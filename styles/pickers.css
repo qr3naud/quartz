@@ -1,0 +1,777 @@
+/* ==========================================================================
+   IMPORT BUTTON
+   ========================================================================== */
+
+.cb-toolbar-import {
+  gap: 5px;
+}
+
+.cb-toolbar-import svg {
+  flex-shrink: 0;
+}
+
+/* ==========================================================================
+   TABLE PICKER DROPDOWN
+   ========================================================================== */
+
+.cb-table-picker-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 9999998;
+}
+
+.cb-table-picker {
+  position: fixed;
+  z-index: 9999999;
+  min-width: 200px;
+  max-width: 320px;
+  max-height: 300px;
+  overflow-y: auto;
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.15);
+  padding: 4px;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+
+.cb-table-picker-title {
+  padding: 8px 10px 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #6b7280;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.cb-table-picker-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  padding: 8px 10px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: #374151;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 450;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.1s;
+}
+
+.cb-table-picker-item:hover {
+  background: #f3f4f6;
+}
+
+.cb-table-picker-count {
+  font-size: 11px;
+  color: #9ca3af;
+  white-space: nowrap;
+}
+
+.cb-table-picker-chevron {
+  display: flex;
+  align-items: center;
+  color: #9ca3af;
+  margin-left: auto;
+  flex-shrink: 0;
+  transition: transform 0.15s;
+}
+
+.cb-table-picker-row:hover>.cb-table-picker-item .cb-table-picker-chevron {
+  transform: rotate(90deg);
+}
+
+.cb-table-picker-views {
+  display: none;
+  padding: 0 0 4px 18px;
+}
+
+.cb-table-picker-row:hover>.cb-table-picker-views {
+  display: block;
+}
+
+.cb-table-picker-views .cb-table-picker-item {
+  padding: 6px 10px;
+  font-size: 12px;
+  color: #6b7280;
+}
+
+.cb-table-picker-views .cb-table-picker-item:hover {
+  color: #374151;
+}
+
+.cb-table-picker-default {
+  font-size: 10px;
+  color: #9ca3af;
+  background: #f3f4f6;
+  border-radius: 4px;
+  padding: 1px 5px;
+  margin-left: auto;
+  white-space: nowrap;
+}
+
+.cb-table-picker-loading {
+  padding: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #9ca3af;
+  font-size: 12px;
+  font-family: inherit;
+}
+
+/* ==========================================================================
+   MODEL CHIP (on AI cards)
+   ========================================================================== */
+
+.cb-model-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 0;
+  height: 22px;
+  padding: 0 8px;
+  border: 1px dashed #c7d2fe;
+  border-left: none;
+  border-radius: 0 11px 11px 0;
+  background: #eef2ff;
+  color: #4338ca;
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  flex: 1;
+  min-width: 0;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.cb-model-chip:hover {
+  background: #e0e7ff;
+  border-color: #a5b4fc;
+}
+
+.cb-model-chip-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.cb-model-chip svg {
+  flex-shrink: 0;
+  opacity: 0.6;
+}
+
+/* ==========================================================================
+   MODEL PICKER DROPDOWN
+   ========================================================================== */
+
+.cb-model-picker-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 9999998;
+}
+
+.cb-model-picker {
+  position: fixed;
+  z-index: 9999999;
+  min-width: 200px;
+  max-width: 300px;
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.15);
+  padding: 4px;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+
+/* ---------- Provider rows (grouped mode) ---------- */
+
+.cb-model-provider-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 7px 10px;
+  border-radius: 6px;
+  cursor: default;
+  transition: background 0.1s;
+}
+
+.cb-model-provider-row:hover {
+  background: #f3f4f6;
+}
+
+.cb-model-provider-active {
+  background: #eef2ff;
+}
+
+.cb-model-provider-active:hover {
+  background: #e0e7ff;
+}
+
+.cb-model-provider-name {
+  font-size: 13px;
+  font-weight: 500;
+  color: #374151;
+  white-space: nowrap;
+}
+
+.cb-model-provider-active .cb-model-provider-name {
+  color: #4338ca;
+  font-weight: 600;
+}
+
+.cb-model-provider-chevron {
+  display: flex;
+  align-items: center;
+  color: #9ca3af;
+}
+
+.cb-model-provider-active .cb-model-provider-chevron {
+  color: #4338ca;
+}
+
+/* ---------- Submenu (flies out to the right) ---------- */
+
+.cb-model-submenu {
+  display: none;
+  position: absolute;
+  top: -4px;
+  left: 100%;
+  padding-left: 4px;
+  z-index: 1;
+}
+
+.cb-model-submenu-inner {
+  min-width: 200px;
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.15);
+  padding: 4px;
+}
+
+.cb-model-provider-row:hover>.cb-model-submenu {
+  display: block;
+}
+
+/* ---------- Model options (shared between flat & grouped) ---------- */
+
+.cb-model-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  padding: 7px 10px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: #374151;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 450;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.1s;
+}
+
+.cb-model-option:hover {
+  background: #f3f4f6;
+}
+
+.cb-model-option-active {
+  background: #eef2ff;
+  color: #4338ca;
+  font-weight: 600;
+}
+
+.cb-model-option-active:hover {
+  background: #e0e7ff;
+}
+
+.cb-model-option-name {
+  white-space: nowrap;
+}
+
+.cb-model-option-cost {
+  font-size: 11px;
+  color: #059669;
+  white-space: nowrap;
+  font-weight: 500;
+}
+
+/* ==========================================================================
+   TOOLBOX (bottom center of canvas)
+   ========================================================================== */
+
+.cb-toolbox {
+  position: absolute;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  padding: 8px;
+  min-width: 380px;
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1), 0 1px 3px rgba(0, 0, 0, 0.06);
+}
+
+.cb-tool-helper {
+  display: none;
+  padding: 6px 8px;
+  margin: -2px -2px 2px;
+  border-bottom: 1px solid #e5e7eb;
+  border-radius: 8px 8px 0 0;
+  background: #f9fafb;
+  color: #4f46e5;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.3;
+  text-align: center;
+}
+
+.cb-tool-helper-visible {
+  display: block;
+}
+
+.cb-tool-helper kbd {
+  display: inline-block;
+  padding: 0 4px;
+  border: 1px solid #c7d2fe;
+  border-radius: 3px;
+  background: #eef2ff;
+  color: #4338ca;
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.cb-tool-selector {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.cb-tool-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 36px;
+  flex: 1;
+  padding: 0 10px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: #6b7280;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.cb-tool-btn:hover {
+  background: #f3f4f6;
+  color: #374151;
+}
+
+.cb-tool-btn-active {
+  background: #eef2ff;
+  color: #4338ca;
+  border-color: #c7d2fe;
+}
+
+.cb-tool-btn-active:hover {
+  background: #e0e7ff;
+}
+
+.cb-tool-btn svg {
+  flex-shrink: 0;
+}
+
+/* Canvas cursor when a tool is active */
+
+.cb-canvas-area.cb-tool-active {
+  cursor: crosshair;
+}
+
+.cb-canvas-area.cb-tool-active.cb-space-pan {
+  cursor: grab;
+}
+
+.cb-canvas-area.cb-tool-active.cb-space-pan:active {
+  cursor: grabbing;
+}
+
+/* ==========================================================================
+   ZOOM CONTROLS
+   ========================================================================== */
+
+.cb-zoom-controls {
+  position: absolute;
+  bottom: 20px;
+  left: 50%;
+  margin-left: 200px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  height: 86px;
+  z-index: 20;
+}
+
+.cb-zoom-btn {
+  width: 40px;
+  height: 40px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #374151;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  transition: background 0.15s, border-color 0.15s;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1), 0 1px 3px rgba(0, 0, 0, 0.06);
+}
+
+.cb-zoom-btn svg {
+  flex-shrink: 0;
+}
+
+.cb-zoom-btn:hover {
+  background: #f3f4f6;
+  border-color: #9ca3af;
+}
+
+.cb-zoom-btn:active {
+  background: #e5e7eb;
+}
+
+/* ==========================================================================
+   BULK DATA POINT INPUT
+   ========================================================================== */
+
+.cb-bulk-input {
+  position: absolute;
+  z-index: 5;
+  background: #ffffff;
+  border: 2px solid #6366f1;
+  border-radius: 10px;
+  padding: 8px;
+  box-shadow: 0 4px 16px rgba(99, 102, 241, 0.15);
+  min-width: 260px;
+}
+
+.cb-bulk-textarea {
+  display: block;
+  width: 100%;
+  min-width: 240px;
+  min-height: 80px;
+  padding: 8px;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  background: #f9fafb;
+  color: #111827;
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.5;
+  resize: vertical;
+  outline: none;
+}
+
+.cb-bulk-textarea:focus {
+  border-color: #6366f1;
+  background: #ffffff;
+}
+
+.cb-bulk-textarea::placeholder {
+  color: #9ca3af;
+}
+
+/* ==========================================================================
+   HELP BUTTON + POPOVER (bottom-left of canvas)
+   ========================================================================== */
+
+.cb-help-wrap {
+  position: absolute;
+  bottom: 20px;
+  left: 20px;
+  z-index: 20;
+}
+
+.cb-help-btn {
+  width: 52px;
+  height: 86px;
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  background: #ffffff;
+  color: #6b7280;
+  font-family: inherit;
+  font-size: 18px;
+  font-weight: 600;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1), 0 1px 3px rgba(0, 0, 0, 0.06);
+}
+
+.cb-help-btn:hover {
+  background: #f3f4f6;
+  border-color: #9ca3af;
+  color: #374151;
+}
+
+.cb-help-btn-open {
+  background: #eef2ff;
+  border-color: #c7d2fe;
+  color: #4338ca;
+}
+
+.cb-help-btn-open:hover {
+  background: #e0e7ff;
+}
+
+.cb-help-popover {
+  display: none;
+  position: absolute;
+  bottom: 94px;
+  left: 0;
+  width: 320px;
+  max-height: 420px;
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.15);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  overflow: hidden;
+}
+
+.cb-help-popover-open {
+  display: flex;
+  flex-direction: column;
+}
+
+.cb-help-toggle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 8px;
+  background: #f3f4f6;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.cb-help-tab {
+  flex: 1;
+  height: 30px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: #6b7280;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s, box-shadow 0.15s;
+}
+
+.cb-help-tab:hover {
+  color: #374151;
+}
+
+.cb-help-tab-active {
+  background: #ffffff;
+  color: #111827;
+  font-weight: 600;
+  border-color: #e5e7eb;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+}
+
+.cb-help-tab-active:hover {
+  background: #ffffff;
+  color: #111827;
+}
+
+.cb-help-content {
+  padding: 16px 18px;
+  overflow-y: auto;
+  max-height: 340px;
+  font-size: 13px;
+  line-height: 1.55;
+  color: #374151;
+}
+
+.cb-help-content p {
+  margin: 0 0 10px;
+}
+
+.cb-help-content p:last-child {
+  margin-bottom: 0;
+}
+
+.cb-help-content strong {
+  color: #111827;
+  font-weight: 600;
+}
+
+.cb-help-content .cb-help-section {
+  margin-bottom: 16px;
+}
+
+.cb-help-content .cb-help-section:last-child {
+  margin-bottom: 0;
+}
+
+.cb-help-content .cb-help-section-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: #9ca3af;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 8px;
+}
+
+.cb-help-shortcut-list {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1px;
+  background: #e5e7eb;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.cb-help-shortcut {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 10px 8px;
+  background: #ffffff;
+  text-align: center;
+}
+
+.cb-help-shortcut-keys {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 2px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+
+.cb-help-shortcut-desc {
+  color: #6b7280;
+  font-size: 11px;
+  line-height: 1.3;
+}
+
+.cb-help-shortcut:only-child,
+.cb-help-shortcut:nth-last-child(1):nth-child(odd) {
+  grid-column: 1 / -1;
+}
+
+.cb-help-shortcut-full {
+  grid-column: 1 / -1;
+}
+
+.cb-help-shortcut-full ~ .cb-help-shortcut:nth-last-child(1):nth-child(even) {
+  grid-column: 1 / -1;
+}
+
+.cb-help-shortcut-full ~ .cb-help-shortcut:nth-last-child(1):nth-child(odd) {
+  grid-column: auto;
+}
+
+.cb-help-content kbd {
+  display: inline-block;
+  padding: 1px 5px;
+  border: 1px solid #d1d5db;
+  border-radius: 4px;
+  background: #f9fafb;
+  color: #374151;
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.4;
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.08);
+}
+
+/* ---------- Help popover action buttons (expand / pin) ---------- */
+
+.cb-help-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: auto;
+  padding-right: 2px;
+}
+
+.cb-help-action-btn {
+  width: 26px;
+  height: 26px;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: #9ca3af;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  transition: background 0.15s, color 0.15s;
+}
+
+.cb-help-action-btn:hover {
+  background: #f3f4f6;
+  color: #374151;
+}
+
+.cb-help-action-btn-active {
+  color: #4338ca;
+}
+
+.cb-help-action-btn-active:hover {
+  background: #eef2ff;
+  color: #4338ca;
+}
+
+.cb-help-action-btn svg {
+  flex-shrink: 0;
+}
+
+/* ---------- Expanded state ---------- */
+
+.cb-help-popover-expanded {
+  width: 520px;
+  max-height: 600px;
+}
+
+.cb-help-popover-expanded .cb-help-content {
+  max-height: 520px;
+}

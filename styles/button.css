@@ -1,0 +1,46 @@
+/* ==========================================================================
+   TOOLBAR BUTTON
+   ========================================================================== */
+
+.cb-btn-wrapper {
+  position: relative;
+  display: inline-flex;
+}
+
+.cb-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 14px;
+  border: 1px solid rgba(0, 0, 0, 0.15);
+  border-radius: 4px;
+  background: #ffffff;
+  color: #374151;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.cb-btn-icon {
+  width: 14px;
+  height: 14px;
+  object-fit: contain;
+}
+
+.cb-btn:hover {
+  background: #f0f0ff;
+  border-color: #6366f1;
+  color: #4338ca;
+}
+
+.cb-float {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  z-index: 99999;
+}

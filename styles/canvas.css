@@ -1,0 +1,137 @@
+/* ==========================================================================
+   MAIN / CANVAS
+   ========================================================================== */
+
+.cb-main {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  position: relative;
+}
+
+.cb-canvas-area {
+  flex: 1;
+  position: relative;
+  overflow: hidden;
+  cursor: default;
+  background: radial-gradient(circle, #d1d5db 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+
+.cb-canvas-area.cb-space-pan {
+  cursor: grab;
+}
+
+.cb-canvas-area.cb-space-pan:active {
+  cursor: grabbing;
+}
+
+.cb-svg-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: visible;
+  transform-origin: 0 0;
+}
+
+.cb-card-container {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 0;
+  height: 0;
+  transform-origin: 0 0;
+}
+
+/* ==========================================================================
+   SELECTION BOX
+   ========================================================================== */
+
+.cb-selection-box {
+  position: absolute;
+  border: 1.5px dashed #6366f1;
+  background: rgba(99, 102, 241, 0.06);
+  border-radius: 4px;
+  pointer-events: none;
+}
+
+.cb-hover-preview {
+  position: absolute;
+  width: 190px;
+  min-height: 70px;
+  border: 1.5px dashed #6366f1;
+  border-radius: 10px;
+  background: rgba(99, 102, 241, 0.08);
+  pointer-events: none;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-size: 13px;
+  font-weight: 500;
+  color: rgba(99, 102, 241, 0.5);
+  transition: width 0.15s ease, min-height 0.15s ease;
+}
+
+.cb-hover-preview-dp {
+  border-color: #6366f1;
+  background: rgba(99, 102, 241, 0.08);
+}
+
+.cb-hover-preview-er {
+  border-color: #d1d5db;
+  background: rgba(255, 255, 255, 0.6);
+  color: rgba(156, 163, 175, 0.7);
+}
+
+.cb-hover-preview-input {
+  border-color: #fb7185;
+  background: rgba(244, 63, 94, 0.08);
+  color: rgba(244, 63, 94, 0.5);
+}
+
+.cb-hover-preview-comment {
+  border-color: #fbbf24;
+  background: rgba(245, 158, 11, 0.08);
+  color: rgba(245, 158, 11, 0.5);
+}
+
+.cb-hover-preview-bulk {
+  width: 300px;
+  min-height: 120px;
+}
+
+.cb-selection-hint {
+  position: absolute;
+  z-index: 8;
+  transform: translate(-50%, -100%);
+  padding: 6px 10px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #f9fafb;
+  color: #4f46e5;
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+
+.cb-selection-hint-visible {
+  opacity: 1;
+}
+
+.cb-selection-hint kbd {
+  display: inline-block;
+  padding: 0 4px;
+  border: 1px solid #c7d2fe;
+  border-radius: 3px;
+  background: #eef2ff;
+  color: #4338ca;
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+

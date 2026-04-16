@@ -1,0 +1,464 @@
+/* ==========================================================================
+   OVERLAY — canvas sits below Clay's header
+   ========================================================================== */
+
+.cb-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 999999;
+  display: flex;
+  flex-direction: column;
+  background: #f1f5f9;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  color: #1f2937;
+}
+
+/* ==========================================================================
+   TOOLBAR
+   ========================================================================== */
+
+.cb-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 48px;
+  padding: 0 14px;
+  background: #ffffff;
+  border-bottom: 1px solid #e5e7eb;
+  flex-shrink: 0;
+  z-index: 10;
+}
+
+.cb-topbar-left,
+.cb-topbar-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.cb-topbar-left {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.cb-topbar-right {
+  flex-shrink: 0;
+}
+
+/* ==========================================================================
+   TAB BAR
+   ========================================================================== */
+
+.cb-tab-bar {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.cb-tab-bar::-webkit-scrollbar {
+  display: none;
+}
+
+.cb-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: #6b7280;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.cb-tab:hover {
+  background: #f3f4f6;
+  color: #374151;
+}
+
+.cb-tab-active {
+  background: #eef2ff;
+  color: #4338ca;
+  border-color: #c7d2fe;
+}
+
+.cb-tab-active:hover {
+  background: #e0e7ff;
+}
+
+.cb-tab-name {
+  cursor: pointer;
+  user-select: none;
+}
+
+.cb-tab-close {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: #9ca3af;
+  font-size: 10px;
+  cursor: pointer;
+  flex-shrink: 0;
+  padding: 0;
+  line-height: 1;
+}
+
+.cb-tab:hover .cb-tab-close {
+  display: inline-flex;
+}
+
+.cb-tab-close:hover {
+  background: #fee2e2;
+  color: #dc2626;
+}
+
+.cb-tab-add {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  margin-left: 6px;
+  border: 1px dashed #d1d5db;
+  border-radius: 6px;
+  background: transparent;
+  color: #9ca3af;
+  padding: 0;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.cb-tab-add:hover {
+  background: #f3f4f6;
+  border-color: #6366f1;
+  color: #6366f1;
+}
+
+.cb-tab-rename {
+  border: 1px solid #6366f1;
+  border-radius: 4px;
+  background: #ffffff;
+  color: #111827;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  padding: 2px 8px;
+  height: 28px;
+  outline: none;
+  min-width: 60px;
+  max-width: 180px;
+}
+
+/* ---- Hidden tabs dropdown ---- */
+
+.cb-hidden-tabs-wrap {
+  position: relative;
+  display: inline-flex;
+  margin-left: 4px;
+  flex-shrink: 0;
+}
+
+.cb-hidden-tabs-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  background: #f9fafb;
+  color: #6b7280;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.cb-hidden-tabs-btn:hover {
+  background: #f3f4f6;
+  border-color: #9ca3af;
+}
+
+.cb-saved-tabs-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid #f59e0b;
+  border-radius: 6px;
+  background: #fef3c7;
+  color: #92400e;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.cb-saved-tabs-btn:hover {
+  background: #fde68a;
+}
+
+.cb-hidden-tabs-menu {
+  display: none;
+  position: fixed;
+  min-width: 140px;
+  max-width: 240px;
+  max-height: 200px;
+  overflow-y: auto;
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.12);
+  padding: 4px;
+  z-index: 100;
+}
+
+.cb-hidden-tabs-menu-open {
+  display: block !important;
+}
+
+.cb-hidden-tab-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  border-radius: 5px;
+  transition: background 0.1s;
+}
+
+.cb-hidden-tab-item:hover {
+  background: #f3f4f6;
+}
+
+.cb-hidden-tab-name {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 10px;
+  border: none;
+  background: transparent;
+  color: #374151;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 450;
+  cursor: pointer;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cb-hidden-tab-delete {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  margin-right: 4px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: #9ca3af;
+  font-size: 10px;
+  cursor: pointer;
+  flex-shrink: 0;
+  padding: 0;
+  line-height: 1;
+}
+
+.cb-hidden-tab-item:hover .cb-hidden-tab-delete {
+  display: inline-flex;
+}
+
+.cb-hidden-tab-delete:hover {
+  background: #fee2e2;
+  color: #dc2626;
+}
+
+/* ---- Tab context menu ---- */
+
+.cb-tab-context-menu {
+  position: fixed;
+  min-width: 140px;
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.12);
+  padding: 4px;
+  z-index: 1000;
+}
+
+.cb-tab-context-item {
+  display: block;
+  width: 100%;
+  padding: 7px 12px;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: #374151;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 450;
+  cursor: pointer;
+  text-align: left;
+  white-space: nowrap;
+  transition: background 0.1s;
+}
+
+.cb-tab-context-item:hover {
+  background: #f3f4f6;
+}
+
+.cb-tab-context-item-danger {
+  color: #dc2626;
+}
+
+.cb-tab-context-item-danger:hover {
+  background: #fef2f2;
+}
+
+/* ---- Toolbar buttons ---- */
+
+.cb-toolbar-btn {
+  display: inline-flex;
+  align-items: center;
+  height: 32px;
+  padding: 0 12px;
+  border: 1px solid rgba(0, 0, 0, 0.15);
+  border-radius: 5px;
+  background: #ffffff;
+  color: #374151;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.cb-toolbar-btn:hover {
+  background: #f9fafb;
+  border-color: rgba(0, 0, 0, 0.25);
+}
+
+.cb-toolbar-btn-primary {
+  background: #6366f1;
+  color: #ffffff;
+  border-color: #6366f1;
+}
+
+.cb-toolbar-btn-primary:hover {
+  background: #4f46e5;
+}
+
+.cb-toolbar-close {
+  color: #6b7280;
+  border-color: transparent;
+  background: transparent;
+}
+
+.cb-toolbar-close:hover {
+  background: #f3f4f6;
+  color: #111827;
+}
+
+.cb-group-btn {
+  background: #fef3c7;
+  border-color: #f59e0b;
+  color: #92400e;
+}
+
+.cb-group-btn:hover {
+  background: #fde68a;
+}
+
+/* ==========================================================================
+   SUMMARY BAR
+   ========================================================================== */
+
+.cb-summary-bar {
+  display: flex;
+  align-items: stretch;
+  gap: 10px;
+  padding: 10px 16px;
+  background: #ffffff;
+  border-bottom: 1px solid #e5e7eb;
+  flex-shrink: 0;
+}
+
+.cb-summary-box {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 14px;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  background: #f9fafb;
+  min-width: 120px;
+}
+
+.cb-summary-label {
+  font-size: 11px;
+  font-weight: 500;
+  color: #6b7280;
+}
+
+.cb-summary-value {
+  font-size: 15px;
+  font-weight: 600;
+  color: #111827;
+  margin-top: 3px;
+}
+
+.cb-summary-input {
+  width: 110px;
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #111827;
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.cb-summary-input:focus {
+  outline: none;
+  border-color: #6366f1;
+  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.15);
+}
+
+.cb-summary-input::placeholder {
+  color: #d1d5db;
+  font-weight: 400;
+}
+
+.cb-summary-total {
+  background: #f0fdf4;
+  border-color: #bbf7d0;
+}
+
+.cb-summary-total .cb-summary-value {
+  color: #166534;
+}

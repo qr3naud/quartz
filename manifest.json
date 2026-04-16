@@ -1,0 +1,57 @@
+{
+  "manifest_version": 3,
+  "name": "Clay Scoping Tool",
+  "version": "2.1",
+  "description": "Visual brainstorming canvas for Clay enrichment workflows",
+  "permissions": ["activeTab"],
+  "host_permissions": [
+    "https://api.clay.com/*"
+  ],
+  "icons": {
+    "16": "icons/icon-16.png",
+    "32": "icons/icon-32.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://app.clay.com/*"],
+      "js": [
+        "src/config.js",
+        "src/api.js",
+        "src/canvas/svg.js",
+        "src/canvas/geometry.js",
+        "src/canvas/graph-queries.js",
+        "src/canvas/groups.js",
+        "src/canvas/credits.js",
+        "src/canvas/snap.js",
+        "src/canvas/connections.js",
+        "src/canvas/connect-flow.js",
+        "src/canvas/ui.js",
+        "src/canvas/cards.js",
+        "src/canvas/persistence.js",
+        "src/canvas/index.js",
+        "src/tabs.js",
+        "src/picker.js",
+        "src/table-import.js",
+        "src/overlay.js",
+        "src/toolbar.js"
+      ],
+      "css": [
+        "styles/button.css",
+        "styles/picker.css",
+        "styles/overlay.css",
+        "styles/canvas.css",
+        "styles/cards.css",
+        "styles/groups.css",
+        "styles/pickers.css"
+      ]
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["icons/key-icon.png"],
+      "matches": ["https://app.clay.com/*"]
+    }
+  ]
+}
