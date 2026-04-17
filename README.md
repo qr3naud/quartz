@@ -21,10 +21,12 @@ A Chrome extension that adds a visual scoping canvas to Clay workbooks for plann
 Open the **Terminal** app (on macOS: press `Cmd + Space`, type "Terminal", press Enter), then paste this command and press Enter:
 
 ```bash
-git clone https://github.com/qr3naud/scoping.git ~/clay-scoping-extension
+git clone https://github.com/qr3naud/scoping.git ~/Downloads/clay-scoping-extension
 ```
 
-This creates a folder called `clay-scoping-extension` in your home directory and downloads the latest version of the extension into it.
+This creates a folder called `clay-scoping-extension` inside your **Downloads** folder and downloads the latest version of the extension into it.
+
+> **Heads-up:** don't delete this folder when you clean out Downloads — the extension reads from it every time Chrome starts. If you ever do delete it by accident, just re-run the clone command above.
 
 > **First time using `git`?** macOS will prompt you to install the **Xcode Command Line Tools** the first time you run a `git` command. Click **Install** in the popup and wait for it to finish (a few minutes), then re-run the command above.
 
@@ -33,7 +35,7 @@ This creates a folder called `clay-scoping-extension` in your home directory and
 1. Open a new Chrome tab and go to [`chrome://extensions`](chrome://extensions)
 2. Toggle **Developer mode** on — it's the switch in the top-right corner of the page
 3. Click **Load unpacked** (button on the left)
-4. In the file picker, navigate to your home folder and select `clay-scoping-extension`, then click **Select** / **Open**
+4. In the file picker, go to your **Downloads** folder and select `clay-scoping-extension`, then click **Select** / **Open**
 
 You should now see a card titled **Clay Scoping Tool** in the extensions list.
 
@@ -50,7 +52,7 @@ If you don't see the button, reload the Clay tab. Still missing? See [Troublesho
 *Run this whenever you want the latest version — usually when something new has shipped and you want to pick it up.*
 
 ```bash
-cd ~/clay-scoping-extension && git pull
+cd ~/Downloads/clay-scoping-extension && git pull
 ```
 
 Then in Chrome:
@@ -81,17 +83,10 @@ Wait for it to finish, then re-run the clone command.
 This means files in your `clay-scoping-extension` folder have been modified locally (you probably don't want to keep those changes — you just want the latest version from GitHub). Reset to the remote version:
 
 ```bash
-cd ~/clay-scoping-extension && git fetch origin && git reset --hard origin/main
+cd ~/Downloads/clay-scoping-extension && git fetch origin && git reset --hard origin/main
 ```
 
 > **Warning:** this throws away any local edits in that folder. That's almost always what you want for an extension you're just using (not developing).
 
 **The extension card shows an "Errors" button**
-Click it, copy the error, and ping the maintainer (see below). Most often this means a file got corrupted during update — re-running `git pull` usually fixes it.
-
----
-
-## Bugs and feature requests
-
-<!-- TODO: replace with the right Slack channel / handle / email -->
-Ping the maintainer directly for now.
+Click it, copy the error, and share it with the maintainer. Most often this means a file got corrupted during update — re-running `git pull` usually fixes it.
