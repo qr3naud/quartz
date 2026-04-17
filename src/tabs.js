@@ -256,13 +256,17 @@
   // Deliberately conservative: we only apply a remote update when it's safe
   // to overwrite local state. If any of these are true we skip; the next
   // save from either side will resync.
+  //
+  // Scope the check to OUR overlay only: Clay's own frontend has many inputs
+  // that can be focused (search boxes, cell editors, etc.) and we don't want
+  // to block remote updates just because the user clicked on Clay's UI.
   function isUserInteracting() {
     const el = document.activeElement;
-    if (el) {
-      const tag = el.tagName;
-      if (tag === "INPUT" || tag === "TEXTAREA") return true;
-      if (el.isContentEditable) return true;
-    }
+    if (!el) return false;
+    if (!__cb.overlayEl || !__cb.overlayEl.contains(el)) return false;
+    const tag = el.tagName;
+    if (tag === "INPUT" || tag === "TEXTAREA") return true;
+    if (el.isContentEditable) return true;
     return false;
   }
 

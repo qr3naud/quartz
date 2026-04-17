@@ -739,6 +739,9 @@
             if (container && __cb.mountCursorsLayer) {
               __cb.mountCursorsLayer(container);
             }
+            // Live card-level action streaming (Tier D): drags and text
+            // edits propagate within ~100ms via the same channel.
+            if (__cb.mountLiveActions) __cb.mountLiveActions();
           }
         })();
       }
@@ -833,6 +836,7 @@
       __cb._cursorMoveHandler = null;
       __cb._cursorMoveTarget = null;
     }
+    if (__cb.unmountLiveActions) __cb.unmountLiveActions();
     if (__cb.unmountCursorsLayer) __cb.unmountCursorsLayer();
     if (__cb.uninstallRealtimeCanvasSync) __cb.uninstallRealtimeCanvasSync();
     if (__cb.realtime?.leaveWorkbook) __cb.realtime.leaveWorkbook();

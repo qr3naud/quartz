@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Clay Scoping Tool",
-  "version": "3.1",
+  "version": "3.2",
   "description": "Visual scoping canvas for Clay enrichment workflows",
   "permissions": ["activeTab"],
   "host_permissions": [
@@ -49,6 +49,7 @@
         "src/canvas/index.js",
         "src/canvas/collaborators.js",
         "src/canvas/cursors.js",
+        "src/canvas/live-actions.js",
         "src/tabs.js",
         "src/picker.js",
         "src/table-import.js",

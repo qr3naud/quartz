@@ -749,7 +749,18 @@
       const dx = (e.clientX - dragState.startMouseX) / scale, dy = (e.clientY - dragState.startMouseY) / scale;
       for (const [cid, sp] of dragState.startPositions) { const c = cards.find((cc) => cc.id === cid); if (!c) continue; c.x = sp.x + dx; c.y = sp.y + dy; }
       const snap = getSnapHelpers().findSnapTarget(new Set(dragState.startPositions.keys()), dragState.cardId);
-      for (const [cid, sp] of dragState.startPositions) { const c = cards.find((cc) => cc.id === cid); if (!c) continue; c.x = sp.x + dx + snap.dx; c.y = sp.y + dy + snap.dy; c.el.style.transform = `translate(${c.x}px, ${c.y}px)`; }
+      for (const [cid, sp] of dragState.startPositions) {
+        const c = cards.find((cc) => cc.id === cid);
+        if (!c) continue;
+        c.x = sp.x + dx + snap.dx;
+        c.y = sp.y + dy + snap.dy;
+        c.el.style.transform = `translate(${c.x}px, ${c.y}px)`;
+        // Stream the position to peers (Tier D). Realtime handles per-card
+        // throttling internally so this is cheap even at native mousemove rate.
+        if (__cb.realtime?.broadcastCardMove) {
+          __cb.realtime.broadcastCardMove(c.id, c.x, c.y);
+        }
+      }
       updateGroupBounds(); updateSelectionHint(); return;
     }
     if (groupDragState) {
@@ -761,7 +772,16 @@
       }
       if (!groupDragState.hasMoved) return;
       const dx = (e.clientX - groupDragState.startMouseX) / scale, dy = (e.clientY - groupDragState.startMouseY) / scale;
-      for (const [cid, sp] of groupDragState.startPositions) { const c = cards.find((cc) => cc.id === cid); if (!c) continue; c.x = sp.x + dx; c.y = sp.y + dy; c.el.style.transform = `translate(${c.x}px, ${c.y}px)`; }
+      for (const [cid, sp] of groupDragState.startPositions) {
+        const c = cards.find((cc) => cc.id === cid);
+        if (!c) continue;
+        c.x = sp.x + dx;
+        c.y = sp.y + dy;
+        c.el.style.transform = `translate(${c.x}px, ${c.y}px)`;
+        if (__cb.realtime?.broadcastCardMove) {
+          __cb.realtime.broadcastCardMove(c.id, c.x, c.y);
+        }
+      }
       updateGroupBounds(); return;
     }
     if (panState) { hideHoverPreview(); panX = panState.startPanX + (e.clientX - panState.startMouseX); panY = panState.startPanY + (e.clientY - panState.startMouseY); applyTransform(); return; }
@@ -1081,6 +1101,15 @@
     getCardContainer: () => cardContainer,
     getCanvasArea: () => canvasArea,
     screenToCanvas,
+    // Exposed for live-actions.js: lets remote cardMove apply safely check
+    // whether we're dragging this card ourselves (local-drag-wins rule) and
+    // re-run the post-move bookkeeping we'd normally do inside onMouseMove.
+    isDraggingCard: (cardId) =>
+      !!(
+        (dragState?.startPositions && dragState.startPositions.has(cardId)) ||
+        (groupDragState?.startPositions && groupDragState.startPositions.has(cardId))
+      ),
+    updateGroupBounds,
   };
   __cb.initCanvas = init;
 })();

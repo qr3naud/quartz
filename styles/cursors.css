@@ -20,8 +20,10 @@
   top: 0;
   left: 0;
   pointer-events: none;
-  /* Smooth between 50ms broadcasts. Linear feels more "alive" than easing. */
-  transition: transform 80ms linear, opacity 200ms;
+  /* No transform transition here: cursors.js runs a requestAnimationFrame
+     lerp loop that interpolates position every frame (60fps+) from the
+     ~20fps broadcasts. CSS smoothing would fight the JS animation. */
+  transition: opacity 200ms;
   opacity: 1;
   will-change: transform;
 }

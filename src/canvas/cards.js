@@ -604,6 +604,11 @@
       textEl.addEventListener("input", () => {
         syncDpText(card, textEl);
         notifyChange();
+        // Stream the typed text to peers (Tier D). Debounced per-card inside
+        // realtime.js so rapid typing coalesces before hitting the wire.
+        if (window.__cb.realtime?.broadcastCardText) {
+          window.__cb.realtime.broadcastCardText(card.id, textEl.textContent);
+        }
       });
       textEl.addEventListener("mousedown", (evt) => evt.stopPropagation());
       textEl.addEventListener("keydown", (evt) => {
@@ -715,6 +720,9 @@
       textEl.addEventListener("input", () => {
         syncEditableText(card, textEl);
         notifyChange();
+        if (window.__cb.realtime?.broadcastCardText) {
+          window.__cb.realtime.broadcastCardText(card.id, textEl.textContent);
+        }
       });
       textEl.addEventListener("mousedown", (evt) => evt.stopPropagation());
       textEl.addEventListener("keydown", (evt) => {
@@ -792,6 +800,9 @@
       textEl.addEventListener("input", () => {
         syncEditableText(card, textEl);
         notifyChange();
+        if (window.__cb.realtime?.broadcastCardText) {
+          window.__cb.realtime.broadcastCardText(card.id, textEl.textContent);
+        }
       });
       textEl.addEventListener("mousedown", (evt) => evt.stopPropagation());
       textEl.addEventListener("keydown", (evt) => {

@@ -23,12 +23,20 @@
   // node and doesn't flicker back in from a different position.
   const STALE_AFTER_MS = 3000;
   const REAPER_INTERVAL_MS = 500;
+  // Lerp factor per frame (60fps). 0.3 means the cursor closes ~30% of the
+  // remaining distance each frame, so it catches up to a new target within
+  // ~5 frames (~80ms). Higher = snappier, lower = smoother but laggier.
+  const LERP_K = 0.3;
+  // Below this pixel distance we snap directly to target to avoid endless
+  // sub-pixel jitter at the end of a move.
+  const LERP_SNAP_DISTANCE = 0.5;
 
   let layerEl = null;
   let reaperTimer = null;
   let unsubCursor = null;
   let unsubPresence = null;
-  // userId -> { el, lastSeen, x, y }
+  let rafId = null;
+  // userId -> { el, lastSeen, targetX, targetY, currentX, currentY, initialized }
   const cursorsByUser = new Map();
   // userId -> { name, profile_picture } from presence payloads
   const userMetaByUser = new Map();
@@ -75,19 +83,57 @@
 
     let entry = cursorsByUser.get(String(userId));
     if (!entry) {
-      entry = { el: buildCursorEl(userId), lastSeen: 0, x: 0, y: 0 };
+      entry = {
+        el: buildCursorEl(userId),
+        lastSeen: 0,
+        targetX: x,
+        targetY: y,
+        currentX: x,
+        currentY: y,
+        initialized: false,
+      };
       layerEl.appendChild(entry.el);
       cursorsByUser.set(String(userId), entry);
       updateLabel(entry, userId);
     }
-    entry.x = x;
-    entry.y = y;
+
+    // Update the target; the rAF loop lerps currentX/Y toward it every frame.
+    // On first sighting, snap straight to the target so the cursor doesn't
+    // sweep in from (0,0).
+    entry.targetX = x;
+    entry.targetY = y;
+    if (!entry.initialized) {
+      entry.currentX = x;
+      entry.currentY = y;
+      entry.el.style.transform = `translate(${x}px, ${y}px)`;
+      entry.initialized = true;
+    }
     entry.lastSeen = Date.now();
-    // Cursor coords are canvas-space. Because layerEl is a child of
-    // cardContainer (which already has translate+scale applied), we just set
-    // a canvas-space transform here and the browser composes the two.
-    entry.el.style.transform = `translate(${x}px, ${y}px)`;
     entry.el.classList.remove("cb-cursor-stale");
+  }
+
+  // Single rAF loop covering every cursor. Runs at the display refresh rate
+  // (60-120fps) and linearly interpolates currentX/Y toward targetX/Y so
+  // movement looks smooth regardless of the 20fps broadcast cadence.
+  function tick() {
+    rafId = requestAnimationFrame(tick);
+    for (const entry of cursorsByUser.values()) {
+      const dx = entry.targetX - entry.currentX;
+      const dy = entry.targetY - entry.currentY;
+      if (Math.abs(dx) < LERP_SNAP_DISTANCE && Math.abs(dy) < LERP_SNAP_DISTANCE) {
+        // Already there (or close enough) -- skip the transform write to
+        // avoid churning the compositor on idle cursors.
+        if (entry.currentX !== entry.targetX || entry.currentY !== entry.targetY) {
+          entry.currentX = entry.targetX;
+          entry.currentY = entry.targetY;
+          entry.el.style.transform = `translate(${entry.currentX}px, ${entry.currentY}px)`;
+        }
+        continue;
+      }
+      entry.currentX += dx * LERP_K;
+      entry.currentY += dy * LERP_K;
+      entry.el.style.transform = `translate(${entry.currentX}px, ${entry.currentY}px)`;
+    }
   }
 
   function reap() {
@@ -134,10 +180,14 @@
     });
 
     reaperTimer = setInterval(reap, REAPER_INTERVAL_MS);
+    // Kick off the animation loop once; it stays alive for the widget's
+    // lifetime and is cancelled in unmount.
+    if (rafId == null) rafId = requestAnimationFrame(tick);
   };
 
   __cb.unmountCursorsLayer = function () {
     if (reaperTimer) { clearInterval(reaperTimer); reaperTimer = null; }
+    if (rafId != null) { cancelAnimationFrame(rafId); rafId = null; }
     if (unsubCursor) { unsubCursor(); unsubCursor = null; }
     if (unsubPresence) { unsubPresence(); unsubPresence = null; }
     if (layerEl && layerEl.parentNode) layerEl.parentNode.removeChild(layerEl);
