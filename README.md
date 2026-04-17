@@ -1,6 +1,6 @@
 # Clay Scoping Tool
 
-A Chrome extension that adds a visual brainstorming canvas to Clay workbooks for scoping enrichment workflows. Built for Clay's GTM Ops team (GTMEs and SEs).
+A Chrome extension that adds a visual brainstorming canvas to Clay workbooks for scoping enrichment workflows.
 
 ---
 
@@ -22,7 +22,7 @@ This creates a folder called `clay-scoping-extension` in your home directory and
 
 ### 2. Load it into Chrome
 
-1. Open a new Chrome tab and go to `chrome://extensions`
+1. Open a new Chrome tab and go to [`chrome://extensions`](chrome://extensions)
 2. Toggle **Developer mode** on — it's the switch in the top-right corner of the page
 3. Click **Load unpacked** (button on the left)
 4. In the file picker, navigate to your home folder and select `clay-scoping-extension`, then click **Select** / **Open**
@@ -47,7 +47,7 @@ cd ~/clay-scoping-extension && git pull
 
 Then in Chrome:
 
-1. Go to `chrome://extensions`
+1. Go to [`chrome://extensions`](chrome://extensions)
 2. Find the **Clay Scoping Tool** card and click the **circular refresh icon** on it
 3. Reload any open Clay tabs so they pick up the new code
 
@@ -58,7 +58,7 @@ That's it.
 ## Troubleshooting
 
 **I don't see the "Brainstorm" button on Clay workbooks**
-Reload the Clay tab first. If it's still missing, go to `chrome://extensions`, click the refresh icon on the **Clay Scoping Tool** card, then reload Clay again.
+Reload the Clay tab first. If it's still missing, go to [`chrome://extensions`](chrome://extensions), click the refresh icon on the **Clay Scoping Tool** card, then reload Clay again.
 
 **Terminal says `git: command not found`**
 You need Apple's developer tools. Run this in Terminal and click **Install** in the popup:
