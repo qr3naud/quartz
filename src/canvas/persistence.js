@@ -76,14 +76,17 @@
       }
       for (const cs of state.cards || []) {
         if (cs.data.type === "dp") {
-          // Pass `fillRate` through so the user's edited value (or one
-          // computed by table-import in Phase 2) survives reload. Missing
-          // values fall back to the canvas default inside addDataPointCard.
+          // Pass `fillRate` and `fillRateCustom` through so the user's edit
+          // state survives reload. Missing values (legacy cards, or freshly
+          // imported DP cards in Phase 2) fall back to defaults inside
+          // addDataPointCard; missing `fillRateCustom` defaults to false so
+          // legacy cards keep tracking the records input live.
           addDataPointCard(cs.data.text || "", {
             x: cs.x,
             y: cs.y,
             id: cs.id,
             fillRate: cs.data.fillRate,
+            fillRateCustom: cs.data.fillRateCustom,
           });
         }
         else if (cs.data.type === "input") addInputCard(cs.data.text || "", { x: cs.x, y: cs.y, id: cs.id });

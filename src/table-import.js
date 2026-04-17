@@ -68,6 +68,7 @@
   }
 
   const CARD_W = 220;
+  const CARD_H = 70;
 
   function isGreenField(fieldId, viewFields) {
     return viewFields[fieldId]?.color === "green";
@@ -247,25 +248,26 @@
       importedAny = true;
     }
 
-    // --- Basic groups: place DP + ER cards adjacent so they snap-link ---
+    // --- Basic groups: comment on top of DP (left), ERs stacked vertically to the right ---
 
     let groupY = col > 0 ? currentY + CARD_V_GAP : currentY;
     col = 0;
+    // Leave room above the first row for the comment card sitting on top of each DP.
+    groupY += CARD_H;
+
+    const GROUP_H_GAP = 40;
+    const GROUP_V_GAP = 40;
 
     for (const bg of basicGroups) {
-      const chainCards = [];
-
-      if (bg.name) {
-        chainCards.push({ kind: "comment", text: bg.name });
-      }
-
+      const dpFields = [];
       for (const dpField of bg.dpFields) {
         const dpKey = `dp-${dpField.id}`;
         if (existingKeys.has(dpKey)) continue;
         existingKeys.add(dpKey);
-        chainCards.push({ kind: "dp", field: dpField });
+        dpFields.push(dpField);
       }
 
+      const erFields = [];
       for (const erField of bg.erFields) {
         const ai = __cb.isAiAction(
           erField.typeSettings?.actionKey,
@@ -277,36 +279,53 @@
           : `${erField.typeSettings?.actionPackageId ?? "clay"}-${erField.typeSettings?.actionKey}`;
         if (existingKeys.has(dedupKey)) continue;
         existingKeys.add(dedupKey);
-        chainCards.push({ kind: "er", field: erField });
+        erFields.push(erField);
       }
 
-      if (chainCards.length === 0) continue;
+      if (dpFields.length === 0 && erFields.length === 0) continue;
 
-      const chainWidth = chainCards.length * CARD_W;
-      if (col > 0 && START_X + col * CARD_H_GAP + chainWidth > START_X + COLS * CARD_H_GAP) {
+      const groupCols = erFields.length > 0 ? 2 : 1;
+      const groupWidth = groupCols * CARD_W;
+      const rowCount = Math.max(dpFields.length, erFields.length, 1);
+      const groupHeight = rowCount * CARD_H;
+
+      const rightEdge = START_X + col * CARD_H_GAP + groupWidth;
+      const canvasRight = START_X + COLS * CARD_H_GAP;
+      if (col > 0 && rightEdge > canvasRight) {
         col = 0;
-        groupY += CARD_V_GAP;
+        groupY += groupHeight + CARD_H + GROUP_V_GAP;
       }
 
-      let x = START_X + col * CARD_H_GAP;
-      for (const item of chainCards) {
-        if (item.kind === "comment") {
-          __cb.canvas.addCommentCard(item.text, { x, y: groupY });
-        } else if (item.kind === "dp") {
-          const card = addDpCard(item.field, x, groupY);
-          card.data.fieldId = item.field.id;
-        } else {
-          __cb.canvas.addCard(mapFieldToCardData(item.field), { x, y: groupY });
-        }
-        x += CARD_W;
+      const groupX = START_X + col * CARD_H_GAP;
+
+      if (bg.name) {
+        __cb.canvas.addCommentCard(bg.name, { x: groupX, y: groupY - CARD_H });
       }
 
-      col += Math.ceil(chainWidth / CARD_H_GAP);
+      for (let i = 0; i < dpFields.length; i++) {
+        const card = addDpCard(dpFields[i], groupX, groupY + i * CARD_H);
+        card.data.fieldId = dpFields[i].id;
+      }
+
+      for (let i = 0; i < erFields.length; i++) {
+        __cb.canvas.addCard(mapFieldToCardData(erFields[i]), {
+          x: groupX + CARD_W,
+          y: groupY + i * CARD_H,
+        });
+      }
+
+      col += Math.ceil((groupWidth + GROUP_H_GAP) / CARD_H_GAP);
       if (col >= COLS) {
         col = 0;
-        groupY += CARD_V_GAP;
+        groupY += groupHeight + CARD_H + GROUP_V_GAP;
       }
       importedAny = true;
+    }
+
+    // After groups, advance to a new row below the tallest group placed on the current row.
+    if (col > 0) {
+      groupY += CARD_H;
+      col = 0;
     }
 
     // --- Standalone fields: green → DP, action → ER ---

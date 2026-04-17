@@ -624,6 +624,10 @@
     return __credits.updateDpCosts();
   }
 
+  function updateDefaultFillRates(records) {
+    return getCardHelpers().updateDefaultFillRates(records);
+  }
+
   // ---- Groups ----
 
   function createGroupLabel(initialValue) {
@@ -1070,6 +1074,13 @@
     getCardById,
     showBulkInput,
     recenterView,
+    updateDefaultFillRates,
+    // Exposed for the cursor overlay: cursors are rendered inside cardContainer
+    // so they inherit pan/zoom. screenToCanvas converts mousemove events from
+    // viewport pixels to the canvas's coordinate space before broadcasting.
+    getCardContainer: () => cardContainer,
+    getCanvasArea: () => canvasArea,
+    screenToCanvas,
   };
   __cb.initCanvas = init;
 })();

@@ -181,6 +181,34 @@
     });
   }
 
+  /**
+   * Upserts only the caller's canvas_contributors row. Unlike pushToSupabase,
+   * this does NOT touch the canvases row, so it's safe to call purely on
+   * view (no edit needed) and as a periodic heartbeat.
+   *
+   * Silently ignores errors: the most common failure is an FK violation when
+   * the user opens a never-saved workbook (no canvases row exists yet). The
+   * first real save will create the canvases row and subsequent heartbeats
+   * will succeed.
+   */
+  __cb.markCanvasActivity = async function (workbookId) {
+    const supa = window.__cbSupabase;
+    if (!supa || !__cb.userId || !workbookId) return;
+    try {
+      await supa.supabaseFetch("canvas_contributors", "POST", {
+        prefer: "resolution=merge-duplicates",
+        body: {
+          workbook_id: workbookId,
+          user_id: __cb.userId,
+          last_accessed_at: new Date().toISOString(),
+        },
+      });
+    } catch {
+      // Non-critical; collaborators widget will just lack this user until the
+      // next successful upsert (usually after the first save).
+    }
+  };
+
   __cb.saveTabs = function () {
     // Prefer the workbook the overlay was opened for (captured at openCanvas
     // time) over the current URL: a save triggered right after the user
@@ -221,6 +249,81 @@
 
   __cb.cancelPendingSave = function () {
     clearTimeout(saveTimer);
+  };
+
+  // ---- Live save propagation (Supabase Realtime postgres_changes) ----
+
+  // Deliberately conservative: we only apply a remote update when it's safe
+  // to overwrite local state. If any of these are true we skip; the next
+  // save from either side will resync.
+  function isUserInteracting() {
+    const el = document.activeElement;
+    if (el) {
+      const tag = el.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA") return true;
+      if (el.isContentEditable) return true;
+    }
+    return false;
+  }
+
+  function hasPendingSave() {
+    return saveTimer != null;
+  }
+
+  /**
+   * Applies a remote canvases row to the local state. Called from the
+   * realtime postgres_changes subscription, set up in installRealtimeSync()
+   * below. Keeps the local activeId when the tab still exists remotely so
+   * switching tabs in a peer's save doesn't yank you to a different tab.
+   */
+  function applyRemoteCanvas(newRow) {
+    if (!newRow || !newRow.state) return;
+    // Ignore our own echo.
+    if (newRow.updated_by && newRow.updated_by === __cb.userId) return;
+    // Don't clobber in-flight local edits.
+    if (hasPendingSave() || isUserInteracting()) return;
+
+    const remote = newRow.state;
+    const localActiveId = __cb.tabStore?.activeId;
+
+    const next = { ...remote };
+    if (
+      localActiveId &&
+      Array.isArray(next.tabs) &&
+      next.tabs.some(t => t.id === localActiveId)
+    ) {
+      next.activeId = localActiveId;
+    }
+    __cb.tabStore = next;
+
+    // Cache the new store to localStorage so reload-from-offline keeps parity.
+    const workbookId = newRow.workbook_id;
+    if (workbookId) {
+      try { localStorage.setItem(`cb-tabs-${workbookId}`, JSON.stringify(next)); } catch {}
+    }
+
+    const active = next.tabs?.find(t => t.id === next.activeId);
+    if (active?.state && __cb.canvas) {
+      __cb.canvas.restore(active.state);
+      const recordsInput = document.getElementById("cb-records-input");
+      if (recordsInput && active.state.records != null) {
+        recordsInput.value = active.state.records;
+        recordsInput.dispatchEvent(new Event("input"));
+      }
+    }
+    // Re-render the tab bar so any new/renamed tabs from the peer appear.
+    // Defined later in this IIFE as a local function; hoisted at call time.
+    try { renderTabBar(); } catch {}
+  }
+
+  // Registered from overlay.js once the realtime channel is joined. Idempotent.
+  let unsubCanvasUpdate = null;
+  __cb.installRealtimeCanvasSync = function () {
+    if (unsubCanvasUpdate || !__cb.realtime?.onCanvasUpdate) return;
+    unsubCanvasUpdate = __cb.realtime.onCanvasUpdate(applyRemoteCanvas);
+  };
+  __cb.uninstallRealtimeCanvasSync = function () {
+    if (unsubCanvasUpdate) { unsubCanvasUpdate(); unsubCanvasUpdate = null; }
   };
 
   __cb.resetTabBar = function () {

@@ -1,0 +1,57 @@
+/* Remote cursor overlay
+   ========================================================================
+   The layer is a child of .cb-card-container so cursors inherit the pan/zoom
+   transform. Individual cursors position themselves with translate() in
+   canvas-space coordinates.
+*/
+
+.cb-cursors-layer {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 0;
+  height: 0;
+  pointer-events: none;
+  z-index: 15; /* below context menus (20) but above cards (default) */
+}
+
+.cb-cursor {
+  position: absolute;
+  top: 0;
+  left: 0;
+  pointer-events: none;
+  /* Smooth between 50ms broadcasts. Linear feels more "alive" than easing. */
+  transition: transform 80ms linear, opacity 200ms;
+  opacity: 1;
+  will-change: transform;
+}
+
+/* Cursor pointer SVG sits at (0,0) relative to the element so translate()
+   points to the tip of the arrow, matching OS cursor semantics. */
+.cb-cursor-pointer {
+  display: block;
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.3));
+}
+
+.cb-cursor-label {
+  display: inline-block;
+  margin-top: -2px;
+  margin-left: 12px;
+  padding: 2px 6px;
+  background: var(--cb-cursor-color, #6366f1);
+  color: #ffffff;
+  font-size: 11px;
+  font-weight: 500;
+  font-family:
+    -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  line-height: 1.3;
+  border-radius: 4px;
+  white-space: nowrap;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.15);
+}
+
+/* Stale cursor: faded but still visible. Avoids popping in/out when someone
+   briefly stops moving (e.g. clicking a card). */
+.cb-cursor.cb-cursor-stale {
+  opacity: 0.35;
+}

@@ -9,22 +9,36 @@
   // portion of a whole", which matches the semantic of fill rate.
   const FILL_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 256 256" fill="currentColor"><path d="M128 24a104 104 0 1 0 104 104A104 104 0 0 0 128 24Zm0 16a88 88 0 0 1 86.5 72H128Z"/></svg>';
 
-  // Defaults for canvas-created DP cards (Phase 1). Phase 2 will override
-  // these with values computed from Clay's runstatus endpoints when DP cards
-  // are imported from a table.
-  const DEFAULT_FILL_NUMERATOR = 95;
-  const DEFAULT_FILL_DENOMINATOR = 100;
+  // Absolute last-resort fallback when the records input is empty. Phase 2
+  // will override fillRate for table-imported DP cards using Clay's runstatus
+  // endpoints; canvas-created cards use the logic below.
+  const FALLBACK_FILL = 100;
+
+  // Reads the summary bar's Records input and returns a non-negative integer
+  // (0 if blank / unparseable). Declared outside the helper factory so it can
+  // be called from anywhere in this IIFE.
+  function readRecordsCount() {
+    const input = document.getElementById("cb-records-input");
+    if (!input) return 0;
+    const parsed = parseInt((input.value || "").replace(/[^\d]/g, ""), 10);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+  }
+
+  // Default fillRate for a freshly created DP card: `records || 100` for both
+  // numerator and denominator, which renders as 100% — the user's natural
+  // starting point when planning a scope ("we expect all rows to fill").
+  function buildDefaultFillRate() {
+    const n = readRecordsCount() || FALLBACK_FILL;
+    return { numerator: n, denominator: n };
+  }
 
   function normalizeFillRate(raw) {
-    if (!raw || typeof raw !== "object") {
-      return { numerator: DEFAULT_FILL_NUMERATOR, denominator: DEFAULT_FILL_DENOMINATOR };
-    }
+    if (!raw || typeof raw !== "object") return buildDefaultFillRate();
     const n = Number(raw.numerator);
     const d = Number(raw.denominator);
-    return {
-      numerator: Number.isFinite(n) && n >= 0 ? n : DEFAULT_FILL_NUMERATOR,
-      denominator: Number.isFinite(d) && d > 0 ? d : DEFAULT_FILL_DENOMINATOR,
-    };
+    const safeDen = Number.isFinite(d) && d > 0 ? d : FALLBACK_FILL;
+    const safeNum = Number.isFinite(n) && n >= 0 ? n : safeDen;
+    return { numerator: safeNum, denominator: safeDen };
   }
 
   function fillPercentText(fillRate) {
@@ -230,6 +244,9 @@
           denominator: denInput.value === "" ? NaN : Number(denInput.value),
         });
         card.data.fillRate = next;
+        // The user opened the popover and typed a value — lock this card so
+        // the records input's live-update no longer rewrites it.
+        card.data.fillRateCustom = true;
         const text = fillPercentText(next);
         pctLabel.textContent = text;
         if (labelEl) labelEl.textContent = text;
@@ -537,12 +554,22 @@
       ensureNextCardId(id);
 
       // `opts.fillRate` lets persistence/restore preserve the user's edited
-      // value. New cards (no opts.fillRate) get the canvas default of 95/100.
+      // value. New cards (no opts.fillRate) get a smart default of
+      // `records / records` — i.e. 100% of the current records count, falling
+      // back to 100/100 when the records input is empty.
+      //
+      // `fillRateCustom` tracks whether the user has explicitly set values in
+      // the popover. When false, the card tracks the records input live (so
+      // typing "1000" into records auto-updates unedited DP cards to 1000/1000).
+      // Once the user commits a change in the popover, the flag flips to true
+      // and we stop auto-updating that card.
+      const fillRate = opts?.fillRate ? normalizeFillRate(opts.fillRate) : buildDefaultFillRate();
       const data = {
         type: "dp",
         text: text || "",
         displayName: text || "",
-        fillRate: normalizeFillRate(opts?.fillRate),
+        fillRate,
+        fillRateCustom: !!opts?.fillRateCustom,
       };
       const card = { id, x, y, data, el: null, handles: {}, groupId: null };
 
@@ -794,6 +821,23 @@
       return card;
     }
 
+    // Called whenever the summary bar's Records input changes. Walks every
+    // DP card and, for those that haven't been customized, rewrites both the
+    // numerator and denominator to the new records value (keeping 100%).
+    // Custom cards are left alone — the user already expressed an opinion.
+    function updateDefaultFillRates(recordsOrNull) {
+      const next = Number.isFinite(recordsOrNull) && recordsOrNull > 0
+        ? recordsOrNull
+        : FALLBACK_FILL;
+      for (const card of cardsRef()) {
+        if (!card || card.data.type !== "dp") continue;
+        if (card.data.fillRateCustom) continue;
+        card.data.fillRate = { numerator: next, denominator: next };
+        const labelEl = card.el?.querySelector(".cb-dp-fill-label");
+        if (labelEl) labelEl.textContent = fillPercentText(card.data.fillRate);
+      }
+    }
+
     return {
       addCard,
       addDataPointCard,
@@ -802,6 +846,7 @@
       removeCard,
       startCardMouseInteraction,
       syncDpText,
+      updateDefaultFillRates,
     };
   };
 })();

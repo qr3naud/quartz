@@ -39,13 +39,32 @@
   border-color: #6366f1;
 }
 
-/* Stack: avatars overlap left-to-right to save horizontal space. */
+/* Stack: container for active + inactive groups. */
 .cb-collab-stack {
   display: inline-flex;
   align-items: center;
 }
 
-.cb-collab-stack .cb-collab-avatar + .cb-collab-avatar {
+/* Active group: currently viewing. Avatars sit side-by-side (no overlap)
+   with a small gap and a green ring, similar to Figma/Slack presence. */
+.cb-collab-stack-active {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* Space between the active and inactive groups when both are present. */
+.cb-collab-stack-active + .cb-collab-stack-inactive {
+  margin-left: 6px;
+}
+
+/* Inactive group: historical contributors. Avatars overlap to save width. */
+.cb-collab-stack-inactive {
+  display: inline-flex;
+  align-items: center;
+}
+
+.cb-collab-stack-inactive .cb-collab-avatar + .cb-collab-avatar {
   margin-left: -8px;
 }
 
@@ -92,6 +111,13 @@
   border-width: 0;
 }
 
+/* Green ring marks avatars whose owner is currently viewing the canvas.
+   box-shadow is used instead of outline so it sits flush against the
+   circular border without jaggies. */
+.cb-collab-avatar-active {
+  box-shadow: 0 0 0 2px #10b981;
+}
+
 /* Dropdown
    ------------------------------------------------------------------------
    Hidden by default, revealed when .cb-collab-open is applied to the widget.
@@ -125,6 +151,18 @@
 
 .cb-collab-row:hover {
   background: #f3f4f6;
+}
+
+/* Small green dot rendered before the avatar for currently-viewing users.
+   Matches the ring color on the header avatars for consistency. */
+.cb-collab-row-active::before {
+  content: "";
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #10b981;
+  flex-shrink: 0;
 }
 
 .cb-collab-row-name {

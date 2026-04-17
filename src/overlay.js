@@ -356,6 +356,11 @@
       const diff = formatted.length - prevLen;
       recordsInput.setSelectionRange(caretPos + diff, caretPos + diff);
       recalcTotal();
+      // Keep unedited DP card fill rates in sync with the records count
+      // (editable popover values stay locked once the user has touched them).
+      if (__cb.canvas?.updateDefaultFillRates) {
+        __cb.canvas.updateDefaultFillRates(parseRecordsValue());
+      }
     });
 
     // ---- Canvas area + toolbox ----
@@ -711,10 +716,48 @@
     if (__cb.mountCollaboratorsWidget) {
       __cb.mountCollaboratorsWidget(mainArea);
       const ids = __cb.parseIdsFromUrl();
-      if (ids && __cb.refreshCollaborators) {
-        __cb.refreshCollaborators(ids.workbookId);
+      if (ids) {
+        // Register our presence before the first refresh so we appear in the
+        // widget immediately, even if we haven't edited yet. userIdReady is
+        // the one-shot /v3/me fetch kicked off at script init.
+        (async () => {
+          if (__cb.userIdReady) await __cb.userIdReady;
+          if (__cb.markCanvasActivity) await __cb.markCanvasActivity(ids.workbookId);
+          if (__cb.refreshCollaborators) __cb.refreshCollaborators(ids.workbookId);
+
+          // Realtime: join the channel, mount the cursor overlay, hook up
+          // the postgres-changes save sync. Doing this after userIdReady
+          // ensures our presence is tagged with a real user, not "anon".
+          if (__cb.realtime?.joinWorkbook) {
+            await __cb.realtime.joinWorkbook(ids.workbookId, {
+              user_id: __cb.userId,
+              name: __cb.user?.name,
+              profile_picture: __cb.user?.profilePicture,
+            });
+            if (__cb.installRealtimeCanvasSync) __cb.installRealtimeCanvasSync();
+            const container = __cb.canvas?.getCardContainer?.();
+            if (container && __cb.mountCursorsLayer) {
+              __cb.mountCursorsLayer(container);
+            }
+          }
+        })();
       }
     }
+
+    // Broadcast our cursor position over the realtime channel. The throttle
+    // (currently 20fps) lives inside __cb.realtime.broadcastCursor so this
+    // listener can stay naive. We use capture-phase on canvasArea so it also
+    // fires while we're dragging a card (the drag handler stops propagation
+    // on the cards themselves).
+    const cursorMoveHandler = (e) => {
+      if (!__cb.realtime?.broadcastCursor || !__cb.canvas?.screenToCanvas) return;
+      const pt = __cb.canvas.screenToCanvas(e.clientX, e.clientY);
+      __cb.realtime.broadcastCursor(pt.x, pt.y);
+    };
+    canvasArea.addEventListener("mousemove", cursorMoveHandler, true);
+    // Remember the handler so closeCanvas can detach it.
+    __cb._cursorMoveHandler = cursorMoveHandler;
+    __cb._cursorMoveTarget = canvasArea;
 
     __cb.onEnrichmentToolClick = function (x, y) {
       __cb.enrichmentClickPos = { x, y };
@@ -783,6 +826,16 @@
       __cb.canvas.destroy();
       __cb.canvas = null;
     }
+    // Tear down realtime in reverse order: detach the mousemove, unmount the
+    // cursor overlay, unsubscribe from canvas updates, leave the channel.
+    if (__cb._cursorMoveHandler && __cb._cursorMoveTarget) {
+      __cb._cursorMoveTarget.removeEventListener("mousemove", __cb._cursorMoveHandler, true);
+      __cb._cursorMoveHandler = null;
+      __cb._cursorMoveTarget = null;
+    }
+    if (__cb.unmountCursorsLayer) __cb.unmountCursorsLayer();
+    if (__cb.uninstallRealtimeCanvasSync) __cb.uninstallRealtimeCanvasSync();
+    if (__cb.realtime?.leaveWorkbook) __cb.realtime.leaveWorkbook();
     if (__cb.unmountCollaboratorsWidget) __cb.unmountCollaboratorsWidget();
     __cb.overlayEl.remove();
     __cb.overlayEl = null;

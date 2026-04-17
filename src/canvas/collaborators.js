@@ -1,16 +1,19 @@
 /**
- * Collaborators widget shown in the top-right corner of the scoping
- * canvas. Surfaces who else has touched the canvas for the current workbook.
+ * Collaborators widget shown in the top-right corner of the scoping canvas.
+ * Surfaces who has touched the canvas (historical) AND who is currently
+ * viewing it (live).
  *
- * Data flow:
- *   1. On canvas open, query `canvas_contributors` joined with `users` for
- *      the current workbook_id.
- *   2. Render up to 3 overlapping avatars in a compact header.
- *   3. Click header → toggles a dropdown listing every contributor.
- *   4. Click outside or press Escape → closes the dropdown.
+ * Data sources:
+ *   - Historical contributor list: `canvas_contributors` table, fetched via
+ *     refreshCollaborators() on canvas open and after saves.
+ *   - Live presence (active users): Supabase Realtime Presence, delivered
+ *     via __cb.realtime.onPresenceSync. Active users get the side-by-side
+ *     green-ring treatment; inactive users stack in the classic overlap.
  *
- * Refresh: after each debounced save the list is re-fetched so users see
- * each other's contributions within ~seconds, without real-time wiring.
+ * UI:
+ *   - Compact header with up to 3 avatars + a count badge.
+ *   - Click header -> dropdown listing every contributor.
+ *   - Click outside or press Escape -> closes the dropdown.
  */
 (function () {
   "use strict";
@@ -26,6 +29,17 @@
   let isOpen = false;
   let currentWorkbookId = null;
   let docListenerAttached = false;
+
+  // Set of user ids that Supabase Realtime Presence reports as currently
+  // viewing the channel. Drives the "side-by-side + green ring" rendering.
+  // Populated by the onPresenceSync subscription set up in mount().
+  let activeUserIds = new Set();
+  let unsubPresence = null;
+
+  function isActive(c) {
+    if (!c?.id) return false;
+    return activeUserIds.has(String(c.id));
+  }
 
   function firstInitial(name) {
     return (name || "?").trim().charAt(0).toUpperCase();
@@ -77,10 +91,35 @@
   function renderStack() {
     if (!stackEl) return;
     stackEl.innerHTML = "";
-    const shown = contributors.slice(0, MAX_STACKED_AVATARS);
-    for (const c of shown) {
-      stackEl.appendChild(buildAvatar(c.name, c.profilePicture));
+
+    // Split so active users get the side-by-side + ring treatment, and
+    // inactive users fall back to the classic overlapping stack.
+    const active = contributors.filter(isActive);
+    const inactive = contributors.filter(c => !isActive(c));
+
+    if (active.length > 0) {
+      const activeWrap = document.createElement("div");
+      activeWrap.className = "cb-collab-stack-active";
+      for (const c of active.slice(0, MAX_STACKED_AVATARS)) {
+        const av = buildAvatar(c.name, c.profilePicture);
+        av.classList.add("cb-collab-avatar-active");
+        activeWrap.appendChild(av);
+      }
+      stackEl.appendChild(activeWrap);
     }
+
+    // Inactive avatars fill any remaining slots (so the compact header never
+    // exceeds MAX_STACKED_AVATARS total).
+    const remaining = Math.max(0, MAX_STACKED_AVATARS - active.length);
+    if (inactive.length > 0 && remaining > 0) {
+      const inactiveWrap = document.createElement("div");
+      inactiveWrap.className = "cb-collab-stack-inactive";
+      for (const c of inactive.slice(0, remaining)) {
+        inactiveWrap.appendChild(buildAvatar(c.name, c.profilePicture));
+      }
+      stackEl.appendChild(inactiveWrap);
+    }
+
     if (countEl) {
       countEl.textContent = String(contributors.length);
       countEl.style.display = contributors.length > 0 ? "" : "none";
@@ -102,6 +141,7 @@
     for (const c of contributors) {
       const row = document.createElement("div");
       row.className = "cb-collab-row";
+      if (isActive(c)) row.classList.add("cb-collab-row-active");
 
       row.appendChild(buildAvatar(c.name, c.profilePicture, { size: "lg" }));
 
@@ -191,6 +231,19 @@
     parent.appendChild(widgetEl);
     attachDocListeners();
     renderStack();
+
+    // Presence: subscribe to the realtime channel's presence stream so the
+    // active/inactive split reflects who's currently viewing, in real time.
+    // The contributors list itself still comes from the historical
+    // canvas_contributors table via refreshCollaborators().
+    if (__cb.realtime?.onPresenceSync) {
+      unsubPresence = __cb.realtime.onPresenceSync((byUser) => {
+        activeUserIds = new Set(Array.from(byUser.keys()).map(String));
+        renderStack();
+        if (isOpen) renderDropdown();
+      });
+    }
+
     return widgetEl;
   };
 
@@ -210,6 +263,7 @@
   /** Tear down the widget (called when the canvas overlay closes). */
   __cb.unmountCollaboratorsWidget = function () {
     detachDocListeners();
+    if (unsubPresence) { unsubPresence(); unsubPresence = null; }
     if (widgetEl && widgetEl.parentNode) widgetEl.parentNode.removeChild(widgetEl);
     widgetEl = null;
     stackEl = null;
@@ -218,5 +272,6 @@
     contributors = [];
     isOpen = false;
     currentWorkbookId = null;
+    activeUserIds = new Set();
   };
 })();

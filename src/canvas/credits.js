@@ -93,13 +93,7 @@
 
         let sum = 0;
         let hasCredits = false;
-
-        for (const c of members) {
-          if (!isNonErType(c.data.type) && !c.data.usePrivateKey && c.data.credits != null && c.data.credits > 0) {
-            sum += c.data.credits;
-            hasCredits = true;
-          }
-        }
+        const countedErIds = new Set();
 
         for (const c of members) {
           if (c.data.type !== "dp") continue;
@@ -113,6 +107,7 @@
             if (dpCards.length === 0) break;
 
             for (const er of erCards) {
+              countedErIds.add(er.id);
               if (er.data.usePrivateKey) continue;
               if (er.data.credits != null && er.data.credits > 0) {
                 sum += er.data.credits / dpCards.length;
@@ -120,6 +115,16 @@
               }
             }
             break;
+          }
+        }
+
+        for (const c of members) {
+          if (isNonErType(c.data.type)) continue;
+          if (countedErIds.has(c.id)) continue;
+          if (c.data.usePrivateKey) continue;
+          if (c.data.credits != null && c.data.credits > 0) {
+            sum += c.data.credits;
+            hasCredits = true;
           }
         }
 
