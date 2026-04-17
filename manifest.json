@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Clay Scoping Tool",
   "version": "2.9",
-  "description": "Visual brainstorming canvas for Clay enrichment workflows",
+  "description": "Visual scoping canvas for Clay enrichment workflows",
   "permissions": ["activeTab"],
   "host_permissions": [
     "https://api.clay.com/*",

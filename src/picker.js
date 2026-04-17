@@ -14,7 +14,7 @@
   __cb.startPickerMode = function () {
     const ids = __cb.parseIdsFromUrl();
     if (!ids) {
-      console.error("[Clay Brainstorm] Not on a Clay workbook page.");
+      console.error("[Clay Scoping] Not on a Clay workbook page.");
       return;
     }
 
@@ -22,7 +22,7 @@
     Promise.all([
       __cb.fetchEnrichments(ids.workspaceId),
       __cb.fetchWaterfallExecCosts(),
-    ]).catch((err) => console.error("[Clay Brainstorm] enrichment prefetch failed:", err));
+    ]).catch((err) => console.error("[Clay Scoping] enrichment prefetch failed:", err));
     __cb.fetchModelPricing(ids.workspaceId);
 
     watchForDialog();

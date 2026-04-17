@@ -415,14 +415,14 @@
       } catch (err) {
         // Owner data is a progressive enhancement — if it fails, we still
         // want to render the list. The Owner cells will show "—".
-        console.warn("[Clay Brainstorm] owners fetch failed:", err);
+        console.warn("[Clay Scoping] owners fetch failed:", err);
       }
 
       statusEl.style.display = "none";
       renderTable(tableWrap, rows, ownersByWorkbook, userId);
       renderFilterBar(filterBar, ownersByWorkbook, userId, tableWrap);
     } catch (err) {
-      console.warn("[Clay Brainstorm] home canvases fetch failed:", err);
+      console.warn("[Clay Scoping] home canvases fetch failed:", err);
       statusEl.textContent = "Couldn't load canvases from the server.";
     }
   }

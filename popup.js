@@ -79,7 +79,7 @@
         profilePicture: data.profilePicture || null,
       };
     } catch (err) {
-      console.warn("[Clay Brainstorm Popup] /v3/me failed:", err);
+      console.warn("[Clay Scoping Popup] /v3/me failed:", err);
       return null;
     }
   }
@@ -125,7 +125,7 @@
       });
       for (const row of rows || []) byId.set(row.id, row);
     } catch (err) {
-      console.warn("[Clay Brainstorm Popup] users lookup failed:", err);
+      console.warn("[Clay Scoping Popup] users lookup failed:", err);
     }
     return byId;
   }
@@ -267,7 +267,7 @@
         const usersById = await fetchUsersByIds(editorIds);
         renderList(rows, currentIds, usersById, user.id);
       } catch (err) {
-        console.error("[Clay Brainstorm Popup] fetchCanvases failed:", err);
+        console.error("[Clay Scoping Popup] fetchCanvases failed:", err);
         showStatus("Couldn't load canvases from the server.", true);
       }
     });

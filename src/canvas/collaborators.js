@@ -1,5 +1,5 @@
 /**
- * Collaborators widget shown in the top-right corner of the brainstorm
+ * Collaborators widget shown in the top-right corner of the scoping
  * canvas. Surfaces who else has touched the canvas for the current workbook.
  *
  * Data flow:
@@ -69,7 +69,7 @@
         lastAccessedAt: r.last_accessed_at,
       }));
     } catch (err) {
-      console.warn("[Clay Brainstorm] fetchContributors failed:", err);
+      console.warn("[Clay Scoping] fetchContributors failed:", err);
       return [];
     }
   }

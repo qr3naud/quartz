@@ -49,7 +49,7 @@
         __cb.livePricingByModel[entry.modelName] = entry.baseCostCredits;
       }
     } catch (err) {
-      console.warn("[Clay Brainstorm] model pricing fetch failed, using defaults:", err);
+      console.warn("[Clay Scoping] model pricing fetch failed, using defaults:", err);
     }
   };
 
@@ -70,7 +70,7 @@
         __cb.waterfallExecByName[attr.displayName.toLowerCase()] = 1;
       }
     } catch (err) {
-      console.warn("[Clay Brainstorm] waterfall attributes fetch failed:", err);
+      console.warn("[Clay Scoping] waterfall attributes fetch failed:", err);
     }
   };
 

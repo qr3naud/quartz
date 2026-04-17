@@ -481,7 +481,7 @@
   __cb.startImport = async function (anchorEl) {
     const ids = __cb.parseIdsFromUrl();
     if (!ids) {
-      console.error("[Clay Brainstorm] Not on a Clay workbook page.");
+      console.error("[Clay Scoping] Not on a Clay workbook page.");
       return;
     }
 
@@ -509,7 +509,7 @@
         showTablePicker(tables, anchorEl);
       }
     } catch (err) {
-      console.error("[Clay Brainstorm] Failed to fetch tables:", err);
+      console.error("[Clay Scoping] Failed to fetch tables:", err);
       closeTablePicker();
     }
   };

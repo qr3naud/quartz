@@ -12,7 +12,7 @@
       const tabId = __cb.generateTabId();
       __cb.tabStore = {
         activeId: tabId,
-        tabs: [{ id: tabId, name: "Brainstorm", hidden: false, state: null }],
+        tabs: [{ id: tabId, name: "Scoping", hidden: false, state: null }],
       };
     }
 
@@ -569,7 +569,7 @@
     const instructionsHtml =
       '<div class="cb-help-section">' +
         '<div class="cb-help-section-title">Getting started</div>' +
-        '<p>Open the brainstorm canvas from the <strong>Brainstorm</strong> button on any Clay table. Use <strong>+ Add More</strong> to pick enrichments from the catalog, or <strong>Import from Table</strong> to pull in enrichments from an existing table.</p>' +
+        '<p>Open the canvas from the <strong>GTME View</strong> button on any Clay table. Use <strong>+ Add More</strong> to pick enrichments from the catalog, or <strong>Import from Table</strong> to pull in enrichments from an existing table.</p>' +
       '</div>' +
       '<div class="cb-help-section">' +
         '<div class="cb-help-section-title">Tools</div>' +
@@ -589,7 +589,7 @@
       '</div>' +
       '<div class="cb-help-section">' +
         '<div class="cb-help-section-title">Cost estimation</div>' +
-        '<p>Enter a record count in the <strong>summary bar</strong> at the top to see total estimated credits and actions for your brainstorm.</p>' +
+        '<p>Enter a record count in the <strong>summary bar</strong> at the top to see total estimated credits and actions for your scope.</p>' +
       '</div>';
 
     const navTipsHtml =

@@ -29,7 +29,7 @@
       }
       return templates;
     } catch (e) {
-      console.warn("[Clay Brainstorm] loadSavedTemplates failed:", e);
+      console.warn("[Clay Scoping] loadSavedTemplates failed:", e);
       return [];
     }
   }
@@ -38,7 +38,7 @@
     try {
       localStorage.setItem("cb-saved-templates", JSON.stringify(templates));
     } catch (e) {
-      console.warn("[Clay Brainstorm] saveSavedTemplates failed:", e);
+      console.warn("[Clay Scoping] saveSavedTemplates failed:", e);
     }
   }
 
@@ -66,7 +66,7 @@
       }
       return migrateOldStorage(key);
     } catch (e) {
-      console.warn("[Clay Brainstorm] loadTabsLocal failed:", e);
+      console.warn("[Clay Scoping] loadTabsLocal failed:", e);
       return null;
     }
   }
@@ -95,13 +95,13 @@
           try {
             localStorage.setItem(key, JSON.stringify(store));
           } catch (e) {
-            console.warn("[Clay Brainstorm] localStorage cache write failed:", e);
+            console.warn("[Clay Scoping] localStorage cache write failed:", e);
           }
           bumpNextTabIdFromStore(store);
           return store;
         }
       } catch (err) {
-        console.warn("[Clay Brainstorm] Supabase loadTabs failed, using localStorage:", err);
+        console.warn("[Clay Scoping] Supabase loadTabs failed, using localStorage:", err);
       }
     }
 
@@ -125,7 +125,7 @@
       localStorage.removeItem(oldKey);
       return store;
     } catch (e) {
-      console.warn("[Clay Brainstorm] migration failed:", e);
+      console.warn("[Clay Scoping] migration failed:", e);
       return null;
     }
   }
@@ -177,7 +177,7 @@
         },
       });
     }).catch(err => {
-      console.warn("[Clay Brainstorm] Supabase save failed:", err);
+      console.warn("[Clay Scoping] Supabase save failed:", err);
     });
   }
 
@@ -208,7 +208,7 @@
     try {
       localStorage.setItem(key, JSON.stringify(__cb.tabStore));
     } catch (e) {
-      console.warn("[Clay Brainstorm] saveTabs failed:", e);
+      console.warn("[Clay Scoping] saveTabs failed:", e);
     }
 
     if (workspaceId) pushToSupabase(workbookId, workspaceId, __cb.tabStore);

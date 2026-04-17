@@ -1,6 +1,6 @@
 # Clay Scoping Tool
 
-A Chrome extension that adds a visual brainstorming canvas to Clay workbooks for scoping enrichment workflows.
+A Chrome extension that adds a visual scoping canvas to Clay workbooks for planning enrichment workflows.
 
 ---
 

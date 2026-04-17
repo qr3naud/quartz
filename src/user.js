@@ -30,7 +30,7 @@
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(user));
     } catch (e) {
-      console.warn("[Clay Brainstorm] failed to cache user identity:", e);
+      console.warn("[Clay Scoping] failed to cache user identity:", e);
     }
   }
 
@@ -56,7 +56,7 @@
         profilePicture: data.profilePicture || null,
       };
     } catch (err) {
-      console.warn("[Clay Brainstorm] /v3/me fetch failed:", err);
+      console.warn("[Clay Scoping] /v3/me fetch failed:", err);
       return null;
     }
   }
@@ -79,7 +79,7 @@
         email: user.email,
         updated_at: new Date().toISOString(),
       },
-    }).catch(err => console.warn("[Clay Brainstorm] user upsert failed:", err));
+    }).catch(err => console.warn("[Clay Scoping] user upsert failed:", err));
   }
 
   /**
