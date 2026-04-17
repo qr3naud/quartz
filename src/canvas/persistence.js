@@ -75,7 +75,17 @@
         applyTransform();
       }
       for (const cs of state.cards || []) {
-        if (cs.data.type === "dp") addDataPointCard(cs.data.text || "", { x: cs.x, y: cs.y, id: cs.id });
+        if (cs.data.type === "dp") {
+          // Pass `fillRate` through so the user's edited value (or one
+          // computed by table-import in Phase 2) survives reload. Missing
+          // values fall back to the canvas default inside addDataPointCard.
+          addDataPointCard(cs.data.text || "", {
+            x: cs.x,
+            y: cs.y,
+            id: cs.id,
+            fillRate: cs.data.fillRate,
+          });
+        }
         else if (cs.data.type === "input") addInputCard(cs.data.text || "", { x: cs.x, y: cs.y, id: cs.id });
         else if (cs.data.type === "comment") addCommentCard(cs.data.text || "", { x: cs.x, y: cs.y, id: cs.id });
         else addCard(cs.data, { x: cs.x, y: cs.y, id: cs.id });

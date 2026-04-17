@@ -1,0 +1,154 @@
+/* Collaborators widget
+   ========================================================================
+   Positioned absolutely in the top-right of the canvas main area. The parent
+   (.cb-main) is positioned relative so these coordinates work.
+*/
+
+.cb-collab-widget {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  z-index: 20;
+  font-family: inherit;
+  font-size: 12px;
+  color: #1f2937;
+}
+
+.cb-collab-header {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 9999px;
+  cursor: pointer;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08), 0 1px 3px rgba(0, 0, 0, 0.04);
+  transition: background 0.15s, border-color 0.15s;
+  font-family: inherit;
+  font-size: 12px;
+  color: inherit;
+}
+
+.cb-collab-header:hover {
+  background: #f9fafb;
+  border-color: #d1d5db;
+}
+
+.cb-collab-open .cb-collab-header {
+  border-color: #6366f1;
+}
+
+/* Stack: avatars overlap left-to-right to save horizontal space. */
+.cb-collab-stack {
+  display: inline-flex;
+  align-items: center;
+}
+
+.cb-collab-stack .cb-collab-avatar + .cb-collab-avatar {
+  margin-left: -8px;
+}
+
+.cb-collab-count {
+  min-width: 18px;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: 9999px;
+  background: #eef2ff;
+  color: #4338ca;
+  font-size: 10px;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Avatar
+   ------------------------------------------------------------------------ */
+.cb-collab-avatar {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background-color: #6366f1;
+  color: #ffffff;
+  font-size: 10px;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  overflow: hidden;
+  border: 2px solid #ffffff;
+  /* Photo avatars use background-image; fallback is a letter via textContent. */
+  background-position: center;
+  background-size: cover;
+  background-repeat: no-repeat;
+}
+
+.cb-collab-avatar-lg {
+  width: 28px;
+  height: 28px;
+  font-size: 11px;
+  border-width: 0;
+}
+
+/* Dropdown
+   ------------------------------------------------------------------------
+   Hidden by default, revealed when .cb-collab-open is applied to the widget.
+*/
+.cb-collab-dropdown {
+  display: none;
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  min-width: 220px;
+  max-height: 320px;
+  overflow-y: auto;
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.12), 0 2px 6px rgba(0, 0, 0, 0.06);
+  padding: 6px;
+}
+
+.cb-collab-open .cb-collab-dropdown {
+  display: block;
+}
+
+.cb-collab-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+  border-radius: 6px;
+}
+
+.cb-collab-row:hover {
+  background: #f3f4f6;
+}
+
+.cb-collab-row-name {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: #1f2937;
+}
+
+.cb-collab-row-you {
+  display: inline-block;
+  padding: 1px 6px;
+  font-size: 10px;
+  font-weight: 600;
+  color: #4338ca;
+  background: #eef2ff;
+  border-radius: 9999px;
+}
+
+.cb-collab-empty {
+  padding: 12px 8px;
+  font-size: 12px;
+  color: #6b7280;
+  text-align: center;
+}

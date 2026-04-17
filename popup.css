@@ -1,0 +1,205 @@
+/* Chrome extension popups have a max width around 800px. We use 360px which
+   matches Gmail/Trello/Notion popups for a familiar feel. */
+:root {
+  --cb-bg: #ffffff;
+  --cb-fg: #1f2937;
+  --cb-fg-muted: #6b7280;
+  --cb-border: #e5e7eb;
+  --cb-bg-hover: #f3f4f6;
+  --cb-accent: #6366f1;
+  --cb-accent-fg: #ffffff;
+  --cb-danger: #ef4444;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  font-family:
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    Roboto,
+    sans-serif;
+  font-size: 13px;
+  color: var(--cb-fg);
+  background: var(--cb-bg);
+}
+
+.cb-popup {
+  width: 360px;
+  max-height: 540px;
+  display: flex;
+  flex-direction: column;
+}
+
+.cb-popup-header {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--cb-border);
+}
+
+.cb-popup-user {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.cb-popup-user-meta {
+  min-width: 0; /* allow name truncation */
+  flex: 1;
+}
+
+.cb-popup-user-name {
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cb-popup-user-sub {
+  font-size: 11px;
+  color: var(--cb-fg-muted);
+  margin-top: 2px;
+}
+
+/* Reusable avatar element. Two sizes: default (24px, rows) and sm (32px, header). */
+.cb-popup-avatar {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background-color: var(--cb-accent);
+  color: var(--cb-accent-fg);
+  font-size: 10px;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  overflow: hidden;
+  text-transform: uppercase;
+  /* Styles apply when background-image is set (for photo avatars) too. */
+  background-position: center;
+  background-size: cover;
+  background-repeat: no-repeat;
+}
+
+.cb-popup-avatar-sm {
+  width: 32px;
+  height: 32px;
+  font-size: 12px;
+}
+
+.cb-popup-status {
+  padding: 16px;
+  color: var(--cb-fg-muted);
+  font-size: 12px;
+  text-align: center;
+}
+
+.cb-popup-status.cb-popup-status-error {
+  color: var(--cb-danger);
+}
+
+.cb-popup-list {
+  list-style: none;
+  margin: 0;
+  padding: 4px 0;
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+}
+
+.cb-popup-item {
+  padding: 10px 16px;
+  cursor: pointer;
+  border-bottom: 1px solid var(--cb-border);
+  transition: background-color 0.1s;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.cb-popup-item:last-child {
+  border-bottom: none;
+}
+
+.cb-popup-item:hover {
+  background: var(--cb-bg-hover);
+}
+
+.cb-popup-item-body {
+  min-width: 0;
+  flex: 1;
+}
+
+.cb-popup-item-title {
+  font-weight: 500;
+  font-size: 13px;
+  line-height: 1.4;
+  /* Workbook names can be long; truncate so each row stays one line. */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cb-popup-item-meta {
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--cb-fg-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cb-popup-item-current-badge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  font-size: 10px;
+  font-weight: 600;
+  background: var(--cb-accent);
+  color: var(--cb-accent-fg);
+  border-radius: 9px;
+  vertical-align: middle;
+}
+
+.cb-popup-footer {
+  border-top: 1px solid var(--cb-border);
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.cb-popup-btn {
+  width: 100%;
+  padding: 8px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  border-radius: 6px;
+  border: 1px solid var(--cb-border);
+  background: var(--cb-bg);
+  color: var(--cb-fg);
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.cb-popup-btn:hover {
+  background: var(--cb-bg-hover);
+}
+
+.cb-popup-btn-primary {
+  background: var(--cb-accent);
+  border-color: var(--cb-accent);
+  color: var(--cb-accent-fg);
+}
+
+.cb-popup-btn-primary:hover {
+  background: #4f46e5;
+}

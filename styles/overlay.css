@@ -382,6 +382,41 @@
   color: #111827;
 }
 
+/* Pro Mode toggle. Reads as a neutral pill when off, switches to an amber
+   "active" treatment when on so the user always sees whether it's enabled. */
+.cb-toolbar-btn-pro {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #6b7280;
+}
+
+.cb-toolbar-btn-pro svg {
+  flex-shrink: 0;
+  color: #9ca3af;
+  transition: color 0.15s;
+}
+
+.cb-toolbar-btn-pro:hover svg {
+  color: #6b7280;
+}
+
+.cb-toolbar-btn-pro-active {
+  background: #fffbeb;
+  border-color: #fbbf24;
+  color: #92400e;
+}
+
+.cb-toolbar-btn-pro-active:hover {
+  background: #fef3c7;
+  border-color: #f59e0b;
+}
+
+.cb-toolbar-btn-pro-active svg,
+.cb-toolbar-btn-pro-active:hover svg {
+  color: #d97706;
+}
+
 .cb-group-btn {
   background: #fef3c7;
   border-color: #f59e0b;
@@ -461,4 +496,113 @@
 
 .cb-summary-total .cb-summary-value {
   color: #166534;
+}
+
+/* ==========================================================================
+   PRICING CARDS (collapsible)
+   ========================================================================== */
+
+.cb-pricing-group {
+  display: inline-flex;
+  align-items: stretch;
+  gap: 10px;
+}
+
+.cb-pricing-group .cb-pricing-card {
+  display: none;
+}
+
+.cb-pricing-group.is-expanded .cb-pricing-card {
+  display: flex;
+}
+
+.cb-pricing-toggle {
+  cursor: pointer;
+  min-width: 110px;
+  user-select: none;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.cb-pricing-toggle:hover {
+  background: #f3f4f6;
+  border-color: #d1d5db;
+}
+
+.cb-pricing-toggle-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 3px;
+}
+
+.cb-pricing-toggle .cb-chevron {
+  display: inline-flex;
+  color: #6b7280;
+  transition: transform 0.15s ease;
+}
+
+.cb-pricing-toggle .cb-chevron.cb-chevron-open {
+  transform: rotate(90deg);
+}
+
+.cb-pricing-input {
+  width: 80px;
+  height: 26px;
+  padding: 0 6px;
+  margin-top: 3px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #111827;
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.cb-pricing-input:focus {
+  outline: none;
+  border-color: #6366f1;
+  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.15);
+}
+
+.cb-pricing-dollar {
+  font-size: 13px;
+  font-weight: 500;
+  color: #6b7280;
+  margin-top: 4px;
+}
+
+.cb-pricing-total {
+  background: #eef2ff;
+  border-color: #c7d2fe;
+}
+
+.cb-pricing-total .cb-summary-value {
+  color: #3730a3;
+}
+
+/* ==========================================================================
+   CLAY PORTAL BOOST
+   Clay renders its native popovers (breadcrumb menus, table action menus,
+   profile menu, etc.) into portal wrappers at body level. Those wrappers
+   are position:static with no z-index, so they sit behind our overlay
+   (z-index: 999999). Promote them to a fixed, viewport-anchored stacking
+   context above the overlay whenever the overlay is mounted.
+
+   position: fixed with zero size is required: the portal wrapper is
+   appended near the end of <body> so making it position:relative would
+   re-anchor its absolutely-positioned descendants (the actual menu) to
+   that low point and push the menu off-screen. Fixed with zero width
+   and height keeps the menu's internal absolute + transform positioning
+   viewport-relative, which is what Clay's popover libraries expect.
+   ========================================================================== */
+
+body:has(.cb-overlay) [data-base-ui-portal],
+body:has(.cb-overlay) [data-floating-ui-portal] {
+  position: fixed !important;
+  top: 0 !important;
+  left: 0 !important;
+  width: 0;
+  height: 0;
+  z-index: 1000000 !important;
 }

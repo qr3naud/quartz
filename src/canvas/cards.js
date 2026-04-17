@@ -5,6 +5,33 @@
 
   const CREDIT_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" fill="currentColor" viewBox="0 0 256 256"><path d="M207.58,63.84C186.85,53.48,159.33,48,128,48S69.15,53.48,48.42,63.84,16,88.78,16,104v48c0,15.22,11.82,29.85,32.42,40.16S96.67,208,128,208s58.85-5.48,79.58-15.84S240,167.22,240,152V104C240,88.78,228.18,74.15,207.58,63.84Z" opacity="0.2"/><path d="M128,64c62.64,0,96,23.23,96,40s-33.36,40-96,40-96-23.23-96-40S65.36,64,128,64Z"/></svg>';
   const KEY_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 256 256"><path fill="#3b82f6" d="M216.57,39.43A80,80,0,0,0,83.91,120.78L28.69,176A15.86,15.86,0,0,0,24,187.31V216a16,16,0,0,0,16,16H72a8,8,0,0,0,8-8V208H96a8,8,0,0,0,8-8V184h16a8,8,0,0,0,5.66-2.34l9.56-9.57A79.73,79.73,0,0,0,160,176h.1A80,80,0,0,0,216.57,39.43Z"/><path fill="#93c5fd" d="M224,98.1c-1.09,34.09-29.75,61.86-63.89,61.9H160a63.7,63.7,0,0,1-23.65-4.51,8,8,0,0,0-8.84,1.68L116.69,168H96a8,8,0,0,0-8,8v16H72a8,8,0,0,0-8,8v16H40V187.31l58.83-58.82a8,8,0,0,0,1.68-8.84A63.72,63.72,0,0,1,96,95.92c0-34.14,27.81-62.8,61.9-63.89A64,64,0,0,1,224,98.1ZM192,76a12,12,0,1,1-12-12A12,12,0,0,1,192,76Z"/></svg>';
+  // Pie-slice icon for the Pro Mode fill-rate badge. Solid wedge = "filled
+  // portion of a whole", which matches the semantic of fill rate.
+  const FILL_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 256 256" fill="currentColor"><path d="M128 24a104 104 0 1 0 104 104A104 104 0 0 0 128 24Zm0 16a88 88 0 0 1 86.5 72H128Z"/></svg>';
+
+  // Defaults for canvas-created DP cards (Phase 1). Phase 2 will override
+  // these with values computed from Clay's runstatus endpoints when DP cards
+  // are imported from a table.
+  const DEFAULT_FILL_NUMERATOR = 95;
+  const DEFAULT_FILL_DENOMINATOR = 100;
+
+  function normalizeFillRate(raw) {
+    if (!raw || typeof raw !== "object") {
+      return { numerator: DEFAULT_FILL_NUMERATOR, denominator: DEFAULT_FILL_DENOMINATOR };
+    }
+    const n = Number(raw.numerator);
+    const d = Number(raw.denominator);
+    return {
+      numerator: Number.isFinite(n) && n >= 0 ? n : DEFAULT_FILL_NUMERATOR,
+      denominator: Number.isFinite(d) && d > 0 ? d : DEFAULT_FILL_DENOMINATOR,
+    };
+  }
+
+  function fillPercentText(fillRate) {
+    if (!fillRate || !fillRate.denominator) return "—";
+    const pct = (fillRate.numerator / fillRate.denominator) * 100;
+    return `${Math.round(pct)}%`;
+  }
 
   window.__cbCanvasModules.createCardHelpers = function createCardHelpers(deps) {
     const {
@@ -125,6 +152,121 @@
       keyToggleEl.style.top = (rect.bottom + 4) + "px";
       keyToggleEl.style.left = rect.left + "px";
       keyToggleEl.style.zIndex = "9999999";
+    }
+
+    let fillPopoverEl = null;
+    let fillPopoverBackdrop = null;
+
+    function closeFillPopover() {
+      if (fillPopoverEl) { fillPopoverEl.remove(); fillPopoverEl = null; }
+      if (fillPopoverBackdrop) { fillPopoverBackdrop.remove(); fillPopoverBackdrop = null; }
+    }
+
+    function showFillRatePopover(card, anchorEl, labelEl) {
+      closeFillPopover();
+
+      // Full-viewport backdrop: catches outside clicks to close, but doesn't
+      // block events inside the popover (z-index ordering + stopPropagation
+      // on the popover handle that).
+      fillPopoverBackdrop = document.createElement("div");
+      fillPopoverBackdrop.style.cssText = "position:fixed;inset:0;z-index:9999998;";
+      fillPopoverBackdrop.addEventListener("mousedown", (evt) => {
+        evt.stopPropagation();
+        closeFillPopover();
+      });
+
+      fillPopoverEl = document.createElement("div");
+      fillPopoverEl.className = "cb-dp-fill-popover";
+      // Stop drag from starting and prevent the backdrop from closing when
+      // the user clicks inside the popover (e.g. focusing an input).
+      fillPopoverEl.addEventListener("mousedown", (evt) => evt.stopPropagation());
+
+      const title = document.createElement("div");
+      title.className = "cb-dp-fill-popover-title";
+      title.textContent = "Fill rate";
+      fillPopoverEl.appendChild(title);
+
+      const ratio = document.createElement("div");
+      ratio.className = "cb-dp-fill-ratio";
+
+      const numInput = document.createElement("input");
+      numInput.type = "number";
+      numInput.min = "0";
+      numInput.step = "1";
+      numInput.className = "cb-dp-fill-input";
+      numInput.value = String(card.data.fillRate.numerator);
+
+      const sep = document.createElement("span");
+      sep.className = "cb-dp-fill-sep";
+      sep.textContent = "/";
+
+      const denInput = document.createElement("input");
+      denInput.type = "number";
+      denInput.min = "1";
+      denInput.step = "1";
+      denInput.className = "cb-dp-fill-input";
+      denInput.value = String(card.data.fillRate.denominator);
+
+      ratio.appendChild(numInput);
+      ratio.appendChild(sep);
+      ratio.appendChild(denInput);
+      fillPopoverEl.appendChild(ratio);
+
+      const pctLabel = document.createElement("div");
+      pctLabel.className = "cb-dp-fill-pct";
+      pctLabel.textContent = fillPercentText(card.data.fillRate);
+      fillPopoverEl.appendChild(pctLabel);
+
+      const hint = document.createElement("div");
+      hint.className = "cb-dp-fill-hint";
+      hint.textContent = "Results found / rows that ran";
+      fillPopoverEl.appendChild(hint);
+
+      function commit() {
+        // Re-normalize on every edit so we never persist invalid values.
+        // Empty input yields NaN → normalizeFillRate falls back to defaults.
+        const next = normalizeFillRate({
+          numerator: numInput.value === "" ? NaN : Number(numInput.value),
+          denominator: denInput.value === "" ? NaN : Number(denInput.value),
+        });
+        card.data.fillRate = next;
+        const text = fillPercentText(next);
+        pctLabel.textContent = text;
+        if (labelEl) labelEl.textContent = text;
+        notifyChange();
+        if (window.__cb.saveTabs) window.__cb.saveTabs();
+      }
+
+      numInput.addEventListener("input", commit);
+      denInput.addEventListener("input", commit);
+
+      // Close on Escape, blur on Enter (mirrors the canvas's other inline
+      // editors). Use keydown so we can preventDefault on Enter to stop
+      // accidental form-submit-like behavior in some browsers.
+      function onKey(evt) {
+        if (evt.key === "Escape") closeFillPopover();
+        if (evt.key === "Enter") {
+          evt.preventDefault();
+          closeFillPopover();
+        }
+      }
+      numInput.addEventListener("keydown", onKey);
+      denInput.addEventListener("keydown", onKey);
+
+      document.body.appendChild(fillPopoverBackdrop);
+      document.body.appendChild(fillPopoverEl);
+
+      // Anchor below the badge, left-aligned with it. Use fixed positioning
+      // because the popover lives at document.body level (outside the
+      // canvas's pan/zoom transform).
+      const rect = anchorEl.getBoundingClientRect();
+      fillPopoverEl.style.position = "fixed";
+      fillPopoverEl.style.top = (rect.bottom + 6) + "px";
+      fillPopoverEl.style.left = rect.left + "px";
+      fillPopoverEl.style.zIndex = "9999999";
+
+      numInput.focus();
+      numInput.select();
     }
 
     function handleCardDblClick(card, evt) {
@@ -394,7 +536,14 @@
       }
       ensureNextCardId(id);
 
-      const data = { type: "dp", text: text || "", displayName: text || "" };
+      // `opts.fillRate` lets persistence/restore preserve the user's edited
+      // value. New cards (no opts.fillRate) get the canvas default of 95/100.
+      const data = {
+        type: "dp",
+        text: text || "",
+        displayName: text || "",
+        fillRate: normalizeFillRate(opts?.fillRate),
+      };
       const card = { id, x, y, data, el: null, handles: {}, groupId: null };
 
       const el = document.createElement("div");
@@ -439,11 +588,39 @@
       row_.appendChild(textEl);
       el.appendChild(row_);
 
+      // Footer row holds the "Not connected / ~N credits / row" pill on the
+      // left and (in Pro Mode only) the editable fill-rate badge on the right.
+      // The footer is always mounted; CSS hides .cb-dp-fill when the overlay
+      // doesn't carry the [data-cb-pro-mode] attribute.
+      const footer = document.createElement("div");
+      footer.className = "cb-dp-footer";
+
       const costBar = document.createElement("div");
       costBar.className = "cb-dp-cost";
       costBar.innerHTML =
         '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" fill="currentColor" viewBox="0 0 256 256"><path d="M207.58,63.84C186.85,53.48,159.33,48,128,48S69.15,53.48,48.42,63.84,16,88.78,16,104v48c0,15.22,11.82,29.85,32.42,40.16S96.67,208,128,208s58.85-5.48,79.58-15.84S240,167.22,240,152V104C240,88.78,228.18,74.15,207.58,63.84Z" opacity="0.2"/><path d="M128,64c62.64,0,96,23.23,96,40s-33.36,40-96,40-96-23.23-96-40S65.36,64,128,64Z"/></svg><span>Not connected</span>';
-      el.appendChild(costBar);
+      footer.appendChild(costBar);
+
+      const fillBadge = document.createElement("button");
+      fillBadge.className = "cb-dp-fill";
+      fillBadge.type = "button";
+      fillBadge.title = "Click to edit fill rate";
+      const fillLabel = document.createElement("span");
+      fillLabel.className = "cb-dp-fill-label";
+      fillLabel.textContent = fillPercentText(card.data.fillRate);
+      fillBadge.innerHTML = FILL_SVG;
+      fillBadge.appendChild(fillLabel);
+      // Stop propagation so clicking the badge doesn't start a card drag /
+      // selection. mousedown matters because the canvas drag listener is on
+      // mousedown, not click.
+      fillBadge.addEventListener("mousedown", (evt) => evt.stopPropagation());
+      fillBadge.addEventListener("click", (evt) => {
+        evt.stopPropagation();
+        showFillRatePopover(card, fillBadge, fillLabel);
+      });
+      footer.appendChild(fillBadge);
+
+      el.appendChild(footer);
 
       el.addEventListener("contextmenu", (evt) => {
         evt.preventDefault();

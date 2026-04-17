@@ -17,7 +17,11 @@
     }
 
     const ids = __cb.parseIdsFromUrl();
-    if (ids) localStorage.setItem(`cb-open-${ids.workbookId}`, "1");
+    if (ids) {
+      localStorage.setItem(`cb-open-${ids.workbookId}`, "1");
+      __cb.currentWorkbookId = ids.workbookId;
+      __cb.currentWorkspaceId = ids.workspaceId;
+    }
 
     __cb.overlayEl = document.createElement("div");
     __cb.overlayEl.className = "cb-overlay";
@@ -60,6 +64,39 @@
       " Import from Table";
     importBtn.addEventListener("click", () => __cb.startImport(importBtn));
 
+    // Pie-slice icon — visually communicates "fraction of the whole filled".
+    const PRO_ICON_SVG =
+      '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 256 256" fill="currentColor">' +
+      '<path d="M128 24a104 104 0 1 0 104 104A104 104 0 0 0 128 24Zm0 16a88 88 0 0 1 86.5 72H128Z"/>' +
+      '</svg>';
+
+    const proBtn = document.createElement("button");
+    proBtn.className = "cb-toolbar-btn cb-toolbar-btn-pro";
+    proBtn.type = "button";
+    proBtn.title = "Show fill rates on data point cards";
+    proBtn.innerHTML = PRO_ICON_SVG + " Pro Mode";
+    proBtn.addEventListener("click", () => __cb.setProMode(!__cb.proMode));
+
+    // Toggle the workbook-scoped pro mode flag. Visibility of the per-card
+    // fill-rate badges is CSS-driven via `[data-cb-pro-mode]` on the overlay,
+    // so individual cards don't need to be re-rendered. We use the debounced
+    // save instead of an immediate `saveTabs()` because saveTabs serializes
+    // the live canvas — calling it during the initial seed (before
+    // `canvas.restore` runs) would overwrite the user's persisted state with
+    // an empty canvas snapshot.
+    __cb.setProMode = function (value) {
+      const next = !!value;
+      __cb.proMode = next;
+      if (__cb.overlayEl) {
+        if (next) __cb.overlayEl.setAttribute("data-cb-pro-mode", "");
+        else __cb.overlayEl.removeAttribute("data-cb-pro-mode");
+      }
+      proBtn.classList.toggle("cb-toolbar-btn-pro-active", next);
+      if (__cb.tabStore) __cb.tabStore.proMode = next;
+      if (__cb.debouncedSave) __cb.debouncedSave();
+    };
+
+    rightGroup.appendChild(proBtn);
     rightGroup.appendChild(importBtn);
     rightGroup.appendChild(addMoreBtn);
     rightGroup.appendChild(closeBtn);
@@ -134,14 +171,100 @@
     totalActionsBox.appendChild(totalActionsLabel);
     totalActionsBox.appendChild(totalActionsValue);
 
+    // ---- Pricing cards (collapsible) ----
+
+    const pricingGroup = document.createElement("div");
+    pricingGroup.className = "cb-pricing-group";
+
+    const pricingToggleBox = document.createElement("div");
+    pricingToggleBox.className = "cb-summary-box cb-pricing-toggle";
+    const pricingToggleLabel = document.createElement("span");
+    pricingToggleLabel.className = "cb-summary-label";
+    pricingToggleLabel.textContent = "Pricing";
+    const pricingToggleRow = document.createElement("span");
+    pricingToggleRow.className = "cb-pricing-toggle-row";
+    const pricingToggleText = document.createElement("span");
+    pricingToggleText.className = "cb-summary-value";
+    pricingToggleText.textContent = "Show";
+    const chevronEl = document.createElement("span");
+    chevronEl.className = "cb-chevron";
+    chevronEl.innerHTML =
+      '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" ' +
+      'stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">' +
+      '<polyline points="9 18 15 12 9 6"/></svg>';
+    pricingToggleRow.appendChild(pricingToggleText);
+    pricingToggleRow.appendChild(chevronEl);
+    pricingToggleBox.appendChild(pricingToggleLabel);
+    pricingToggleBox.appendChild(pricingToggleRow);
+
+    const creditCostBox = document.createElement("div");
+    creditCostBox.className = "cb-summary-box cb-pricing-card";
+    const creditCostLabel = document.createElement("label");
+    creditCostLabel.className = "cb-summary-label";
+    creditCostLabel.textContent = "Credit Cost";
+    creditCostLabel.htmlFor = "cb-credit-cost-input";
+    const creditCostInput = document.createElement("input");
+    creditCostInput.type = "text";
+    creditCostInput.inputMode = "decimal";
+    creditCostInput.className = "cb-pricing-input";
+    creditCostInput.id = "cb-credit-cost-input";
+    creditCostInput.value = "$0.05";
+    const creditDollarValue = document.createElement("span");
+    creditDollarValue.className = "cb-summary-value cb-pricing-dollar";
+    creditDollarValue.id = "cb-credit-dollar-value";
+    creditDollarValue.textContent = "$0.00";
+    creditCostBox.appendChild(creditCostLabel);
+    creditCostBox.appendChild(creditCostInput);
+    creditCostBox.appendChild(creditDollarValue);
+
+    const actionCostBox = document.createElement("div");
+    actionCostBox.className = "cb-summary-box cb-pricing-card";
+    const actionCostLabel = document.createElement("label");
+    actionCostLabel.className = "cb-summary-label";
+    actionCostLabel.textContent = "Action Cost";
+    actionCostLabel.htmlFor = "cb-action-cost-input";
+    const actionCostInput = document.createElement("input");
+    actionCostInput.type = "text";
+    actionCostInput.inputMode = "decimal";
+    actionCostInput.className = "cb-pricing-input";
+    actionCostInput.id = "cb-action-cost-input";
+    actionCostInput.value = "$0.008";
+    const actionDollarValue = document.createElement("span");
+    actionDollarValue.className = "cb-summary-value cb-pricing-dollar";
+    actionDollarValue.id = "cb-action-dollar-value";
+    actionDollarValue.textContent = "$0.00";
+    actionCostBox.appendChild(actionCostLabel);
+    actionCostBox.appendChild(actionCostInput);
+    actionCostBox.appendChild(actionDollarValue);
+
+    const totalDollarBox = document.createElement("div");
+    totalDollarBox.className = "cb-summary-box cb-pricing-card cb-pricing-total";
+    const totalDollarLabel = document.createElement("span");
+    totalDollarLabel.className = "cb-summary-label";
+    totalDollarLabel.textContent = "Total Cost";
+    const totalDollarValue = document.createElement("span");
+    totalDollarValue.className = "cb-summary-value";
+    totalDollarValue.id = "cb-total-dollar-value";
+    totalDollarValue.textContent = "$0.00";
+    totalDollarBox.appendChild(totalDollarLabel);
+    totalDollarBox.appendChild(totalDollarValue);
+
+    pricingGroup.appendChild(pricingToggleBox);
+    pricingGroup.appendChild(creditCostBox);
+    pricingGroup.appendChild(actionCostBox);
+    pricingGroup.appendChild(totalDollarBox);
+
     summaryBar.appendChild(creditsBox);
     summaryBar.appendChild(actionsBox);
     summaryBar.appendChild(recordsBox);
     summaryBar.appendChild(totalBox);
     summaryBar.appendChild(totalActionsBox);
+    summaryBar.appendChild(pricingGroup);
 
     let currentCreditsPerRow = 0;
     let currentActionsPerRow = 0;
+    let creditCost = 0.05;
+    let actionCost = 0.008;
 
     function formatNumber(n) {
       return n % 1 === 0
@@ -158,11 +281,63 @@
       return parseInt(recordsInput.value.replace(/,/g, ""), 10) || 0;
     }
 
+    function parseDollar(str) {
+      const n = parseFloat(String(str).replace(/[^\d.]/g, ""));
+      return isNaN(n) ? 0 : n;
+    }
+
+    function formatDollar(n) {
+      // 2 decimals by default; allow up to 3 if the value has sub-cent precision.
+      const rounded = Math.round(n * 1000) / 1000;
+      const hasSubCent = Math.abs(rounded * 100 - Math.round(rounded * 100)) > 1e-9;
+      return "$" + rounded.toLocaleString(undefined, {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: hasSubCent ? 3 : 2,
+      });
+    }
+
     function recalcTotal() {
       const records = parseRecordsValue();
-      totalValue.textContent = formatNumber(currentCreditsPerRow * records);
-      totalActionsValue.textContent = formatNumber(currentActionsPerRow * records);
+      const totalCredits = currentCreditsPerRow * records;
+      const totalActions = currentActionsPerRow * records;
+      totalValue.textContent = formatNumber(totalCredits);
+      totalActionsValue.textContent = formatNumber(totalActions);
+
+      const creditDollars = totalCredits * creditCost;
+      const actionDollars = totalActions * actionCost;
+      creditDollarValue.textContent = formatDollar(creditDollars);
+      actionDollarValue.textContent = formatDollar(actionDollars);
+      totalDollarValue.textContent = formatDollar(creditDollars + actionDollars);
     }
+
+    function commitPricingInput(input, setter) {
+      const parsed = parseDollar(input.value);
+      setter(parsed);
+      input.value = formatDollar(parsed);
+      recalcTotal();
+      if (__cb.debouncedSave) __cb.debouncedSave();
+    }
+
+    function wirePricingInput(input, setter) {
+      input.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          input.blur();
+        }
+      });
+      input.addEventListener("blur", () => commitPricingInput(input, setter));
+      input.addEventListener("focus", () => input.select());
+    }
+
+    wirePricingInput(creditCostInput, (v) => { creditCost = v; });
+    wirePricingInput(actionCostInput, (v) => { actionCost = v; });
+
+    pricingToggleBox.addEventListener("click", () => {
+      const expanded = pricingGroup.classList.toggle("is-expanded");
+      chevronEl.classList.toggle("cb-chevron-open", expanded);
+      pricingToggleText.textContent = expanded ? "Hide" : "Show";
+      if (__cb.debouncedSave) __cb.debouncedSave();
+    });
 
     __cb.updateCreditTotal = function (creditsPerRow, actionsPerRow) {
       currentCreditsPerRow = creditsPerRow;
@@ -515,10 +690,30 @@
 
     if (__cb.initCanvas) {
       __cb.canvas = __cb.initCanvas(canvasArea);
-      __cb.onCanvasStateChange = __cb.debouncedSave;
+      // When canvas state changes (debounced), save AND refresh collaborators
+      // so a contributor you just added shows up without manual reload.
+      __cb.onCanvasStateChange = function () {
+        __cb.debouncedSave();
+        const ids = __cb.parseIdsFromUrl();
+        if (ids && __cb.refreshCollaborators) {
+          // Delay slightly past the save debounce so the server has the
+          // updated contributor row before we re-query.
+          setTimeout(() => __cb.refreshCollaborators(ids.workbookId), 800);
+        }
+      };
       __cb.setCanvasMode = setSelectedMode;
       setSelectedMode("navigate");
       updateToolButtons();
+    }
+
+    // Mount the collaborators widget in the top-right of the canvas area.
+    // The widget positions itself absolutely; mainArea is position:relative.
+    if (__cb.mountCollaboratorsWidget) {
+      __cb.mountCollaboratorsWidget(mainArea);
+      const ids = __cb.parseIdsFromUrl();
+      if (ids && __cb.refreshCollaborators) {
+        __cb.refreshCollaborators(ids.workbookId);
+      }
     }
 
     __cb.onEnrichmentToolClick = function (x, y) {
@@ -540,6 +735,20 @@
         recordsInput.value = activeTab.state.records;
         recordsInput.dispatchEvent(new Event("input"));
       }
+      if (activeTab.state.creditCost) {
+        creditCostInput.value = activeTab.state.creditCost;
+        creditCost = parseDollar(activeTab.state.creditCost);
+      }
+      if (activeTab.state.actionCost) {
+        actionCostInput.value = activeTab.state.actionCost;
+        actionCost = parseDollar(activeTab.state.actionCost);
+      }
+      if (activeTab.state.pricingExpanded) {
+        pricingGroup.classList.add("is-expanded");
+        chevronEl.classList.add("cb-chevron-open");
+        pricingToggleText.textContent = "Hide";
+      }
+      recalcTotal();
     }
 
     if (initialCards && initialCards.length > 0) {
@@ -550,19 +759,31 @@
       }
     }
 
+    // Apply the workbook-scoped pro mode flag AFTER restore: setProMode
+    // schedules a debouncedSave, which serializes the live canvas. Restoring
+    // first guarantees the serialized snapshot contains the user's actual
+    // cards rather than an empty placeholder. CSS attribute changes apply
+    // instantly, so any restored DP cards immediately reflect the new state.
+    __cb.setProMode(!!__cb.tabStore.proMode);
+
     window.addEventListener("beforeunload", __cb.saveTabs);
   };
 
   __cb.closeCanvas = function () {
     if (!__cb.overlayEl) return;
-    const ids = __cb.parseIdsFromUrl();
-    if (ids) localStorage.removeItem(`cb-open-${ids.workbookId}`);
+    // Use the workbook the overlay was mounted for, not parseIdsFromUrl(): if
+    // the user just navigated to a different workbook, the URL already points
+    // at the new one but we still need to clean up the old workbook's flag.
+    if (__cb.currentWorkbookId) {
+      localStorage.removeItem(`cb-open-${__cb.currentWorkbookId}`);
+    }
     __cb.saveTabs();
     __cb.cancelPendingSave();
     if (__cb.canvas) {
       __cb.canvas.destroy();
       __cb.canvas = null;
     }
+    if (__cb.unmountCollaboratorsWidget) __cb.unmountCollaboratorsWidget();
     __cb.overlayEl.remove();
     __cb.overlayEl = null;
     __cb.resetTabBar();
@@ -571,6 +792,8 @@
     __cb.onEnrichmentToolClick = null;
     __cb.onDpBulkInputForCard = null;
     __cb.setCanvasMode = null;
+    __cb.setProMode = null;
+    __cb.proMode = false;
     __cb.enrichmentClickPos = null;
     window.removeEventListener("beforeunload", __cb.saveTabs);
     document.removeEventListener("keydown", handleEscape);
@@ -579,6 +802,8 @@
       document.removeEventListener("mousedown", __cb._closeHelpPopover);
       __cb._closeHelpPopover = null;
     }
+    __cb.currentWorkbookId = null;
+    __cb.currentWorkspaceId = null;
   };
 
   function handleEscape(e) {

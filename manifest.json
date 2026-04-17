@@ -1,11 +1,12 @@
 {
   "manifest_version": 3,
   "name": "Clay Scoping Tool",
-  "version": "2.1",
+  "version": "2.9",
   "description": "Visual brainstorming canvas for Clay enrichment workflows",
   "permissions": ["activeTab"],
   "host_permissions": [
-    "https://api.clay.com/*"
+    "https://api.clay.com/*",
+    "https://*.supabase.co/*"
   ],
   "icons": {
     "16": "icons/icon-16.png",
@@ -13,11 +14,24 @@
     "48": "icons/icon-48.png",
     "128": "icons/icon-128.png"
   },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "My Canvases",
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "32": "icons/icon-32.png",
+      "48": "icons/icon-48.png",
+      "128": "icons/icon-128.png"
+    }
+  },
   "content_scripts": [
     {
       "matches": ["https://app.clay.com/*"],
       "js": [
+        "src/supabase.js",
         "src/config.js",
+        "src/user.js",
+        "src/workbook-info.js",
         "src/api.js",
         "src/canvas/svg.js",
         "src/canvas/geometry.js",
@@ -31,10 +45,12 @@
         "src/canvas/cards.js",
         "src/canvas/persistence.js",
         "src/canvas/index.js",
+        "src/canvas/collaborators.js",
         "src/tabs.js",
         "src/picker.js",
         "src/table-import.js",
         "src/overlay.js",
+        "src/home.js",
         "src/toolbar.js"
       ],
       "css": [
@@ -44,7 +60,8 @@
         "styles/canvas.css",
         "styles/cards.css",
         "styles/groups.css",
-        "styles/pickers.css"
+        "styles/pickers.css",
+        "styles/collaborators.css"
       ]
     }
   ],

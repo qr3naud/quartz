@@ -502,8 +502,18 @@
   color: #312e81;
 }
 
-.cb-dp-cost {
+/* Footer wraps the credit pill and (in Pro Mode) the fill-rate badge so they
+   sit on the same baseline. Using inline-flex keeps things compact and avoids
+   the badge shifting when the credit pill text changes width. */
+.cb-dp-footer {
   margin-top: 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.cb-dp-cost {
   display: inline-flex;
   align-items: center;
   gap: 4px;
@@ -529,4 +539,116 @@
   color: #059669;
   background: rgba(255, 255, 255, 0.85);
   border-color: #bbf7d0;
+}
+
+/* Fill-rate badge — only visible when Pro Mode is on. Amber palette
+   intentionally distinguishes it from the credit pill (indigo/green family)
+   so users immediately spot the new control. The badge is always mounted in
+   the DOM; hiding/showing is purely CSS to avoid re-rendering cards. */
+.cb-dp-fill {
+  display: none;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+  padding: 0 10px;
+  border-radius: 11px;
+  background: #fffbeb;
+  border: 1px solid #fcd34d;
+  color: #b45309;
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.12s, border-color 0.12s;
+}
+
+.cb-overlay[data-cb-pro-mode] .cb-dp-fill {
+  display: inline-flex;
+}
+
+.cb-dp-fill:hover {
+  background: #fef3c7;
+  border-color: #f59e0b;
+}
+
+.cb-dp-fill svg {
+  width: 12px;
+  height: 12px;
+  fill: currentColor;
+  flex-shrink: 0;
+}
+
+/* Popover for editing the fill rate. Positioned by JS via fixed coords, so
+   we only need to style the container and the form controls. */
+.cb-dp-fill-popover {
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+  padding: 12px;
+  min-width: 180px;
+  font-size: 12px;
+  color: #374151;
+}
+
+.cb-dp-fill-popover-title {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #6b7280;
+  margin-bottom: 8px;
+}
+
+.cb-dp-fill-ratio {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.cb-dp-fill-input {
+  width: 56px;
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid #d1d5db;
+  border-radius: 5px;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  color: #111827;
+  text-align: center;
+  outline: none;
+  -moz-appearance: textfield;
+}
+
+.cb-dp-fill-input::-webkit-outer-spin-button,
+.cb-dp-fill-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.cb-dp-fill-input:focus {
+  border-color: #f59e0b;
+  box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.2);
+}
+
+.cb-dp-fill-sep {
+  font-size: 16px;
+  font-weight: 400;
+  color: #9ca3af;
+}
+
+.cb-dp-fill-pct {
+  margin-top: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #b45309;
+}
+
+.cb-dp-fill-hint {
+  margin-top: 6px;
+  font-size: 11px;
+  color: #9ca3af;
+  line-height: 1.4;
 }

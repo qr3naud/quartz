@@ -255,6 +255,10 @@
     for (const bg of basicGroups) {
       const chainCards = [];
 
+      if (bg.name) {
+        chainCards.push({ kind: "comment", text: bg.name });
+      }
+
       for (const dpField of bg.dpFields) {
         const dpKey = `dp-${dpField.id}`;
         if (existingKeys.has(dpKey)) continue;
@@ -286,7 +290,9 @@
 
       let x = START_X + col * CARD_H_GAP;
       for (const item of chainCards) {
-        if (item.kind === "dp") {
+        if (item.kind === "comment") {
+          __cb.canvas.addCommentCard(item.text, { x, y: groupY });
+        } else if (item.kind === "dp") {
           const card = addDpCard(item.field, x, groupY);
           card.data.fieldId = item.field.id;
         } else {

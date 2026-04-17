@@ -467,7 +467,7 @@
     if (__cb.canvas.refreshClusters) __cb.canvas.refreshClusters();
   }
 
-  function finishPicker() {
+  async function finishPicker() {
     const cards = [...selectedEnrichments.values()];
     closePicker();
     cleanupPicker();
@@ -492,7 +492,7 @@
         }
       }
     } else {
-      __cb.tabStore = __cb.loadTabs();
+      __cb.tabStore = await __cb.loadTabs();
       __cb.openCanvas(cards);
     }
   }

@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <title>My Canvases</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <div class="cb-popup">
+      <header class="cb-popup-header">
+        <div class="cb-popup-user" id="cb-popup-user">
+          <div class="cb-popup-avatar cb-popup-avatar-sm" id="cb-popup-user-avatar"></div>
+          <div class="cb-popup-user-meta">
+            <div class="cb-popup-user-name" id="cb-popup-user-name">Loading…</div>
+            <div class="cb-popup-user-sub">My Canvases</div>
+          </div>
+        </div>
+      </header>
+
+      <div id="cb-popup-status" class="cb-popup-status">Loading…</div>
+
+      <ul id="cb-popup-list" class="cb-popup-list" hidden></ul>
+
+      <footer class="cb-popup-footer">
+        <button id="cb-popup-current" type="button" class="cb-popup-btn cb-popup-btn-primary" hidden>
+          Open canvas for current workbook
+        </button>
+      </footer>
+    </div>
+
+    <!-- Shared Supabase client must load first; popup.js reads window.cbSupabase. -->
+    <script src="src/supabase.js"></script>
+    <script src="popup.js"></script>
+  </body>
+</html>

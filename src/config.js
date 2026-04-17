@@ -76,6 +76,24 @@
     tabStore: null,
     canvas: null,
 
+    // Workbook the currently-mounted overlay is bound to. Captured at open
+    // time so saves and the cb-open flag cleanup keep writing to the right
+    // storage key even after the user navigates to a different workbook
+    // via Clay's breadcrumb (SPA route change — URL changes but the page
+    // does not reload).
+    currentWorkbookId: null,
+    currentWorkspaceId: null,
+
+    // User identity (set during init by ensureUserId in user.js).
+    // Used as the `updated_by` and `user_id` columns in Supabase.
+    userId: null,
+
+    // Workbook-scoped feature flag. Toggled by the "Pro Mode" topbar button
+    // in overlay.js, persisted alongside tabStore. Drives visibility of
+    // per-DP-card fill rate badges (CSS attribute selector on overlayEl).
+    proMode: false,
+    setProMode: null,
+
     onCanvasStateChange: null,
     updateCreditTotal: null,
     updateGroupButtonVisibility: null,

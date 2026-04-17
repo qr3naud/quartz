@@ -42,24 +42,70 @@
     }
   }
 
-  __cb.loadTabs = function () {
+  // Tracks the highest tab number we've seen across loaded tab stores so
+  // generateTabId() returns ids that don't collide with stored ones.
+  function bumpNextTabIdFromStore(store) {
+    if (!store?.tabs) return;
+    for (const t of store.tabs) {
+      const num = parseInt(t.id.replace("tab-", ""), 10);
+      if (!isNaN(num) && num >= nextTabId) nextTabId = num + 1;
+    }
+  }
+
+  // Loads from localStorage only. Used as a synchronous fallback and to seed
+  // the canvas immediately while the Supabase fetch resolves.
+  function loadTabsLocal() {
     const key = tabsStorageKey();
     if (!key) return null;
     try {
       const raw = localStorage.getItem(key);
       if (raw) {
         const store = JSON.parse(raw);
-        for (const t of store.tabs) {
-          const num = parseInt(t.id.replace("tab-", ""), 10);
-          if (!isNaN(num) && num >= nextTabId) nextTabId = num + 1;
-        }
+        bumpNextTabIdFromStore(store);
         return store;
       }
       return migrateOldStorage(key);
     } catch (e) {
-      console.warn("[Clay Brainstorm] loadTabs failed:", e);
+      console.warn("[Clay Brainstorm] loadTabsLocal failed:", e);
       return null;
     }
+  }
+
+  // Tries Supabase first (network) then falls back to localStorage. The
+  // function is async because of the network call; callers must `await` it.
+  // If Supabase is unreachable, behavior matches the pre-Supabase extension.
+  __cb.loadTabs = async function () {
+    const key = tabsStorageKey();
+    if (!key) return null;
+
+    const ids = __cb.parseIdsFromUrl();
+    const supa = window.__cbSupabase;
+    if (ids && supa) {
+      try {
+        const rows = await supa.supabaseFetch("canvases", "GET", {
+          query: {
+            workbook_id: `eq.${ids.workbookId}`,
+            select: "state",
+            limit: "1",
+          },
+        });
+        if (Array.isArray(rows) && rows.length > 0 && rows[0].state) {
+          const store = rows[0].state;
+          // Cache to localStorage so we still work offline next time.
+          try {
+            localStorage.setItem(key, JSON.stringify(store));
+          } catch (e) {
+            console.warn("[Clay Brainstorm] localStorage cache write failed:", e);
+          }
+          bumpNextTabIdFromStore(store);
+          return store;
+        }
+      } catch (err) {
+        console.warn("[Clay Brainstorm] Supabase loadTabs failed, using localStorage:", err);
+      }
+    }
+
+    return loadTabsLocal();
   };
 
   function migrateOldStorage(newKey) {
@@ -84,15 +130,78 @@
     }
   }
 
+  // Pushes the current tab store to Supabase (canvases + canvas_contributors).
+  // Fire-and-forget: errors are logged, never thrown. This runs after the
+  // localStorage write so even if Supabase is down, the user's work is safe.
+  async function pushToSupabase(workbookId, workspaceId, tabStore) {
+    const supa = window.__cbSupabase;
+    if (!supa) return;
+
+    const updatedBy = __cb.userId || "unknown";
+    const now = new Date().toISOString();
+
+    // Resolve the workbook name in parallel with the save. If it's not ready
+    // yet (first save after opening) we just upsert without it; a later save
+    // will fill it in. Avoids blocking the save on an extra network call.
+    let workbookName = null;
+    if (__cb.getWorkbookName) {
+      try {
+        workbookName = await __cb.getWorkbookName(workspaceId, workbookId);
+      } catch {
+        workbookName = null;
+      }
+    }
+
+    const canvasBody = {
+      workbook_id: workbookId,
+      workspace_id: workspaceId,
+      state: tabStore,
+      updated_at: now,
+      updated_by: updatedBy,
+    };
+    if (workbookName) canvasBody.workbook_name = workbookName;
+
+    supa.supabaseFetch("canvases", "POST", {
+      prefer: "resolution=merge-duplicates",
+      body: canvasBody,
+    }).then(() => {
+      // Only record contributorship if we have a real user id. The contributor
+      // upsert depends on the canvas row existing, so we chain it after.
+      if (!__cb.userId) return null;
+      return supa.supabaseFetch("canvas_contributors", "POST", {
+        prefer: "resolution=merge-duplicates",
+        body: {
+          workbook_id: workbookId,
+          user_id: __cb.userId,
+          last_accessed_at: now,
+        },
+      });
+    }).catch(err => {
+      console.warn("[Clay Brainstorm] Supabase save failed:", err);
+    });
+  }
+
   __cb.saveTabs = function () {
-    const key = tabsStorageKey();
-    if (!key || !__cb.tabStore) return;
+    // Prefer the workbook the overlay was opened for (captured at openCanvas
+    // time) over the current URL: a save triggered right after the user
+    // navigated to another workbook must still write to the ORIGINAL
+    // workbook's key, otherwise we corrupt the new workbook with stale data.
+    const workbookId = __cb.currentWorkbookId || __cb.parseIdsFromUrl()?.workbookId;
+    const workspaceId = __cb.currentWorkspaceId || __cb.parseIdsFromUrl()?.workspaceId;
+    if (!workbookId || !__cb.tabStore) return;
+    const key = `cb-tabs-${workbookId}`;
     if (__cb.canvas && __cb.tabStore.activeId) {
       const activeTab = __cb.tabStore.tabs.find(t => t.id === __cb.tabStore.activeId);
       if (activeTab) {
         const state = __cb.canvas.serialize();
         const recordsInput = document.getElementById("cb-records-input");
         if (recordsInput) state.records = recordsInput.value;
+        const creditCostInput = document.getElementById("cb-credit-cost-input");
+        const actionCostInput = document.getElementById("cb-action-cost-input");
+        const pricingGroup = document.querySelector(".cb-pricing-group");
+        if (creditCostInput) state.creditCost = creditCostInput.value;
+        if (actionCostInput) state.actionCost = actionCostInput.value;
+        if (pricingGroup) state.pricingExpanded = pricingGroup.classList.contains("is-expanded");
         activeTab.state = state;
       }
     }
@@ -101,6 +210,8 @@
     } catch (e) {
       console.warn("[Clay Brainstorm] saveTabs failed:", e);
     }
+
+    if (workspaceId) pushToSupabase(workbookId, workspaceId, __cb.tabStore);
   };
 
   __cb.debouncedSave = function () {
@@ -283,6 +394,12 @@
           e.stopPropagation();
           closeSavedMenu(savedMenu);
           removeSavedTemplate(tpl.id);
+        });
+
+        item.addEventListener("contextmenu", (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          showSavedItemContextMenu(e, tpl, nameBtn, savedMenu);
         });
 
         item.appendChild(nameBtn);
@@ -533,6 +650,69 @@
     renderTabBar();
   }
 
+  function showSavedItemContextMenu(e, tpl, nameBtn, savedMenu) {
+    closeTabContextMenu();
+
+    const menu = document.createElement("div");
+    menu.className = "cb-tab-context-menu";
+    menu.style.left = `${e.clientX}px`;
+    menu.style.top = `${e.clientY}px`;
+
+    const renameItem = document.createElement("button");
+    renameItem.className = "cb-tab-context-item";
+    renameItem.textContent = "Rename";
+    renameItem.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      closeTabContextMenu();
+      renameTemplate(tpl, nameBtn, savedMenu);
+    });
+
+    menu.appendChild(renameItem);
+    (__cb.overlayEl || document.body).appendChild(menu);
+
+    const closeFn = () => {
+      closeTabContextMenu();
+      document.removeEventListener("click", closeFn);
+      document.removeEventListener("contextmenu", closeFn);
+    };
+    setTimeout(() => {
+      document.addEventListener("click", closeFn);
+      document.addEventListener("contextmenu", closeFn);
+    }, 0);
+  }
+
+  function renameTemplate(tpl, nameBtn, savedMenu) {
+    const input = document.createElement("input");
+    input.type = "text";
+    input.className = "cb-tab-rename";
+    input.value = tpl.name;
+
+    let finished = false;
+    function finishRename() {
+      if (finished) return;
+      finished = true;
+      const newName = input.value.trim() || tpl.name;
+      const templates = loadSavedTemplates();
+      const target = templates.find(t => t.id === tpl.id);
+      if (target) target.name = newName;
+      saveSavedTemplates(templates);
+      closeSavedMenu(savedMenu);
+      renderTabBar();
+    }
+
+    input.addEventListener("blur", finishRename);
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") input.blur();
+      if (e.key === "Escape") { input.value = tpl.name; input.blur(); }
+    });
+    input.addEventListener("mousedown", (e) => e.stopPropagation());
+    input.addEventListener("click", (e) => e.stopPropagation());
+
+    nameBtn.replaceWith(input);
+    input.focus();
+    input.select();
+  }
+
   // ---- Tab switching ----
 
   __cb.switchTab = function (tabId) {
@@ -552,7 +732,15 @@
 
     if (__cb.initCanvas && canvasArea) {
       __cb.canvas = __cb.initCanvas(canvasArea);
-      __cb.onCanvasStateChange = __cb.debouncedSave;
+      // Re-install the wrapped save-plus-collaborators-refresh callback.
+      // overlay.js installs this initially; switchTab must preserve it.
+      __cb.onCanvasStateChange = function () {
+        __cb.debouncedSave();
+        const ids = __cb.parseIdsFromUrl();
+        if (ids && __cb.refreshCollaborators) {
+          setTimeout(() => __cb.refreshCollaborators(ids.workbookId), 800);
+        }
+      };
     }
 
     const tab = __cb.tabStore.tabs.find(t => t.id === tabId);
@@ -566,8 +754,35 @@
       recordsInput.dispatchEvent(new Event("input"));
     }
 
+    const creditCostInput = document.getElementById("cb-credit-cost-input");
+    if (creditCostInput) {
+      creditCostInput.value = tab?.state?.creditCost || "$0.05";
+      creditCostInput.dispatchEvent(new Event("blur"));
+    }
+    const actionCostInput = document.getElementById("cb-action-cost-input");
+    if (actionCostInput) {
+      actionCostInput.value = tab?.state?.actionCost || "$0.008";
+      actionCostInput.dispatchEvent(new Event("blur"));
+    }
+    const pricingGroup = document.querySelector(".cb-pricing-group");
+    const chevronEl = pricingGroup?.querySelector(".cb-chevron");
+    const pricingToggleText = pricingGroup?.querySelector(".cb-pricing-toggle .cb-summary-value");
+    if (pricingGroup) {
+      const expanded = !!tab?.state?.pricingExpanded;
+      pricingGroup.classList.toggle("is-expanded", expanded);
+      if (chevronEl) chevronEl.classList.toggle("cb-chevron-open", expanded);
+      if (pricingToggleText) pricingToggleText.textContent = expanded ? "Hide" : "Show";
+    }
+
     __cb.saveTabs();
     renderTabBar();
+
+    // Refresh the collaborators widget; the widget itself is workbook-scoped
+    // so the IDs don't change, but refreshing keeps data current.
+    const ids = __cb.parseIdsFromUrl();
+    if (ids && __cb.refreshCollaborators) {
+      __cb.refreshCollaborators(ids.workbookId);
+    }
   };
 
   function addNewTab() {
