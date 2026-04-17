@@ -39,7 +39,7 @@ You should now see a card titled **Clay Scoping Tool** in the extensions list.
 
 ### 3. Confirm it works
 
-Open any Clay workbook (e.g. `https://app.clay.com/workspaces/...`). You should see a **Brainstorm** button in the workbook toolbar. Click it to open the canvas.
+Open any Clay workbook (e.g. `https://app.clay.com/workspaces/...`). You should see a **GTME View** button in the workbook toolbar. Click it to open the canvas.
 
 If you don't see the button, reload the Clay tab. Still missing? See [Troubleshooting](#troubleshooting) below.
 
@@ -65,7 +65,7 @@ That's it.
 
 ## Troubleshooting
 
-**I don't see the "Brainstorm" button on Clay workbooks**
+**I don't see the "GTME View" button on Clay workbooks**
 Reload the Clay tab first. If it's still missing, go to [`chrome://extensions`](chrome://extensions), click the refresh icon on the **Clay Scoping Tool** card, then reload Clay again.
 
 **Terminal says `git: command not found`**
