@@ -4,9 +4,17 @@ A Chrome extension that adds a visual brainstorming canvas to Clay workbooks for
 
 ---
 
-## Install (one-time, ~2 minutes)
+**Pick your path:**
 
-You'll do this once per machine. From then on you only run the **Update** step below.
+- First time setting this up? → [Install](#install)
+- Already installed, just want the latest version? → [Update](#update)
+- Something not working? → [Troubleshooting](#troubleshooting)
+
+---
+
+## Install
+
+*One-time, ~2 minutes per machine. From then on you only run the [Update](#update) step.*
 
 ### 1. Clone the repo
 
@@ -37,9 +45,9 @@ If you don't see the button, reload the Clay tab. Still missing? See [Troublesho
 
 ---
 
-## Update (whenever new features ship)
+## Update
 
-Run this whenever you want the latest version:
+*Run this whenever you want the latest version — usually when something new has shipped and you want to pick it up.*
 
 ```bash
 cd ~/clay-scoping-extension && git pull
