@@ -25,6 +25,13 @@
    * @param {string} [options.prefer] - PostgREST Prefer header (e.g. "resolution=merge-duplicates" for upsert)
    * @returns {Promise<any>} parsed JSON response (or null if response is empty)
    */
+  // Retry schedule for transient network errors on write operations. The
+  // "TypeError: Failed to fetch" we see in the wild is almost always a
+  // short-lived CORS preflight / network flake; retrying a handful of times
+  // clears it. We don't retry 4xx/5xx responses because those are
+  // application-level errors that a retry won't fix.
+  const WRITE_RETRY_DELAYS_MS = [400, 1200, 3600];
+
   async function supabaseFetch(table, method, options = {}) {
     const url = new URL(`${SUPABASE_URL}/rest/v1/${table}`);
     if (options.query) {
@@ -40,19 +47,48 @@
     };
     if (options.prefer) headers.Prefer = options.prefer;
 
-    const res = await fetch(url.toString(), {
-      method,
-      headers,
-      body: options.body !== undefined ? JSON.stringify(options.body) : undefined,
-    });
+    const isWrite = method !== "GET" && method !== "HEAD";
+    const delays = isWrite ? WRITE_RETRY_DELAYS_MS : [];
 
-    if (!res.ok) {
-      const text = await res.text().catch(() => "");
-      throw new Error(`Supabase ${method} ${table} failed: ${res.status} ${res.statusText} ${text}`);
+    let lastErr = null;
+    for (let attempt = 0; attempt <= delays.length; attempt++) {
+      const started = Date.now();
+      try {
+        const res = await fetch(url.toString(), {
+          method,
+          headers,
+          body: options.body !== undefined ? JSON.stringify(options.body) : undefined,
+        });
+        if (!res.ok) {
+          const text = await res.text().catch(() => "");
+          throw new Error(`Supabase ${method} ${table} failed: ${res.status} ${res.statusText} ${text}`);
+        }
+        const text = await res.text();
+        return text ? JSON.parse(text) : null;
+      } catch (err) {
+        lastErr = err;
+        // Only TypeError means the fetch itself failed (network/CORS). HTTP
+        // errors come through as our own Error above and should surface as-is.
+        const isNetworkError = err instanceof TypeError;
+        if (!isNetworkError || attempt >= delays.length) {
+          // Structured log so production failures leave us a breadcrumb trail
+          // (URL, method, attempt number, elapsed, error details).
+          console.warn("[Clay Scoping] supabase fetch error", {
+            table,
+            method,
+            attempt,
+            elapsedMs: Date.now() - started,
+            errorName: err?.name,
+            errorMessage: err?.message,
+          });
+          throw err;
+        }
+        await new Promise(resolve => setTimeout(resolve, delays[attempt]));
+      }
     }
-
-    const text = await res.text();
-    return text ? JSON.parse(text) : null;
+    // Unreachable: the loop either returns on success or throws on final
+    // failure. Kept for TypeScript-style exhaustiveness.
+    throw lastErr;
   }
 
   const api = {

@@ -1,0 +1,594 @@
+/* ==========================================================================
+   EXPORT MENU + EXPORT-AS-TABLE MODAL
+   Mirrors the look of cb-freq-picker / cb-toolbar-btn so the export entry
+   point feels like a first-class part of the topbar.
+   ========================================================================== */
+
+/* ---- Topbar Export button (extends cb-toolbar-btn-primary) ---- */
+
+.cb-toolbar-export {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.cb-toolbar-export svg {
+  flex-shrink: 0;
+}
+
+/* ---- Export dropdown menu ---- */
+
+.cb-export-menu {
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.14);
+  padding: 4px;
+  min-width: 220px;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+
+.cb-export-menu-option {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  padding: 8px 10px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: #374151;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  text-align: left;
+  font-family: inherit;
+}
+
+.cb-export-menu-option:hover {
+  background: #f3f4f6;
+}
+
+.cb-export-menu-option-disabled,
+.cb-export-menu-option-disabled:hover {
+  color: #9ca3af;
+  background: transparent;
+  cursor: not-allowed;
+  opacity: 0.65;
+}
+
+/* ==========================================================================
+   MODAL — full-viewport backdrop with a centered card
+   ========================================================================== */
+
+.cb-export-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.55);
+  z-index: 9999998;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+
+.cb-export-modal {
+  width: 92vw;
+  max-width: 1200px;
+  height: 88vh;
+  max-height: 880px;
+  background: #ffffff;
+  border-radius: 12px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  z-index: 9999999;
+}
+
+/* ---- Header ---- */
+
+.cb-export-modal-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 18px 22px 14px;
+  border-bottom: 1px solid #e5e7eb;
+  flex-shrink: 0;
+}
+
+.cb-export-modal-title-wrap {
+  min-width: 0;
+}
+
+.cb-export-modal-title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  color: #111827;
+  line-height: 1.3;
+}
+
+.cb-export-modal-subtitle {
+  margin-top: 4px;
+  font-size: 13px;
+  color: #6b7280;
+}
+
+.cb-export-modal-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.cb-export-filter-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  background: #f9fafb;
+  color: #374151;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  user-select: none;
+}
+
+.cb-export-filter-toggle input[type="checkbox"] {
+  accent-color: #6366f1;
+  cursor: pointer;
+}
+
+.cb-export-download-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 12px;
+  border: 1px solid #6366f1;
+  border-radius: 6px;
+  background: #6366f1;
+  color: #ffffff;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.cb-export-download-btn:hover {
+  background: #4f46e5;
+  border-color: #4f46e5;
+}
+
+.cb-export-download-btn svg {
+  flex-shrink: 0;
+}
+
+.cb-export-modal-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: #6b7280;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.cb-export-modal-close:hover {
+  background: #f3f4f6;
+  color: #111827;
+}
+
+/* ---- Body / table ---- */
+
+.cb-export-modal-body {
+  flex: 1;
+  overflow: auto;
+  padding: 0;
+  background: #ffffff;
+}
+
+.cb-export-empty {
+  padding: 60px 24px;
+  text-align: center;
+  color: #6b7280;
+  font-size: 14px;
+}
+
+.cb-export-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 13px;
+  color: #1f2937;
+}
+
+.cb-export-table thead th {
+  position: sticky;
+  top: 0;
+  background: #f9fafb;
+  border-bottom: 1px solid #e5e7eb;
+  padding: 10px 14px;
+  text-align: left;
+  font-size: 12px;
+  font-weight: 600;
+  color: #6b7280;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+  z-index: 1;
+}
+
+.cb-export-table tbody td {
+  padding: 8px 14px;
+  border-bottom: 1px solid #f1f5f9;
+  vertical-align: middle;
+}
+
+.cb-export-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.cb-export-table tbody tr:hover {
+  background: #f9fafb;
+}
+
+/* Column sizing — DP and ERs grow, the numeric columns stay tight. */
+.cb-export-table .col-dp {
+  width: 28%;
+}
+
+.cb-export-table .col-fill {
+  width: 130px;
+  white-space: nowrap;
+}
+
+.cb-export-table .col-credits,
+.cb-export-table .col-actions {
+  width: 110px;
+  font-variant-numeric: tabular-nums;
+}
+
+.cb-export-table .col-ers {
+  width: auto;
+}
+
+/* Unconnected rows — slightly muted so they read as "no enrichments yet". */
+.cb-export-row-unconnected td {
+  color: #6b7280;
+}
+
+.cb-export-row-unconnected .cb-export-cell-input-text {
+  color: #374151;
+}
+
+/* ---- Editable cells ---- */
+
+.cb-export-cell-input {
+  width: 100%;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  padding: 5px 8px;
+  background: transparent;
+  font-family: inherit;
+  font-size: 13px;
+  color: #1f2937;
+  transition: background 0.12s, border-color 0.12s;
+}
+
+.cb-export-cell-input:hover {
+  background: #f3f4f6;
+}
+
+.cb-export-cell-input:focus {
+  outline: none;
+  background: #ffffff;
+  border-color: #6366f1;
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.18);
+}
+
+.cb-export-cell-input-num {
+  width: 70px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.cb-export-cell-suffix {
+  display: inline-block;
+  margin-left: 4px;
+  color: #6b7280;
+  font-size: 12px;
+}
+
+.cb-export-cell-readonly {
+  color: #1f2937;
+  font-weight: 500;
+}
+
+.cb-export-empty-cell {
+  color: #9ca3af;
+}
+
+/* ---- ER chips ---- */
+
+.cb-export-er-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.cb-export-er-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 8px;
+  background: #eef2ff;
+  color: #4338ca;
+  border: 1px solid #e0e7ff;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ---- Footer ---- */
+
+.cb-export-modal-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 22px;
+  border-top: 1px solid #e5e7eb;
+  background: #ffffff;
+  flex-shrink: 0;
+}
+
+.cb-export-modal-footer-hint {
+  font-size: 12px;
+  color: #6b7280;
+}
+
+.cb-export-modal-done {
+  display: inline-flex;
+  align-items: center;
+  height: 32px;
+  padding: 0 14px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #374151;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.cb-export-modal-done:hover {
+  background: #f9fafb;
+  border-color: #9ca3af;
+}
+
+/* ==========================================================================
+   GTME EXPORT MODAL — narrower than the table modal because there's no grid.
+   ========================================================================== */
+
+.cb-gtme-modal {
+  max-width: 640px;
+  height: auto;
+  max-height: 88vh;
+}
+
+.cb-gtme-body {
+  padding: 20px 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.cb-gtme-fields {
+  display: flex;
+  align-items: stretch;
+  gap: 12px;
+}
+
+.cb-gtme-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 180px;
+}
+
+.cb-gtme-field-grow {
+  flex: 1;
+}
+
+.cb-gtme-field-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: #374151;
+}
+
+.cb-gtme-input {
+  height: 36px;
+  padding: 0 10px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #1f2937;
+  font-family: inherit;
+  font-size: 13px;
+  transition: border-color 0.12s, box-shadow 0.12s;
+}
+
+.cb-gtme-input:focus {
+  outline: none;
+  border-color: #6366f1;
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.18);
+}
+
+.cb-gtme-input-num {
+  width: 110px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Read-only display for fields the user can't edit (e.g. fixed contract
+   length). Mirrors .cb-gtme-input's metrics so the row stays balanced. */
+.cb-gtme-static-value {
+  display: inline-flex;
+  align-items: center;
+  height: 36px;
+  padding: 0 10px;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  background: #f3f4f6;
+  color: #374151;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.cb-gtme-tabs-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 4px;
+}
+
+.cb-gtme-tabs-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #111827;
+}
+
+.cb-gtme-tabs-hint {
+  font-size: 12px;
+  color: #6b7280;
+}
+
+.cb-gtme-tabs {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 320px;
+  overflow-y: auto;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 6px;
+  background: #f9fafb;
+}
+
+.cb-gtme-tab-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: #ffffff;
+  cursor: pointer;
+  transition: border-color 0.12s, background 0.12s;
+}
+
+.cb-gtme-tab-row:hover {
+  border-color: #d1d5db;
+}
+
+.cb-gtme-tab-row-checked {
+  border-color: #6366f1;
+  background: #eef2ff;
+}
+
+.cb-gtme-tab-row input[type="checkbox"] {
+  accent-color: #6366f1;
+  cursor: pointer;
+}
+
+.cb-gtme-tab-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.cb-gtme-tab-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: #111827;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cb-gtme-tab-stats {
+  font-size: 12px;
+  color: #4338ca;
+  font-variant-numeric: tabular-nums;
+}
+
+.cb-gtme-tab-stats-empty {
+  color: #9ca3af;
+  font-variant-numeric: normal;
+}
+
+.cb-gtme-tab-prices {
+  font-size: 11px;
+  color: #6b7280;
+  font-variant-numeric: tabular-nums;
+  margin-top: 2px;
+}
+
+.cb-gtme-error {
+  padding: 10px 12px;
+  border: 1px solid #fecaca;
+  background: #fef2f2;
+  color: #b91c1c;
+  border-radius: 6px;
+  font-size: 13px;
+}
+
+.cb-gtme-footer-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.cb-gtme-submit {
+  display: inline-flex;
+  align-items: center;
+  height: 32px;
+  padding: 0 14px;
+  border: 1px solid #6366f1;
+  border-radius: 6px;
+  background: #6366f1;
+  color: #ffffff;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.cb-gtme-submit:hover:not(:disabled) {
+  background: #4f46e5;
+  border-color: #4f46e5;
+}
+
+.cb-gtme-submit:disabled {
+  background: #c7d2fe;
+  border-color: #c7d2fe;
+  cursor: not-allowed;
+}

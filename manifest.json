@@ -1,12 +1,16 @@
 {
   "manifest_version": 3,
   "name": "Clay Scoping Tool",
-  "version": "3.2",
+  "version": "3.3",
   "description": "Visual scoping canvas for Clay enrichment workflows",
   "permissions": ["activeTab"],
   "host_permissions": [
     "https://api.clay.com/*",
-    "https://*.supabase.co/*"
+    "https://*.supabase.co/*",
+    "http://localhost/*",
+    "http://localhost:*/*",
+    "http://127.0.0.1/*",
+    "http://127.0.0.1:*/*"
   ],
   "icons": {
     "16": "icons/icon-16.png",
@@ -53,6 +57,7 @@
         "src/tabs.js",
         "src/picker.js",
         "src/table-import.js",
+        "src/export.js",
         "src/overlay.js",
         "src/home.js",
         "src/toolbar.js"
@@ -66,7 +71,8 @@
         "styles/groups.css",
         "styles/pickers.css",
         "styles/collaborators.css",
-        "styles/cursors.css"
+        "styles/cursors.css",
+        "styles/export.css"
       ]
     }
   ],

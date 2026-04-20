@@ -582,6 +582,104 @@
 }
 
 /* ==========================================================================
+   FREQUENCY (summary-bar trigger + shared picker)
+   ========================================================================== */
+
+/* Summary-bar "Frequency" trigger button. Visually matches the other summary
+   boxes (input-like affordance) but is a button instead of an input because
+   the value is picked from a fixed set of options via a dropdown. */
+
+.cb-summary-freq-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  width: 130px;
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #111827;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.cb-summary-freq-trigger:hover {
+  background: #f9fafb;
+  border-color: #9ca3af;
+}
+
+.cb-summary-freq-trigger .cb-chevron {
+  color: #6b7280;
+  display: inline-flex;
+}
+
+.cb-summary-freq-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Shared frequency dropdown (summary bar + every ER card badge). Mirrors
+   cb-key-toggle: document.body-mounted, fixed-positioned, stops propagation
+   so clicks inside don't dismiss via the backdrop. */
+
+.cb-freq-picker {
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.14);
+  padding: 4px;
+  min-width: 170px;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+
+.cb-freq-picker-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  padding: 7px 10px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: #374151;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  text-align: left;
+}
+
+.cb-freq-picker-option:hover {
+  background: #f3f4f6;
+}
+
+.cb-freq-picker-option-active {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.cb-freq-picker-option-active:hover {
+  background: #fde68a;
+}
+
+.cb-freq-picker-mult {
+  color: #6b7280;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  font-size: 12px;
+}
+
+.cb-freq-picker-option-active .cb-freq-picker-mult {
+  color: #b45309;
+}
+
+/* ==========================================================================
    CLAY PORTAL BOOST
    Clay renders its native popovers (breadcrumb menus, table action menus,
    profile menu, etc.) into portal wrappers at body level. Those wrappers

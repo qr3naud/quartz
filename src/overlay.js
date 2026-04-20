@@ -45,11 +45,21 @@
     const rightGroup = document.createElement("div");
     rightGroup.className = "cb-topbar-right";
 
-    const addMoreBtn = document.createElement("button");
-    addMoreBtn.className = "cb-toolbar-btn cb-toolbar-btn-primary";
-    addMoreBtn.textContent = "+ Add More";
-    addMoreBtn.addEventListener("click", () => {
-      __cb.startPickerMode();
+    // Export button replaces the old "+ Add More" entry point. Click opens a
+    // 4-option dropdown (Export to GTME Calculator / DealOps / Table / JSON);
+    // only "Export as Table" is wired up at this stage. The chevron is part
+    // of the button so it visually communicates "menu opens here" the same
+    // way the model chip and frequency trigger do elsewhere.
+    const exportBtn = document.createElement("button");
+    exportBtn.className = "cb-toolbar-btn cb-toolbar-btn-primary cb-toolbar-export";
+    exportBtn.type = "button";
+    exportBtn.innerHTML =
+      '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>' +
+      '<span>Export</span>' +
+      '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>';
+    exportBtn.addEventListener("click", (evt) => {
+      evt.stopPropagation();
+      if (__cb.openExportMenu) __cb.openExportMenu(exportBtn);
     });
 
     const closeBtn = document.createElement("button");
@@ -98,7 +108,7 @@
 
     rightGroup.appendChild(proBtn);
     rightGroup.appendChild(importBtn);
-    rightGroup.appendChild(addMoreBtn);
+    rightGroup.appendChild(exportBtn);
     rightGroup.appendChild(closeBtn);
     topBar.appendChild(leftGroup);
     topBar.appendChild(rightGroup);
@@ -134,6 +144,64 @@
     recordsInput.placeholder = "0";
     recordsBox.appendChild(recordsLabel);
     recordsBox.appendChild(recordsInput);
+
+    // Frequency box: displays the global default. Clicking the value opens
+    // the same dropdown used on each ER card's ×N badge, so the UX is
+    // symmetrical between global and per-card control.
+    const freqBox = document.createElement("div");
+    freqBox.className = "cb-summary-box cb-summary-freq";
+    const freqLabel = document.createElement("span");
+    freqLabel.className = "cb-summary-label";
+    freqLabel.textContent = "Frequency";
+    const freqTrigger = document.createElement("button");
+    freqTrigger.type = "button";
+    freqTrigger.className = "cb-summary-freq-trigger";
+    freqTrigger.id = "cb-frequency-trigger";
+    const freqTriggerText = document.createElement("span");
+    freqTriggerText.className = "cb-summary-freq-text";
+    freqTriggerText.textContent = __cb.getFrequencyLabel(__cb.getCurrentFrequencyId());
+    const freqTriggerChevron = document.createElement("span");
+    freqTriggerChevron.className = "cb-chevron";
+    freqTriggerChevron.innerHTML =
+      '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" ' +
+      'stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">' +
+      '<polyline points="6 9 12 15 18 9"/></svg>';
+    freqTrigger.appendChild(freqTriggerText);
+    freqTrigger.appendChild(freqTriggerChevron);
+    freqBox.appendChild(freqLabel);
+    freqBox.appendChild(freqTrigger);
+
+    function setGlobalFrequency(nextId, opts) {
+      const id = __cb.FREQUENCY_OPTIONS.some((o) => o.id === nextId)
+        ? nextId
+        : __cb.DEFAULT_FREQUENCY_ID;
+      __cb.currentFrequencyId = id;
+      freqTriggerText.textContent = __cb.getFrequencyLabel(id);
+      // Update every ER card that hasn't been individually overridden so the
+      // badges on those cards stay in sync with the new default.
+      if (__cb.canvas?.updateDefaultFrequencies) {
+        __cb.canvas.updateDefaultFrequencies(id);
+      }
+      // Re-run credit math so the "Total Credits" box reflects the new weight.
+      if (__cb.canvas?.refreshCreditTotal) {
+        __cb.canvas.refreshCreditTotal();
+      } else {
+        recalcTotal();
+      }
+      if (opts?.skipSave) return;
+      if (__cb.debouncedSave) __cb.debouncedSave();
+    }
+
+    // Exposed so tabs.js can reset the summary-bar frequency when the user
+    // switches tabs. closeCanvas clears this again.
+    __cb.setGlobalFrequency = setGlobalFrequency;
+
+    freqTrigger.addEventListener("click", (evt) => {
+      evt.stopPropagation();
+      __cb.showFrequencyPicker(freqTrigger, __cb.getCurrentFrequencyId(), (picked) => {
+        setGlobalFrequency(picked);
+      });
+    });
 
     const actionsBox = document.createElement("div");
     actionsBox.className = "cb-summary-box";
@@ -257,12 +325,19 @@
     summaryBar.appendChild(creditsBox);
     summaryBar.appendChild(actionsBox);
     summaryBar.appendChild(recordsBox);
+    summaryBar.appendChild(freqBox);
     summaryBar.appendChild(totalBox);
     summaryBar.appendChild(totalActionsBox);
     summaryBar.appendChild(pricingGroup);
 
+    // Per-row numbers (unweighted) for the "Avg / Row" boxes.
     let currentCreditsPerRow = 0;
     let currentActionsPerRow = 0;
+    // Frequency-weighted per-row numbers for the "Total" boxes. The canvas
+    // reports both: unweighted drives the per-row display, weighted drives
+    // the totals that get multiplied by Records.
+    let currentWeightedCreditsPerRow = 0;
+    let currentWeightedActionsPerRow = 0;
     let creditCost = 0.05;
     let actionCost = 0.008;
 
@@ -281,6 +356,10 @@
       return parseInt(recordsInput.value.replace(/,/g, ""), 10) || 0;
     }
 
+    __cb.getRecordsCount = () => parseRecordsValue();
+    __cb.getCreditCost = () => creditCost;
+    __cb.getActionCost = () => actionCost;
+
     function parseDollar(str) {
       const n = parseFloat(String(str).replace(/[^\d.]/g, ""));
       return isNaN(n) ? 0 : n;
@@ -298,8 +377,12 @@
 
     function recalcTotal() {
       const records = parseRecordsValue();
-      const totalCredits = currentCreditsPerRow * records;
-      const totalActions = currentActionsPerRow * records;
+      // Totals use the frequency-weighted per-row numbers so they reflect
+      // "cost across the contract period" (e.g. monthly = x12 of the per-row
+      // cost for each ER). Per-row boxes keep the unweighted numbers so they
+      // stay honest about a single execution.
+      const totalCredits = currentWeightedCreditsPerRow * records;
+      const totalActions = currentWeightedActionsPerRow * records;
       totalValue.textContent = formatNumber(totalCredits);
       totalActionsValue.textContent = formatNumber(totalActions);
 
@@ -315,6 +398,9 @@
       setter(parsed);
       input.value = formatDollar(parsed);
       recalcTotal();
+      if (__cb.canvas?.updateGroupCredits) {
+        __cb.canvas.updateGroupCredits();
+      }
       if (__cb.debouncedSave) __cb.debouncedSave();
     }
 
@@ -339,9 +425,20 @@
       if (__cb.debouncedSave) __cb.debouncedSave();
     });
 
-    __cb.updateCreditTotal = function (creditsPerRow, actionsPerRow) {
+    // Signature extended to receive both unweighted and frequency-weighted
+    // per-row totals. Old call sites that pass only two args still work:
+    // the weighted numbers fall back to the unweighted ones so the totals
+    // behave as if every ER were on the default (x1) frequency.
+    __cb.updateCreditTotal = function (
+      creditsPerRow,
+      actionsPerRow,
+      weightedCreditsPerRow,
+      weightedActionsPerRow
+    ) {
       currentCreditsPerRow = creditsPerRow;
       currentActionsPerRow = actionsPerRow;
+      currentWeightedCreditsPerRow = weightedCreditsPerRow ?? creditsPerRow;
+      currentWeightedActionsPerRow = weightedActionsPerRow ?? actionsPerRow;
       creditsValue.textContent = formatNumber(creditsPerRow);
       actionsValue.textContent = formatNumber(actionsPerRow);
       recalcTotal();
@@ -360,6 +457,9 @@
       // (editable popover values stay locked once the user has touched them).
       if (__cb.canvas?.updateDefaultFillRates) {
         __cb.canvas.updateDefaultFillRates(parseRecordsValue());
+      }
+      if (__cb.canvas?.updateGroupCredits) {
+        __cb.canvas.updateGroupCredits();
       }
     });
 
@@ -382,7 +482,7 @@
 
     const helper = document.createElement("div");
     helper.className = "cb-tool-helper";
-    helper.innerHTML = "<kbd>\u21E7</kbd> bulk \u00A0\u00A0 <kbd>\u2325</kbd> comment \u00A0\u00A0 <kbd>\u2318</kbd> input";
+    helper.innerHTML = "<kbd>\u21E7</kbd> bulk \u00A0\u00A0 <kbd>\u2325</kbd> comment \u00A0\u00A0 <kbd>\u2318</kbd> input \u00A0\u00A0 <kbd>\u21E7</kbd><kbd>\u2318</kbd> bulk input";
 
     const erHelper = document.createElement("div");
     erHelper.className = "cb-tool-helper";
@@ -574,7 +674,7 @@
     const instructionsHtml =
       '<div class="cb-help-section">' +
         '<div class="cb-help-section-title">Getting started</div>' +
-        '<p>Open the canvas from the <strong>GTME View</strong> button on any Clay table. Use <strong>+ Add More</strong> to pick enrichments from the catalog, or <strong>Import from Table</strong> to pull in enrichments from an existing table.</p>' +
+        '<p>Open the canvas from the <strong>GTME View</strong> button on any Clay table. Use the <strong>Enrichments tool</strong> in the toolbar to pick enrichments from the catalog, or <strong>Import from Table</strong> to pull in enrichments from an existing table.</p>' +
       '</div>' +
       '<div class="cb-help-section">' +
         '<div class="cb-help-section-title">Tools</div>' +
@@ -613,9 +713,10 @@
       '<div class="cb-help-section">' +
         '<div class="cb-help-section-title">Data Points mode</div>' +
         '<div class="cb-help-shortcut-list">' +
-          '<div class="cb-help-shortcut"><span class="cb-help-shortcut-keys"><kbd>Shift</kbd> + <kbd>Click</kbd></span><span class="cb-help-shortcut-desc">Bulk input (comma-separated)</span></div>' +
+          '<div class="cb-help-shortcut"><span class="cb-help-shortcut-keys"><kbd>Shift</kbd> + <kbd>Click</kbd></span><span class="cb-help-shortcut-desc">Bulk (comma-separated)</span></div>' +
           '<div class="cb-help-shortcut"><span class="cb-help-shortcut-keys"><kbd>\u2325 Alt</kbd> + <kbd>Click</kbd></span><span class="cb-help-shortcut-desc">Create a comment card</span></div>' +
           '<div class="cb-help-shortcut"><span class="cb-help-shortcut-keys"><kbd>\u2318 Cmd</kbd> + <kbd>Click</kbd></span><span class="cb-help-shortcut-desc">Create an input card</span></div>' +
+          '<div class="cb-help-shortcut"><span class="cb-help-shortcut-keys"><kbd>\u21E7 Shift</kbd> + <kbd>\u2318 Cmd</kbd> + <kbd>Click</kbd></span><span class="cb-help-shortcut-desc">Bulk input (comma-separated)</span></div>' +
           '<div class="cb-help-shortcut"><span class="cb-help-shortcut-keys">Double <kbd>Click</kbd> enrichment</span><span class="cb-help-shortcut-desc">Open bulk input next to it</span></div>' +
         '</div>' +
       '</div>';
@@ -735,6 +836,7 @@
               profile_picture: __cb.user?.profilePicture,
             });
             if (__cb.installRealtimeCanvasSync) __cb.installRealtimeCanvasSync();
+            if (__cb.installRealtimeTabSync) __cb.installRealtimeTabSync();
             const container = __cb.canvas?.getCardContainer?.();
             if (container && __cb.mountCursorsLayer) {
               __cb.mountCursorsLayer(container);
@@ -794,6 +896,9 @@
         chevronEl.classList.add("cb-chevron-open");
         pricingToggleText.textContent = "Hide";
       }
+      // Restore global frequency. `skipSave` avoids kicking off a save for
+      // state we just loaded — the first user interaction will save.
+      setGlobalFrequency(activeTab.state.frequency || __cb.DEFAULT_FREQUENCY_ID, { skipSave: true });
       recalcTotal();
     }
 
@@ -839,6 +944,7 @@
     if (__cb.unmountLiveActions) __cb.unmountLiveActions();
     if (__cb.unmountCursorsLayer) __cb.unmountCursorsLayer();
     if (__cb.uninstallRealtimeCanvasSync) __cb.uninstallRealtimeCanvasSync();
+    if (__cb.uninstallRealtimeTabSync) __cb.uninstallRealtimeTabSync();
     if (__cb.realtime?.leaveWorkbook) __cb.realtime.leaveWorkbook();
     if (__cb.unmountCollaboratorsWidget) __cb.unmountCollaboratorsWidget();
     __cb.overlayEl.remove();
@@ -850,7 +956,13 @@
     __cb.onDpBulkInputForCard = null;
     __cb.setCanvasMode = null;
     __cb.setProMode = null;
+    __cb.setGlobalFrequency = null;
+    __cb.getRecordsCount = null;
+    __cb.getCreditCost = null;
+    __cb.getActionCost = null;
     __cb.proMode = false;
+    __cb.currentFrequencyId = __cb.DEFAULT_FREQUENCY_ID;
+    __cb.closeFrequencyPicker();
     __cb.enrichmentClickPos = null;
     window.removeEventListener("beforeunload", __cb.saveTabs);
     document.removeEventListener("keydown", handleEscape);

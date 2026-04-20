@@ -56,6 +56,20 @@
     { id: "gemini-2.5-flash-lite", name: "Gemini 2.5 Flash Lite", credits: 1, provider: "Gemini" },
   ];
 
+  // Scoping frequency options used by the summary-bar picker + per-ER badge.
+  // `multiplier` is the annualized number of runs: e.g. "monthly" means the
+  // enrichment runs 12 times per year, so 1-year credit cost = credits * 12.
+  // Order is coarsest → finest (annually at the top, weekly at the bottom) so
+  // the picker reads like a "how often" slider.
+  const FREQUENCY_OPTIONS = [
+    { id: "annually",    label: "Annually",    multiplier: 1  },
+    { id: "bi-annually", label: "Bi-annually", multiplier: 2  },
+    { id: "quarterly",   label: "Quarterly",   multiplier: 4  },
+    { id: "monthly",     label: "Monthly",     multiplier: 12 },
+    { id: "weekly",      label: "Weekly",      multiplier: 52 },
+  ];
+  const DEFAULT_FREQUENCY_ID = "annually";
+
   window.__cb = {
     TOOLBAR_SELECTOR:
       "#clay-app > div > main > div > div > div > div > div > " +
@@ -65,6 +79,14 @@
       "div.flex.flex-row.items-center.gap-x-2",
 
     INJECTED_ATTR: "data-clay-brainstorm-injected",
+
+    // Base URL for the GTME pricing calculator. The "Export to GTME Calculator"
+    // flow opens `${GTME_CALCULATOR_BASE_URL}/import?payload=<base64url>` in a
+    // new tab. No fetch happens from the extension, so host_permissions isn't
+    // strictly required for the flow itself — window.open is plain navigation.
+    //   Local dev: "http://localhost:5173" (default Vite port)
+    //   Production: the deployed Railway URL once provisioned
+    GTME_CALCULATOR_BASE_URL: "http://localhost:5173",
 
     enrichmentLookup: {},
     actionByIdLookup: {},
@@ -144,6 +166,83 @@
       OpenAI: "https://clay-base-prod-static.s3.amazonaws.com/icons/svg/chat-gpt.svg",
       Anthropic: "https://clay-base-prod-static.s3.amazonaws.com/icons/svg/anthropic.svg",
       Gemini: "https://clay-base-prod-static.s3.amazonaws.com/icons/svg/google-gemini.svg",
+    },
+
+    // ---- Frequency (scoping) ----
+    //
+    // Frequency lives in two places:
+    //   1. A global default on the summary bar (drives every ER that hasn't
+    //      been individually customized).
+    //   2. A per-ER override, shared across every ER in the same snap-cluster.
+    //
+    // The summary bar owns the global default; we read it back from the
+    // credits module via getCurrentFrequencyId so credits.js doesn't have
+    // to poke at DOM elements.
+    FREQUENCY_OPTIONS,
+    DEFAULT_FREQUENCY_ID,
+    currentFrequencyId: DEFAULT_FREQUENCY_ID,
+    getCurrentFrequencyId() {
+      return window.__cb.currentFrequencyId || DEFAULT_FREQUENCY_ID;
+    },
+    getFrequencyMultiplier(id) {
+      const opt = FREQUENCY_OPTIONS.find((o) => o.id === id);
+      return opt ? opt.multiplier : 1;
+    },
+    getFrequencyLabel(id) {
+      const opt = FREQUENCY_OPTIONS.find((o) => o.id === id);
+      return opt ? opt.label : "Annually";
+    },
+
+    // Shared dropdown used by both the summary-bar frequency card and every
+    // ER card's ×N badge. Mirrors the structure of the existing `cb-key-toggle`
+    // popover in cards.js: a full-viewport backdrop catches outside clicks,
+    // the popover stops propagation so clicks inside don't dismiss it, and
+    // positioning is fixed relative to the anchor's bounding rect.
+    showFrequencyPicker(anchorEl, currentId, onPick) {
+      window.__cb.closeFrequencyPicker();
+
+      const backdrop = document.createElement("div");
+      backdrop.style.cssText = "position:fixed;inset:0;z-index:9999998;";
+      backdrop.addEventListener("mousedown", (evt) => {
+        evt.stopPropagation();
+        window.__cb.closeFrequencyPicker();
+      });
+
+      const menu = document.createElement("div");
+      menu.className = "cb-freq-picker";
+      menu.addEventListener("mousedown", (evt) => evt.stopPropagation());
+
+      for (const opt of FREQUENCY_OPTIONS) {
+        const item = document.createElement("button");
+        item.type = "button";
+        item.className = "cb-freq-picker-option" + (opt.id === currentId ? " cb-freq-picker-option-active" : "");
+        item.innerHTML =
+          `<span class="cb-freq-picker-label">${opt.label}</span>` +
+          `<span class="cb-freq-picker-mult">\u00d7${opt.multiplier}</span>`;
+        item.addEventListener("click", (evt) => {
+          evt.stopPropagation();
+          window.__cb.closeFrequencyPicker();
+          if (typeof onPick === "function") onPick(opt.id);
+        });
+        menu.appendChild(item);
+      }
+
+      document.body.appendChild(backdrop);
+      document.body.appendChild(menu);
+
+      const rect = anchorEl.getBoundingClientRect();
+      menu.style.position = "fixed";
+      menu.style.top = (rect.bottom + 4) + "px";
+      menu.style.left = rect.left + "px";
+      menu.style.zIndex = "9999999";
+
+      window.__cb._freqPickerEl = menu;
+      window.__cb._freqPickerBackdrop = backdrop;
+    },
+    closeFrequencyPicker() {
+      const cb = window.__cb;
+      if (cb._freqPickerEl) { cb._freqPickerEl.remove(); cb._freqPickerEl = null; }
+      if (cb._freqPickerBackdrop) { cb._freqPickerBackdrop.remove(); cb._freqPickerBackdrop = null; }
     },
   };
 })();

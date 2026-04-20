@@ -41,6 +41,7 @@
     if (!__ui) {
       __ui = __cbCanvasModules.createUiHelpers({
         addDataPointCard,
+        addInputCard,
         cardContainerRef: () => cardContainer,
         canvasAreaRef: () => canvasArea,
         screenToCanvas,
@@ -140,6 +141,9 @@
         refreshClusters,
         updateGroupCredits,
         updateDpCosts,
+        // Used by the per-ER frequency badge to propagate a picked value
+        // across every ER in the same snap-cluster ("update one, all update").
+        getSnapClusters,
       });
     }
     return __cards;
@@ -372,8 +376,8 @@
 
   // ---- Bulk Data Point Input ----
 
-  function showBulkInput(canvasX, canvasY) {
-    getUiHelpers().showBulkInput(canvasX, canvasY);
+  function showBulkInput(canvasX, canvasY, options) {
+    getUiHelpers().showBulkInput(canvasX, canvasY, options);
   }
 
   function removeBulkInput() {
@@ -628,6 +632,21 @@
     return getCardHelpers().updateDefaultFillRates(records);
   }
 
+  function updateDefaultFrequencies(globalFreqId) {
+    return getCardHelpers().updateDefaultFrequencies(globalFreqId);
+  }
+
+  function applyClusterFrequency(originCardId, freqId) {
+    return getCardHelpers().applyClusterFrequency(originCardId, freqId);
+  }
+
+  // Public hook used by overlay.js when the global frequency changes — it
+  // lets the summary bar re-run the credit math without having to know about
+  // the internal notifyCreditTotal function.
+  function refreshCreditTotal() {
+    return notifyCreditTotal();
+  }
+
   // ---- Groups ----
 
   function createGroupLabel(initialValue) {
@@ -797,14 +816,21 @@
       endSelectionBox();
       const pt = screenToCanvas(pending.x, pending.y);
       if (activeTool === "dp") {
-        if (pending.shiftKey) {
-          showBulkInput(pt.x, pt.y);
-        } else if (pending.altKey) {
+        // Ordering matters: Alt wins (matches the hover-preview state machine
+        // in ui.js), then Cmd+Shift (bulk input) wins over plain Shift (bulk
+        // DP) and plain Cmd (single input). `pending.metaKey` is already
+        // normalized to `e.metaKey || e.ctrlKey` at mousedown time, so
+        // Ctrl+Shift works the same on Windows/Linux.
+        if (pending.altKey) {
           const card = addCommentCard("", { x: pt.x, y: pt.y });
           requestAnimationFrame(() => {
             const textEl = card.el.querySelector(".cb-comment-text");
             if (textEl) textEl.focus();
           });
+        } else if (pending.metaKey && pending.shiftKey) {
+          showBulkInput(pt.x, pt.y, { type: "input" });
+        } else if (pending.shiftKey) {
+          showBulkInput(pt.x, pt.y);
         } else if (pending.metaKey) {
           const card = addInputCard("", { x: pt.x, y: pt.y });
           requestAnimationFrame(() => {
@@ -1001,6 +1027,13 @@
   }
 
   function restore(state) {
+    // Always clear before re-applying. Without this, repeated restores (live
+    // save propagation in particular) accumulate duplicate cards/groups in
+    // both the cards array and the DOM, because addCard and friends never
+    // check for existing ids. No-op when the canvas is already empty (first
+    // restore on canvas open / tab switch). Mirrors the explicit clear that
+    // undo/redo already do before calling persistence.restore.
+    clearCanvas();
     getPersistenceHelpers().restore(state);
     refreshClusters();
     lastSnapshot = captureSnapshot();
@@ -1092,9 +1125,23 @@
     zoomOut: () => zoomBy(-0.15),
     refreshClusters,
     getCardById,
+    getSnapClusters,
+    // Live snapshot of the cards array. External read-only consumers (e.g. the
+    // export-as-table modal) need this to enumerate every card. Mutating the
+    // returned array directly would corrupt internal state — go through addCard
+    // / removeCard / card.data setters instead.
+    getCards: () => cards.slice(),
+    // Exposed so external editors (e.g. the export-as-table modal) can mark
+    // canvas-data edits — both for undo history and for kicking the
+    // debounced save / collaborator refresh that onCanvasStateChange does.
+    notifyChange,
     showBulkInput,
     recenterView,
     updateDefaultFillRates,
+    updateDefaultFrequencies,
+    applyClusterFrequency,
+    refreshCreditTotal,
+    updateGroupCredits,
     // Exposed for the cursor overlay: cursors are rendered inside cardContainer
     // so they inherit pan/zoom. screenToCanvas converts mousemove events from
     // viewport pixels to the canvas's coordinate space before broadcasting.

@@ -78,7 +78,29 @@
       refreshClusters,
       updateGroupCredits,
       updateDpCosts,
+      getSnapClusters,
     } = deps;
+
+    // Keep this predicate in sync with the identical one in credits.js —
+    // "non-ER" means the card is not an enrichment and therefore doesn't
+    // carry credits or a frequency.
+    function isNonErType(type) {
+      return type === "dp" || type === "input" || type === "comment";
+    }
+
+    // Writes the current frequency onto the DOM label inside a card. Called
+    // both from the badge factory (initial render) and from the cluster /
+    // global propagation helpers when the value changes elsewhere.
+    function renderFreqLabel(card) {
+      if (!card || !card.el) return;
+      const label = card.el.querySelector(".cb-er-freq-label");
+      if (!label) return;
+      const cb = window.__cb;
+      const effectiveId = card.data.frequencyCustom
+        ? card.data.frequency
+        : (card.data.frequency || cb.getCurrentFrequencyId());
+      label.textContent = "\u00d7" + cb.getFrequencyMultiplier(effectiveId);
+    }
 
     const EDITABLE_PLACEHOLDERS = {
       dp: "Type data point\u2026",
@@ -346,6 +368,16 @@
       }
       ensureNextCardId(id);
 
+      // Seed frequency defaults on every ER-like card. Doing it here (instead
+      // of at every call site in picker/table-import/etc.) means existing
+      // state loaded from localStorage or Supabase automatically gets the
+      // defaults if it was saved before the frequency feature shipped.
+      if (!isNonErType(data.type)) {
+        const cb = window.__cb;
+        if (data.frequency == null) data.frequency = cb.getCurrentFrequencyId();
+        if (data.frequencyCustom == null) data.frequencyCustom = false;
+      }
+
       const card = { id, x, y, data, el: null, handles: {}, groupId: null };
       const el = document.createElement("div");
       el.className = "cb-card";
@@ -401,6 +433,28 @@
             evt.preventDefault();
             name.blur();
           }
+        });
+      } else {
+        // Non-editable ER names: only make them focusable when the text is
+        // actually being truncated by line-clamp:1. Names that fit on one
+        // line stay as plain spans so clicking falls through to the card's
+        // selection/drag handler (matching the rest of the card surface).
+        //
+        // Deferred to rAF because `name` isn't in the DOM yet — the card
+        // element is appended further down in addCard. rAF also batches
+        // measurements across many cards into a single layout pass.
+        requestAnimationFrame(() => {
+          const isTruncated = name.scrollHeight > name.clientHeight + 1;
+          if (!isTruncated) return;
+          name.tabIndex = 0;
+          name.classList.add("cb-card-name-truncated");
+          name.addEventListener("mousedown", (evt) => evt.stopPropagation());
+          name.addEventListener("keydown", (evt) => {
+            if (evt.key === "Enter" || evt.key === "Escape") {
+              evt.preventDefault();
+              name.blur();
+            }
+          });
         });
       }
       row_.appendChild(icon);
@@ -469,6 +523,43 @@
         }
 
         badgeRow.appendChild(costBadge);
+      }
+
+      // Frequency badge — always rendered for ER cards (anything that reaches
+      // addCard, i.e. not DP/input/comment). Sits between the credit pill
+      // and the model chip so it slots into the existing segmented-pill
+      // border-radius rules (first/last-child) without extra work.
+      if (!isNonErType(data.type)) {
+        const freqBadge = document.createElement("button");
+        freqBadge.type = "button";
+        freqBadge.className = "cb-card-badge cb-er-freq";
+        freqBadge.title = "Click to change how often this enrichment runs";
+        const freqLabelEl = document.createElement("span");
+        freqLabelEl.className = "cb-er-freq-label";
+        const cb = window.__cb;
+        const effectiveId = data.frequencyCustom
+          ? data.frequency
+          : (data.frequency || cb.getCurrentFrequencyId());
+        freqLabelEl.textContent = "\u00d7" + cb.getFrequencyMultiplier(effectiveId);
+        freqBadge.appendChild(freqLabelEl);
+
+        freqBadge.addEventListener("mousedown", (evt) => evt.stopPropagation());
+        freqBadge.addEventListener("click", (evt) => {
+          evt.stopPropagation();
+          const currentId = card.data.frequencyCustom
+            ? card.data.frequency
+            : (card.data.frequency || cb.getCurrentFrequencyId());
+          cb.showFrequencyPicker(freqBadge, currentId, (picked) => {
+            applyClusterFrequency(card.id, picked);
+            notifyCreditTotal();
+            if (updateDpCosts) updateDpCosts();
+            if (updateGroupCredits) updateGroupCredits();
+            notifyChange();
+            if (window.__cb.saveTabs) window.__cb.saveTabs();
+          });
+        });
+
+        badgeRow.appendChild(freqBadge);
       }
 
       if (data.isAi && data.modelOptions && data.modelOptions.length > 0) {
@@ -849,6 +940,40 @@
       }
     }
 
+    // Global → ER propagation. Mirrors updateDefaultFillRates: when the user
+    // picks a new default in the summary bar, walk every ER that hasn't been
+    // individually customized and sync its value. Customized ER cards are
+    // left alone — their `frequencyCustom` flag is a "user touched this,
+    // stop auto-updating" marker, same as fillRateCustom for DP cards.
+    function updateDefaultFrequencies(globalFreqId) {
+      for (const card of cardsRef()) {
+        if (!card?.data || isNonErType(card.data.type)) continue;
+        if (card.data.frequencyCustom) continue;
+        card.data.frequency = globalFreqId;
+        renderFreqLabel(card);
+      }
+    }
+
+    // Cluster propagation — the "update one, all update" rule. Called by the
+    // per-ER badge when the user picks a frequency. Walks the snap-cluster
+    // containing the origin card and applies the picked value to every ER
+    // in that cluster, marking each as custom so the global default no
+    // longer rewrites them. DP / input / comment cards in the same cluster
+    // are skipped; they don't carry a frequency. Standalone ERs (no cluster
+    // match, or a singleton cluster) update just themselves.
+    function applyClusterFrequency(originCardId, freqId) {
+      const clusters = typeof getSnapClusters === "function" ? getSnapClusters() : [];
+      const match = clusters.find((ids) => ids.includes(originCardId));
+      const targetIds = match ? match : [originCardId];
+      for (const id of targetIds) {
+        const card = getCardById(id);
+        if (!card || !card.data || isNonErType(card.data.type)) continue;
+        card.data.frequency = freqId;
+        card.data.frequencyCustom = true;
+        renderFreqLabel(card);
+      }
+    }
+
     return {
       addCard,
       addDataPointCard,
@@ -858,6 +983,8 @@
       startCardMouseInteraction,
       syncDpText,
       updateDefaultFillRates,
+      updateDefaultFrequencies,
+      applyClusterFrequency,
     };
   };
 })();

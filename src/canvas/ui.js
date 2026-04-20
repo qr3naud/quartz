@@ -6,6 +6,7 @@
   window.__cbCanvasModules.createUiHelpers = function createUiHelpers(deps) {
     const {
       addDataPointCard,
+      addInputCard,
       cardContainerRef,
       canvasAreaRef,
       screenToCanvas,
@@ -214,7 +215,12 @@
       if (refreshClusters) refreshClusters();
     }
 
-    function showBulkInput(canvasX, canvasY) {
+    function showBulkInput(canvasX, canvasY, options) {
+      // `type` chooses which card factory + placeholder to use. "dp" is the
+      // original behavior (Shift+Click); "input" is the new Cmd+Shift+Click
+      // bulk-input flow. Only these two are supported — anything else falls
+      // back to "dp" so callers can't silently request an unsupported type.
+      const type = options?.type === "input" ? "input" : "dp";
       removeBulkInput();
 
       const cardContainer = cardContainerRef();
@@ -226,7 +232,9 @@
 
       const textarea = document.createElement("textarea");
       textarea.className = "cb-bulk-textarea";
-      textarea.placeholder = "Type data points, separated by commas...";
+      textarea.placeholder = type === "input"
+        ? "Type inputs, separated by commas..."
+        : "Type data points, separated by commas...";
       textarea.rows = 4;
       textarea.addEventListener("mousedown", (e) => e.stopPropagation());
 
@@ -248,11 +256,16 @@
         window.__cb.linkTargetCardId = null;
 
         if (linkTargetId) {
+          // ER-linked bulk is DP-only — that flow is only reachable from the
+          // DP-double-clicks-ER gesture, which always seeds DP cards next to
+          // the ER. Generalizing placeDpsAdjacentTo isn't needed for Cmd+Shift
+          // since that never sets linkTargetCardId.
           placeDpsAdjacentTo(linkTargetId, unique);
         } else {
           const V_GAP = 80;
+          const addFn = type === "input" ? addInputCard : addDataPointCard;
           for (let i = 0; i < unique.length; i++) {
-            addDataPointCard(unique[i], { x: canvasX, y: canvasY + i * V_GAP });
+            addFn(unique[i], { x: canvasX, y: canvasY + i * V_GAP });
           }
         }
       }
@@ -320,7 +333,7 @@
       }
 
       const editingText = cardContainerRef()?.querySelector(
-        ".cb-dp-text:focus, .cb-input-text:focus, .cb-comment-text:focus, .cb-card-name-editable:focus"
+        ".cb-dp-text:focus, .cb-input-text:focus, .cb-comment-text:focus, .cb-card-name:focus"
       );
       if (editingText) {
         hideHoverPreview();
@@ -350,20 +363,29 @@
 
       const pt = screenToCanvas(clientX, clientY);
       const isDp = activeToolRef() === "dp";
-      const isInput = isDp && (metaKey || ctrlKey) && !altKey;
+      // Alt wins over Cmd/Ctrl (matches the click dispatch in index.js).
+      // `isModCombo` is the Cmd-or-Ctrl-held-and-not-Alt state; Shift within
+      // that state distinguishes bulk-input from plain-input.
+      const isModCombo = (metaKey || ctrlKey) && !altKey;
       const isComment = isDp && altKey;
-      const isPlainDp = isDp && !isInput && !isComment;
+      const isBulkInput = isDp && isModCombo && shiftKey;
+      const isInput = isDp && isModCombo && !shiftKey;
+      const isBulkDp = isDp && !isModCombo && !altKey && shiftKey;
+      const isPlainDp = isDp && !isInput && !isComment && !isBulkInput && !isBulkDp;
 
-      hoverPreviewEl.classList.toggle("cb-hover-preview-dp", isPlainDp);
-      hoverPreviewEl.classList.toggle("cb-hover-preview-input", isInput);
+      // `cb-hover-preview-input` carries the rose color; `cb-hover-preview-bulk`
+      // is a pure size modifier (wider, taller). Composing them gives us
+      // rose-bulk (for bulk-input) without needing new CSS.
+      hoverPreviewEl.classList.toggle("cb-hover-preview-dp", isPlainDp || isBulkDp);
+      hoverPreviewEl.classList.toggle("cb-hover-preview-input", isInput || isBulkInput);
       hoverPreviewEl.classList.toggle("cb-hover-preview-comment", isComment);
       hoverPreviewEl.classList.toggle("cb-hover-preview-er", activeToolRef() === "er");
-      hoverPreviewEl.classList.toggle("cb-hover-preview-bulk", isDp && shiftKey && !isInput && !isComment);
+      hoverPreviewEl.classList.toggle("cb-hover-preview-bulk", isBulkDp || isBulkInput);
 
       let label = "";
       if (isComment) label = "Comment";
+      else if (isBulkInput || isBulkDp) label = "Bulk";
       else if (isInput) label = "Input";
-      else if (isPlainDp && shiftKey) label = "Bulk Input";
       else if (isPlainDp) label = "Data Point";
       else if (activeToolRef() === "er") label = "Enrichment";
       hoverPreviewEl.textContent = label;

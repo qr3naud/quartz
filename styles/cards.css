@@ -34,13 +34,33 @@
   box-shadow: none;
 }
 
-.cb-card-snapped.cb-snap-top    { border-top-left-radius: 0; border-top-right-radius: 0; }
-.cb-card-snapped.cb-snap-bottom { border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
-.cb-card-snapped.cb-snap-left   { border-top-left-radius: 0; border-bottom-left-radius: 0; }
-.cb-card-snapped.cb-snap-right  { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+.cb-card-snapped.cb-snap-top {
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+}
 
-.cb-card-dp.cb-card-snapped       { outline-color: #cbd5e1; }
-.cb-card-dp.cb-card-snapped:hover  { outline-color: #cbd5e1; }
+.cb-card-snapped.cb-snap-bottom {
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.cb-card-snapped.cb-snap-left {
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+}
+
+.cb-card-snapped.cb-snap-right {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.cb-card-dp.cb-card-snapped {
+  outline-color: #cbd5e1;
+}
+
+.cb-card-dp.cb-card-snapped:hover {
+  outline-color: #cbd5e1;
+}
 
 .cb-card.cb-card-selected:hover {
   outline-color: #6366f1;
@@ -95,14 +115,9 @@
   color: #111827;
   line-height: 1.3;
   display: -webkit-box;
-  -webkit-line-clamp: 2;
+  -webkit-line-clamp: 1;
   -webkit-box-orient: vertical;
   overflow: hidden;
-}
-
-.cb-card:has(.cb-card-badge-credit) .cb-card-name,
-.cb-card:has(.cb-card-badge-key) .cb-card-name {
-  -webkit-line-clamp: 1;
 }
 
 .cb-card-name-editable {
@@ -114,6 +129,32 @@
   content: "Type name\2026";
   color: #9ca3af;
   pointer-events: none;
+}
+
+/* Focus-driven expand: mirrors .cb-dp-text:focus / .cb-input-text:focus.
+   Fires for both AI editable names (contentEditable) and ER non-editable
+   names that JS marked truncated and made focusable via tabindex. */
+.cb-card-name:focus {
+  display: block;
+  -webkit-line-clamp: unset;
+  word-break: break-word;
+  overflow: visible;
+  outline: none;
+}
+
+/* Lets the card grow vertically when its name is focused. Scoped to
+   .cb-card (not .cb-card-dp) so AI and ER cards both benefit; DP cards
+   use their own .cb-card-dp:has(.cb-dp-text:focus) rule. */
+.cb-card:has(.cb-card-name:focus) {
+  height: auto;
+  min-height: 70px;
+}
+
+/* Cursor affordance is gated on the truncated class that cards.js adds
+   only when the name actually overflows — so names that fit on one line
+   keep the default cursor and fall through to the card's drag/select. */
+.cb-card-name.cb-card-name-truncated {
+  cursor: text;
 }
 
 /* ---- Badges row ---- */
@@ -195,6 +236,29 @@
 
 .cb-card-badge-key:hover {
   background: #eff6ff;
+}
+
+/* Frequency badge (multiplier displayed on ER cards).
+   Inherits .cb-card-badge sizing so it snaps into the segmented pill row
+   alongside the credit/key badge. Amber accent to read as "schedule /
+   recurrence", visually distinct from the green credit badge, the blue
+   private-key badge, and the indigo AI model chip. */
+
+.cb-er-freq {
+  color: #b45309;
+  cursor: pointer;
+  border-color: #e5e7eb;
+  background: #ffffff;
+  font-variant-numeric: tabular-nums;
+}
+
+.cb-er-freq:hover {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.cb-er-freq-label {
+  letter-spacing: 0.01em;
 }
 
 /* Key / credit toggle dropdown */
@@ -366,8 +430,13 @@
   box-shadow: 0 0 0 2px rgba(225, 29, 72, 0.25), 0 4px 14px rgba(0, 0, 0, 0.1);
 }
 
-.cb-card-input.cb-card-snapped       { outline-color: #cbd5e1; }
-.cb-card-input.cb-card-snapped:hover  { outline-color: #cbd5e1; }
+.cb-card-input.cb-card-snapped {
+  outline-color: #cbd5e1;
+}
+
+.cb-card-input.cb-card-snapped:hover {
+  outline-color: #cbd5e1;
+}
 
 .cb-input-text {
   font-size: 13px;
@@ -439,8 +508,13 @@
   box-shadow: 0 0 0 2px rgba(180, 83, 9, 0.25), 0 4px 14px rgba(0, 0, 0, 0.1);
 }
 
-.cb-card-comment.cb-card-snapped       { outline-color: #cbd5e1; }
-.cb-card-comment.cb-card-snapped:hover  { outline-color: #cbd5e1; }
+.cb-card-comment.cb-card-snapped {
+  outline-color: #cbd5e1;
+}
+
+.cb-card-comment.cb-card-snapped:hover {
+  outline-color: #cbd5e1;
+}
 
 .cb-comment-text {
   font-size: 13px;

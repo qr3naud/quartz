@@ -71,6 +71,35 @@
     }
   }
 
+  // Picks an activeId from a list of tabs, preferring (in order):
+  //   1. The previously-active tab id stored in localStorage for this workbook
+  //   2. The first non-hidden tab
+  //   3. The first tab regardless of hidden flag
+  function pickActiveId(tabs, workbookId) {
+    if (!tabs || tabs.length === 0) return null;
+    let preferred = null;
+    try {
+      preferred = localStorage.getItem(`cb-active-tab-${workbookId}`);
+    } catch {}
+    if (preferred && tabs.some(t => t.id === preferred)) return preferred;
+    const visible = tabs.find(t => !t.hidden);
+    return visible ? visible.id : tabs[0].id;
+  }
+
+  // Builds a tabStore object from a list of canvas_tabs rows (DB shape).
+  function tabStoreFromRows(rows, workbookId) {
+    const tabs = (rows || []).map(r => ({
+      id: r.tab_id,
+      name: r.name || "Scoping",
+      hidden: !!r.hidden,
+      state: r.state || {},
+    }));
+    return {
+      activeId: pickActiveId(tabs, workbookId),
+      tabs,
+    };
+  }
+
   // Tries Supabase first (network) then falls back to localStorage. The
   // function is async because of the network call; callers must `await` it.
   // If Supabase is unreachable, behavior matches the pre-Supabase extension.
@@ -82,16 +111,41 @@
     const supa = window.__cbSupabase;
     if (ids && supa) {
       try {
-        const rows = await supa.supabaseFetch("canvases", "GET", {
+        // New per-tab path: read canvas_tabs rows ordered by sort_order.
+        const rows = await supa.supabaseFetch("canvas_tabs", "GET", {
+          query: {
+            workbook_id: `eq.${ids.workbookId}`,
+            select: "*",
+            order: "sort_order.asc",
+          },
+        });
+        if (Array.isArray(rows) && rows.length > 0) {
+          const store = tabStoreFromRows(rows, ids.workbookId);
+          // Cache to localStorage so we still work offline next time. We've
+          // already ensured the canvases row exists since rows came back, so
+          // mark it as ensured to skip a redundant POST on the next save.
+          ensuredCanvasRows.add(ids.workbookId);
+          try {
+            localStorage.setItem(key, JSON.stringify(store));
+          } catch (e) {
+            console.warn("[Clay Scoping] localStorage cache write failed:", e);
+          }
+          bumpNextTabIdFromStore(store);
+          return store;
+        }
+
+        // Legacy fallback: workbook predates the canvas_tabs split. Read the
+        // full state out of canvases.state. Backfill should have caught most
+        // of these but leave the path in for safety.
+        const legacy = await supa.supabaseFetch("canvases", "GET", {
           query: {
             workbook_id: `eq.${ids.workbookId}`,
             select: "state",
             limit: "1",
           },
         });
-        if (Array.isArray(rows) && rows.length > 0 && rows[0].state) {
-          const store = rows[0].state;
-          // Cache to localStorage so we still work offline next time.
+        if (Array.isArray(legacy) && legacy.length > 0 && legacy[0].state?.tabs) {
+          const store = legacy[0].state;
           try {
             localStorage.setItem(key, JSON.stringify(store));
           } catch (e) {
@@ -130,55 +184,120 @@
     }
   }
 
-  // Pushes the current tab store to Supabase (canvases + canvas_contributors).
-  // Fire-and-forget: errors are logged, never thrown. This runs after the
-  // localStorage write so even if Supabase is down, the user's work is safe.
-  async function pushToSupabase(workbookId, workspaceId, tabStore) {
+  // Tracks which workbook ids we've already ensured a canvases row for in
+  // this page lifetime. Avoids a redundant POST on every tab save when the
+  // parent row clearly exists (we just inserted/updated it ourselves).
+  const ensuredCanvasRows = new Set();
+
+  // Upserts the parent canvases row so the canvas_tabs FK is satisfied. Cheap
+  // metadata-only write -- no `state` column included now that per-tab state
+  // lives in canvas_tabs.
+  async function ensureCanvasRow(workbookId, workspaceId) {
+    if (!workbookId || ensuredCanvasRows.has(workbookId)) return;
     const supa = window.__cbSupabase;
     if (!supa) return;
-
     const updatedBy = __cb.userId || "unknown";
     const now = new Date().toISOString();
 
-    // Resolve the workbook name in parallel with the save. If it's not ready
-    // yet (first save after opening) we just upsert without it; a later save
-    // will fill it in. Avoids blocking the save on an extra network call.
     let workbookName = null;
-    if (__cb.getWorkbookName) {
+    if (__cb.getWorkbookName && workspaceId) {
       try {
         workbookName = await __cb.getWorkbookName(workspaceId, workbookId);
       } catch {
         workbookName = null;
       }
     }
-
-    const canvasBody = {
+    const body = {
       workbook_id: workbookId,
       workspace_id: workspaceId,
-      state: tabStore,
       updated_at: now,
       updated_by: updatedBy,
     };
-    if (workbookName) canvasBody.workbook_name = workbookName;
+    if (workbookName) body.workbook_name = workbookName;
 
-    supa.supabaseFetch("canvases", "POST", {
-      prefer: "resolution=merge-duplicates",
-      body: canvasBody,
-    }).then(() => {
-      // Only record contributorship if we have a real user id. The contributor
-      // upsert depends on the canvas row existing, so we chain it after.
-      if (!__cb.userId) return null;
-      return supa.supabaseFetch("canvas_contributors", "POST", {
+    try {
+      await supa.supabaseFetch("canvases", "POST", {
+        prefer: "resolution=merge-duplicates",
+        body,
+      });
+      ensuredCanvasRows.add(workbookId);
+    } catch (err) {
+      console.warn("[Clay Scoping] ensureCanvasRow failed:", err);
+    }
+  }
+
+  // Convenience: upsert a tab by id, looking up its sort_order from the
+  // current tabStore order. Used by tab CRUD paths (rename, hide, restore,
+  // create, duplicate) so they don't have to compute sort_order themselves.
+  async function saveTabRow(tabId) {
+    if (!__cb.tabStore) return;
+    const tab = __cb.tabStore.tabs.find(t => t.id === tabId);
+    if (!tab) return;
+    const idx = __cb.tabStore.tabs.indexOf(tab);
+    const workbookId = __cb.currentWorkbookId || __cb.parseIdsFromUrl()?.workbookId;
+    const workspaceId = __cb.currentWorkspaceId || __cb.parseIdsFromUrl()?.workspaceId;
+    if (!workbookId) return;
+    await pushTabToSupabase(workbookId, workspaceId, tab, idx);
+  }
+
+  // DELETE a canvas_tabs row. Trigger fires tabState/tabInvalidate with
+  // operation=DELETE so peers can drop the tab from their local tabStore too.
+  async function deleteTabRow(tabId) {
+    const supa = window.__cbSupabase;
+    if (!supa || !tabId) return;
+    const workbookId = __cb.currentWorkbookId || __cb.parseIdsFromUrl()?.workbookId;
+    if (!workbookId) return;
+    try {
+      await supa.supabaseFetch("canvas_tabs", "DELETE", {
+        query: {
+          workbook_id: `eq.${workbookId}`,
+          tab_id: `eq.${tabId}`,
+        },
+      });
+    } catch (err) {
+      console.warn("[Clay Scoping] deleteTabRow failed:", err);
+    }
+  }
+
+  // Upserts a single tab's row to canvas_tabs. The trigger broadcasts a
+  // tabState event (full row) and a tabInvalidate fallback to peers in the
+  // same workbook. Fire-and-forget: errors are logged, never thrown.
+  async function pushTabToSupabase(workbookId, workspaceId, tab, sortOrder) {
+    const supa = window.__cbSupabase;
+    if (!supa || !workbookId || !tab?.id) return;
+    const updatedBy = __cb.userId || "unknown";
+    const now = new Date().toISOString();
+
+    // FK parent must exist. Cheap and idempotent (cached via ensuredCanvasRows).
+    await ensureCanvasRow(workbookId, workspaceId);
+
+    try {
+      await supa.supabaseFetch("canvas_tabs", "POST", {
         prefer: "resolution=merge-duplicates",
         body: {
           workbook_id: workbookId,
-          user_id: __cb.userId,
-          last_accessed_at: now,
+          tab_id: tab.id,
+          name: tab.name || "Scoping",
+          hidden: tab.hidden ?? false,
+          sort_order: sortOrder ?? 0,
+          state: tab.state || {},
+          updated_at: now,
+          updated_by: updatedBy,
         },
       });
-    }).catch(err => {
-      console.warn("[Clay Scoping] Supabase save failed:", err);
-    });
+      if (__cb.userId) {
+        await supa.supabaseFetch("canvas_contributors", "POST", {
+          prefer: "resolution=merge-duplicates",
+          body: {
+            workbook_id: workbookId,
+            user_id: __cb.userId,
+            last_accessed_at: now,
+          },
+        });
+      }
+    } catch (err) {
+      console.warn("[Clay Scoping] pushTabToSupabase failed:", err);
+    }
   }
 
   /**
@@ -218,9 +337,15 @@
     const workspaceId = __cb.currentWorkspaceId || __cb.parseIdsFromUrl()?.workspaceId;
     if (!workbookId || !__cb.tabStore) return;
     const key = `cb-tabs-${workbookId}`;
+
+    // Re-serialize the active tab from the live canvas so the in-memory
+    // tabStore reflects what the user actually sees right now.
+    let activeTab = null;
+    let activeIndex = -1;
     if (__cb.canvas && __cb.tabStore.activeId) {
-      const activeTab = __cb.tabStore.tabs.find(t => t.id === __cb.tabStore.activeId);
-      if (activeTab) {
+      activeIndex = __cb.tabStore.tabs.findIndex(t => t.id === __cb.tabStore.activeId);
+      if (activeIndex !== -1) {
+        activeTab = __cb.tabStore.tabs[activeIndex];
         const state = __cb.canvas.serialize();
         const recordsInput = document.getElementById("cb-records-input");
         if (recordsInput) state.records = recordsInput.value;
@@ -230,16 +355,32 @@
         if (creditCostInput) state.creditCost = creditCostInput.value;
         if (actionCostInput) state.actionCost = actionCostInput.value;
         if (pricingGroup) state.pricingExpanded = pricingGroup.classList.contains("is-expanded");
+        // Persist the global frequency default alongside the other
+        // summary-bar values. Per-ER overrides ride along inside each card's
+        // `data.frequency` / `data.frequencyCustom`, so they come back for
+        // free via canvas.serialize() above.
+        state.frequency = __cb.getCurrentFrequencyId
+          ? __cb.getCurrentFrequencyId()
+          : __cb.DEFAULT_FREQUENCY_ID;
         activeTab.state = state;
       }
     }
+
+    // Local-first: localStorage cache is always current. We still write the
+    // full tabStore here because that's what loadTabsLocal reads, and it's
+    // a useful offline backup.
     try {
       localStorage.setItem(key, JSON.stringify(__cb.tabStore));
     } catch (e) {
       console.warn("[Clay Scoping] saveTabs failed:", e);
     }
 
-    if (workspaceId) pushToSupabase(workbookId, workspaceId, __cb.tabStore);
+    // Persist only the active tab to Supabase. Other tabs aren't dirty and
+    // don't need to be re-uploaded; their canvas_tabs rows still hold the
+    // last-saved state.
+    if (activeTab) {
+      pushTabToSupabase(workbookId, workspaceId, activeTab, activeIndex);
+    }
   };
 
   __cb.debouncedSave = function () {
@@ -253,25 +394,24 @@
 
   // ---- Live save propagation (Supabase Realtime postgres_changes) ----
 
-  // Deliberately conservative: we only apply a remote update when it's safe
-  // to overwrite local state. If any of these are true we skip; the next
-  // save from either side will resync.
-  //
-  // Scope the check to OUR overlay only: Clay's own frontend has many inputs
-  // that can be focused (search boxes, cell editors, etc.) and we don't want
-  // to block remote updates just because the user clicked on Clay's UI.
-  function isUserInteracting() {
-    const el = document.activeElement;
-    if (!el) return false;
-    if (!__cb.overlayEl || !__cb.overlayEl.contains(el)) return false;
-    const tag = el.tagName;
-    if (tag === "INPUT" || tag === "TEXTAREA") return true;
-    if (el.isContentEditable) return true;
-    return false;
-  }
+  // "Actively typing" check: clicking a card auto-focuses its contenteditable
+  // text, so gating on focus alone (as we did before) froze live sync until
+  // the user happened to click the empty canvas. We now only block when a
+  // keystroke happened within the last INTERACTING_KEYSTROKE_WINDOW_MS. Stale
+  // focus is fine; mid-word typing is what we're protecting against.
+  const INTERACTING_KEYSTROKE_WINDOW_MS = 1500;
+  let lastKeystrokeAt = 0;
+  // Capture phase so we see the keystroke even if Clay/our own handlers
+  // stopPropagation before bubble. We never prevent default; this is purely
+  // observational.
+  document.addEventListener(
+    "keydown",
+    () => { lastKeystrokeAt = Date.now(); },
+    true,
+  );
 
-  function hasPendingSave() {
-    return saveTimer != null;
+  function isUserInteracting() {
+    return Date.now() - lastKeystrokeAt < INTERACTING_KEYSTROKE_WINDOW_MS;
   }
 
   /**
@@ -279,15 +419,48 @@
    * realtime postgres_changes subscription, set up in installRealtimeSync()
    * below. Keeps the local activeId when the tab still exists remotely so
    * switching tabs in a peer's save doesn't yank you to a different tab.
+   *
+   * We deliberately do NOT skip when a local save is pending: that save will
+   * fire within ~500ms and overwrite the peer's state with ours anyway, so
+   * applying the remote in the interim just gives a brief preview of the
+   * peer's work rather than freezing live sync until our timer fires.
    */
   function applyRemoteCanvas(newRow) {
-    if (!newRow || !newRow.state) return;
-    // Ignore our own echo.
-    if (newRow.updated_by && newRow.updated_by === __cb.userId) return;
-    // Don't clobber in-flight local edits.
-    if (hasPendingSave() || isUserInteracting()) return;
+    // Verbose-only logs: silent unless DevTools "Verbose" filter is on.
+    // Each early-return path tells us why a remote update was skipped, which
+    // is the question that comes up most often when "live updates aren't
+    // working".
+    if (!newRow) {
+      console.debug("[Clay Scoping] skip remote: no row");
+      return;
+    }
 
-    const remote = newRow.state;
+    // Normalize stringified state. Some transports (notably BfD via
+    // realtime.broadcast_changes) serialize jsonb columns into JSON strings
+    // by the time they reach the client. Accepting both keeps this handler
+    // transport-agnostic.
+    let state = newRow.state;
+    if (typeof state === "string") {
+      try { state = JSON.parse(state); }
+      catch { state = null; }
+    }
+    if (!state || typeof state !== "object") {
+      console.debug("[Clay Scoping] skip remote: no state", { stateType: typeof newRow.state });
+      return;
+    }
+
+    // Ignore our own echo.
+    if (newRow.updated_by && newRow.updated_by === __cb.userId) {
+      console.debug("[Clay Scoping] skip remote: own echo", { updatedBy: newRow.updated_by });
+      return;
+    }
+    // Only skip if the user is mid-keystroke (typing). Stale focus is fine.
+    if (isUserInteracting()) {
+      console.debug("[Clay Scoping] skip remote: user typing");
+      return;
+    }
+
+    const remote = state;
     const localActiveId = __cb.tabStore?.activeId;
 
     const next = { ...remote };
@@ -308,7 +481,17 @@
 
     const active = next.tabs?.find(t => t.id === next.activeId);
     if (active?.state && __cb.canvas) {
-      __cb.canvas.restore(active.state);
+      console.debug("[Clay Scoping] applying remote canvas", {
+        tabs: next.tabs?.length,
+        activeId: next.activeId,
+        cards: active.state.cards?.length,
+        groups: active.state.groups?.length,
+      });
+      // Drop view so user B keeps their own pan/zoom rather than being
+      // teleported to user A's last view position. Same pattern undo/redo
+      // already uses internally.
+      const { view: _ignoredView, ...stateForRestore } = active.state;
+      __cb.canvas.restore(stateForRestore);
       const recordsInput = document.getElementById("cb-records-input");
       if (recordsInput && active.state.records != null) {
         recordsInput.value = active.state.records;
@@ -328,6 +511,135 @@
   };
   __cb.uninstallRealtimeCanvasSync = function () {
     if (unsubCanvasUpdate) { unsubCanvasUpdate(); unsubCanvasUpdate = null; }
+  };
+
+  // ---- Per-tab remote apply (canvas_tabs broadcasts) ----
+
+  // Applies a remote canvas_tabs row into the local tabStore. The active
+  // tab's state is re-rendered via canvas.restore; other tabs are updated
+  // in memory only and the user sees them next time they switch.
+  function applyRemoteTab(row) {
+    // Loud entry log so we always know when applyRemoteTab fires, regardless
+    // of which skip path is hit below.
+    console.log("[Clay Scoping] applyRemoteTab entered", {
+      tabId: row?.tab_id,
+      workbookId: row?.workbook_id,
+      updatedBy: row?.updated_by,
+      deleted: !!row?.__deleted,
+    });
+
+    if (!row?.tab_id || !row.workbook_id) {
+      console.log("[Clay Scoping] applyRemoteTab skipped: missing ids");
+      return;
+    }
+    if (!__cb.tabStore) {
+      console.log("[Clay Scoping] applyRemoteTab skipped: no tabStore");
+      return;
+    }
+
+    // Only apply to the workbook we're currently viewing -- other channels
+    // shouldn't even deliver these events, but be defensive.
+    const currentWorkbookId = __cb.currentWorkbookId || __cb.parseIdsFromUrl()?.workbookId;
+    if (currentWorkbookId && row.workbook_id !== currentWorkbookId) {
+      console.log("[Clay Scoping] applyRemoteTab skipped: different workbook", {
+        rowWorkbookId: row.workbook_id,
+        currentWorkbookId,
+      });
+      return;
+    }
+
+    if (row.updated_by && row.updated_by === __cb.userId) {
+      console.log("[Clay Scoping] applyRemoteTab skipped: own echo", { userId: __cb.userId });
+      return;
+    }
+
+    const tabs = __cb.tabStore.tabs;
+    const existingIdx = tabs.findIndex(t => t.id === row.tab_id);
+
+    // DELETE: drop the tab and switch away if we were viewing it.
+    if (row.__deleted) {
+      if (existingIdx === -1) {
+        console.log("[Clay Scoping] applyRemoteTab DELETE: tab not in local store, no-op");
+        return;
+      }
+      tabs.splice(existingIdx, 1);
+      console.log("[Clay Scoping] applyRemoteTab applied DELETE", { tabId: row.tab_id });
+      if (__cb.tabStore.activeId === row.tab_id) {
+        const fallback = tabs.find(t => !t.hidden) || tabs[0];
+        if (fallback) {
+          // Defer switchTab so callers (refetchTab, broadcast handler) finish
+          // their stack before we tear down/rebuild the canvas.
+          setTimeout(() => __cb.switchTab(fallback.id), 0);
+        }
+      }
+      const key = tabsStorageKey();
+      if (key) { try { localStorage.setItem(key, JSON.stringify(__cb.tabStore)); } catch {} }
+      try { renderTabBar(); } catch {}
+      return;
+    }
+
+    // Block while the user is mid-keystroke to avoid clobbering typing on
+    // the active tab. Background tabs are safe to update either way.
+    const isActive = __cb.tabStore.activeId === row.tab_id;
+    if (isActive && isUserInteracting()) {
+      console.log("[Clay Scoping] applyRemoteTab skipped: user typing on active tab");
+      return;
+    }
+
+    const newTab = {
+      id: row.tab_id,
+      name: row.name || "Scoping",
+      hidden: !!row.hidden,
+      state: row.state || {},
+    };
+
+    if (existingIdx === -1) {
+      // Insert at sort_order position (or append if past end).
+      const idx = Math.min(row.sort_order ?? tabs.length, tabs.length);
+      tabs.splice(idx, 0, newTab);
+    } else {
+      tabs[existingIdx] = newTab;
+    }
+
+    // Cache to localStorage so a refresh shows the new state.
+    const key = tabsStorageKey();
+    if (key) {
+      try { localStorage.setItem(key, JSON.stringify(__cb.tabStore)); } catch {}
+    }
+
+    // If this is the tab the user is currently viewing, repaint the canvas.
+    // Strip view so user B keeps their own pan/zoom (same pattern undo/redo
+    // already uses internally).
+    if (__cb.tabStore.activeId === row.tab_id && __cb.canvas) {
+      console.log("[Clay Scoping] applyRemoteTab applied (active)", {
+        tabId: row.tab_id,
+        cards: newTab.state?.cards?.length,
+        groups: newTab.state?.groups?.length,
+      });
+      const { view: _ignoredView, ...stateForRestore } = newTab.state;
+      __cb.canvas.restore(stateForRestore);
+      const recordsInput = document.getElementById("cb-records-input");
+      if (recordsInput && stateForRestore.records != null) {
+        recordsInput.value = stateForRestore.records;
+        recordsInput.dispatchEvent(new Event("input"));
+      }
+    } else {
+      console.log("[Clay Scoping] applyRemoteTab applied (background)", {
+        tabId: row.tab_id,
+      });
+    }
+
+    // Tab bar may need a redraw if name/hidden changed.
+    try { renderTabBar(); } catch {}
+  }
+
+  let unsubTabUpdate = null;
+  __cb.installRealtimeTabSync = function () {
+    if (unsubTabUpdate || !__cb.realtime?.onTabUpdate) return;
+    unsubTabUpdate = __cb.realtime.onTabUpdate(applyRemoteTab);
+  };
+  __cb.uninstallRealtimeTabSync = function () {
+    if (unsubTabUpdate) { unsubTabUpdate(); unsubTabUpdate = null; }
   };
 
   __cb.resetTabBar = function () {
@@ -557,6 +869,9 @@
 
     function finishRename() {
       tab.name = input.value.trim() || "Scoping";
+      // saveTabs only writes the active tab; explicitly upsert this one so a
+      // rename of a non-active tab still propagates to peers.
+      saveTabRow(tab.id);
       __cb.saveTabs();
       renderTabBar();
     }
@@ -683,7 +998,7 @@
     const newId = __cb.generateTabId();
     const clonedState = sourceTab.state
       ? JSON.parse(JSON.stringify(sourceTab.state))
-      : null;
+      : {};
 
     __cb.tabStore.tabs.push({
       id: newId,
@@ -692,6 +1007,7 @@
       state: clonedState,
     });
 
+    saveTabRow(newId);
     __cb.switchTab(newId);
   }
 
@@ -703,11 +1019,16 @@
     if (idx === -1) return;
     __cb.tabStore.tabs.splice(idx, 1);
 
+    // Drop the row from canvas_tabs. Trigger fires tabState DELETE so peers
+    // remove the tab from their local tabStore too.
+    deleteTabRow(tabId);
+
     if (__cb.tabStore.activeId === tabId) {
       const visibleTabs = __cb.tabStore.tabs.filter(t => !t.hidden);
       if (visibleTabs.length === 0) {
         const newId = __cb.generateTabId();
-        __cb.tabStore.tabs.push({ id: newId, name: "Scoping", hidden: false, state: null });
+        __cb.tabStore.tabs.push({ id: newId, name: "Scoping", hidden: false, state: {} });
+        saveTabRow(newId);
         __cb.switchTab(newId);
       } else {
         __cb.switchTab(visibleTabs[0].id);
@@ -739,13 +1060,14 @@
     const newId = __cb.generateTabId();
     const clonedState = template.state
       ? JSON.parse(JSON.stringify(template.state))
-      : null;
+      : {};
     __cb.tabStore.tabs.push({
       id: newId,
       name: template.name,
       hidden: false,
       state: clonedState,
     });
+    saveTabRow(newId);
     __cb.switchTab(newId);
   }
 
@@ -827,6 +1149,13 @@
 
     __cb.saveTabs();
 
+    // Per-user, per-workbook active tab. Keeps each user on the tab they
+    // last looked at when re-opening the workbook; not synced across users.
+    const switchWorkbookId = __cb.currentWorkbookId || __cb.parseIdsFromUrl()?.workbookId;
+    if (switchWorkbookId) {
+      try { localStorage.setItem(`cb-active-tab-${switchWorkbookId}`, tabId); } catch {}
+    }
+
     if (__cb.canvas) {
       __cb.canvas.destroy();
       __cb.canvas = null;
@@ -881,6 +1210,17 @@
       if (pricingToggleText) pricingToggleText.textContent = expanded ? "Hide" : "Show";
     }
 
+    // Apply the tab's saved global frequency. setGlobalFrequency walks the
+    // ER cards (updateDefaultFrequencies) and re-runs the credit math, so
+    // the summary-bar trigger, the ER badges, and the totals all end up in
+    // sync with the tab we just switched to.
+    if (__cb.setGlobalFrequency) {
+      __cb.setGlobalFrequency(
+        tab?.state?.frequency || __cb.DEFAULT_FREQUENCY_ID,
+        { skipSave: true }
+      );
+    }
+
     __cb.saveTabs();
     renderTabBar();
 
@@ -896,7 +1236,10 @@
     if (!__cb.tabStore) return;
     __cb.saveTabs();
     const tabId = __cb.generateTabId();
-    __cb.tabStore.tabs.push({ id: tabId, name: "Scoping", hidden: false, state: null });
+    __cb.tabStore.tabs.push({ id: tabId, name: "Scoping", hidden: false, state: {} });
+    // Persist the new tab row immediately so peers see it appear in their
+    // tab bar even before the user does anything inside it.
+    saveTabRow(tabId);
     __cb.switchTab(tabId);
   }
 
@@ -909,19 +1252,27 @@
     const tab = __cb.tabStore.tabs.find(t => t.id === tabId);
     if (!tab) return;
     tab.hidden = true;
+    // Persist hidden=true (UPDATE) so peers see the tab move to the deleted
+    // bin in their tab bar.
+    saveTabRow(tabId);
 
     const hiddenTabs = __cb.tabStore.tabs.filter(t => t.hidden);
     while (hiddenTabs.length > MAX_DELETED) {
       const oldest = hiddenTabs.shift();
       const idx = __cb.tabStore.tabs.indexOf(oldest);
-      if (idx !== -1) __cb.tabStore.tabs.splice(idx, 1);
+      if (idx !== -1) {
+        __cb.tabStore.tabs.splice(idx, 1);
+        // Capacity-driven hard delete: also drop the row from the DB.
+        deleteTabRow(oldest.id);
+      }
     }
 
     if (__cb.tabStore.activeId === tabId) {
       const visibleTabs = __cb.tabStore.tabs.filter(t => !t.hidden);
       if (visibleTabs.length === 0) {
         const newId = __cb.generateTabId();
-        __cb.tabStore.tabs.push({ id: newId, name: "Scoping", hidden: false, state: null });
+        __cb.tabStore.tabs.push({ id: newId, name: "Scoping", hidden: false, state: {} });
+        saveTabRow(newId);
         __cb.switchTab(newId);
       } else {
         __cb.switchTab(visibleTabs[0].id);
@@ -937,6 +1288,8 @@
     const tab = __cb.tabStore.tabs.find(t => t.id === tabId);
     if (!tab) return;
     tab.hidden = false;
+    // Persist hidden=false so peers see the tab reappear in the visible row.
+    saveTabRow(tabId);
     __cb.switchTab(tabId);
   }
 })();
