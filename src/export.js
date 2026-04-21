@@ -554,15 +554,19 @@
   // serialized tab.state instead of the live canvas, so it works for tabs
   // the user isn't currently looking at. Returns year-1 volumes (because
   // the frequency multipliers are already annualized) plus the per-tab
-  // credit/action list prices the rep set in the summary bar — null when
-  // the tab predates the price inputs or has no value yet.
+  // credit/action prices the rep set in the summary bar — null when the
+  // tab predates the price inputs or has no value yet. These prices are
+  // adjusted (negotiated) prices, not list prices: the calculator slots
+  // them into adjustedCPC / adjustedYear1CPA so the discount band reflects
+  // what the rep is pitching, while list prices keep their canonical
+  // policy values.
   function computeTabVolumes(tabState) {
     if (!tabState || !Array.isArray(tabState.cards)) {
       return {
         creditsPerYear: 0,
         actionsPerYear: 0,
-        creditListPrice: null,
-        actionListPrice: null,
+        creditPrice: null,
+        actionPrice: null,
       };
     }
     const records = parseRecordsValue(tabState.records);
@@ -590,8 +594,8 @@
     return {
       creditsPerYear: Math.max(0, Math.round(weightedCreditsPerRow * records)),
       actionsPerYear: Math.max(0, Math.round(weightedActionsPerRow * records)),
-      creditListPrice: parseDollarValue(tabState.creditCost),
-      actionListPrice: parseDollarValue(tabState.actionCost),
+      creditPrice: parseDollarValue(tabState.creditCost),
+      actionPrice: parseDollarValue(tabState.actionCost),
     };
   }
 
@@ -781,17 +785,17 @@
         meta.appendChild(stats);
 
         // Surface the per-tab credit/action prices we'll inject into the
-        // calculator. Only render when at least one is set so blank tabs
-        // stay visually quiet.
-        if (row.volumes.creditListPrice != null || row.volumes.actionListPrice != null) {
+        // calculator's adjusted (year-1) price fields. Only render when at
+        // least one is set so blank tabs stay visually quiet.
+        if (row.volumes.creditPrice != null || row.volumes.actionPrice != null) {
           const prices = document.createElement("div");
           prices.className = "cb-gtme-tab-prices";
           const parts = [];
-          if (row.volumes.creditListPrice != null) {
-            parts.push(`$${row.volumes.creditListPrice} / credit`);
+          if (row.volumes.creditPrice != null) {
+            parts.push(`$${row.volumes.creditPrice} / credit`);
           }
-          if (row.volumes.actionListPrice != null) {
-            parts.push(`$${row.volumes.actionListPrice} / action`);
+          if (row.volumes.actionPrice != null) {
+            parts.push(`$${row.volumes.actionPrice} / action`);
           }
           prices.textContent = parts.join(" · ");
           meta.appendChild(prices);
@@ -865,11 +869,11 @@
           // Only attach prices when the user explicitly set them in this
           // tab. Sending undefined would still serialize as missing keys,
           // but explicit omission keeps the URL payload smaller.
-          if (volumes.creditListPrice != null) {
-            config.creditListPrice = volumes.creditListPrice;
+          if (volumes.creditPrice != null) {
+            config.creditPrice = volumes.creditPrice;
           }
-          if (volumes.actionListPrice != null) {
-            config.actionListPrice = volumes.actionListPrice;
+          if (volumes.actionPrice != null) {
+            config.actionPrice = volumes.actionPrice;
           }
           return config;
         }),
