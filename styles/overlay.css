@@ -785,3 +785,42 @@ body:has(.cb-overlay) [data-floating-ui-portal] {
   height: 0;
   z-index: 1000000 !important;
 }
+
+/* ==========================================================================
+   COLUMN FOCUS FLASH
+   Applied by src/table-focus.js to the Clay column header
+   (#table-header-cell-{fieldId}) right after a "Open in table" navigation
+   from the brainstorm canvas. Brief indigo pulse so the user spots the
+   column instantly. The class is removed after 2.5s by the JS that added it.
+
+   Implementation note: we use a ::after pseudo-element (instead of
+   `outline`) because the Clay column header contains a child <button>
+   that fills the entire box with an opaque background. An `outline`
+   with negative offset would be drawn INSIDE the box and obscured by
+   that child. A position:absolute ::after with z-index sits ABOVE
+   children and inset:-3px places it just outside the header edges so
+   it's clearly visible against neighbouring columns. pointer-events:none
+   keeps clicks falling through to the header itself. The Clay header
+   already has `position: relative` (Tailwind `relative` class), so our
+   absolute ::after anchors correctly without us needing to override
+   position.
+   ========================================================================== */
+
+.cb-focus-flash::after {
+  content: "";
+  position: absolute;
+  inset: -3px;
+  border: 2px solid #6366f1;
+  border-radius: 6px;
+  pointer-events: none;
+  z-index: 9999;
+  box-sizing: border-box;
+  animation: cb-focus-flash-pulse 2.5s ease-out forwards;
+}
+
+@keyframes cb-focus-flash-pulse {
+  0%   { opacity: 0; box-shadow: 0 0 0 0 rgba(99, 102, 241, 0); }
+  15%  { opacity: 1; box-shadow: 0 0 12px 2px rgba(99, 102, 241, 0.5); }
+  60%  { opacity: 1; box-shadow: 0 0 0 0 rgba(99, 102, 241, 0); }
+  100% { opacity: 0; box-shadow: 0 0 0 0 rgba(99, 102, 241, 0); }
+}

@@ -220,6 +220,64 @@
       keyToggleEl.style.zIndex = "9999999";
     }
 
+    let cardMenuEl = null;
+    let cardMenuBackdrop = null;
+
+    function closeCardMenu() {
+      if (cardMenuEl) { cardMenuEl.remove(); cardMenuEl = null; }
+      if (cardMenuBackdrop) { cardMenuBackdrop.remove(); cardMenuBackdrop = null; }
+    }
+
+    // Single-card right-click menu. Only shown for cards that originated from
+    // a table import (i.e. carry both `data.fieldId` and `data.tableId`) — the
+    // sole option navigates Clay back to that column in its native grid.
+    // Multi-select right-click still goes through the existing showSelectionMenu
+    // (which has Group / Align actions); this helper is only invoked when
+    // exactly one card is the right-click target.
+    function showCardMenu(card, evt) {
+      const data = card?.data;
+      if (!data?.fieldId || !data?.tableId) return false;
+
+      closeCardMenu();
+
+      cardMenuBackdrop = document.createElement("div");
+      cardMenuBackdrop.style.cssText = "position:fixed;inset:0;z-index:9999998;";
+      cardMenuBackdrop.addEventListener("mousedown", (e) => {
+        e.stopPropagation();
+        closeCardMenu();
+      });
+      cardMenuBackdrop.addEventListener("contextmenu", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        closeCardMenu();
+      });
+
+      cardMenuEl = document.createElement("div");
+      cardMenuEl.className = "cb-card-context-menu";
+      cardMenuEl.addEventListener("mousedown", (e) => e.stopPropagation());
+
+      const openBtn = document.createElement("button");
+      openBtn.type = "button";
+      openBtn.className = "cb-card-context-menu-btn";
+      openBtn.textContent = "Open in table";
+      openBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        closeCardMenu();
+        if (typeof window.__cb.openCardInTable === "function") {
+          window.__cb.openCardInTable(card);
+        }
+      });
+      cardMenuEl.appendChild(openBtn);
+
+      document.body.appendChild(cardMenuBackdrop);
+      document.body.appendChild(cardMenuEl);
+      cardMenuEl.style.position = "fixed";
+      cardMenuEl.style.left = evt.clientX + "px";
+      cardMenuEl.style.top = evt.clientY + "px";
+      cardMenuEl.style.zIndex = "9999999";
+      return true;
+    }
+
     let fillPopoverEl = null;
     let fillPopoverBackdrop = null;
 
@@ -767,6 +825,7 @@
           showSelectionMenu(evt);
           return;
         }
+        showCardMenu(card, evt);
       });
       el.addEventListener("mousedown", (evt) => startCardMouseInteraction(card, evt));
       el.addEventListener("dblclick", (evt) => handleCardDblClick(card, evt));
@@ -987,6 +1046,7 @@
           showSelectionMenu(evt);
           return;
         }
+        showCardMenu(card, evt);
       });
       el.addEventListener("mousedown", (evt) => startCardMouseInteraction(card, evt));
       el.addEventListener("dblclick", (evt) => handleCardDblClick(card, evt));
@@ -1076,6 +1136,7 @@
           showSelectionMenu(evt);
           return;
         }
+        showCardMenu(card, evt);
       });
       el.addEventListener("mousedown", (evt) => startCardMouseInteraction(card, evt));
       el.addEventListener("dblclick", (evt) => handleCardDblClick(card, evt));
@@ -1162,6 +1223,7 @@
           showSelectionMenu(evt);
           return;
         }
+        showCardMenu(card, evt);
       });
       el.addEventListener("mousedown", (evt) => startCardMouseInteraction(card, evt));
       el.addEventListener("dblclick", (evt) => handleCardDblClick(card, evt));

@@ -1030,6 +1030,42 @@
     __cb.currentWorkspaceId = null;
   };
 
+  // Right-click → "Open in table" entry point. Closes the canvas overlay and
+  // navigates the tab to the source view URL with `?fieldId=...`, which
+  // Clay's VirtualizedGrid (apps/frontend/src/components/VirtualizedGrid)
+  // consumes via useQuerySchemaActions to scroll the column into view. Only
+  // imported cards carry both fieldId and tableId — earlier cards / picker-
+  // dropped cards return early and the menu never appears for them anyway
+  // (the cards.js guard checks the same fields before showing the menu).
+  __cb.openCardInTable = function (card) {
+    const data = card?.data;
+    if (!data?.fieldId || !data?.tableId) return;
+    const ids = __cb.parseIdsFromUrl();
+    const workspaceId = ids?.workspaceId ?? __cb.currentWorkspaceId;
+    const workbookId = __cb.currentWorkbookId ?? ids?.workbookId;
+    if (!workspaceId || !workbookId) return;
+
+    const base = `/workspaces/${workspaceId}/workbooks/${workbookId}/tables/${data.tableId}`;
+    const url = data.viewId
+      ? `${base}/views/${data.viewId}?fieldId=${encodeURIComponent(data.fieldId)}`
+      : `${base}?fieldId=${encodeURIComponent(data.fieldId)}`;
+
+    // Hand-off sentinel for src/table-focus.js on the destination page:
+    // it left-aligns the column (overriding Clay's default right-aligned
+    // scroll) and pulses an outline on the header so the user spots it
+    // immediately. 10s TTL guards against stale entries if the user
+    // navigates manually before the destination page loads.
+    try {
+      sessionStorage.setItem(
+        "cb-focus-field",
+        JSON.stringify({ fieldId: data.fieldId, ts: Date.now() })
+      );
+    } catch (_e) { /* private mode etc. — silently fall through */ }
+
+    __cb.closeCanvas();
+    window.location.assign(url);
+  };
+
   function handleEscape(e) {
     if (e.key !== "Escape") return;
     if (__cb.setCanvasMode) {
