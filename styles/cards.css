@@ -16,7 +16,24 @@
   transition: box-shadow 0.15s, outline-color 0.15s;
   width: 220px;
   box-sizing: border-box;
-  height: 70px;
+  /* Auto height with a 70px floor for default 2-line layout (icon row +
+     footer/badges). Pro Mode swaps to a strict 96px so all cards — even
+     comment / input cards that don't gain a stats row — stay exactly the
+     same height as the 3-line DP/ER cards. 96px == padding-top 10 + icon
+     row 18 + 7 margin + badges 22 + 6 margin + stats 22 + padding-bottom
+     10 + 1px sub-pixel buffer, which keeps the bottom gap visually
+     identical to the 10px padding the non-Pro 2-line cards show. Strict
+     (not min-height) because snap.js's hasFullSideMatch requires identical
+     heights for left/right adjacency; any drift from variable content
+     height silently breaks magneting between cards in a cluster. The
+     existing `:has(*:focus)` overrides below let cards still grow when
+     text is being edited. */
+  height: auto;
+  min-height: 70px;
+}
+
+.cb-overlay[data-cb-pro-mode] .cb-card {
+  height: 96px;
 }
 
 .cb-card.cb-card-snapped {
@@ -546,36 +563,6 @@
   pointer-events: none;
 }
 
-.cb-card-context-menu {
-  position: fixed;
-  z-index: 1000000;
-  min-width: 132px;
-  padding: 6px;
-  border: 1px solid #dbe3f2;
-  border-radius: 10px;
-  background: #ffffff;
-  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.16);
-}
-
-.cb-card-context-menu-btn {
-  width: 100%;
-  height: 30px;
-  border: none;
-  border-radius: 8px;
-  background: transparent;
-  color: #1f2937;
-  font-size: 12px;
-  font-weight: 500;
-  text-align: left;
-  padding: 0 10px;
-  cursor: pointer;
-}
-
-.cb-card-context-menu-btn:hover {
-  background: #eef2ff;
-  color: #312e81;
-}
-
 /* Footer wraps the credit pill and (in Pro Mode) the fill-rate badge so they
    sit on the same baseline. Using inline-flex keeps things compact and avoids
    the badge shifting when the credit pill text changes width. */
@@ -615,12 +602,31 @@
   border-color: #bbf7d0;
 }
 
-/* Fill-rate badge — only visible when Pro Mode is on. Amber palette
-   intentionally distinguishes it from the credit pill (indigo/green family)
-   so users immediately spot the new control. The badge is always mounted in
-   the DOM; hiding/showing is purely CSS to avoid re-rendering cards. */
-.cb-dp-fill {
+/* DP card stats row — sibling to .cb-dp-footer, holds the coverage and
+   fill-rate pills on a dedicated line below the cost pill. Hidden by
+   default so non-Pro cards stay the same height as before; flipped to
+   `display: flex` only when the overlay carries [data-cb-pro-mode], which
+   makes the card visibly taller in Pro Mode rather than wrapping the
+   footer. The whole row is mounted unconditionally so toggling Pro Mode is
+   a pure CSS flip — no card re-render needed. */
+.cb-dp-stats {
   display: none;
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.cb-overlay[data-cb-pro-mode] .cb-dp-stats {
+  display: flex;
+}
+
+/* Fill-rate badge — visibility is now parent-gated by .cb-dp-stats above
+   (and by .cb-er-stats for ER cards). Amber palette intentionally
+   distinguishes it from the credit pill (indigo/green family) so users
+   immediately spot the new control. */
+.cb-dp-fill {
+  display: inline-flex;
   align-items: center;
   gap: 4px;
   height: 22px;
@@ -637,10 +643,6 @@
   transition: background 0.12s, border-color 0.12s;
 }
 
-.cb-overlay[data-cb-pro-mode] .cb-dp-fill {
-  display: inline-flex;
-}
-
 .cb-dp-fill:hover {
   background: #fef3c7;
   border-color: #f59e0b;
@@ -653,17 +655,122 @@
   flex-shrink: 0;
 }
 
-/* Popover for editing the fill rate. Positioned by JS via fixed coords, so
-   we only need to style the container and the form controls. */
+/* Coverage badge — sibling to .cb-dp-fill but in the indigo palette so
+   users can tell at a glance which stat they're looking at. Coverage means
+   "% of records run"; fill rate means "% that returned data". Same parent
+   row, same Pro Mode gate. */
+.cb-dp-coverage {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+  padding: 0 10px;
+  border-radius: 11px;
+  background: #eff6ff;
+  border: 1px solid #93c5fd;
+  color: #1e40af;
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.12s, border-color 0.12s;
+}
+
+.cb-dp-coverage:hover {
+  background: #dbeafe;
+  border-color: #3b82f6;
+}
+
+.cb-dp-coverage svg {
+  width: 12px;
+  height: 12px;
+  flex-shrink: 0;
+}
+
+/* ER card stats row — same model as .cb-dp-stats: hidden by default,
+   visible in Pro Mode. Sits below the badge row so the credit / freq /
+   model chips stay on their own line and the coverage + fill pills get a
+   dedicated row underneath. */
+.cb-er-stats {
+  display: none;
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+.cb-overlay[data-cb-pro-mode] .cb-er-stats {
+  display: flex;
+}
+
+.cb-er-coverage,
+.cb-er-fill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 20px;
+  padding: 0 8px;
+  border-radius: 10px;
+  font-family: inherit;
+  font-size: 10.5px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.12s, border-color 0.12s;
+}
+
+.cb-er-coverage {
+  background: #eff6ff;
+  border: 1px solid #93c5fd;
+  color: #1e40af;
+}
+
+.cb-er-coverage:hover {
+  background: #dbeafe;
+  border-color: #3b82f6;
+}
+
+.cb-er-fill {
+  background: #fffbeb;
+  border: 1px solid #fcd34d;
+  color: #b45309;
+}
+
+.cb-er-fill:hover {
+  background: #fef3c7;
+  border-color: #f59e0b;
+}
+
+.cb-er-coverage svg,
+.cb-er-fill svg {
+  width: 12px;
+  height: 12px;
+  flex-shrink: 0;
+}
+
+/* Popover for editing coverage and fill rate. Positioned by JS via fixed
+   coords. width: max-content + viewport-clamped max-width lets the popover
+   accommodate large numbers (1,234,567) without overflowing the viewport. */
 .cb-dp-fill-popover {
   background: #ffffff;
   border: 1px solid #e5e7eb;
   border-radius: 8px;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
   padding: 12px;
-  min-width: 180px;
+  width: max-content;
+  min-width: 200px;
+  max-width: min(360px, calc(100vw - 32px));
   font-size: 12px;
   color: #374151;
+}
+
+/* Each section (Coverage / Fill rate) is a stacked block. The first section
+   has no top margin so it sits flush with the popover top padding. */
+.cb-dp-fill-section + .cb-dp-fill-section {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid #f3f4f6;
 }
 
 .cb-dp-fill-popover-title {
@@ -681,8 +788,16 @@
   gap: 6px;
 }
 
+/* `field-sizing: content` makes the input grow with its value (Chrome
+   123+ / Edge 123+; Safari 17.4+; Firefox tracking). The min/max prevent
+   absurdly tiny or runaway widths. The fallback `width: auto` keeps things
+   reasonable in browsers that don't support field-sizing yet — combined
+   with `size: 1` semantics on text inputs the field still grows visually. */
 .cb-dp-fill-input {
-  width: 56px;
+  field-sizing: content;
+  min-width: 4ch;
+  max-width: 12ch;
+  width: auto;
   height: 28px;
   padding: 0 8px;
   border: 1px solid #d1d5db;
@@ -693,18 +808,18 @@
   color: #111827;
   text-align: center;
   outline: none;
-  -moz-appearance: textfield;
-}
-
-.cb-dp-fill-input::-webkit-outer-spin-button,
-.cb-dp-fill-input::-webkit-inner-spin-button {
-  -webkit-appearance: none;
-  margin: 0;
 }
 
 .cb-dp-fill-input:focus {
   border-color: #f59e0b;
   box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.2);
+}
+
+/* The Coverage section's inputs lean blue when focused so the user gets a
+   visual confirmation they're in the right section. */
+.cb-dp-fill-section:first-child .cb-dp-fill-input:focus {
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
 }
 
 .cb-dp-fill-sep {
@@ -720,9 +835,26 @@
   color: #b45309;
 }
 
+.cb-dp-fill-section:first-child .cb-dp-fill-pct {
+  color: #1e40af;
+}
+
 .cb-dp-fill-hint {
   margin-top: 6px;
   font-size: 11px;
   color: #9ca3af;
   line-height: 1.4;
+}
+
+/* Source ribbon at the bottom of the popover. Tells the user whether the
+   numbers came from runstatus, dataProfile (sampled), or a manual edit —
+   so they can interpret the values appropriately (e.g. dataProfile is a
+   sample, not the full table). */
+.cb-dp-fill-source {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid #f3f4f6;
+  font-size: 10.5px;
+  font-style: italic;
+  color: #9ca3af;
 }

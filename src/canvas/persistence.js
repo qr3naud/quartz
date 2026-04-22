@@ -76,21 +76,44 @@
       }
       for (const cs of state.cards || []) {
         if (cs.data.type === "dp") {
-          // Pass `fillRate` and `fillRateCustom` through so the user's edit
-          // state survives reload. Missing values (legacy cards, or freshly
-          // imported DP cards in Phase 2) fall back to defaults inside
-          // addDataPointCard; missing `fillRateCustom` defaults to false so
-          // legacy cards keep tracking the records input live.
+          // Pass through everything that influences the visible state so
+          // reloads preserve the user's edit decisions AND the import's
+          // attached stats blocks. Missing values (legacy cards, or freshly
+          // imported DP cards) fall back to defaults inside addDataPointCard;
+          // missing `fillRateCustom` defaults to false so legacy cards keep
+          // tracking the records input live.
           addDataPointCard(cs.data.text || "", {
             x: cs.x,
             y: cs.y,
             id: cs.id,
             fillRate: cs.data.fillRate,
             fillRateCustom: cs.data.fillRateCustom,
+            stats: cs.data.stats,
+            groupCluster: cs.data.groupCluster,
+            fieldId: cs.data.fieldId,
+            tableId: cs.data.tableId,
+            viewId: cs.data.viewId,
           });
         }
-        else if (cs.data.type === "input") addInputCard(cs.data.text || "", { x: cs.x, y: cs.y, id: cs.id });
-        else if (cs.data.type === "comment") addCommentCard(cs.data.text || "", { x: cs.x, y: cs.y, id: cs.id });
+        else if (cs.data.type === "input") addInputCard(cs.data.text || "", {
+          x: cs.x,
+          y: cs.y,
+          id: cs.id,
+          fieldId: cs.data.fieldId,
+          tableId: cs.data.tableId,
+          viewId: cs.data.viewId,
+          groupCluster: cs.data.groupCluster,
+        });
+        else if (cs.data.type === "comment") addCommentCard(cs.data.text || "", {
+          x: cs.x,
+          y: cs.y,
+          id: cs.id,
+          groupCluster: cs.data.groupCluster,
+        });
+        // ER cards: addCard(cs.data, ...) passes the full data object
+        // through — data.stats, data.groupCluster, and data.fieldId ride
+        // along automatically since addCard mutates a copy of `data`
+        // rather than re-building it from scratch.
         else addCard(cs.data, { x: cs.x, y: cs.y, id: cs.id });
       }
       for (const gs of state.groups || []) {

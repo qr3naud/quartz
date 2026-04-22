@@ -116,6 +116,15 @@
     proMode: false,
     setProMode: null,
 
+    // "projected" (default — catalog credits × records) vs "actual" (real
+    // spend pulled from Clay's realtime credit usage warehouse, attached to
+    // ER cards via data.stats.spend at import time). Toggled by the
+    // Projected/Actual segmented control in the overlay topbar; persisted on
+    // tabStore.viewMode. The toggle itself is gated behind Pro Mode in CSS,
+    // so non-Pro users never see it.
+    viewMode: "projected",
+    setViewMode: null,
+
     onCanvasStateChange: null,
     updateCreditTotal: null,
     updateGroupButtonVisibility: null,

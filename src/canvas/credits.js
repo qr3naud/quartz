@@ -12,6 +12,36 @@
 
     function notifyCreditTotal() {
       const cb = window.__cb;
+      const isActual = cb.viewMode === "actual";
+
+      if (isActual) {
+        // Actual mode: every number comes from data.stats.spend (which is
+        // populated at import time from Clay's realtime credit usage
+        // pipeline). The totals here are absolute credit counts already, so
+        // the "weighted" slots carry the raw totals and the "per-row" slots
+        // carry an average computed against the largest cellCount we've
+        // seen. recalcTotal() in overlay.js reads __cb.viewMode and skips
+        // the records multiplication when actual mode is on.
+        let actualCredits = 0;
+        let actualActions = 0;
+        let maxCells = 0;
+        for (const c of cardsRef()) {
+          if (isNonErType(c.data.type)) continue;
+          const sp = c.data.stats?.spend;
+          if (!sp) continue;
+          actualCredits += Number(sp.credits) || 0;
+          actualActions += Number(sp.actionExecutions) || 0;
+          maxCells = Math.max(maxCells, Number(sp.cellCount) || 0);
+        }
+        const avgCredits = maxCells > 0 ? actualCredits / maxCells : 0;
+        const avgActions = maxCells > 0 ? actualActions / maxCells : 0;
+        if (cb.updateCreditTotal) {
+          cb.updateCreditTotal(avgCredits, avgActions, actualCredits, actualActions);
+        }
+        return;
+      }
+
+      // Projected mode (existing behavior).
       // Unweighted per-row sums drive the "Avg Credits / Row" and
       // "Actions / Row" boxes — those numbers should stay honest about a
       // single execution regardless of how often the ER is scheduled.

@@ -106,6 +106,53 @@
       if (__cb.debouncedSave) __cb.debouncedSave();
     };
 
+    // Projected / Actual mode toggle. "Projected" uses catalog credit costs
+    // multiplied by record count (the existing behavior). "Actual" pulls
+    // realtime credit usage from Redshift via /column/recent and sums the
+    // observed spend. Source of truth lives on `__cb.viewMode` and
+    // `tabStore.viewMode` so it survives reloads and tab switches. Visual
+    // gating is CSS-driven via `[data-cb-view-mode]` on the overlay, AND
+    // the toggle itself is hidden when Pro Mode is off (CSS rule in
+    // overlay.css) — non-Pro users don't see the stat pills anyway.
+    const viewModeWrap = document.createElement("div");
+    viewModeWrap.className = "cb-view-mode-toggle";
+
+    const viewModeProjected = document.createElement("button");
+    viewModeProjected.className = "cb-view-mode-btn cb-view-mode-projected";
+    viewModeProjected.type = "button";
+    viewModeProjected.title = "Projected: catalog credits \u00d7 records";
+    viewModeProjected.textContent = "Projected";
+
+    const viewModeActual = document.createElement("button");
+    viewModeActual.className = "cb-view-mode-btn cb-view-mode-actual";
+    viewModeActual.type = "button";
+    viewModeActual.title = "Actual: real spend from Clay's billing pipeline";
+    viewModeActual.textContent = "Actual";
+
+    viewModeWrap.appendChild(viewModeProjected);
+    viewModeWrap.appendChild(viewModeActual);
+
+    viewModeProjected.addEventListener("click", () => __cb.setViewMode("projected"));
+    viewModeActual.addEventListener("click", () => __cb.setViewMode("actual"));
+
+    __cb.setViewMode = function (value) {
+      const next = value === "actual" ? "actual" : "projected";
+      __cb.viewMode = next;
+      if (__cb.overlayEl) __cb.overlayEl.setAttribute("data-cb-view-mode", next);
+      viewModeProjected.classList.toggle("cb-view-mode-btn-active", next === "projected");
+      viewModeActual.classList.toggle("cb-view-mode-btn-active", next === "actual");
+      if (__cb.tabStore) __cb.tabStore.viewMode = next;
+      // Re-run credit math so the summary boxes flip immediately.
+      if (__cb.canvas?.refreshCreditTotal) {
+        __cb.canvas.refreshCreditTotal();
+      } else {
+        recalcTotal();
+      }
+      if (__cb.canvas?.updateGroupCredits) __cb.canvas.updateGroupCredits();
+      if (__cb.debouncedSave) __cb.debouncedSave();
+    };
+
+    rightGroup.appendChild(viewModeWrap);
     rightGroup.appendChild(proBtn);
     rightGroup.appendChild(importBtn);
     rightGroup.appendChild(exportBtn);
@@ -377,12 +424,17 @@
 
     function recalcTotal() {
       const records = parseRecordsValue();
-      // Totals use the frequency-weighted per-row numbers so they reflect
-      // "cost across the contract period" (e.g. monthly = x12 of the per-row
-      // cost for each ER). Per-row boxes keep the unweighted numbers so they
-      // stay honest about a single execution.
-      const totalCredits = currentWeightedCreditsPerRow * records;
-      const totalActions = currentWeightedActionsPerRow * records;
+      const isActual = __cb.viewMode === "actual";
+      // Projected mode: totals = per-row × records.
+      // Actual mode: totals come straight from credits.js (which sums
+      // data.stats.spend across ER cards). The "weighted" slots already
+      // hold absolute spend in actual mode, so we skip the multiplication.
+      const totalCredits = isActual
+        ? currentWeightedCreditsPerRow
+        : currentWeightedCreditsPerRow * records;
+      const totalActions = isActual
+        ? currentWeightedActionsPerRow
+        : currentWeightedActionsPerRow * records;
       totalValue.textContent = formatNumber(totalCredits);
       totalActionsValue.textContent = formatNumber(totalActions);
 
@@ -916,6 +968,7 @@
     // cards rather than an empty placeholder. CSS attribute changes apply
     // instantly, so any restored DP cards immediately reflect the new state.
     __cb.setProMode(!!__cb.tabStore.proMode);
+    __cb.setViewMode(__cb.tabStore.viewMode || "projected");
 
     window.addEventListener("beforeunload", __cb.saveTabs);
   };
@@ -956,11 +1009,13 @@
     __cb.onDpBulkInputForCard = null;
     __cb.setCanvasMode = null;
     __cb.setProMode = null;
+    __cb.setViewMode = null;
     __cb.setGlobalFrequency = null;
     __cb.getRecordsCount = null;
     __cb.getCreditCost = null;
     __cb.getActionCost = null;
     __cb.proMode = false;
+    __cb.viewMode = "projected";
     __cb.currentFrequencyId = __cb.DEFAULT_FREQUENCY_ID;
     __cb.closeFrequencyPicker();
     __cb.enrichmentClickPos = null;

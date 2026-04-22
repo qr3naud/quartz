@@ -8,6 +8,10 @@
   // Pie-slice icon for the Pro Mode fill-rate badge. Solid wedge = "filled
   // portion of a whole", which matches the semantic of fill rate.
   const FILL_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 256 256" fill="currentColor"><path d="M128 24a104 104 0 1 0 104 104A104 104 0 0 0 128 24Zm0 16a88 88 0 0 1 86.5 72H128Z"/></svg>';
+  // Donut icon for the coverage badge — visually communicates "% of a whole
+  // that's been processed". Distinct from FILL_SVG (which is a single wedge)
+  // so users can tell at a glance which pill they're looking at.
+  const COVERAGE_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9" opacity="0.35"/><path d="M12 3a9 9 0 0 1 9 9"/></svg>';
 
   // Absolute last-resort fallback when the records input is empty. Phase 2
   // will override fillRate for table-imported DP cards using Clay's runstatus
@@ -45,6 +49,32 @@
     if (!fillRate || !fillRate.denominator) return "—";
     const pct = (fillRate.numerator / fillRate.denominator) * 100;
     return `${Math.round(pct)}%`;
+  }
+
+  // Same shape, different field names. Coverage tracks how many records the
+  // ER attempted vs the total in the view; fill rate tracks how many of those
+  // attempts returned data. Both render as a single percentage on the card.
+  function coveragePercentText(coverage) {
+    if (!coverage || !coverage.total) return "\u2014";
+    const pct = (coverage.ran / coverage.total) * 100;
+    return `${Math.round(pct)}%`;
+  }
+
+  // Reusable helper for inputs in the new two-section popover. Number inputs
+  // formatted with thousands separators get sticky in two ways: the popover
+  // gets too narrow for big numbers and the user can't read what they typed.
+  // Using `field-sizing: content` plus a comma-formatted text input lets the
+  // input grow with content while staying readable for `1,234,567` inputs.
+  function formatThousands(n) {
+    if (!Number.isFinite(n)) return "";
+    return Math.round(n).toLocaleString();
+  }
+
+  function parseThousands(str) {
+    if (typeof str !== "string") return NaN;
+    const cleaned = str.replace(/[^\d.-]/g, "");
+    if (cleaned === "") return NaN;
+    return Number(cleaned);
   }
 
   window.__cbCanvasModules.createCardHelpers = function createCardHelpers(deps) {
@@ -198,12 +228,13 @@
       if (fillPopoverBackdrop) { fillPopoverBackdrop.remove(); fillPopoverBackdrop = null; }
     }
 
-    function showFillRatePopover(card, anchorEl, labelEl) {
+    // Two-section popover: Coverage (top) and Fill rate (bottom). The same
+    // popover opens from either pill — `focusSection` ("coverage" | "fill")
+    // controls which input gets initial focus so clicking the coverage pill
+    // doesn't bury the user inside the fill-rate inputs.
+    function showFillRatePopover(card, anchorEl, labelEl, focusSection) {
       closeFillPopover();
 
-      // Full-viewport backdrop: catches outside clicks to close, but doesn't
-      // block events inside the popover (z-index ordering + stopPropagation
-      // on the popover handle that).
       fillPopoverBackdrop = document.createElement("div");
       fillPopoverBackdrop.style.cssText = "position:fixed;inset:0;z-index:9999998;";
       fillPopoverBackdrop.addEventListener("mousedown", (evt) => {
@@ -213,61 +244,136 @@
 
       fillPopoverEl = document.createElement("div");
       fillPopoverEl.className = "cb-dp-fill-popover";
-      // Stop drag from starting and prevent the backdrop from closing when
-      // the user clicks inside the popover (e.g. focusing an input).
       fillPopoverEl.addEventListener("mousedown", (evt) => evt.stopPropagation());
 
-      const title = document.createElement("div");
-      title.className = "cb-dp-fill-popover-title";
-      title.textContent = "Fill rate";
-      fillPopoverEl.appendChild(title);
+      // Source ribbon: "From runstatus" / "From dataProfile" / "Manual" — so
+      // users know whether the numbers were filled by the import or typed in.
+      const sourceLabel = card.data?.stats?.source
+        ? (card.data.stats.source === "runstatus"
+            ? "From run status"
+            : card.data.stats.source === "dataProfile"
+              ? "From data profile (sampled)"
+              : "Manually edited")
+        : null;
+
+      // -- Coverage section ----------------------------------------------
+      const cov = card.data?.stats?.coverage || null;
+      const coverageRow = document.createElement("div");
+      coverageRow.className = "cb-dp-fill-section";
+
+      const coverageTitle = document.createElement("div");
+      coverageTitle.className = "cb-dp-fill-popover-title";
+      coverageTitle.textContent = "Coverage";
+      coverageRow.appendChild(coverageTitle);
+
+      const coverageRatio = document.createElement("div");
+      coverageRatio.className = "cb-dp-fill-ratio";
+
+      const covRanInput = document.createElement("input");
+      covRanInput.type = "text";
+      covRanInput.inputMode = "numeric";
+      covRanInput.className = "cb-dp-fill-input";
+      covRanInput.value = formatThousands(cov?.ran ?? 0);
+
+      const covSep = document.createElement("span");
+      covSep.className = "cb-dp-fill-sep";
+      covSep.textContent = "/";
+
+      const covTotalInput = document.createElement("input");
+      covTotalInput.type = "text";
+      covTotalInput.inputMode = "numeric";
+      covTotalInput.className = "cb-dp-fill-input";
+      covTotalInput.value = formatThousands(cov?.total ?? 0);
+
+      coverageRatio.appendChild(covRanInput);
+      coverageRatio.appendChild(covSep);
+      coverageRatio.appendChild(covTotalInput);
+      coverageRow.appendChild(coverageRatio);
+
+      const covPctLabel = document.createElement("div");
+      covPctLabel.className = "cb-dp-fill-pct";
+      covPctLabel.textContent = coveragePercentText(cov || { ran: 0, total: 0 });
+      coverageRow.appendChild(covPctLabel);
+
+      const covHint = document.createElement("div");
+      covHint.className = "cb-dp-fill-hint";
+      covHint.textContent = "Records run / total records";
+      coverageRow.appendChild(covHint);
+
+      fillPopoverEl.appendChild(coverageRow);
+
+      // -- Fill-rate section ---------------------------------------------
+      const fillRow = document.createElement("div");
+      fillRow.className = "cb-dp-fill-section";
+
+      const fillTitle = document.createElement("div");
+      fillTitle.className = "cb-dp-fill-popover-title";
+      fillTitle.textContent = "Fill rate";
+      fillRow.appendChild(fillTitle);
 
       const ratio = document.createElement("div");
       ratio.className = "cb-dp-fill-ratio";
 
       const numInput = document.createElement("input");
-      numInput.type = "number";
-      numInput.min = "0";
-      numInput.step = "1";
+      numInput.type = "text";
+      numInput.inputMode = "numeric";
       numInput.className = "cb-dp-fill-input";
-      numInput.value = String(card.data.fillRate.numerator);
+      numInput.value = formatThousands(card.data.fillRate.numerator);
 
       const sep = document.createElement("span");
       sep.className = "cb-dp-fill-sep";
       sep.textContent = "/";
 
       const denInput = document.createElement("input");
-      denInput.type = "number";
-      denInput.min = "1";
-      denInput.step = "1";
+      denInput.type = "text";
+      denInput.inputMode = "numeric";
       denInput.className = "cb-dp-fill-input";
-      denInput.value = String(card.data.fillRate.denominator);
+      denInput.value = formatThousands(card.data.fillRate.denominator);
 
       ratio.appendChild(numInput);
       ratio.appendChild(sep);
       ratio.appendChild(denInput);
-      fillPopoverEl.appendChild(ratio);
+      fillRow.appendChild(ratio);
 
       const pctLabel = document.createElement("div");
       pctLabel.className = "cb-dp-fill-pct";
       pctLabel.textContent = fillPercentText(card.data.fillRate);
-      fillPopoverEl.appendChild(pctLabel);
+      fillRow.appendChild(pctLabel);
 
       const hint = document.createElement("div");
       hint.className = "cb-dp-fill-hint";
       hint.textContent = "Results found / rows that ran";
-      fillPopoverEl.appendChild(hint);
+      fillRow.appendChild(hint);
 
-      function commit() {
-        // Re-normalize on every edit so we never persist invalid values.
-        // Empty input yields NaN → normalizeFillRate falls back to defaults.
+      fillPopoverEl.appendChild(fillRow);
+
+      if (sourceLabel) {
+        const src = document.createElement("div");
+        src.className = "cb-dp-fill-source";
+        src.textContent = sourceLabel;
+        fillPopoverEl.appendChild(src);
+      }
+
+      function commitCoverage() {
+        const ran = parseThousands(covRanInput.value);
+        const total = parseThousands(covTotalInput.value);
+        if (!Number.isFinite(ran) || !Number.isFinite(total) || total <= 0) return;
+        card.data.stats = card.data.stats || {};
+        card.data.stats.coverage = { ran: Math.max(0, ran), total: Math.max(1, total) };
+        card.data.stats.source = "manual";
+        covPctLabel.textContent = coveragePercentText(card.data.stats.coverage);
+        const coverageEl = card.el?.querySelector(".cb-dp-coverage-label, .cb-er-coverage-label");
+        if (coverageEl) coverageEl.textContent = covPctLabel.textContent;
+        notifyChange();
+        if (window.__cb.saveTabs) window.__cb.saveTabs();
+      }
+
+      function commitFill() {
         const next = normalizeFillRate({
-          numerator: numInput.value === "" ? NaN : Number(numInput.value),
-          denominator: denInput.value === "" ? NaN : Number(denInput.value),
+          numerator: parseThousands(numInput.value),
+          denominator: parseThousands(denInput.value),
         });
         card.data.fillRate = next;
-        // The user opened the popover and typed a value — lock this card so
-        // the records input's live-update no longer rewrites it.
         card.data.fillRateCustom = true;
         const text = fillPercentText(next);
         pctLabel.textContent = text;
@@ -276,12 +382,25 @@
         if (window.__cb.saveTabs) window.__cb.saveTabs();
       }
 
-      numInput.addEventListener("input", commit);
-      denInput.addEventListener("input", commit);
+      // Re-format on blur so partial typing (e.g. "1234" mid-edit) doesn't
+      // get clobbered with commas while the user is still in the field.
+      function reformatOnBlur(input, valueGetter) {
+        input.addEventListener("blur", () => {
+          const v = valueGetter();
+          if (Number.isFinite(v)) input.value = formatThousands(v);
+        });
+      }
 
-      // Close on Escape, blur on Enter (mirrors the canvas's other inline
-      // editors). Use keydown so we can preventDefault on Enter to stop
-      // accidental form-submit-like behavior in some browsers.
+      covRanInput.addEventListener("input", commitCoverage);
+      covTotalInput.addEventListener("input", commitCoverage);
+      reformatOnBlur(covRanInput, () => card.data?.stats?.coverage?.ran);
+      reformatOnBlur(covTotalInput, () => card.data?.stats?.coverage?.total);
+
+      numInput.addEventListener("input", commitFill);
+      denInput.addEventListener("input", commitFill);
+      reformatOnBlur(numInput, () => card.data.fillRate.numerator);
+      reformatOnBlur(denInput, () => card.data.fillRate.denominator);
+
       function onKey(evt) {
         if (evt.key === "Escape") closeFillPopover();
         if (evt.key === "Enter") {
@@ -289,23 +408,29 @@
           closeFillPopover();
         }
       }
-      numInput.addEventListener("keydown", onKey);
-      denInput.addEventListener("keydown", onKey);
+      for (const input of [covRanInput, covTotalInput, numInput, denInput]) {
+        input.addEventListener("keydown", onKey);
+      }
 
       document.body.appendChild(fillPopoverBackdrop);
       document.body.appendChild(fillPopoverEl);
 
-      // Anchor below the badge, left-aligned with it. Use fixed positioning
-      // because the popover lives at document.body level (outside the
-      // canvas's pan/zoom transform).
+      // Anchor below the badge, left-aligned, but clamp to the viewport on
+      // the right edge so the popover doesn't escape off-screen for badges
+      // placed near the right side of the page.
       const rect = anchorEl.getBoundingClientRect();
       fillPopoverEl.style.position = "fixed";
       fillPopoverEl.style.top = (rect.bottom + 6) + "px";
-      fillPopoverEl.style.left = rect.left + "px";
       fillPopoverEl.style.zIndex = "9999999";
+      // Force layout so we can read scrollWidth before computing left.
+      fillPopoverEl.style.left = "0px";
+      const popWidth = fillPopoverEl.offsetWidth;
+      const maxLeft = window.innerWidth - popWidth - 8;
+      fillPopoverEl.style.left = Math.max(8, Math.min(rect.left, maxLeft)) + "px";
 
-      numInput.focus();
-      numInput.select();
+      const focusInput = focusSection === "coverage" ? covRanInput : numInput;
+      focusInput.focus();
+      focusInput.select();
     }
 
     function handleCardDblClick(card, evt) {
@@ -382,6 +507,7 @@
       const el = document.createElement("div");
       el.className = "cb-card";
       el.setAttribute("data-card-id", card.id);
+      if (data.groupCluster) el.setAttribute("data-group-cluster", data.groupCluster);
       el.style.transform = `translate(${x}px, ${y}px)`;
 
       const del = document.createElement("button");
@@ -581,6 +707,59 @@
       el.appendChild(row_);
       el.appendChild(badgeRow);
 
+      // Stats row — only mounted when the card has stats (i.e. came from a
+      // table import). Visibility is gated by [data-cb-pro-mode] on the
+      // overlay (same gate as DP fill pills) so non-Pro users never see it.
+      if (data.stats?.coverage || data.stats?.fillRate) {
+        const statsRow = document.createElement("div");
+        statsRow.className = "cb-er-stats";
+
+        if (data.stats?.coverage) {
+          const coverageBadge = document.createElement("button");
+          coverageBadge.type = "button";
+          coverageBadge.className = "cb-er-coverage";
+          coverageBadge.title = "Click to view coverage (records run / total)";
+          const coverageLabel = document.createElement("span");
+          coverageLabel.className = "cb-er-coverage-label";
+          coverageLabel.textContent = coveragePercentText(data.stats.coverage);
+          coverageBadge.innerHTML = COVERAGE_SVG;
+          coverageBadge.appendChild(coverageLabel);
+          coverageBadge.addEventListener("mousedown", (evt) => evt.stopPropagation());
+          coverageBadge.addEventListener("click", (evt) => {
+            evt.stopPropagation();
+            showFillRatePopover(card, coverageBadge, null, "coverage");
+          });
+          statsRow.appendChild(coverageBadge);
+        }
+
+        if (data.stats?.fillRate) {
+          // Mirror the visible fillRate onto the card so the popover reads
+          // the same shape as DP cards (it expects card.data.fillRate to
+          // exist with numerator/denominator).
+          card.data.fillRate = card.data.fillRate || normalizeFillRate({
+            numerator: data.stats.fillRate.success,
+            denominator: data.stats.fillRate.ran,
+          });
+          const fillBadge = document.createElement("button");
+          fillBadge.type = "button";
+          fillBadge.className = "cb-er-fill";
+          fillBadge.title = "Click to view fill rate (results found / records run)";
+          const fillLabel = document.createElement("span");
+          fillLabel.className = "cb-er-fill-label";
+          fillLabel.textContent = fillPercentText(card.data.fillRate);
+          fillBadge.innerHTML = FILL_SVG;
+          fillBadge.appendChild(fillLabel);
+          fillBadge.addEventListener("mousedown", (evt) => evt.stopPropagation());
+          fillBadge.addEventListener("click", (evt) => {
+            evt.stopPropagation();
+            showFillRatePopover(card, fillBadge, fillLabel, "fill");
+          });
+          statsRow.appendChild(fillBadge);
+        }
+
+        el.appendChild(statsRow);
+      }
+
       el.addEventListener("contextmenu", (evt) => {
         evt.preventDefault();
         evt.stopPropagation();
@@ -654,19 +833,43 @@
       // typing "1000" into records auto-updates unedited DP cards to 1000/1000).
       // Once the user commits a change in the popover, the flag flips to true
       // and we stop auto-updating that card.
-      const fillRate = opts?.fillRate ? normalizeFillRate(opts.fillRate) : buildDefaultFillRate();
+      //
+      // `opts.stats` carries the import-time stats block (coverage, fillRate,
+      // spend, source, fetchedAt). When `stats.fillRate` is present and the
+      // user hasn't customized, we seed the visible fillRate from it so the
+      // pill shows the real number on first render — without locking it
+      // (fillRateCustom stays false), so the user can still override it in
+      // the popover if they want to.
+      const stats = opts?.stats ?? null;
+      let fillRate;
+      if (opts?.fillRate) {
+        fillRate = normalizeFillRate(opts.fillRate);
+      } else if (stats?.fillRate && !opts?.fillRateCustom) {
+        fillRate = normalizeFillRate({
+          numerator: stats.fillRate.success,
+          denominator: stats.fillRate.ran,
+        });
+      } else {
+        fillRate = buildDefaultFillRate();
+      }
       const data = {
         type: "dp",
         text: text || "",
         displayName: text || "",
         fillRate,
         fillRateCustom: !!opts?.fillRateCustom,
+        fieldId: opts?.fieldId ?? null,
+        tableId: opts?.tableId ?? null,
+        viewId: opts?.viewId ?? null,
+        stats,
+        groupCluster: opts?.groupCluster ?? null,
       };
       const card = { id, x, y, data, el: null, handles: {}, groupId: null };
 
       const el = document.createElement("div");
       el.className = "cb-card cb-card-dp";
       el.setAttribute("data-card-id", card.id);
+      if (data.groupCluster) el.setAttribute("data-group-cluster", data.groupCluster);
       el.style.transform = `translate(${x}px, ${y}px)`;
 
       const del = document.createElement("button");
@@ -711,10 +914,10 @@
       row_.appendChild(textEl);
       el.appendChild(row_);
 
-      // Footer row holds the "Not connected / ~N credits / row" pill on the
-      // left and (in Pro Mode only) the editable fill-rate badge on the right.
-      // The footer is always mounted; CSS hides .cb-dp-fill when the overlay
-      // doesn't carry the [data-cb-pro-mode] attribute.
+      // Footer row holds the "Not connected / ~N credits / row" pill. Keep
+      // this layout untouched in non-Pro mode so the card height stays the
+      // same as before; in Pro Mode the .cb-dp-stats row below adds visible
+      // height for the coverage + fill pills.
       const footer = document.createElement("div");
       footer.className = "cb-dp-footer";
 
@@ -723,6 +926,38 @@
       costBar.innerHTML =
         '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" fill="currentColor" viewBox="0 0 256 256"><path d="M207.58,63.84C186.85,53.48,159.33,48,128,48S69.15,53.48,48.42,63.84,16,88.78,16,104v48c0,15.22,11.82,29.85,32.42,40.16S96.67,208,128,208s58.85-5.48,79.58-15.84S240,167.22,240,152V104C240,88.78,228.18,74.15,207.58,63.84Z" opacity="0.2"/><path d="M128,64c62.64,0,96,23.23,96,40s-33.36,40-96,40-96-23.23-96-40S65.36,64,128,64Z"/></svg><span>Not connected</span>';
       footer.appendChild(costBar);
+
+      el.appendChild(footer);
+
+      // Stats row — sibling to the footer, hidden by default and only
+      // displayed when [data-cb-pro-mode] is set on the overlay (CSS-driven).
+      // The whole row is mounted unconditionally so toggling Pro Mode is a
+      // pure CSS flip — no card re-render needed. Adding this row makes the
+      // card visually grow taller in Pro Mode rather than wrapping the footer.
+      const statsRow = document.createElement("div");
+      statsRow.className = "cb-dp-stats";
+
+      // Coverage pill — only mounted when the import attached a coverage
+      // block (typically via runstatus on a sibling ER or via the waterfall
+      // merge pathway). Standalone DPs without a coverage source skip it.
+      let coverageLabel = null;
+      if (data.stats?.coverage) {
+        const coverageBadge = document.createElement("button");
+        coverageBadge.className = "cb-dp-coverage";
+        coverageBadge.type = "button";
+        coverageBadge.title = "Click to view coverage (records run / total)";
+        coverageLabel = document.createElement("span");
+        coverageLabel.className = "cb-dp-coverage-label";
+        coverageLabel.textContent = coveragePercentText(data.stats.coverage);
+        coverageBadge.innerHTML = COVERAGE_SVG;
+        coverageBadge.appendChild(coverageLabel);
+        coverageBadge.addEventListener("mousedown", (evt) => evt.stopPropagation());
+        coverageBadge.addEventListener("click", (evt) => {
+          evt.stopPropagation();
+          showFillRatePopover(card, coverageBadge, null, "coverage");
+        });
+        statsRow.appendChild(coverageBadge);
+      }
 
       const fillBadge = document.createElement("button");
       fillBadge.className = "cb-dp-fill";
@@ -739,11 +974,11 @@
       fillBadge.addEventListener("mousedown", (evt) => evt.stopPropagation());
       fillBadge.addEventListener("click", (evt) => {
         evt.stopPropagation();
-        showFillRatePopover(card, fillBadge, fillLabel);
+        showFillRatePopover(card, fillBadge, fillLabel, "fill");
       });
-      footer.appendChild(fillBadge);
+      statsRow.appendChild(fillBadge);
 
-      el.appendChild(footer);
+      el.appendChild(statsRow);
 
       el.addEventListener("contextmenu", (evt) => {
         evt.preventDefault();
@@ -777,12 +1012,21 @@
       }
       ensureNextCardId(id);
 
-      const data = { type: "input", text: text || "", displayName: text || "" };
+      const data = {
+        type: "input",
+        text: text || "",
+        displayName: text || "",
+        fieldId: opts?.fieldId ?? null,
+        tableId: opts?.tableId ?? null,
+        viewId: opts?.viewId ?? null,
+        groupCluster: opts?.groupCluster ?? null,
+      };
       const card = { id, x, y, data, el: null, handles: {}, groupId: null };
 
       const el = document.createElement("div");
       el.className = "cb-card cb-card-input";
       el.setAttribute("data-card-id", card.id);
+      if (data.groupCluster) el.setAttribute("data-group-cluster", data.groupCluster);
       el.style.transform = `translate(${x}px, ${y}px)`;
 
       const del = document.createElement("button");
@@ -857,12 +1101,18 @@
       }
       ensureNextCardId(id);
 
-      const data = { type: "comment", text: text || "", displayName: text || "" };
+      const data = {
+        type: "comment",
+        text: text || "",
+        displayName: text || "",
+        groupCluster: opts?.groupCluster ?? null,
+      };
       const card = { id, x, y, data, el: null, handles: {}, groupId: null };
 
       const el = document.createElement("div");
       el.className = "cb-card cb-card-comment";
       el.setAttribute("data-card-id", card.id);
+      if (data.groupCluster) el.setAttribute("data-group-cluster", data.groupCluster);
       el.style.transform = `translate(${x}px, ${y}px)`;
 
       const del = document.createElement("button");
