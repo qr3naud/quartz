@@ -764,6 +764,37 @@
     notifyChange();
   }
 
+  // Re-position the Y of every card in each cluster so the snap mechanism
+  // can keep them magneted across a card-height change. Called by
+  // setProMode in overlay.js: at toggle time card width stays at 220px but
+  // height changes between 70 and 96, opening (or closing) gaps that snap
+  // adjacency (1px tolerance) can't bridge. We compute each member's row
+  // index in the OLD layout, then re-emit at `leadY + row * newH`. X
+  // positions are untouched. Singletons (clusters of size < 2) are filtered
+  // out by getSnapClusters already, so isolated cards aren't affected.
+  function applyClusterReflow(clusters, oldH, newH) {
+    if (!clusters || oldH === newH) return;
+    for (const cluster of clusters) {
+      if (!cluster || cluster.length < 2) continue;
+      const members = cluster.map((id) => getCardById(id)).filter(Boolean);
+      if (members.length < 2) continue;
+      const leadY = Math.min(...members.map((c) => c.y));
+      for (const c of members) {
+        const row = Math.round((c.y - leadY) / oldH);
+        c.y = leadY + row * newH;
+        c.el.style.transform = `translate(${c.x}px, ${c.y}px)`;
+        // Stream new positions to peers so collaborators tracking the
+        // canvas don't fall out of sync. Cross-user Pro Mode mismatches
+        // can still cause transient magnet desync — a known caveat.
+        if (__cb.realtime?.broadcastCardMove) {
+          __cb.realtime.broadcastCardMove(c.id, c.x, c.y);
+        }
+      }
+    }
+    refreshClusters();
+    notifyChange();
+  }
+
   // ---- Selection box ----
 
   function startSelectionBox(e) {
@@ -1168,6 +1199,7 @@
     refreshClusters,
     getCardById,
     getSnapClusters,
+    applyClusterReflow,
     // Live snapshot of the cards array. External read-only consumers (e.g. the
     // export-as-table modal) need this to enumerate every card. Mutating the
     // returned array directly would corrupt internal state — go through addCard

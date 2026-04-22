@@ -96,6 +96,23 @@
     // an empty canvas snapshot.
     __cb.setProMode = function (value) {
       const next = !!value;
+      // Early-out when state didn't change (e.g. canvas restore reapplying
+      // the persisted Pro Mode value). Without this we'd capture and reflow
+      // clusters on every restore, which is wasted work and could broadcast
+      // spurious card moves to collaborators.
+      if (next === __cb.proMode) return;
+
+      // Capture cluster topology BEFORE the CSS attribute flip so snap
+      // adjacency still sees cards at their current (old) height. After the
+      // height change, applyClusterReflow re-positions each cluster
+      // member's y to match the new pitch, keeping magnets intact.
+      const oldH = __cb.proMode ? 96 : 70;
+      const newH = next ? 96 : 70;
+      let clustersBefore = null;
+      if (oldH !== newH && __cb.canvas?.getSnapClusters) {
+        clustersBefore = __cb.canvas.getSnapClusters();
+      }
+
       __cb.proMode = next;
       if (__cb.overlayEl) {
         if (next) __cb.overlayEl.setAttribute("data-cb-pro-mode", "");
@@ -103,6 +120,20 @@
       }
       proBtn.classList.toggle("cb-toolbar-btn-pro-active", next);
       if (__cb.tabStore) __cb.tabStore.proMode = next;
+
+      if (clustersBefore && __cb.canvas?.applyClusterReflow) {
+        __cb.canvas.applyClusterReflow(clustersBefore, oldH, newH);
+      }
+
+      // Re-derive group rects from the cards' new offsetHeight. The CSS
+      // attribute flip above changes every .cb-card between 70px and 96px,
+      // and groups size themselves from getCardRect (which reads live
+      // offsetHeight). Without this call, groups stay at the old height and
+      // either let cards bleed past the bottom (entering Pro) or leave a
+      // dead band below them (leaving Pro). Runs after applyClusterReflow
+      // so any reflowed cluster member's new y is reflected in maxY.
+      if (__cb.canvas?.updateGroupBounds) __cb.canvas.updateGroupBounds();
+
       if (__cb.debouncedSave) __cb.debouncedSave();
     };
 

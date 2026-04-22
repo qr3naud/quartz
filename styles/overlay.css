@@ -473,10 +473,10 @@
   color: #047857;
 }
 
-/* Projected / Actual segmented control is gated behind Pro Mode — non-Pro
-   users don't see stat pills on cards anyway, so the toggle would be noise.
-   The element stays in the DOM (so setViewMode can still flip it) but
-   renders as display: none until the overlay carries [data-cb-pro-mode]. */
+/* Projected / Actual is gated behind Pro Mode — non-Pro users don't see
+   stat pills on cards anyway, so the toggle would be noise. The element
+   stays in the DOM (so setViewMode can still flip it) but renders as
+   display: none until the overlay carries [data-cb-pro-mode]. */
 .cb-overlay:not([data-cb-pro-mode]) .cb-view-mode-toggle {
   display: none;
 }
