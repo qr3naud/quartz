@@ -18,7 +18,7 @@
 //   3. One rAF after the header appears (so Clay's own scroll has fired),
 //      re-scrolls the grid container so the column's left edge sits just to
 //      the right of the pinned strip — left-aligned visually.
-//   4. Adds .cb-focus-flash to the header for a 2.5s indigo border pulse
+//   4. Adds .cb-focus-flash to the header for a 5s indigo border pulse
 //      (rendered as a ::after pseudo-element so it sits above the column
 //      header's child <button>; see styles/overlay.css for the implementation
 //      note explaining why outline didn't work).
@@ -48,7 +48,7 @@
   const CONTAINER_ID = "grid-view-scroll-container";
   const PINNED_CONTAINER_ID = "table-header-pinned-fields-container";
   const FLASH_CLASS = "cb-focus-flash";
-  const FLASH_DURATION_MS = 2500;
+  const FLASH_DURATION_MS = 5000;
   const POST_MOUNT_DELAY_MS = 200;
   const SAFETY_TIMEOUT_MS = 10000;
 
