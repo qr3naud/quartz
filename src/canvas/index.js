@@ -688,32 +688,74 @@
     const sel = [...selectedCards].map((id) => getCardById(id)).filter(Boolean);
     if (sel.length < 2) return;
 
+    // Mirror the import flow's bucketing so the magnet shortcut produces
+    // the same cluster shape as a fresh table import: comment row on top
+    // of the DP grid, DPs in an adaptive grid in the middle, inputs to
+    // the LEFT of the DPs, ERs to the RIGHT. Sort within each bucket by
+    // current position so the magnet preserves the user's top-to-bottom,
+    // left-to-right intent within a category.
+    const commentCards = sel.filter((c) => c.data.type === "comment");
+    const inputCards = sel.filter((c) => c.data.type === "input");
     const dpCards = sel.filter((c) => c.data.type === "dp");
-    const erCards = sel.filter((c) => c.data.type !== "dp");
-    dpCards.sort((a, b) => a.y - b.y || a.x - b.x);
-    erCards.sort((a, b) => a.y - b.y || a.x - b.x);
+    const erCards = sel.filter((c) =>
+      c.data.type !== "comment" && c.data.type !== "input" && c.data.type !== "dp"
+    );
+    for (const arr of [commentCards, inputCards, dpCards, erCards]) {
+      arr.sort((a, b) => a.y - b.y || a.x - b.x);
+    }
 
     const anchorX = Math.min(...sel.map((c) => c.x));
     const anchorY = Math.min(...sel.map((c) => c.y));
     const cardW = getCardRect(sel[0]).w;
     const cardH = getCardRect(sel[0]).h;
 
-    const rows = Math.max(1, Math.ceil(Math.sqrt(sel.length)));
-    const dpCols = dpCards.length > 0 ? Math.ceil(dpCards.length / rows) : 0;
+    // Adaptive square-ish grid for DPs — better for hand-curated small
+    // selections than the import's fixed 4-col layout.
+    const dpCols = dpCards.length > 0
+      ? Math.max(1, Math.ceil(Math.sqrt(dpCards.length)))
+      : 0;
+    const inputColW = inputCards.length > 0 ? cardW : 0;
+    const commentRowH = commentCards.length > 0 ? cardH : 0;
 
+    // DP grid origin: shifted right by the input column (if any) and down
+    // by the comment row (if any) so the comments and inputs magnet to it.
+    const dpOriginX = anchorX + inputColW;
+    const dpOriginY = anchorY + commentRowH;
+
+    // Comments: row directly above the DP grid (or above the ER column
+    // when there are no DPs), one card per slot. Comment[0] sits above
+    // DP[0] so they magnet vertically.
+    for (let i = 0; i < commentCards.length; i++) {
+      commentCards[i].x = dpOriginX + i * cardW;
+      commentCards[i].y = anchorY;
+      commentCards[i].el.style.transform = `translate(${commentCards[i].x}px, ${commentCards[i].y}px)`;
+    }
+
+    // Inputs: column to the LEFT of the DP grid, same y range as DP rows.
+    for (let i = 0; i < inputCards.length; i++) {
+      inputCards[i].x = anchorX;
+      inputCards[i].y = dpOriginY + i * cardH;
+      inputCards[i].el.style.transform = `translate(${inputCards[i].x}px, ${inputCards[i].y}px)`;
+    }
+
+    // DPs: row-major adaptive grid.
     for (let i = 0; i < dpCards.length; i++) {
-      const col = Math.floor(i / rows);
-      const row = i % rows;
-      dpCards[i].x = anchorX + col * cardW;
-      dpCards[i].y = anchorY + row * cardH;
+      const r = Math.floor(i / dpCols);
+      const c = i % dpCols;
+      dpCards[i].x = dpOriginX + c * cardW;
+      dpCards[i].y = dpOriginY + r * cardH;
       dpCards[i].el.style.transform = `translate(${dpCards[i].x}px, ${dpCards[i].y}px)`;
     }
 
+    // ERs: column to the RIGHT of the DP grid (or column 0 when there
+    // are no DPs, so they still sit beside any inputs and below any
+    // comments — keeping the cluster compact).
+    const erColX = dpCards.length > 0
+      ? dpOriginX + dpCols * cardW
+      : dpOriginX;
     for (let i = 0; i < erCards.length; i++) {
-      const col = dpCols + Math.floor(i / rows);
-      const row = i % rows;
-      erCards[i].x = anchorX + col * cardW;
-      erCards[i].y = anchorY + row * cardH;
+      erCards[i].x = erColX;
+      erCards[i].y = dpOriginY + i * cardH;
       erCards[i].el.style.transform = `translate(${erCards[i].x}px, ${erCards[i].y}px)`;
     }
 
