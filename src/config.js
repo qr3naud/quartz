@@ -84,9 +84,9 @@
     // flow opens `${GTME_CALCULATOR_BASE_URL}/import?payload=<base64url>` in a
     // new tab. No fetch happens from the extension, so host_permissions isn't
     // strictly required for the flow itself — window.open is plain navigation.
-    //   Local dev: "http://localhost:5173" (default Vite port)
-    //   Production: the deployed Railway URL once provisioned
-    GTME_CALCULATOR_BASE_URL: "http://localhost:5173",
+    // For local calculator dev, swap to: "http://localhost:5173"
+    GTME_CALCULATOR_BASE_URL: "https://mono-calculator-production.up.railway.app",
+    // GTME_CALCULATOR_BASE_URL: "http://localhost:5173",
 
     enrichmentLookup: {},
     actionByIdLookup: {},
