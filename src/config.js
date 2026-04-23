@@ -104,6 +104,11 @@
     overlayEl: null,
     enrichmentClickPos: null,
     linkTargetCardId: null,
+    // When set, the next picker run routes its picked enrichments as
+    // providers into the named waterfall card (instead of creating new
+    // canvas cards). Read + cleared inside picker.js's finishPicker.
+    // Toggled by the "+" button inside showProviderChain.
+    addToWaterfallCardId: null,
     tabStore: null,
     canvas: null,
 
@@ -265,19 +270,23 @@
 
     // ---- Provider chain popover (waterfall cards) ----
     //
-    // Pops up below the +N provider badge on a waterfall card. Lists each
-    // provider in the chain (icon + name + per-row credit pill) and shows
-    // the avg/max cost in a footer. Read-only at this stage; future
-    // iterations may add drag-to-reorder.
+    // Pops up below the +N provider badge on a waterfall card. Editable:
+    //   - Header "+" appends a blank provider row (in-line typing).
+    //   - Each row supports vertical drag-to-reorder and per-cell editing
+    //     of name + per-row credit cost.
+    //   - Footer slider lets the user pin the card's effective credit
+    //     cost (overrides the avg-of-providers default).
     //
-    // Mirrors the showFrequencyPicker structure: full-viewport invisible
-    // backdrop catches outside clicks, the popover stops propagation, and
-    // positioning is fixed under the anchor.
+    // After every mutation we run __cb.recomputeWaterfallCardData on
+    // card.data and __cb.refreshWaterfallCardDom on the canvas card so
+    // badge text / +N / cluster credit total all stay in sync. The
+    // popover itself re-renders in place (rebuildPanel) so positions
+    // and focused inputs settle without flicker.
     showProviderChain(card, anchorEl) {
       window.__cb.closeProviderChain();
 
       const data = card?.data;
-      if (!data || !Array.isArray(data.providers) || data.providers.length === 0) return;
+      if (!data || !Array.isArray(data.providers)) return;
 
       const backdrop = document.createElement("div");
       backdrop.style.cssText = "position:fixed;inset:0;z-index:9999998;";
@@ -290,29 +299,199 @@
       panel.className = "cb-provider-chain";
       panel.addEventListener("mousedown", (evt) => evt.stopPropagation());
 
-      const header = document.createElement("div");
-      header.className = "cb-provider-chain-header";
-      const headerTitle = document.createElement("span");
-      headerTitle.className = "cb-provider-chain-header-title";
-      headerTitle.textContent = "Waterfall providers";
-      const headerCount = document.createElement("span");
-      headerCount.className = "cb-provider-chain-header-count";
-      headerCount.textContent = `${data.providers.length} step${data.providers.length === 1 ? "" : "s"}`;
-      header.appendChild(headerTitle);
-      header.appendChild(headerCount);
-      panel.appendChild(header);
+      // ---- Hidden right-click context menu ----
+      //
+      // Right-clicking anywhere inside the popover surfaces a tiny menu
+      // with one option: "Remove validation" when the validation row is
+      // currently shown, "Add validation" when hidden. Lets users force
+      // the row on (e.g. for ad-hoc waterfalls without a curated list)
+      // or off (e.g. for waterfalls where they don't care about the
+      // validation cost).
+      let panelCtxMenuEl = null;
+      let panelCtxMenuBackdrop = null;
 
-      const list = document.createElement("div");
-      list.className = "cb-provider-chain-list";
+      function closePanelCtxMenu() {
+        if (panelCtxMenuEl) { panelCtxMenuEl.remove(); panelCtxMenuEl = null; }
+        if (panelCtxMenuBackdrop) { panelCtxMenuBackdrop.remove(); panelCtxMenuBackdrop = null; }
+      }
 
-      for (let i = 0; i < data.providers.length; i++) {
-        const p = data.providers[i];
+      panel.addEventListener("contextmenu", (evt) => {
+        evt.preventDefault();
+        evt.stopPropagation();
+        closePanelCtxMenu();
+
+        const hasOpts = Array.isArray(data.validationOptions) && data.validationOptions.length > 0;
+        const isShown = typeof data.validationVisible === "boolean"
+          ? data.validationVisible
+          : hasOpts;
+
+        panelCtxMenuBackdrop = document.createElement("div");
+        panelCtxMenuBackdrop.style.cssText = "position:fixed;inset:0;z-index:10000003;";
+        panelCtxMenuBackdrop.addEventListener("mousedown", (e) => {
+          e.stopPropagation();
+          closePanelCtxMenu();
+        });
+        panelCtxMenuBackdrop.addEventListener("contextmenu", (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          closePanelCtxMenu();
+        });
+
+        const menu = document.createElement("div");
+        menu.className = "cb-card-context-menu";
+        menu.addEventListener("mousedown", (e) => e.stopPropagation());
+
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "cb-card-context-menu-btn";
+        btn.textContent = isShown ? "Remove validation" : "Add validation";
+        btn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          data.validationVisible = !isShown;
+          closePanelCtxMenu();
+          window.__cb.recomputeWaterfallCardData(data);
+          window.__cb.refreshWaterfallCardDom(card);
+          rebuildPanel();
+        });
+        menu.appendChild(btn);
+
+        document.body.appendChild(panelCtxMenuBackdrop);
+        document.body.appendChild(menu);
+        panelCtxMenuEl = menu;
+
+        menu.style.position = "fixed";
+        menu.style.zIndex = "10000004";
+        menu.style.left = evt.clientX + "px";
+        menu.style.top = evt.clientY + "px";
+      });
+
+      const fmt = window.__cb.formatWaterfallCost
+        || ((n) => (Number.isFinite(n) ? n.toFixed(1) : "0.0"));
+
+      // ---- Drag-to-reorder state ----
+      // Mouse-based (not HTML5 drag) so we can constrain to vertical
+      // movement and re-render the popover in place. While dragging,
+      // dragState.fromIndex tracks the row currently being dragged;
+      // pointermove computes the over-row by hit-testing list children
+      // and swaps providers[] when the cursor crosses a midpoint.
+      let dragState = null;
+
+      function persist() {
+        window.__cb.recomputeWaterfallCardData(data);
+        window.__cb.refreshWaterfallCardDom(card);
+      }
+
+      function rebuildPanel() {
+        panel.innerHTML = "";
+        renderInto(panel);
+      }
+
+      function renderInto(root) {
+        // ---- Header ----
+        const header = document.createElement("div");
+        header.className = "cb-provider-chain-header";
+
+        const headerTitle = document.createElement("span");
+        headerTitle.className = "cb-provider-chain-header-title";
+        headerTitle.textContent = "Waterfall providers";
+        header.appendChild(headerTitle);
+
+        const headerSpacer = document.createElement("span");
+        headerSpacer.className = "cb-provider-chain-header-spacer";
+        header.appendChild(headerSpacer);
+
+        const headerCount = document.createElement("span");
+        headerCount.className = "cb-provider-chain-header-count";
+        headerCount.textContent = `${data.providers.length} step${data.providers.length === 1 ? "" : "s"}`;
+        header.appendChild(headerCount);
+
+        const addBtn = document.createElement("button");
+        addBtn.type = "button";
+        addBtn.className = "cb-provider-chain-add";
+        addBtn.title = "Add provider from the enrichment picker";
+        addBtn.innerHTML =
+          '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>';
+        addBtn.addEventListener("click", (evt) => {
+          evt.stopPropagation();
+          // Hand off to the standard ER picker flow. picker.js's
+          // finishPicker reads `addToWaterfallCardId` and pushes the
+          // picked enrichments into our providers[] (recomputing avg/max
+          // along the way) instead of creating new canvas cards. Then it
+          // re-opens this popover anchored to the same badge.
+          window.__cb.addToWaterfallCardId = card.id;
+          window.__cb.closeProviderChain();
+          if (typeof window.__cb.startPickerMode === "function") {
+            window.__cb.startPickerMode();
+          }
+        });
+        header.appendChild(addBtn);
+
+        root.appendChild(header);
+
+        // ---- Provider list ----
+        const list = document.createElement("div");
+        list.className = "cb-provider-chain-list";
+
+        for (let i = 0; i < data.providers.length; i++) {
+          list.appendChild(buildRow(i, list));
+        }
+        root.appendChild(list);
+
+        // ---- Footer (validation + avg/max + override tile) ----
+        const footer = document.createElement("div");
+        footer.className = "cb-provider-chain-footer";
+
+        // Validation visibility:
+        //   - explicit data.validationVisible wins (user overrode via the
+        //     right-click context menu — Add or Remove Validation),
+        //   - otherwise default to "show iff the attribute has validators".
+        // Ad-hoc / Cmd+Enter waterfalls have no validators, so the row
+        // stays hidden until the user explicitly adds one.
+        const hasOptions = Array.isArray(data.validationOptions) && data.validationOptions.length > 0;
+        const validationShown = typeof data.validationVisible === "boolean"
+          ? data.validationVisible
+          : hasOptions;
+        if (validationShown) {
+          footer.appendChild(buildValidationRow());
+        }
+
+        const stats = document.createElement("div");
+        stats.className = "cb-provider-chain-stats";
+        const avg = document.createElement("span");
+        avg.className = "cb-provider-chain-avg";
+        avg.innerHTML = `<span class="cb-provider-chain-foot-label">Average</span><span class="cb-provider-chain-foot-val">~${fmt(data.averageCost ?? 0)} / row</span>`;
+        const max = document.createElement("span");
+        max.className = "cb-provider-chain-max";
+        max.innerHTML = `<span class="cb-provider-chain-foot-label">Max</span><span class="cb-provider-chain-foot-val">~${fmt(data.maxCost ?? 0)} / row</span>`;
+        stats.appendChild(avg);
+        stats.appendChild(max);
+        footer.appendChild(stats);
+
+        footer.appendChild(buildOverrideRow());
+        root.appendChild(footer);
+      }
+
+      function buildRow(index, listEl) {
+        const p = data.providers[index];
         const row = document.createElement("div");
         row.className = "cb-provider-chain-row";
+        row.setAttribute("data-index", String(index));
+
+        // Drag handle — hidden until row hover via CSS so the layout
+        // doesn't shift. Doubles as the ord number.
+        const handle = document.createElement("span");
+        handle.className = "cb-provider-chain-handle";
+        handle.title = "Drag to reorder";
+        handle.innerHTML =
+          '<svg xmlns="http://www.w3.org/2000/svg" width="10" height="14" viewBox="0 0 10 14" fill="currentColor" aria-hidden="true">' +
+          '<circle cx="2" cy="3" r="1"/><circle cx="2" cy="7" r="1"/><circle cx="2" cy="11" r="1"/>' +
+          '<circle cx="8" cy="3" r="1"/><circle cx="8" cy="7" r="1"/><circle cx="8" cy="11" r="1"/></svg>';
+        handle.addEventListener("mousedown", (evt) => onDragStart(evt, row, listEl, index));
+        row.appendChild(handle);
 
         const ord = document.createElement("span");
         ord.className = "cb-provider-chain-ord";
-        ord.textContent = String(i + 1);
+        ord.textContent = String(index + 1);
         row.appendChild(ord);
 
         const icon = document.createElement("span");
@@ -325,67 +504,630 @@
         } else if (p.iconSvgHtml) {
           icon.innerHTML = p.iconSvgHtml;
         } else {
-          icon.textContent = (p.packageName || p.displayName || "?").charAt(0).toUpperCase();
+          icon.textContent = (p.packageName || p.displayName || "?").charAt(0).toUpperCase() || "?";
         }
         row.appendChild(icon);
 
         const meta = document.createElement("div");
         meta.className = "cb-provider-chain-meta";
-        const nm = document.createElement("div");
-        nm.className = "cb-provider-chain-name";
-        nm.textContent = p.displayName || "Provider";
-        meta.appendChild(nm);
-        if (p.packageName && p.packageName !== p.displayName) {
+
+        // Top line — provider/package name (Apollo, ZeroBounce, …),
+        // bigger and bolder. Editable for ad-hoc rows; static for
+        // catalog-resolved providers (where the package is canonical).
+        const top = document.createElement("span");
+        top.className = "cb-provider-chain-package";
+        const topText = p.packageName || p.displayName || "";
+        if (p.actionKey) {
+          top.textContent = topText || "Provider";
+        } else {
+          top.contentEditable = "true";
+          top.spellcheck = false;
+          top.textContent = topText;
+          if (!topText) top.setAttribute("data-placeholder", "Provider name\u2026");
+          top.addEventListener("mousedown", (evt) => evt.stopPropagation());
+          top.addEventListener("input", () => {
+            const v = top.textContent || "";
+            p.packageName = v;
+            // Mirror to displayName so the badges row + any external code
+            // that reads `displayName` keeps working for ad-hoc rows.
+            p.displayName = v;
+            if (v) top.removeAttribute("data-placeholder");
+            else top.setAttribute("data-placeholder", "Provider name\u2026");
+            persist();
+          });
+          top.addEventListener("keydown", (evt) => {
+            if (evt.key === "Enter") {
+              evt.preventDefault();
+              top.blur();
+            }
+          });
+        }
+        meta.appendChild(top);
+
+        // Bottom line — action name (smaller). Only shown for catalog
+        // providers where the action and package are distinct (e.g.
+        // package "Apollo" + action "Find Email"). Ad-hoc rows skip it.
+        if (p.actionKey && p.displayName && p.displayName !== topText) {
           const sub = document.createElement("div");
-          sub.className = "cb-provider-chain-sub";
-          sub.textContent = p.packageName;
+          sub.className = "cb-provider-chain-action";
+          sub.textContent = p.displayName;
           meta.appendChild(sub);
         }
         row.appendChild(meta);
 
-        const cost = document.createElement("span");
-        cost.className = "cb-provider-chain-cost";
-        if (p.requiresApiKey && (p.credits == null)) {
-          cost.classList.add("cb-provider-chain-cost-key");
-          cost.textContent = "API key";
-        } else if (p.credits == null) {
-          cost.textContent = "—";
-        } else {
-          cost.textContent = `~${p.credits} / row`;
-        }
-        row.appendChild(cost);
+        // Cost cell — credit/key badge styled like the card's own pill.
+        // Clicking the badge toggles between credit mode and private-key
+        // mode (only meaningful when there's a credit value to fall back
+        // from). For ad-hoc rows the credit value is editable inline.
+        row.appendChild(buildCreditBadge({
+          getCredits: () => p.credits,
+          setCredits: (n) => {
+            p.credits = n;
+            p.creditText = n != null ? `~${n} / row` : null;
+          },
+          editable: !p.actionKey,
+          isKeyMode: () => !!p.usePrivateKey,
+          setKeyMode: (v) => { p.usePrivateKey = !!v; },
+          onChange: () => {
+            persist();
+            refreshFooterStats();
+          },
+        }));
 
-        list.appendChild(row);
+        // Per-row remove button.
+        const rm = document.createElement("button");
+        rm.type = "button";
+        rm.className = "cb-provider-chain-rm";
+        rm.title = "Remove";
+        rm.innerHTML =
+          '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
+        rm.addEventListener("mousedown", (evt) => evt.stopPropagation());
+        rm.addEventListener("click", (evt) => {
+          evt.stopPropagation();
+          data.providers.splice(index, 1);
+          persist();
+          rebuildPanel();
+        });
+        row.appendChild(rm);
+
+        return row;
       }
-      panel.appendChild(list);
 
-      const footer = document.createElement("div");
-      footer.className = "cb-provider-chain-footer";
-      const avg = document.createElement("span");
-      avg.className = "cb-provider-chain-avg";
-      avg.innerHTML = `<span class="cb-provider-chain-foot-label">Average</span><span class="cb-provider-chain-foot-val">~${data.averageCost ?? data.credits ?? 0} / row</span>`;
-      const sep = document.createElement("span");
-      sep.className = "cb-provider-chain-foot-sep";
-      const max = document.createElement("span");
-      max.className = "cb-provider-chain-max";
-      max.innerHTML = `<span class="cb-provider-chain-foot-label">Max</span><span class="cb-provider-chain-foot-val">~${data.maxCost ?? 0} / row</span>`;
-      footer.appendChild(avg);
-      footer.appendChild(sep);
-      footer.appendChild(max);
-      panel.appendChild(footer);
+      // ---- Credit / key badge factory ----
+      //
+      // Mirrors the credit pill on regular cards (cb-card-badge-credit /
+      // cb-card-badge-key). Two visual states: green credit + value, or
+      // blue key + "Private key". The whole badge is clickable to toggle
+      // when allowed; for ad-hoc providers the credit value is an inline
+      // editable number input.
+      //
+      // Toggling key mode never destroys the credit value: when flipping
+      // back to credit mode the previous credits resurface. Only meaningful
+      // when a credit value exists OR the provider was originally
+      // requiresApiKey (matches the on-card showKeyToggle behavior).
+      const CREDIT_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" fill="currentColor" viewBox="0 0 256 256"><path d="M207.58,63.84C186.85,53.48,159.33,48,128,48S69.15,53.48,48.42,63.84,16,88.78,16,104v48c0,15.22,11.82,29.85,32.42,40.16S96.67,208,128,208s58.85-5.48,79.58-15.84S240,167.22,240,152V104C240,88.78,228.18,74.15,207.58,63.84Z" opacity="0.2"/><path d="M128,64c62.64,0,96,23.23,96,40s-33.36,40-96,40-96-23.23-96-40S65.36,64,128,64Z"/></svg>';
+      // Duotone Phosphor key — matches the on-card private-key pill in
+      // canvas/cards.js (darker outline #3b82f6, lighter inside #93c5fd).
+      // Used in two places: the validation dropdown's right-side keyOnly
+      // indicator AND the credit/key badge when in private-key mode.
+      const KEY_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 256 256"><path fill="#3b82f6" d="M216.57,39.43A80,80,0,0,0,83.91,120.78L28.69,176A15.86,15.86,0,0,0,24,187.31V216a16,16,0,0,0,16,16H72a8,8,0,0,0,8-8V208H96a8,8,0,0,0,8-8V184h16a8,8,0,0,0,5.66-2.34l9.56-9.57A79.73,79.73,0,0,0,160,176h.1A80,80,0,0,0,216.57,39.43Z"/><path fill="#93c5fd" d="M224,98.1c-1.09,34.09-29.75,61.86-63.89,61.9H160a63.7,63.7,0,0,1-23.65-4.51,8,8,0,0,0-8.84,1.68L116.69,168H96a8,8,0,0,0-8,8v16H72a8,8,0,0,0-8,8v16H40V187.31l58.83-58.82a8,8,0,0,0,1.68-8.84A63.72,63.72,0,0,1,96,95.92c0-34.14,27.81-62.8,61.9-63.89A64,64,0,0,1,224,98.1ZM192,76a12,12,0,1,1-12-12A12,12,0,0,1,192,76Z"/></svg>';
+
+      function buildCreditBadge({ getCredits, setCredits, editable, isKeyMode, setKeyMode, onChange }) {
+        const badge = document.createElement("button");
+        badge.type = "button";
+        badge.className = "cb-provider-chain-credit-badge";
+        // Click toggles mode. For ad-hoc rows in credit mode the input
+        // catches its own clicks via stopPropagation (so clicking the
+        // input focuses it), and only clicks on the badge body fall
+        // through to the toggle below.
+        badge.addEventListener("mousedown", (evt) => evt.stopPropagation());
+        badge.addEventListener("click", (evt) => {
+          if (evt.target.tagName === "INPUT") return;
+          evt.stopPropagation();
+          setKeyMode(!isKeyMode());
+          renderMode();
+          onChange();
+        });
+
+        function renderMode() {
+          badge.innerHTML = "";
+          if (isKeyMode()) {
+            badge.classList.add("cb-provider-chain-credit-badge-key");
+            badge.classList.remove("cb-provider-chain-credit-badge-credit");
+            const ic = document.createElement("span");
+            ic.className = "cb-provider-chain-credit-badge-icon";
+            ic.innerHTML = KEY_SVG;
+            badge.appendChild(ic);
+            const t = document.createElement("span");
+            t.className = "cb-provider-chain-credit-badge-text";
+            t.textContent = "Private key";
+            badge.appendChild(t);
+          } else {
+            badge.classList.add("cb-provider-chain-credit-badge-credit");
+            badge.classList.remove("cb-provider-chain-credit-badge-key");
+            const ic = document.createElement("span");
+            ic.className = "cb-provider-chain-credit-badge-icon";
+            ic.innerHTML = CREDIT_SVG;
+            badge.appendChild(ic);
+            if (editable) {
+              const input = document.createElement("input");
+              input.type = "number";
+              input.min = "0";
+              input.step = "0.5";
+              input.className = "cb-provider-chain-credit-badge-input";
+              input.value = String(getCredits() ?? 0);
+              input.addEventListener("mousedown", (evt) => evt.stopPropagation());
+              input.addEventListener("click", (evt) => evt.stopPropagation());
+              input.addEventListener("input", () => {
+                const n = parseFloat(input.value);
+                setCredits(Number.isFinite(n) && n >= 0 ? n : 0);
+                onChange();
+              });
+              input.addEventListener("keydown", (evt) => {
+                if (evt.key === "Enter") {
+                  evt.preventDefault();
+                  input.blur();
+                }
+              });
+              badge.appendChild(input);
+              const sfx = document.createElement("span");
+              sfx.className = "cb-provider-chain-credit-badge-suffix";
+              sfx.textContent = "/ row";
+              badge.appendChild(sfx);
+            } else {
+              const t = document.createElement("span");
+              t.className = "cb-provider-chain-credit-badge-text";
+              const c = getCredits();
+              t.textContent = c != null ? `${c} / row` : "\u2014";
+              badge.appendChild(t);
+            }
+          }
+        }
+
+        renderMode();
+        return badge;
+      }
+
+      function refreshFooterStats() {
+        const avgEl = panel.querySelector(".cb-provider-chain-avg .cb-provider-chain-foot-val");
+        const maxEl = panel.querySelector(".cb-provider-chain-max .cb-provider-chain-foot-val");
+        if (avgEl) avgEl.textContent = `~${fmt(data.averageCost ?? 0)} / row`;
+        if (maxEl) maxEl.textContent = `~${fmt(data.maxCost ?? 0)} / row`;
+        // Tile follows averageCost until the user pins their own value.
+        if (!data.creditsCustom) {
+          const input = panel.querySelector(".cb-provider-chain-tile-input");
+          if (input && document.activeElement !== input) {
+            input.value = fmt(data.averageCost ?? 0);
+          }
+        }
+      }
+
+      // ---- Branded validation picker (replaces native <select>) ----
+      //
+      // Mirrors the cb-model-picker visual: a trigger button shows the
+      // current provider; clicking opens a portaled menu with a
+      // backdrop-on-document. Each option lists provider name + per-row
+      // credit cost, matching the model picker's name/cost layout. Used
+      // here so the validation control reads as a Clay-branded affordance
+      // instead of a browser-native dropdown.
+      let validationMenuEl = null;
+      let validationMenuBackdrop = null;
+
+      function closeValidationMenu() {
+        if (validationMenuEl) { validationMenuEl.remove(); validationMenuEl = null; }
+        if (validationMenuBackdrop) { validationMenuBackdrop.remove(); validationMenuBackdrop = null; }
+      }
+
+      function openValidationMenu(triggerEl) {
+        closeValidationMenu();
+
+        // Backdrop sits ABOVE the parent popover backdrop so an outside
+        // click dismisses just this menu first, leaving the parent
+        // popover open. Z indices: parent popover backdrop 9999998,
+        // parent popover 9999999, this backdrop 10000003, this menu 10000004.
+        validationMenuBackdrop = document.createElement("div");
+        validationMenuBackdrop.style.cssText = "position:fixed;inset:0;z-index:10000003;";
+        validationMenuBackdrop.addEventListener("mousedown", (evt) => {
+          evt.stopPropagation();
+          closeValidationMenu();
+        });
+
+        const menu = document.createElement("div");
+        menu.className = "cb-validation-menu";
+        menu.addEventListener("mousedown", (evt) => evt.stopPropagation());
+
+        const noneBtn = document.createElement("button");
+        noneBtn.type = "button";
+        noneBtn.className =
+          "cb-validation-menu-option" +
+          (data.validationProvider == null ? " cb-validation-menu-option-active" : "");
+        const noneName = document.createElement("span");
+        noneName.className = "cb-validation-menu-option-name";
+        noneName.textContent = "No validation";
+        noneBtn.appendChild(noneName);
+        noneBtn.addEventListener("click", (evt) => {
+          evt.stopPropagation();
+          data.validationProvider = null;
+          data.validationName = null;
+          data.validationPrice = 0;
+          data.validationRequiresApiKey = false;
+          data.validationUsePrivateKey = false;
+          window.__cb.recomputeWaterfallCardData(data);
+          window.__cb.refreshWaterfallCardDom(card);
+          closeValidationMenu();
+          rebuildPanel();
+        });
+        menu.appendChild(noneBtn);
+
+        for (const opt of data.validationOptions) {
+          const item = document.createElement("button");
+          item.type = "button";
+          item.className =
+            "cb-validation-menu-option" +
+            (data.validationProvider === opt.actionId ? " cb-validation-menu-option-active" : "");
+
+          const nm = document.createElement("span");
+          nm.className = "cb-validation-menu-option-name";
+          nm.textContent = opt.name || opt.actionName || opt.actionId;
+          item.appendChild(nm);
+
+          // Right-side cost cell:
+          //   - Key-only providers (Debounce / Lead Magic / Enrow / …):
+          //     show a blue key icon in place of the credit number.
+          //     Provider name stays on the left, the icon alone signals
+          //     "bring your own key, costs 0 Clay credits".
+          //   - Everyone else: green per-row credit cost.
+          if (opt.keyOnly) {
+            const keyIcon = document.createElement("span");
+            keyIcon.className = "cb-validation-menu-option-key";
+            keyIcon.innerHTML = KEY_SVG;
+            item.appendChild(keyIcon);
+          } else if (typeof opt.credits === "number") {
+            const cost = document.createElement("span");
+            cost.className = "cb-validation-menu-option-cost";
+            cost.textContent = `${opt.credits} / row`;
+            item.appendChild(cost);
+          }
+
+          item.addEventListener("click", (evt) => {
+            evt.stopPropagation();
+            data.validationProvider = opt.actionId;
+            data.validationName = opt.name || null;
+            data.validationPrice = opt.credits ?? 0;
+            data.validationRequiresApiKey = !!opt.requiresApiKey;
+            // Auto-flip key mode for key-only validators so the
+            // validation cost contributes 0 to averageCost / maxCost
+            // (the user can always click the cost badge to flip back
+            // if Clay starts offering shared-key support for that
+            // provider). Non-key-only options reset the flag.
+            data.validationUsePrivateKey = !!opt.keyOnly;
+            window.__cb.recomputeWaterfallCardData(data);
+            window.__cb.refreshWaterfallCardDom(card);
+            closeValidationMenu();
+            rebuildPanel();
+          });
+          menu.appendChild(item);
+        }
+
+        document.body.appendChild(validationMenuBackdrop);
+        document.body.appendChild(menu);
+        validationMenuEl = menu;
+
+        const rect = triggerEl.getBoundingClientRect();
+        menu.style.position = "fixed";
+        menu.style.zIndex = "10000004";
+        menu.style.top = (rect.bottom + 4) + "px";
+        const menuW = menu.offsetWidth || 220;
+        const left = Math.min(rect.left, window.innerWidth - menuW - 12);
+        menu.style.left = Math.max(8, left) + "px";
+      }
+
+      // ---- Validation row ----
+      //
+      // Pre-Average row that surfaces the per-step validation provider.
+      // Mounted when:
+      //   1. The attribute has validators AND data.validationVisible !== false, OR
+      //   2. data.validationVisible === true (user added it via right-click)
+      //
+      // The trigger button shows the current provider (or "No validation");
+      // clicking opens the branded dropdown above. For waterfalls without
+      // a curated options list, an editable text input lets the user type
+      // a custom validator name.
+      function buildValidationRow() {
+        const wrap = document.createElement("div");
+        wrap.className = "cb-provider-chain-validation";
+
+        const tag = document.createElement("span");
+        tag.className = "cb-provider-chain-validation-tag";
+        tag.textContent = "Validation";
+        wrap.appendChild(tag);
+
+        const hasOptions = Array.isArray(data.validationOptions) && data.validationOptions.length > 0;
+        if (hasOptions) {
+          const trigger = document.createElement("button");
+          trigger.type = "button";
+          trigger.className = "cb-provider-chain-validation-trigger";
+          trigger.addEventListener("mousedown", (evt) => evt.stopPropagation());
+          trigger.addEventListener("click", (evt) => {
+            evt.stopPropagation();
+            openValidationMenu(trigger);
+          });
+
+          const labelEl = document.createElement("span");
+          labelEl.className = "cb-provider-chain-validation-trigger-label";
+          labelEl.textContent = data.validationName || "No validation";
+          trigger.appendChild(labelEl);
+
+          const chev = document.createElement("span");
+          chev.className = "cb-provider-chain-validation-trigger-chev";
+          chev.innerHTML =
+            '<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>';
+          trigger.appendChild(chev);
+
+          wrap.appendChild(trigger);
+        } else {
+          // No curated list — fall back to a free-text input so the user
+          // can label the validator on ad-hoc waterfalls. Shown only when
+          // the user explicitly opted in via the right-click "Add validation"
+          // affordance (the row is hidden by default in that case).
+          const nameEl = document.createElement("span");
+          nameEl.className = "cb-provider-chain-validation-name";
+          nameEl.contentEditable = "true";
+          nameEl.spellcheck = false;
+          nameEl.textContent = data.validationName || "";
+          if (!data.validationName) nameEl.setAttribute("data-placeholder", "Provider name\u2026");
+          nameEl.addEventListener("mousedown", (evt) => evt.stopPropagation());
+          nameEl.addEventListener("input", () => {
+            const v = nameEl.textContent || "";
+            data.validationName = v || null;
+            if (v) nameEl.removeAttribute("data-placeholder");
+            else nameEl.setAttribute("data-placeholder", "Provider name\u2026");
+            window.__cb.refreshWaterfallCardDom(card);
+          });
+          nameEl.addEventListener("keydown", (evt) => {
+            if (evt.key === "Enter") {
+              evt.preventDefault();
+              nameEl.blur();
+            }
+          });
+          wrap.appendChild(nameEl);
+        }
+
+        wrap.appendChild(buildCreditBadge({
+          getCredits: () => data.validationPrice ?? 0,
+          setCredits: (n) => { data.validationPrice = n; },
+          editable: true,
+          isKeyMode: () => !!data.validationUsePrivateKey,
+          setKeyMode: (v) => { data.validationUsePrivateKey = !!v; },
+          onChange: () => {
+            window.__cb.recomputeWaterfallCardData(data);
+            window.__cb.refreshWaterfallCardDom(card);
+            refreshFooterStats();
+          },
+        }));
+
+        return wrap;
+      }
+
+      function buildOverrideRow() {
+        const wrap = document.createElement("div");
+        wrap.className = "cb-provider-chain-override";
+
+        const label = document.createElement("div");
+        label.className = "cb-provider-chain-override-label";
+
+        const labelText = document.createElement("span");
+        labelText.className = "cb-provider-chain-override-label-text";
+        labelText.textContent = "Card credit override";
+        label.appendChild(labelText);
+
+        const resetBtn = document.createElement("button");
+        resetBtn.type = "button";
+        resetBtn.className = "cb-provider-chain-reset";
+        if (data.creditsCustom) resetBtn.classList.add("cb-provider-chain-reset-visible");
+        resetBtn.title = "Reset to provider average";
+        resetBtn.textContent = "Reset";
+        resetBtn.addEventListener("mousedown", (evt) => evt.stopPropagation());
+        resetBtn.addEventListener("click", (evt) => {
+          evt.stopPropagation();
+          data.creditsCustom = false;
+          // recompute restores credits/creditText to averageCost when
+          // creditsCustom is false.
+          window.__cb.recomputeWaterfallCardData(data);
+          window.__cb.refreshWaterfallCardDom(card);
+          input.value = fmt(data.credits ?? 0);
+          resetBtn.classList.remove("cb-provider-chain-reset-visible");
+        });
+        label.appendChild(resetBtn);
+
+        wrap.appendChild(label);
+
+        // Editable rectangle tile: the credit number is the focal point;
+        // clicking it focuses the input and the user can either type a new
+        // value or hold ↑/↓ to step. Step buttons sit on the right for
+        // mouse-only adjustment. The tile commits live (input event) so
+        // the card pill and totals update as the user adjusts.
+        const tile = document.createElement("div");
+        tile.className = "cb-provider-chain-tile";
+        tile.addEventListener("mousedown", (evt) => {
+          // Clicking anywhere on the tile (not just the input) focuses
+          // the number — the whole rectangle is the affordance.
+          if (evt.target === tile) {
+            evt.preventDefault();
+            input.focus();
+            input.select();
+          }
+        });
+
+        const input = document.createElement("input");
+        input.type = "number";
+        input.className = "cb-provider-chain-tile-input";
+        input.min = "0";
+        input.step = "0.5";
+        input.value = fmt(data.credits ?? data.averageCost ?? 0);
+        input.addEventListener("mousedown", (evt) => evt.stopPropagation());
+        input.addEventListener("focus", () => {
+          input.select();
+        });
+        input.addEventListener("input", () => {
+          const n = parseFloat(input.value);
+          if (!Number.isFinite(n) || n < 0) return;
+          data.credits = n;
+          data.creditText = `~${fmt(n)} / row`;
+          data.creditsCustom = true;
+          window.__cb.refreshWaterfallCardDom(card);
+          resetBtn.classList.add("cb-provider-chain-reset-visible");
+        });
+        input.addEventListener("blur", () => {
+          // Re-format the value on blur so "12" → "12.0" stays consistent
+          // with the rest of the popover. Skipping if the user blanked
+          // the field (treat as no override removal — they can hit Reset).
+          if (input.value !== "") input.value = fmt(parseFloat(input.value));
+        });
+        input.addEventListener("keydown", (evt) => {
+          if (evt.key === "Enter") {
+            evt.preventDefault();
+            input.blur();
+          }
+        });
+        tile.appendChild(input);
+
+        const suffix = document.createElement("span");
+        suffix.className = "cb-provider-chain-tile-suffix";
+        suffix.textContent = "/ row";
+        tile.appendChild(suffix);
+
+        const stepper = document.createElement("div");
+        stepper.className = "cb-provider-chain-tile-stepper";
+
+        const upBtn = document.createElement("button");
+        upBtn.type = "button";
+        upBtn.className = "cb-provider-chain-tile-step";
+        upBtn.title = "Increase";
+        upBtn.innerHTML =
+          '<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 15 12 9 18 15"/></svg>';
+        upBtn.addEventListener("mousedown", (evt) => evt.stopPropagation());
+        upBtn.addEventListener("click", (evt) => {
+          evt.stopPropagation();
+          const cur = parseFloat(input.value) || 0;
+          input.value = fmt(cur + 0.5);
+          input.dispatchEvent(new Event("input"));
+        });
+
+        const downBtn = document.createElement("button");
+        downBtn.type = "button";
+        downBtn.className = "cb-provider-chain-tile-step";
+        downBtn.title = "Decrease";
+        downBtn.innerHTML =
+          '<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>';
+        downBtn.addEventListener("mousedown", (evt) => evt.stopPropagation());
+        downBtn.addEventListener("click", (evt) => {
+          evt.stopPropagation();
+          const cur = parseFloat(input.value) || 0;
+          input.value = fmt(Math.max(0, cur - 0.5));
+          input.dispatchEvent(new Event("input"));
+        });
+
+        stepper.appendChild(upBtn);
+        stepper.appendChild(downBtn);
+        tile.appendChild(stepper);
+
+        wrap.appendChild(tile);
+        return wrap;
+      }
+
+      // ---- Drag handlers ----
+
+      function onDragStart(evt, rowEl, listEl, fromIndex) {
+        evt.preventDefault();
+        evt.stopPropagation();
+        const rowRect = rowEl.getBoundingClientRect();
+        dragState = {
+          fromIndex,
+          startY: evt.clientY,
+          rowEl,
+          listEl,
+          rowH: rowRect.height,
+          // Snapshot every row's center-y so swap detection doesn't have
+          // to query the DOM on every mousemove.
+          centers: Array.from(listEl.children).map((c) => {
+            const r = c.getBoundingClientRect();
+            return r.top + r.height / 2;
+          }),
+        };
+        rowEl.classList.add("cb-provider-chain-row-dragging");
+        document.addEventListener("mousemove", onDragMove);
+        document.addEventListener("mouseup", onDragEnd);
+      }
+
+      function onDragMove(evt) {
+        if (!dragState) return;
+        const dy = evt.clientY - dragState.startY;
+        dragState.rowEl.style.transform = `translateY(${dy}px)`;
+
+        // Find the index whose center is closest to the cursor's current y.
+        let target = dragState.fromIndex;
+        let best = Infinity;
+        for (let i = 0; i < dragState.centers.length; i++) {
+          const dist = Math.abs(evt.clientY - dragState.centers[i]);
+          if (dist < best) {
+            best = dist;
+            target = i;
+          }
+        }
+
+        if (target !== dragState.fromIndex) {
+          // Mutate providers[] then rebuild the row order — re-rendering
+          // is cheap (a few DOM nodes) and avoids the bookkeeping of
+          // tracking transforms across multiple rows during drag.
+          const moved = data.providers.splice(dragState.fromIndex, 1)[0];
+          data.providers.splice(target, 0, moved);
+          dragState.fromIndex = target;
+          dragState.rowEl.style.transform = "";
+          // Rebuild the list section in place so the remaining drag
+          // mousemoves continue working against the new layout.
+          rebuildPanel();
+          // Re-acquire the dragged row in the freshly-rendered list.
+          const newList = panel.querySelector(".cb-provider-chain-list");
+          const newRow = newList?.children[target];
+          if (newRow) {
+            newRow.classList.add("cb-provider-chain-row-dragging");
+            const newRect = newRow.getBoundingClientRect();
+            dragState.rowEl = newRow;
+            dragState.listEl = newList;
+            dragState.startY = evt.clientY;
+            dragState.centers = Array.from(newList.children).map((c) => {
+              const r = c.getBoundingClientRect();
+              return r.top + r.height / 2;
+            });
+          }
+        }
+      }
+
+      function onDragEnd() {
+        if (!dragState) return;
+        dragState.rowEl?.classList.remove("cb-provider-chain-row-dragging");
+        if (dragState.rowEl) dragState.rowEl.style.transform = "";
+        document.removeEventListener("mousemove", onDragMove);
+        document.removeEventListener("mouseup", onDragEnd);
+        dragState = null;
+        // Final persist (the in-flight swaps already called persist via
+        // rebuildPanel's children, but the data was mutated directly).
+        persist();
+      }
+
+      renderInto(panel);
 
       document.body.appendChild(backdrop);
       document.body.appendChild(panel);
 
       // Position under the anchor; clamp to viewport so a card near the
-      // right edge doesn't push the panel off-screen. Default panel width
-      // is set in CSS but we also fall back to the panel's actual measured
-      // width for the clamp below.
+      // right edge doesn't push the panel off-screen.
       const rect = anchorEl.getBoundingClientRect();
       panel.style.position = "fixed";
       panel.style.zIndex = "9999999";
       panel.style.top = (rect.bottom + 6) + "px";
-      const panelW = panel.offsetWidth || 280;
+      const panelW = panel.offsetWidth || 320;
       const left = Math.min(rect.left, window.innerWidth - panelW - 12);
       panel.style.left = Math.max(8, left) + "px";
 

@@ -315,9 +315,12 @@
    ========================================================================== */
 
 .cb-provider-chain {
-  width: 320px;
+  width: 340px;
   max-width: calc(100vw - 16px);
-  max-height: 380px;
+  /* Tall enough to fit ~10 provider rows + validation + footer + override
+     tile without scrolling on common screens. The list section still
+     scrolls when this max is exceeded. */
+  max-height: min(640px, calc(100vh - 80px));
   display: flex;
   flex-direction: column;
   background: #ffffff;
@@ -331,7 +334,7 @@
 .cb-provider-chain-header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 8px;
   padding: 10px 12px 8px;
   border-bottom: 1px solid #f3f4f6;
 }
@@ -343,11 +346,36 @@
   letter-spacing: 0.01em;
 }
 
+.cb-provider-chain-header-spacer {
+  flex: 1;
+}
+
 .cb-provider-chain-header-count {
   font-size: 11px;
   font-weight: 500;
   color: #6b7280;
   font-variant-numeric: tabular-nums;
+}
+
+.cb-provider-chain-add {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #4b5563;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.cb-provider-chain-add:hover {
+  background: #f3f4f6;
+  color: #111827;
+  border-color: #d1d5db;
 }
 
 .cb-provider-chain-list {
@@ -357,19 +385,55 @@
   overflow-y: auto;
   flex: 1;
   min-height: 0;
+  /* User-select off so dragging a row doesn't accidentally select text in
+     the list. Inputs / contentEditable inside re-enable text selection. */
+  user-select: none;
 }
 
 .cb-provider-chain-row {
   display: grid;
-  grid-template-columns: 18px 22px 1fr auto;
+  grid-template-columns: 12px 16px 22px 1fr auto 18px;
   align-items: center;
-  gap: 8px;
-  padding: 6px 8px;
+  gap: 6px;
+  padding: 6px 6px 6px 4px;
   border-radius: 6px;
+  position: relative;
+  transition: box-shadow 0.15s;
 }
 
 .cb-provider-chain-row:hover {
   background: #f9fafb;
+}
+
+.cb-provider-chain-row-dragging {
+  background: #ffffff;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18);
+  z-index: 2;
+  border: 1px solid #e5e7eb;
+}
+
+.cb-provider-chain-handle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 12px;
+  color: #d1d5db;
+  cursor: grab;
+  opacity: 0;
+  transition: opacity 0.12s, color 0.12s;
+}
+
+.cb-provider-chain-row:hover .cb-provider-chain-handle,
+.cb-provider-chain-row-dragging .cb-provider-chain-handle {
+  opacity: 1;
+}
+
+.cb-provider-chain-handle:hover {
+  color: #6b7280;
+}
+
+.cb-provider-chain-handle:active {
+  cursor: grabbing;
 }
 
 .cb-provider-chain-ord {
@@ -409,44 +473,336 @@
   min-width: 0;
 }
 
-.cb-provider-chain-name {
-  font-size: 12.5px;
-  font-weight: 500;
+/* Top line in the provider row meta: provider/package name (Apollo,
+   ZeroBounce, …). Bigger and bolder so the brand is the primary
+   identifier. Editable via contentEditable for ad-hoc rows. */
+.cb-provider-chain-package {
+  font-size: 13px;
+  font-weight: 600;
   color: #111827;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  outline: none;
+  user-select: text;
+  cursor: text;
+  min-width: 60px;
+  display: block;
 }
 
-.cb-provider-chain-sub {
-  font-size: 10.5px;
+.cb-provider-chain-package:empty::before {
+  content: attr(data-placeholder);
   color: #9ca3af;
+  font-weight: 500;
+}
+
+.cb-provider-chain-package:focus {
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+}
+
+/* Bottom line: action name (e.g. "Find work email"). Smaller and lighter
+   so the row reads "Apollo / Find work email" — provider first, action
+   as the qualifier. */
+.cb-provider-chain-action {
+  font-size: 11px;
+  color: #6b7280;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-top: 1px;
+}
+
+/* Credit / key badge — same visual language as the on-card cb-card-badge
+   (rounded pill, green credit / blue key) but slightly more compact and
+   always clickable for the toggle. */
+.cb-provider-chain-credit-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+  padding: 0 8px;
+  border: 1px solid #e5e7eb;
+  background: #ffffff;
+  border-radius: 11px;
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  color: #6b7280;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+
+.cb-provider-chain-credit-badge-icon {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.cb-provider-chain-credit-badge-icon svg {
+  width: 12px;
+  height: 12px;
+}
+
+.cb-provider-chain-credit-badge-text {
+  white-space: nowrap;
+}
+
+.cb-provider-chain-credit-badge-input {
+  width: 36px;
+  border: none;
+  background: transparent;
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  padding: 0;
+  outline: none;
+  -moz-appearance: textfield;
+  color: inherit;
+}
+
+.cb-provider-chain-credit-badge-input::-webkit-outer-spin-button,
+.cb-provider-chain-credit-badge-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.cb-provider-chain-credit-badge-suffix {
+  color: #9ca3af;
+  font-weight: 400;
+}
+
+.cb-provider-chain-credit-badge-credit {
+  color: #059669;
+}
+
+.cb-provider-chain-credit-badge-credit:hover {
+  background: #ecfdf5;
+}
+
+.cb-provider-chain-credit-badge-credit .cb-provider-chain-credit-badge-input {
+  color: #059669;
+}
+
+.cb-provider-chain-credit-badge-key {
+  color: #3b82f6;
+}
+
+.cb-provider-chain-credit-badge-key:hover {
+  background: #eff6ff;
+}
+
+/* No SVG fill override here — the duotone key (inline #3b82f6 outline +
+   #93c5fd inside) defined in config.js renders its own colors. */
+
+.cb-provider-chain-rm {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  border-radius: 4px;
+  color: #d1d5db;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s, background 0.12s, color 0.12s;
+}
+
+.cb-provider-chain-row:hover .cb-provider-chain-rm {
+  opacity: 1;
+}
+
+.cb-provider-chain-rm:hover {
+  background: #fee2e2;
+  color: #dc2626;
+}
+
+.cb-provider-chain-footer {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px 12px 12px;
+  border-top: 1px solid #f3f4f6;
+  background: #f9fafb;
+  font-size: 11.5px;
+  color: #374151;
+}
+
+/* ---- Validation row ---- */
+
+.cb-provider-chain-validation {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+}
+
+.cb-provider-chain-validation-tag {
+  font-size: 10px;
+  font-weight: 600;
+  color: #6b7280;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 2px 6px;
+  background: #f3f4f6;
+  border-radius: 4px;
+}
+
+.cb-provider-chain-validation-name {
+  font-size: 12.5px;
+  font-weight: 500;
+  color: #111827;
+  outline: none;
+  cursor: text;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  user-select: text;
+}
+
+.cb-provider-chain-validation-name:empty::before {
+  content: attr(data-placeholder);
+  color: #9ca3af;
+  font-weight: 400;
+}
+
+/* Branded validation trigger — looks like the model-chip on AI cards
+   (compact pill with a chevron) but neutral coloured to match the rest
+   of the popover. Clicking opens .cb-validation-menu. */
+.cb-provider-chain-validation-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 8px 0 10px;
+  border: 1px solid #e5e7eb;
+  background: #ffffff;
+  border-radius: 6px;
+  color: #111827;
+  font-family: inherit;
+  font-size: 12.5px;
+  font-weight: 500;
+  cursor: pointer;
+  min-width: 0;
+  max-width: 100%;
+  transition: background 0.12s, border-color 0.12s;
+}
+
+.cb-provider-chain-validation-trigger:hover {
+  background: #f9fafb;
+  border-color: #d1d5db;
+}
+
+.cb-provider-chain-validation-trigger-label {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: left;
+}
+
+.cb-provider-chain-validation-trigger-chev {
+  display: inline-flex;
+  align-items: center;
+  color: #9ca3af;
+  flex-shrink: 0;
+}
+
+/* ---- Validation menu (portaled, opens below the trigger) ---- */
+
+.cb-validation-menu {
+  min-width: 220px;
+  max-width: 320px;
+  max-height: 320px;
+  overflow-y: auto;
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.15);
+  padding: 4px;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+
+.cb-validation-menu-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  padding: 7px 10px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: #374151;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 450;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.1s;
+}
+
+.cb-validation-menu-option:hover {
+  background: #f3f4f6;
+}
+
+.cb-validation-menu-option-active {
+  background: #eef2ff;
+  color: #4338ca;
+  font-weight: 600;
+}
+
+.cb-validation-menu-option-active:hover {
+  background: #e0e7ff;
+}
+
+.cb-validation-menu-option-name {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-.cb-provider-chain-cost {
+.cb-validation-menu-option-cost {
   font-size: 11px;
-  font-weight: 500;
   color: #059669;
-  font-variant-numeric: tabular-nums;
   white-space: nowrap;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
 }
 
-.cb-provider-chain-cost-key {
-  color: #3b82f6;
-}
-
-.cb-provider-chain-footer {
-  display: flex;
+/* Key-only validators (Debounce, Lead Magic, Enrow, …) — blue key icon
+   replaces the credit cost on the right side of the row, signalling
+   "bring your own key, costs 0 Clay credits". */
+.cb-validation-menu-option-key {
+  display: inline-flex;
   align-items: center;
-  gap: 12px;
-  padding: 10px 12px;
-  border-top: 1px solid #f3f4f6;
-  background: #f9fafb;
-  font-size: 11.5px;
-  color: #374151;
+  color: #3b82f6;
+  flex-shrink: 0;
+}
+
+.cb-validation-menu-option-key svg {
+  width: 14px;
+  height: 14px;
+}
+
+.cb-provider-chain-stats {
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
 }
 
 .cb-provider-chain-avg,
@@ -470,9 +826,139 @@
   font-variant-numeric: tabular-nums;
 }
 
-.cb-provider-chain-foot-sep {
+/* ---- Credit override tile ----
+   The override is a single rectangular tile with the credit number front
+   and centered. Click anywhere on the tile to focus the number; type or
+   use the small ↑/↓ stepper on the right to adjust by 0.5 increments. */
+
+.cb-provider-chain-override {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 10px;
+  border-top: 1px dashed #e5e7eb;
+}
+
+.cb-provider-chain-override-label {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.cb-provider-chain-override-label-text {
+  font-size: 10.5px;
+  font-weight: 500;
+  color: #6b7280;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.cb-provider-chain-tile {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 6px 10px 14px;
+  background: #ffffff;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  cursor: text;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.cb-provider-chain-tile:hover {
+  border-color: #9ca3af;
+}
+
+.cb-provider-chain-tile:focus-within {
+  border-color: #111827;
+  box-shadow: 0 0 0 2px rgba(17, 24, 39, 0.08);
+}
+
+.cb-provider-chain-tile-input {
   flex: 1;
-  height: 1px;
+  border: none;
+  background: transparent;
+  color: #111827;
+  font-family: inherit;
+  font-size: 22px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  padding: 0;
+  outline: none;
+  width: 100%;
+  min-width: 0;
+  -moz-appearance: textfield;
+}
+
+.cb-provider-chain-tile-input::-webkit-outer-spin-button,
+.cb-provider-chain-tile-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.cb-provider-chain-tile-suffix {
+  font-size: 12px;
+  font-weight: 500;
+  color: #9ca3af;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.cb-provider-chain-tile-stepper {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-left: 4px;
+}
+
+.cb-provider-chain-tile-step {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 14px;
+  padding: 0;
+  border: 1px solid #e5e7eb;
+  background: #f9fafb;
+  border-radius: 4px;
+  color: #6b7280;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+
+.cb-provider-chain-tile-step:hover {
+  background: #f3f4f6;
+  color: #111827;
+  border-color: #d1d5db;
+}
+
+.cb-provider-chain-tile-step:active {
+  background: #e5e7eb;
+}
+
+.cb-provider-chain-reset {
+  display: none;
+  padding: 2px 8px;
+  border: 1px solid #e5e7eb;
+  background: #ffffff;
+  border-radius: 5px;
+  color: #6b7280;
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.cb-provider-chain-reset-visible {
+  display: inline-block;
+}
+
+.cb-provider-chain-reset:hover {
+  background: #f3f4f6;
+  color: #111827;
+  border-color: #d1d5db;
 }
 
 /* ==========================================================================

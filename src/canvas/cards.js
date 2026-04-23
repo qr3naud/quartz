@@ -4,6 +4,13 @@
   window.__cbCanvasModules = window.__cbCanvasModules || {};
 
   const CREDIT_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" fill="currentColor" viewBox="0 0 256 256"><path d="M207.58,63.84C186.85,53.48,159.33,48,128,48S69.15,53.48,48.42,63.84,16,88.78,16,104v48c0,15.22,11.82,29.85,32.42,40.16S96.67,208,128,208s58.85-5.48,79.58-15.84S240,167.22,240,152V104C240,88.78,228.18,74.15,207.58,63.84Z" opacity="0.2"/><path d="M128,64c62.64,0,96,23.23,96,40s-33.36,40-96,40-96-23.23-96-40S65.36,64,128,64Z"/></svg>';
+  // Stacked-layers icon — matches the "Enrichments" tool icon in the
+  // bottom toolbox (overlay.js erBtn). Used as the always-visible icon on
+  // every waterfall card so the card type reads as "stack of providers"
+  // at a glance, regardless of which providers are inside.
+  const WATERFALL_ICON_SVG =
+    '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="cb-card-icon-svg">' +
+    '<path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>';
   const KEY_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 256 256"><path fill="#3b82f6" d="M216.57,39.43A80,80,0,0,0,83.91,120.78L28.69,176A15.86,15.86,0,0,0,24,187.31V216a16,16,0,0,0,16,16H72a8,8,0,0,0,8-8V208H96a8,8,0,0,0,8-8V184h16a8,8,0,0,0,5.66-2.34l9.56-9.57A79.73,79.73,0,0,0,160,176h.1A80,80,0,0,0,216.57,39.43Z"/><path fill="#93c5fd" d="M224,98.1c-1.09,34.09-29.75,61.86-63.89,61.9H160a63.7,63.7,0,0,1-23.65-4.51,8,8,0,0,0-8.84,1.68L116.69,168H96a8,8,0,0,0-8,8v16H72a8,8,0,0,0-8,8v16H40V187.31l58.83-58.82a8,8,0,0,0,1.68-8.84A63.72,63.72,0,0,1,96,95.92c0-34.14,27.81-62.8,61.9-63.89A64,64,0,0,1,224,98.1ZM192,76a12,12,0,1,1-12-12A12,12,0,0,1,192,76Z"/></svg>';
   // Pie-slice icon for the Pro Mode fill-rate badge. Solid wedge = "filled
   // portion of a whole", which matches the semantic of fill rate.
@@ -582,7 +589,14 @@
       row_.className = "cb-card-row";
       const icon = document.createElement("span");
       icon.className = "cb-card-icon";
-      if (data.iconUrl) {
+      if (data.type === "waterfall") {
+        // Always render the same stacked-layers icon for every waterfall card,
+        // matching the bottom-toolbox Enrichments tool. The provider chain's
+        // own icons are still surfaced through the .cb-card-badge-providers
+        // stack on the card and through the showProviderChain popover.
+        icon.classList.add("cb-card-icon-waterfall");
+        icon.innerHTML = WATERFALL_ICON_SVG;
+      } else if (data.iconUrl) {
         const img = document.createElement("img");
         img.src = data.iconUrl;
         img.alt = "";
@@ -663,23 +677,37 @@
       // the +N count — that opens the showProviderChain popover. This is the
       // clickable "list of providers + per-step costs" affordance the user
       // explicitly asked for.
-      if (data.type === "waterfall" && data.badges && data.badges.length > 0) {
+      if (data.type === "waterfall") {
+        // Always render the providers badge for waterfall cards — it's the
+        // entry point to the popover where the user can add / reorder /
+        // override credits, even when the chain is empty.
         const providerBadge = document.createElement("button");
         providerBadge.type = "button";
         providerBadge.className = "cb-card-badge cb-card-badge-providers";
         providerBadge.title = "Click to see the provider chain";
 
-        const stack = document.createElement("span");
-        stack.className = "cb-card-badge-providers-stack";
-        for (const b of data.badges) {
-          if (!b.imgSrc) continue;
-          const bImg = document.createElement("img");
-          bImg.src = b.imgSrc;
-          bImg.alt = "";
-          bImg.className = "cb-card-badge-img cb-card-badge-providers-img";
-          stack.appendChild(bImg);
-        }
-        providerBadge.appendChild(stack);
+        // Provider-icon stack intentionally disabled — the bare "+N" reads
+        // cleaner. Keeping the construction commented (not deleted) so we
+        // can flip it back without re-deriving the icon stacking logic.
+        //
+        // const stack = document.createElement("span");
+        // stack.className = "cb-card-badge-providers-stack";
+        // // Cap the in-card icon stack at 3 to keep the badge compact even
+        // // for long chains. The full chain (with names + costs) is always
+        // // available in the showProviderChain popover anyway.
+        // const MAX_STACK_ICONS = 3;
+        // let stackCount = 0;
+        // for (const b of data.badges) {
+        //   if (!b.imgSrc) continue;
+        //   if (stackCount >= MAX_STACK_ICONS) break;
+        //   const bImg = document.createElement("img");
+        //   bImg.src = b.imgSrc;
+        //   bImg.alt = "";
+        //   bImg.className = "cb-card-badge-img cb-card-badge-providers-img";
+        //   stack.appendChild(bImg);
+        //   stackCount++;
+        // }
+        // providerBadge.appendChild(stack);
 
         const countText = document.createElement("span");
         countText.className = "cb-card-badge-providers-count";

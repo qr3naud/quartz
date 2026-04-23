@@ -286,13 +286,26 @@
    clickable pill with a stack of dedup'd provider icons + "+N" count + a
    chevron. Clicking it opens .cb-provider-chain (in pickers.css). */
 
+/* Always-on icon to the left of the (editable) title. Plain black (same
+   tone as the title text) — no provider/category accent. */
+.cb-card-icon-waterfall {
+  color: #111827;
+}
+
+.cb-card-icon-waterfall svg {
+  width: 16px;
+  height: 16px;
+}
+
 .cb-card-badge-providers {
   cursor: pointer;
   background: #ffffff;
   border-color: #e5e7eb;
   color: #6b7280;
   padding-right: 5px;
-  padding-left: 4px;
+  /* Extra left padding now that the icon stack is hidden — the bare "+N"
+     was sitting right against the segmented-pill border. */
+  padding-left: 9px;
   gap: 5px;
   font-family: inherit;
 }
@@ -323,7 +336,10 @@
   margin-left: 0;
 }
 
-.cb-card-badge-providers-stack > .cb-card-badge-providers-img:nth-child(n + 5) {
+/* Belt-and-suspenders cap: cards.js already stops appending after 3, but
+   restoring legacy state or future call-site changes shouldn't bleed
+   extra icons into the layout. */
+.cb-card-badge-providers-stack > .cb-card-badge-providers-img:nth-child(n + 4) {
   display: none;
 }
 

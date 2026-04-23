@@ -29,10 +29,31 @@
         iconUrl,
         isAi: ai,
         modelOptions: ai ? __cb.getModelOptions() : null,
+        // Two flags from action.actionLabels disambiguate "requires
+        // your own credentials" from "supports both shared and private
+        // keys". Together they form the canonical "key-only" predicate
+        // (see checkRequiresCredentials in
+        // libs/shared/src/credits/credit-cost-utils.ts). When either is
+        // true, the action's effective cost is `usesPrivateKeyCredits`,
+        // which is usually 0 — same logic getActionCost runs server-side.
         requiresApiKey: action.actionLabels?.requiresApiKey ?? false,
+        disableSharedKey: action.actionLabels?.disableSharedKey ?? false,
+        privateKeyCredits:
+          post?.usesPrivateKeyCredits?.basic ??
+          fallback?.usesPrivateKeyCredits?.basic ??
+          0,
       };
       __cb.enrichmentLookup[action.displayName.toLowerCase()] = entry;
-      __cb.actionByIdLookup[`${entry.packageId}-${action.key}`] = entry;
+      // Clay's canonical action-id format is `${packageId}/${actionKey}`
+      // (see libs/shared/src/actions/build-action-ids.ts). Indexing here
+      // with the same format lets attribute.actionIds and
+      // attribute.validationProviders look up entries directly without a
+      // conversion step. The hyphen form is also indexed for legacy
+      // call-sites in table-import.js / picker.js until those switch.
+      const slashId = `${entry.packageId}/${action.key}`;
+      const dashId = `${entry.packageId}-${action.key}`;
+      __cb.actionByIdLookup[slashId] = entry;
+      __cb.actionByIdLookup[dashId] = entry;
     }
   };
 
@@ -83,12 +104,20 @@
         const name = attr.displayName?.toLowerCase();
         if (!name) continue;
         __cb.waterfallExecByName[name] = 1;
+        const validationIds = Array.isArray(attr.validationProviders) ? [...attr.validationProviders] : [];
         __cb.waterfallByName[name] = {
           displayName: attr.displayName,
           attributeEnum: attr.enum ?? null,
           icon: attr.icon ?? null,
           actionIds: Array.isArray(attr.actionIds) ? [...attr.actionIds] : [],
-          validationProviderActionId: attr.validationProviders?.[0] ?? null,
+          // Full validation provider list (in Clay's preferred order). The
+          // first entry is what the picker would default to. The popover
+          // exposes this whole list as a dropdown so users can swap the
+          // validator (e.g. ZeroBounce → Findymail) without leaving the
+          // canvas.
+          validationProviderActionIds: validationIds,
+          // Kept for back-compat with code that only ever used the default.
+          validationProviderActionId: validationIds[0] ?? null,
         };
       }
     } catch (err) {

@@ -43,6 +43,11 @@
       modelOptions: p.modelOptions ?? null,
       selectedModel: p.selectedModel ?? null,
       requiresApiKey: !!p.requiresApiKey,
+      // Per-provider key toggle. When true the provider doesn't burn Clay
+      // credits (its actionable cost falls to 0) but still triggers a
+      // validation call, which IS billed unless the validation itself is
+      // toggled to API-key mode.
+      usePrivateKey: !!p.usePrivateKey,
       stats: p.stats ?? null,
       fieldId: p.fieldId ?? null,
     };
@@ -69,12 +74,73 @@
     return badges;
   }
 
+  // Display helper used by both the card pill and the popover so the
+  // numbers are formatted identically.
+  const formatWaterfallCost = (n) =>
+    Number.isFinite(n) ? n.toFixed(1) : "0.0";
+  __cb.formatWaterfallCost = formatWaterfallCost;
+
+  // Whether validation should be billed for this waterfall card. Honors
+  // the right-click "Add / Remove validation" toggle (data.validationVisible)
+  // and falls back to "active iff options exist" when the user hasn't
+  // explicitly toggled.
+  //
+  // Removing validation via the right-click menu sets validationVisible
+  // to false → this returns false → validationPrice contributes 0 to
+  // every per-provider cost → averageCost / maxCost drop accordingly.
+  function isValidationActive(data) {
+    if (data?.validationVisible === false) return false;
+    if (data?.validationVisible === true) return true;
+    return Array.isArray(data?.validationOptions) && data.validationOptions.length > 0;
+  }
+  __cb.isValidationActive = isValidationActive;
+
+  // Computes derived fields (averageCost / maxCost / credits / creditText /
+  // badges / requiresApiKey) from a providers[] + validation settings.
+  // Called both at construction (buildWaterfallCardData) AND after popover
+  // edits (recomputeWaterfallCardData) so the math stays consistent.
+  //
+  // Cost model:
+  //   validationActive = data.validationVisible OR (default = hasOptions)
+  //   per-provider cost = (provider.usePrivateKey ? 0 : provider.credits) +
+  //                       ((validationActive && !validationUsePrivateKey)
+  //                          ? validationPrice
+  //                          : 0)
+  //   averageCost       = mean(per-provider cost)
+  //   maxCost           = max(per-provider cost)
+  function deriveWaterfallTotals(providers, validationPrice, validationUsePrivateKey, validationActive) {
+    const useValidation = validationActive !== false && !validationUsePrivateKey;
+    const v = useValidation
+      ? (Number.isFinite(validationPrice) ? validationPrice : 0)
+      : 0;
+    const creditsList = providers.map((p) => {
+      const c = p.usePrivateKey ? 0 : (p.credits ?? 0);
+      return c + v;
+    });
+    const totalCost = creditsList.reduce((s, c) => s + c, 0);
+    const averageCost = providers.length === 0
+      ? 0
+      : Math.round((totalCost / providers.length) * 10) / 10;
+    const maxCost = providers.length === 0 ? 0 : Math.max(...creditsList);
+    return {
+      averageCost,
+      maxCost,
+      requiresApiKey: providers.some((p) => p.requiresApiKey),
+      badges: buildBadgesFromProviders(providers),
+    };
+  }
+
   __cb.buildWaterfallCardData = function buildWaterfallCardData({
     displayName,
     providers,
     attributeEnum = null,
     packageId = "clay",
     validationPrice = 0,
+    validationName = null,
+    validationRequiresApiKey = false,
+    validationUsePrivateKey = false,
+    validationOptions = [],
+    validationProvider = null,
     iconUrl = null,
     iconSvgHtml = null,
     actionExecutions = 1,
@@ -88,15 +154,11 @@
       .map(normalizeWaterfallProvider)
       .filter(Boolean);
 
-    const v = Number.isFinite(validationPrice) ? validationPrice : 0;
-    const creditsList = norm.map((p) => (p.credits ?? 0) + v);
-    const totalCost = creditsList.reduce((s, c) => s + c, 0);
-    const averageCost = norm.length === 0
-      ? 0
-      : Math.round((totalCost / norm.length) * 10) / 10;
-    const maxCost = norm.length === 0 ? 0 : Math.max(...creditsList);
-
-    const requiresApiKey = norm.some((p) => p.requiresApiKey);
+    // At construction we can't reference data.validationVisible (data is
+    // what we're building). Falls back to the same default as
+    // isValidationActive(data === undefined) → "active iff options exist".
+    const initialValidationActive = Array.isArray(validationOptions) && validationOptions.length > 0;
+    const totals = deriveWaterfallTotals(norm, validationPrice, validationUsePrivateKey, initialValidationActive);
     const safeName = (displayName ?? "").trim();
 
     return {
@@ -118,24 +180,108 @@
       actionKey: attributeEnum
         ? `waterfall-${attributeEnum}`
         : (presetId ? `waterfall-preset-${presetId}` : `waterfall-${safeName.toLowerCase().replace(/[^a-z0-9]+/g, "_") || "adhoc"}`),
-      credits: averageCost,
-      creditText: averageCost > 0 ? `~${averageCost} / row (avg)` : null,
-      averageCost,
-      maxCost,
-      validationPrice: v,
+      credits: totals.averageCost,
+      // Same `~N / row` format the rest of the cards use — the "average
+      // across providers" semantic is implicit for waterfall cards (and
+      // surfaced explicitly in the showProviderChain popover footer).
+      // Always one decimal so the pill reads as "12.0" not "12".
+      creditText: totals.averageCost > 0 ? `~${formatWaterfallCost(totals.averageCost)} / row` : null,
+      // creditsCustom flips to true the moment the user moves the override
+      // slider in the popover, pinning `credits` independent of providers[]
+      // changes. Adding/removing/reordering providers updates averageCost
+      // and maxCost but leaves `credits` alone when this flag is true.
+      creditsCustom: false,
+      averageCost: totals.averageCost,
+      maxCost: totals.maxCost,
+      validationPrice: Number.isFinite(validationPrice) ? validationPrice : 0,
+      // Validation row metadata (popover-editable). Lets the user surface
+      // and tweak the cost of the validation provider Clay runs after each
+      // step (e.g. ZeroBounce verifying an email). validationUsePrivateKey
+      // zeroes out the validation contribution to averageCost / maxCost.
+      validationName: validationName || null,
+      validationRequiresApiKey: !!validationRequiresApiKey,
+      validationUsePrivateKey: !!validationUsePrivateKey,
+      // Validation provider dropdown options (resolved against
+      // actionByIdLookup at extract time). Each entry is
+      // { actionId, name, packageName, actionName, iconUrl, credits, requiresApiKey }.
+      // Empty for ad-hoc waterfalls — those fall back to an editable text
+      // input. Selecting a different option in the popover updates
+      // validationName / validationPrice / validationRequiresApiKey atomically.
+      validationOptions: Array.isArray(validationOptions) ? validationOptions : [],
+      validationProvider: validationProvider ?? null,
       actionExecutions,
       providers: norm,
-      badges: buildBadgesFromProviders(norm),
+      badges: totals.badges,
       isAi: false,
       modelOptions: null,
       selectedModel: null,
-      requiresApiKey,
+      requiresApiKey: totals.requiresApiKey,
       usePrivateKey: false,
       groupCluster,
       fieldId,
       tableId,
       viewId,
     };
+  };
+
+  // Recomputes derived fields on an existing waterfall card after the
+  // popover has mutated providers[]. Honors creditsCustom: when the user
+  // has overridden the credit cost, averageCost/maxCost still recompute
+  // but `credits` and `creditText` stay pinned to the override.
+  __cb.recomputeWaterfallCardData = function recomputeWaterfallCardData(data) {
+    if (!data || data.type !== "waterfall") return data;
+    const norm = (Array.isArray(data.providers) ? data.providers : [])
+      .map(normalizeWaterfallProvider)
+      .filter(Boolean);
+    const totals = deriveWaterfallTotals(
+      norm,
+      data.validationPrice,
+      data.validationUsePrivateKey,
+      isValidationActive(data),
+    );
+    data.providers = norm;
+    data.badges = totals.badges;
+    data.averageCost = totals.averageCost;
+    data.maxCost = totals.maxCost;
+    data.requiresApiKey = totals.requiresApiKey;
+    if (!data.creditsCustom) {
+      data.credits = totals.averageCost;
+      data.creditText = totals.averageCost > 0
+        ? `~${formatWaterfallCost(totals.averageCost)} / row`
+        : null;
+    }
+    return data;
+  };
+
+  // Pushes the current waterfall card data to the canvas DOM + summary
+  // bar. Called after popover edits so the badge / +N / cluster credit
+  // total reflect the new numbers without rebuilding the whole card.
+  __cb.refreshWaterfallCardDom = function refreshWaterfallCardDom(card) {
+    if (!card?.el || card.data?.type !== "waterfall") return;
+    const data = card.data;
+
+    // Credit pill (.cb-card-badge-credit > span). The credit pill is
+    // rebuilt by addCard's renderCreditMode helper from data.creditText
+    // each render, but since we don't re-mount the card we update the
+    // text node directly.
+    const creditEl = card.el.querySelector(".cb-card-badge-credit span");
+    if (creditEl) {
+      creditEl.textContent = data.creditText || (data.credits != null ? `~${data.credits} / row` : "");
+    }
+
+    // +N count.
+    const countEl = card.el.querySelector(".cb-card-badge-providers-count");
+    if (countEl) {
+      countEl.textContent = `+${(data.providers || []).length}`;
+    }
+
+    // Re-run summary-bar / per-cluster math so totals reflect the change.
+    // notifyChange pushes an undo entry and triggers the existing debounced
+    // save through onCanvasStateChange, so we don't need to call saveTabs
+    // directly — that would fire a synchronous save on every keystroke.
+    if (window.__cb.canvas?.refreshCreditTotal) window.__cb.canvas.refreshCreditTotal();
+    if (window.__cb.canvas?.updateGroupCredits) window.__cb.canvas.updateGroupCredits();
+    if (window.__cb.canvas?.notifyChange) window.__cb.canvas.notifyChange();
   };
 
   __cb.startPickerMode = function () {
@@ -365,7 +511,48 @@
     toggleSelection(name, input.checked, row);
   }
 
-  // Resolve a list of action IDs (Clay's `${packageId}-${actionKey}` format)
+  // True when the action can ONLY be used with the user's own key
+  // (either disableSharedKey or requiresApiKey is set). For these actions
+  // the catalog `credits` field is misleading — Clay charges
+  // `usesPrivateKeyCredits.basic` (usually 0) when the user brings a
+  // key, which is the only way they can be invoked. Mirrors
+  // checkRequiresCredentials in libs/shared/src/credits/credit-cost-utils.ts.
+  function isKeyOnlyEntry(entry) {
+    return !!entry && (entry.requiresApiKey || entry.disableSharedKey);
+  }
+
+  // Builds the provider entry for a resolved catalog action, honoring
+  // key-only pricing: when the action requires the user's own key, the
+  // effective per-row cost is `privateKeyCredits` (usually 0), and we
+  // seed `usePrivateKey: true` so the credit pill renders in key mode
+  // by default. Shared by all three resolvers below so they stay
+  // consistent.
+  function providerFromEntry(entry) {
+    const keyOnly = isKeyOnlyEntry(entry);
+    const credits = keyOnly
+      ? (entry.privateKeyCredits ?? 0)
+      : (entry.credits ?? null);
+    return {
+      actionKey: entry.key,
+      packageId: entry.packageId,
+      displayName: entry.displayName,
+      packageName: entry.packageName,
+      iconUrl: entry.iconUrl,
+      credits,
+      creditText: credits != null ? `${credits} / row` : null,
+      isAi: !!entry.isAi,
+      modelOptions: entry.modelOptions ?? null,
+      requiresApiKey: !!entry.requiresApiKey,
+      disableSharedKey: !!entry.disableSharedKey,
+      keyOnly,
+      // Auto-flip to private-key mode for key-only actions so the
+      // averageCost math zeroes their contribution (per
+      // deriveWaterfallTotals' handling of usePrivateKey).
+      usePrivateKey: keyOnly,
+    };
+  }
+
+  // Resolve a list of action IDs (Clay's `${packageId}/${actionKey}` format)
   // against the cached actionByIdLookup. Anything that doesn't resolve is
   // dropped — without action metadata we have no credits / icon and can't
   // render a useful provider row.
@@ -375,18 +562,7 @@
       if (!id) continue;
       const entry = __cb.actionByIdLookup?.[id];
       if (!entry) continue;
-      providers.push({
-        actionKey: entry.key,
-        packageId: entry.packageId,
-        displayName: entry.displayName,
-        packageName: entry.packageName,
-        iconUrl: entry.iconUrl,
-        credits: entry.credits ?? null,
-        creditText: entry.credits != null ? `~${entry.credits} / row` : null,
-        isAi: !!entry.isAi,
-        modelOptions: entry.modelOptions ?? null,
-        requiresApiKey: !!entry.requiresApiKey,
-      });
+      providers.push(providerFromEntry(entry));
     }
     return providers;
   }
@@ -405,31 +581,51 @@
       const id = `${cfg.actionPackageId}-${cfg.actionKey}`;
       const entry = __cb.actionByIdLookup?.[id];
       if (!entry) continue;
-      providers.push({
-        actionKey: entry.key,
-        packageId: entry.packageId,
-        displayName: entry.displayName,
-        packageName: entry.packageName,
-        iconUrl: entry.iconUrl,
-        credits: entry.credits ?? null,
-        creditText: entry.credits != null ? `~${entry.credits} / row` : null,
-        isAi: !!entry.isAi,
-        modelOptions: entry.modelOptions ?? null,
-        requiresApiKey: !!entry.requiresApiKey,
-      });
+      providers.push(providerFromEntry(entry));
     }
     return providers;
   }
 
-  // Looks up the per-action validation cost for an attribute. Mirrors
+  // Looks up the validation provider list for an attribute and returns
+  // both the default (price/name/requiresApiKey from the first option)
+  // AND the full list of options for the popover dropdown. Mirrors
   // getValidationPriceFromAttribute in apps/frontend/src/hooks/credits/attributes.ts:
-  // the validation price is the cost of the FIRST action in
-  // attribute.validationProviders, applied per provider step.
-  function getValidationPriceForAttribute(wfMeta) {
-    const id = wfMeta?.validationProviderActionId;
-    if (!id) return 0;
-    const entry = __cb.actionByIdLookup?.[id];
-    return entry?.credits ?? 0;
+  // the picker's WaterfallRow defaults to the first validation provider
+  // and exposes the full list as a swap-out menu.
+  function getValidationInfoForAttribute(wfMeta) {
+    const ids = wfMeta?.validationProviderActionIds
+      ?? (wfMeta?.validationProviderActionId ? [wfMeta.validationProviderActionId] : []);
+    if (!ids || ids.length === 0) {
+      return { price: 0, name: null, requiresApiKey: false, options: [], selectedActionId: null };
+    }
+    const options = [];
+    for (const id of ids) {
+      const entry = __cb.actionByIdLookup?.[id];
+      if (!entry) continue;
+      const keyOnly = isKeyOnlyEntry(entry);
+      const credits = keyOnly
+        ? (entry.privateKeyCredits ?? 0)
+        : (typeof entry.credits === "number" ? entry.credits : 0);
+      options.push({
+        actionId: id,
+        name: entry.packageName || entry.displayName || null,
+        actionName: entry.displayName || null,
+        packageName: entry.packageName || null,
+        iconUrl: entry.iconUrl || null,
+        credits,
+        requiresApiKey: !!entry.requiresApiKey,
+        disableSharedKey: !!entry.disableSharedKey,
+        keyOnly,
+      });
+    }
+    const first = options[0];
+    return {
+      price: first?.credits ?? 0,
+      name: first?.name ?? null,
+      requiresApiKey: !!first?.requiresApiKey,
+      options,
+      selectedActionId: first?.actionId ?? null,
+    };
   }
 
   function extractVisualData(row, name) {
@@ -456,13 +652,18 @@
                 (w) => w.attributeEnum === presetMeta.attributeEnum,
               )
             : null;
+        const v = getValidationInfoForAttribute(builtInForValidation);
         return __cb.buildWaterfallCardData({
           displayName: presetMeta.displayName || name,
           providers,
           attributeEnum: presetMeta.attributeEnum,
           presetId: presetMeta.presetId,
           packageId: "clay",
-          validationPrice: getValidationPriceForAttribute(builtInForValidation),
+          validationPrice: v.price,
+          validationName: v.name,
+          validationRequiresApiKey: v.requiresApiKey,
+          validationOptions: v.options,
+          validationProvider: v.selectedActionId,
           actionExecutions: 1,
         });
       }
@@ -472,12 +673,17 @@
     if (wfMeta && wfMeta.actionIds?.length > 0) {
       const providers = resolveActionIdsToProviders(wfMeta.actionIds);
       if (providers.length > 0) {
+        const v = getValidationInfoForAttribute(wfMeta);
         return __cb.buildWaterfallCardData({
           displayName: wfMeta.displayName || name,
           providers,
           attributeEnum: wfMeta.attributeEnum,
           packageId: "clay",
-          validationPrice: getValidationPriceForAttribute(wfMeta),
+          validationPrice: v.price,
+          validationName: v.name,
+          validationRequiresApiKey: v.requiresApiKey,
+          validationOptions: v.options,
+          validationProvider: v.selectedActionId,
           actionExecutions: 1,
         });
       }
@@ -527,8 +733,17 @@
       }
     }
 
-    let resolvedCredits = apiMatch.credits ?? (creditMatch ? parseFloat(creditMatch[1]) : null);
-    let resolvedCreditText = creditText;
+    // Key-only detection: when the action has disableSharedKey OR
+    // requiresApiKey, Clay charges privateKeyCredits (usually 0) — the
+    // public-key cost on apiMatch.credits is misleading. Default the
+    // card to private-key mode and override the displayed credits.
+    const keyOnly = isKeyOnlyEntry(apiMatch);
+    let resolvedCredits = keyOnly
+      ? (apiMatch.privateKeyCredits ?? 0)
+      : (apiMatch.credits ?? (creditMatch ? parseFloat(creditMatch[1]) : null));
+    let resolvedCreditText = keyOnly
+      ? (resolvedCredits != null ? `${resolvedCredits} / row` : null)
+      : creditText;
 
     let resolvedIconUrl = iconUrl;
     let resolvedIconSvgHtml = iconSvgHtml;
@@ -561,7 +776,12 @@
       modelOptions,
       selectedModel,
       requiresApiKey,
-      usePrivateKey: requiresApiKey && resolvedCredits == null,
+      // Auto-flip to private-key mode for key-only catalog entries
+      // (Debounce / Lead Magic / Enrow / etc.) so the card pill renders
+      // blue and the credits sum to 0. Falls back to the existing
+      // "requires key + no credits known" heuristic for actions whose
+      // pricing isn't in the catalog.
+      usePrivateKey: keyOnly || (requiresApiKey && resolvedCredits == null),
     };
   }
 
@@ -720,12 +940,76 @@
     if (__cb.canvas.refreshClusters) __cb.canvas.refreshClusters();
   }
 
+  // Convert a picked enrichment's card data into a provider entry suitable
+  // for pushing into a waterfall card's providers[]. Mirrors the shape
+  // normalizeWaterfallProvider expects so recomputeWaterfallCardData can
+  // immediately re-derive averageCost / maxCost.
+  //
+  // If the picked enrichment is itself a waterfall (built-in attribute or
+  // workspace preset), we flatten its providers chain into the target —
+  // adding "Find Email" as a step adds Apollo/ZeroBounce/etc., not a
+  // nested waterfall.
+  function pickedCardToProviders(picked) {
+    if (!picked) return [];
+    if (picked.type === "waterfall" && Array.isArray(picked.providers)) {
+      return picked.providers.map((p) => ({ ...p }));
+    }
+    return [{
+      actionKey: picked.actionKey,
+      packageId: picked.packageId,
+      displayName: picked.displayName,
+      packageName: picked.packageName,
+      iconUrl: picked.iconUrl,
+      iconSvgHtml: picked.iconSvgHtml,
+      credits: typeof picked.credits === "number" ? picked.credits : null,
+      creditText: picked.creditText,
+      isAi: !!picked.isAi,
+      modelOptions: picked.modelOptions,
+      selectedModel: picked.selectedModel,
+      requiresApiKey: !!picked.requiresApiKey,
+      // extractVisualData already auto-flips usePrivateKey for key-only
+      // catalog entries; flow it through so the in-popover credit pill
+      // renders blue and the provider's contribution to averageCost is 0.
+      usePrivateKey: !!picked.usePrivateKey,
+    }];
+  }
+
   async function finishPicker() {
     const cards = [...selectedEnrichments.values()];
     closePicker();
     cleanupPicker();
 
     if (__cb.overlayEl) {
+      // "Add to waterfall" mode: + button in the provider-chain popover
+      // sets addToWaterfallCardId before calling startPickerMode. Picked
+      // enrichments become providers in the target waterfall card; no new
+      // canvas cards are created. Re-opens the popover after so the user
+      // sees the additions in context.
+      const addToCardId = __cb.addToWaterfallCardId;
+      __cb.addToWaterfallCardId = null;
+      if (addToCardId != null && __cb.canvas) {
+        const target = __cb.canvas.getCardById(addToCardId);
+        if (target?.data?.type === "waterfall") {
+          for (const picked of cards) {
+            for (const provider of pickedCardToProviders(picked)) {
+              target.data.providers.push(provider);
+            }
+          }
+          if (__cb.recomputeWaterfallCardData) __cb.recomputeWaterfallCardData(target.data);
+          if (__cb.refreshWaterfallCardDom) __cb.refreshWaterfallCardDom(target);
+
+          // Re-anchor the popover to the (refreshed) badge so the user can
+          // see the new providers immediately. The badge element id is
+          // stable (created during the original addCard render), so a
+          // simple querySelector is enough.
+          const anchor = target.el?.querySelector(".cb-card-badge-providers");
+          if (anchor && __cb.showProviderChain) {
+            __cb.showProviderChain(target, anchor);
+          }
+        }
+        return;
+      }
+
       const linkTargetId = __cb.linkTargetCardId;
       __cb.linkTargetCardId = null;
       const pos = __cb.enrichmentClickPos;
