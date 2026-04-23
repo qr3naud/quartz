@@ -561,7 +561,7 @@
 
     const navHelper = document.createElement("div");
     navHelper.className = "cb-tool-helper";
-    navHelper.innerHTML = "Select cards  <kbd>\u23CE</kbd> link or <kbd>\u21E7\u23CE</kbd> group";
+    navHelper.innerHTML = "Select cards  <kbd>\u23CE</kbd> link \u00A0\u00A0 <kbd>\u21E7\u23CE</kbd> group \u00A0\u00A0 <kbd>\u2318\u23CE</kbd> waterfall";
 
     const helper = document.createElement("div");
     helper.className = "cb-tool-helper";
@@ -772,8 +772,8 @@
         '<p>Enrichments are provider calls that return data points. Click the canvas to open the enrichment picker. You can also <strong>double-click a data point</strong> to add enrichments linked to it.</p>' +
       '</div>' +
       '<div class="cb-help-section">' +
-        '<div class="cb-help-section-title">Linking &amp; Grouping</div>' +
-        '<p>Select multiple cards, then press <strong>Enter</strong> to snap-link them into a chain, or <strong>Shift+Enter</strong> to group them. Groups display combined credit totals.</p>' +
+        '<div class="cb-help-section-title">Linking, Grouping &amp; Waterfalls</div>' +
+        '<p>Select multiple cards, then press <strong>Enter</strong> to snap-link them into a chain, <strong>Shift+Enter</strong> to group them, or <strong>Cmd+Enter</strong> to fold the selected enrichments into a single waterfall card. Groups display combined credit totals; waterfall cards average their providers\' costs.</p>' +
       '</div>' +
       '<div class="cb-help-section">' +
         '<div class="cb-help-section-title">Cost estimation</div>' +
@@ -786,6 +786,7 @@
         '<div class="cb-help-shortcut-list">' +
           '<div class="cb-help-shortcut"><span class="cb-help-shortcut-keys"><kbd>Enter</kbd></span><span class="cb-help-shortcut-desc">Snap-link selected cards</span></div>' +
           '<div class="cb-help-shortcut"><span class="cb-help-shortcut-keys"><kbd>Shift</kbd>+<kbd>Enter</kbd></span><span class="cb-help-shortcut-desc">Group selected cards</span></div>' +
+          '<div class="cb-help-shortcut"><span class="cb-help-shortcut-keys"><kbd>\u2318 Cmd</kbd>+<kbd>Enter</kbd></span><span class="cb-help-shortcut-desc">Fold selected ERs into a waterfall card</span></div>' +
           '<div class="cb-help-shortcut"><span class="cb-help-shortcut-keys"><kbd>Delete</kbd>/<kbd>\u232B</kbd></span><span class="cb-help-shortcut-desc">Remove cards or disband group</span></div>' +
           '<div class="cb-help-shortcut"><span class="cb-help-shortcut-keys">Right <kbd>Click</kbd></span><span class="cb-help-shortcut-desc">Context menu when multiple cards are selected</span></div>' +
           '<div class="cb-help-shortcut"><span class="cb-help-shortcut-keys">Right <kbd>Click</kbd> canvas</span><span class="cb-help-shortcut-desc">Recenter view on all cards</span></div>' +

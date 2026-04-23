@@ -458,7 +458,25 @@
         selectionHintEl.classList.remove("cb-selection-hint-visible");
         return;
       }
-      selectionHintEl.innerHTML = "<kbd>\u23CE</kbd> link or <kbd>\u21E7\u23CE</kbd> group";
+
+      // Cmd+Enter ⇒ waterfall is only valid when ≥2 ER-like cards are
+      // selected (createWaterfallFromSelection bails otherwise). We hide
+      // the hint segment when it wouldn't fire — keeps the affordance
+      // honest for selections that contain DPs / inputs / comments only.
+      const erLikeCount = [...selectedCards]
+        .map((id) => getCardById(id))
+        .filter(
+          (c) =>
+            c?.data &&
+            c.data.type !== "comment" &&
+            c.data.type !== "input" &&
+            c.data.type !== "dp",
+        ).length;
+      const showWaterfall = erLikeCount >= 2;
+
+      selectionHintEl.innerHTML = showWaterfall
+        ? "<kbd>\u23CE</kbd> link · <kbd>\u21E7\u23CE</kbd> group · <kbd>\u2318\u23CE</kbd> waterfall"
+        : "<kbd>\u23CE</kbd> link or <kbd>\u21E7\u23CE</kbd> group";
       positionHintAboveCards([...selectedCards]);
       selectionHintEl.classList.add("cb-selection-hint-visible");
       return;
@@ -499,6 +517,32 @@
     const menu = document.createElement("div");
     menu.className = "cb-card-context-menu";
     menu.addEventListener("mousedown", (evt) => evt.stopPropagation());
+
+    // "Group as waterfall" is only meaningful when ≥2 selected cards are
+    // ER-like (anything that has a provider chain to fold into the new
+    // waterfall). Skipping it for selections containing only DPs / inputs /
+    // comments matches what createWaterfallFromSelection itself bails on.
+    const erLikeSelected = [...selectedCards]
+      .map((id) => getCardById(id))
+      .filter(
+        (c) =>
+          c?.data &&
+          c.data.type !== "comment" &&
+          c.data.type !== "input" &&
+          c.data.type !== "dp",
+      );
+    if (erLikeSelected.length >= 2) {
+      const wfBtn = document.createElement("button");
+      wfBtn.type = "button";
+      wfBtn.className = "cb-card-context-menu-btn";
+      wfBtn.textContent = "Group as waterfall";
+      wfBtn.addEventListener("click", (evt) => {
+        evt.stopPropagation();
+        closeSelectionMenu();
+        createWaterfallFromSelection();
+      });
+      menu.appendChild(wfBtn);
+    }
 
     const groupBtn = document.createElement("button");
     groupBtn.type = "button";
@@ -762,6 +806,100 @@
     updateGroupBounds();
     refreshClusters();
     notifyChange();
+  }
+
+  // ---- Create waterfall from selection (Cmd+Enter) ----
+  //
+  // Collapse 2+ selected ER-like cards into a single composite waterfall
+  // card. The source cards are CONSUMED (deleted) and their actionKey /
+  // packageId / credits become the providers[] inside the new card. The
+  // new card lands at the bbox center of the consumed cards and its title
+  // is auto-focused so the user can type the waterfall name immediately.
+  //
+  // Comment / input / DP cards in the selection are skipped — they don't
+  // map to providers and would be silently destroyed otherwise.
+  function createWaterfallFromSelection() {
+    if (selectedCards.size < 2) return;
+    const all = [...selectedCards].map((id) => getCardById(id)).filter(Boolean);
+
+    // Sort by current position so the resulting provider chain reads
+    // top-to-bottom, left-to-right — matching how the user laid the cards
+    // out spatially.
+    const sources = all
+      .filter((c) =>
+        c.data &&
+        c.data.type !== "comment" &&
+        c.data.type !== "input" &&
+        c.data.type !== "dp",
+      )
+      .sort((a, b) => a.y - b.y || a.x - b.x);
+
+    if (sources.length < 2) return;
+
+    const providers = sources.map((c) => ({
+      actionKey: c.data.actionKey,
+      packageId: c.data.packageId,
+      displayName: c.data.displayName || c.data.text || "Provider",
+      packageName: c.data.packageName,
+      iconUrl: c.data.iconUrl,
+      iconSvgHtml: c.data.iconSvgHtml,
+      credits: typeof c.data.credits === "number" ? c.data.credits : null,
+      isAi: !!c.data.isAi,
+      modelOptions: c.data.modelOptions ?? null,
+      selectedModel: c.data.selectedModel ?? null,
+      requiresApiKey: !!c.data.requiresApiKey,
+    }));
+
+    // Use the first source card's groupCluster (if any) so the new
+    // waterfall card inherits the cluster membership of the cards it
+    // replaces. Picking the first one is a heuristic — when cards from
+    // multiple clusters are selected we'd lose information either way.
+    const groupCluster = sources[0].data.groupCluster ?? null;
+
+    const wfData = window.__cb.buildWaterfallCardData({
+      displayName: "",
+      providers,
+      attributeEnum: null,
+      packageId: "clay",
+      validationPrice: 0,
+      actionExecutions: 1,
+      groupCluster,
+    });
+
+    // Drop the new card at the centroid of the consumed cards. We use the
+    // first card's measured rect as the proxy for w/h (all canvas cards
+    // share the same width and an ER-like card's height is uniform too).
+    const r0 = getCardRect(sources[0]);
+    const centerX =
+      sources.reduce((s, c) => s + c.x + r0.w / 2, 0) / sources.length;
+    const centerY =
+      sources.reduce((s, c) => s + c.y + r0.h / 2, 0) / sources.length;
+    const wfX = Math.round(centerX - r0.w / 2);
+    const wfY = Math.round(centerY - r0.h / 2);
+
+    // Delete sources first so removeCard's selection / cluster bookkeeping
+    // settles before the new card lands. We collected sources up front so
+    // mutating selectedCards inside removeCard doesn't disturb our list.
+    const sourceIds = sources.map((c) => c.id);
+    for (const id of sourceIds) removeCard(id);
+
+    const newCard = addCard(wfData, { x: wfX, y: wfY });
+
+    // Auto-focus the title so the user can name the waterfall immediately.
+    // Defer to rAF so the cb-card-name node is mounted; selectAll-style
+    // caret placement isn't worth the complexity here — empty editable
+    // shows the placeholder and any keystroke replaces it.
+    if (newCard?.el) {
+      requestAnimationFrame(() => {
+        const nameEl = newCard.el.querySelector(".cb-card-name");
+        if (nameEl) nameEl.focus();
+      });
+    }
+
+    clearSelection();
+    refreshClusters();
+    notifyChange();
+    if (window.__cb.saveTabs) window.__cb.saveTabs();
   }
 
   // Re-position the Y of every card in each cluster so the snap mechanism
@@ -1042,7 +1180,11 @@
     }
     if (e.key === "Enter" && !isEditingText(e) && selectedCards.size >= 2) {
       e.preventDefault();
-      if (e.shiftKey) groupSelectedCards();
+      // Cmd/Ctrl+Enter: collapse the selection into a single waterfall card.
+      // Shift+Enter:    group (existing).
+      // Plain Enter:    link / cluster (existing).
+      if (e.metaKey || e.ctrlKey) createWaterfallFromSelection();
+      else if (e.shiftKey) groupSelectedCards();
       else linkSelectedCards();
     }
     if ((e.key === "Delete" || e.key === "Backspace") && !isEditingText(e) && (selectedCards.size > 0 || selectedGroupId != null)) {

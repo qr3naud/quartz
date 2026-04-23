@@ -41,7 +41,11 @@
             c.data.text = textEl.textContent;
             c.data.displayName = textEl.textContent;
           }
-        } else if (c.data.isAi) {
+        } else if (c.data.isAi || c.data.type === "waterfall") {
+          // Waterfall cards have an editable title (same contentEditable
+          // .cb-card-name element as AI cards) so their displayName can
+          // drift from c.data while the user is typing. Sync from DOM at
+          // serialize time so undo / reload / realtime sees the latest.
           const nameEl = c.el.querySelector(".cb-card-name");
           if (nameEl) c.data.displayName = nameEl.textContent;
         }

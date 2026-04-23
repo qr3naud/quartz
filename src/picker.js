@@ -11,6 +11,133 @@
   let promotedPortal = null;
   let promotedPortalOriginalZIndex = null;
 
+  // ---------------------------------------------------------------------------
+  // Waterfall card data shape
+  //
+  // A waterfall card is one composite ER-like card that carries an ordered
+  // `providers[]` array. Visually it renders the same way every other ER card
+  // does, except its provider-icons badge is clickable and opens a popover
+  // listing each provider with its individual cost. `credits` mirrors
+  // `averageCost` so the existing summary-bar / per-DP-cluster math sums it
+  // exactly the same as a single ER.
+  //
+  // Cost math intentionally mirrors getWaterfallCreditEstimate in
+  // libs/shared/src/credits/credit-cost-utils.ts so our totals line up with
+  // what the picker's WaterfallRow / PresetRow display:
+  //   averageCost = mean(provider.credits + validationPrice)
+  //   maxCost     = max(provider.credits + validationPrice)
+  // ---------------------------------------------------------------------------
+  function normalizeWaterfallProvider(p) {
+    if (!p) return null;
+    const credits = typeof p.credits === "number" && Number.isFinite(p.credits) ? p.credits : null;
+    return {
+      actionKey: p.actionKey ?? null,
+      packageId: p.packageId ?? "clay",
+      displayName: p.displayName ?? p.name ?? "Provider",
+      packageName: p.packageName ?? null,
+      iconUrl: p.iconUrl ?? null,
+      iconSvgHtml: p.iconSvgHtml ?? null,
+      credits,
+      creditText: p.creditText ?? (credits != null ? `~${credits} / row` : null),
+      isAi: !!p.isAi,
+      modelOptions: p.modelOptions ?? null,
+      selectedModel: p.selectedModel ?? null,
+      requiresApiKey: !!p.requiresApiKey,
+      stats: p.stats ?? null,
+      fieldId: p.fieldId ?? null,
+    };
+  }
+
+  function buildBadgesFromProviders(providers) {
+    // Compact provider-icon badges. We collapse duplicates by iconUrl so a
+    // waterfall with five Apollo steps doesn't render five identical icons in
+    // the always-visible badge row — the popover still shows every step.
+    const seen = new Set();
+    const badges = [];
+    for (const p of providers) {
+      if (!p?.iconUrl) continue;
+      if (seen.has(p.iconUrl)) continue;
+      seen.add(p.iconUrl);
+      badges.push({ imgSrc: p.iconUrl, text: null });
+    }
+    if (badges.length > 0) {
+      badges[badges.length - 1] = {
+        ...badges[badges.length - 1],
+        text: `+${providers.length}`,
+      };
+    }
+    return badges;
+  }
+
+  __cb.buildWaterfallCardData = function buildWaterfallCardData({
+    displayName,
+    providers,
+    attributeEnum = null,
+    packageId = "clay",
+    validationPrice = 0,
+    iconUrl = null,
+    iconSvgHtml = null,
+    actionExecutions = 1,
+    groupCluster = null,
+    fieldId = null,
+    tableId = null,
+    viewId = null,
+    presetId = null,
+  }) {
+    const norm = (Array.isArray(providers) ? providers : [])
+      .map(normalizeWaterfallProvider)
+      .filter(Boolean);
+
+    const v = Number.isFinite(validationPrice) ? validationPrice : 0;
+    const creditsList = norm.map((p) => (p.credits ?? 0) + v);
+    const totalCost = creditsList.reduce((s, c) => s + c, 0);
+    const averageCost = norm.length === 0
+      ? 0
+      : Math.round((totalCost / norm.length) * 10) / 10;
+    const maxCost = norm.length === 0 ? 0 : Math.max(...creditsList);
+
+    const requiresApiKey = norm.some((p) => p.requiresApiKey);
+    const safeName = (displayName ?? "").trim();
+
+    return {
+      type: "waterfall",
+      displayName: safeName,
+      attributeEnum,
+      presetId,
+      packageId,
+      packageName: "Clay",
+      // First provider's icon as the card's primary icon when no explicit one
+      // was passed. Mirrors the picker's WaterfallRow which uses the
+      // attribute icon — but for ad-hoc waterfalls (no attribute) the first
+      // provider gives a more recognizable visual.
+      iconUrl: iconUrl ?? norm[0]?.iconUrl ?? null,
+      iconSvgHtml,
+      // Generated key — only used for dedup against existing canvas cards in
+      // some flows. Doesn't have to match Clay's API since waterfalls aren't
+      // resolved against actionByIdLookup.
+      actionKey: attributeEnum
+        ? `waterfall-${attributeEnum}`
+        : (presetId ? `waterfall-preset-${presetId}` : `waterfall-${safeName.toLowerCase().replace(/[^a-z0-9]+/g, "_") || "adhoc"}`),
+      credits: averageCost,
+      creditText: averageCost > 0 ? `~${averageCost} / row (avg)` : null,
+      averageCost,
+      maxCost,
+      validationPrice: v,
+      actionExecutions,
+      providers: norm,
+      badges: buildBadgesFromProviders(norm),
+      isAi: false,
+      modelOptions: null,
+      selectedModel: null,
+      requiresApiKey,
+      usePrivateKey: false,
+      groupCluster,
+      fieldId,
+      tableId,
+      viewId,
+    };
+  };
+
   __cb.startPickerMode = function () {
     const ids = __cb.parseIdsFromUrl();
     if (!ids) {
@@ -19,10 +146,17 @@
     }
 
     selectedEnrichments.clear();
-    Promise.all([
-      __cb.fetchEnrichments(ids.workspaceId),
-      __cb.fetchWaterfallExecCosts(),
-    ]).catch((err) => console.error("[Clay Scoping] enrichment prefetch failed:", err));
+    // Run actions BEFORE waterfall fetches: both waterfallByName and
+    // waterfallPresetByName store raw actionIds that we resolve against
+    // __cb.actionByIdLookup at extractVisualData time. If actions hadn't
+    // resolved yet we'd downgrade to a flat card on the first checkbox
+    // click. Sequencing here costs ~one round-trip but avoids that race.
+    __cb.fetchEnrichments(ids.workspaceId)
+      .then(() => Promise.all([
+        __cb.fetchWaterfallExecCosts(),
+        __cb.fetchWaterfallPresets(ids.workspaceId),
+      ]))
+      .catch((err) => console.error("[Clay Scoping] enrichment prefetch failed:", err));
     __cb.fetchModelPricing(ids.workspaceId);
 
     watchForDialog();
@@ -231,8 +365,127 @@
     toggleSelection(name, input.checked, row);
   }
 
+  // Resolve a list of action IDs (Clay's `${packageId}-${actionKey}` format)
+  // against the cached actionByIdLookup. Anything that doesn't resolve is
+  // dropped — without action metadata we have no credits / icon and can't
+  // render a useful provider row.
+  function resolveActionIdsToProviders(actionIds) {
+    const providers = [];
+    for (const id of actionIds || []) {
+      if (!id) continue;
+      const entry = __cb.actionByIdLookup?.[id];
+      if (!entry) continue;
+      providers.push({
+        actionKey: entry.key,
+        packageId: entry.packageId,
+        displayName: entry.displayName,
+        packageName: entry.packageName,
+        iconUrl: entry.iconUrl,
+        credits: entry.credits ?? null,
+        creditText: entry.credits != null ? `~${entry.credits} / row` : null,
+        isAi: !!entry.isAi,
+        modelOptions: entry.modelOptions ?? null,
+        requiresApiKey: !!entry.requiresApiKey,
+      });
+    }
+    return providers;
+  }
+
+  // Same idea, but for waterfall preset configs which carry
+  // (actionPackageId, actionKey) tuples instead of pre-built action IDs.
+  // Filters out FormulaConfig steps — only Action_Config steps map to
+  // a billable provider; formula steps don't have a cost.
+  function resolveWaterfallConfigsToProviders(waterfallConfigs) {
+    const providers = [];
+    for (const cfg of waterfallConfigs || []) {
+      if (!cfg) continue;
+      const isAction = cfg.type === "actionConfig" || cfg.type === undefined;
+      if (!isAction) continue;
+      if (!cfg.actionKey || !cfg.actionPackageId) continue;
+      const id = `${cfg.actionPackageId}-${cfg.actionKey}`;
+      const entry = __cb.actionByIdLookup?.[id];
+      if (!entry) continue;
+      providers.push({
+        actionKey: entry.key,
+        packageId: entry.packageId,
+        displayName: entry.displayName,
+        packageName: entry.packageName,
+        iconUrl: entry.iconUrl,
+        credits: entry.credits ?? null,
+        creditText: entry.credits != null ? `~${entry.credits} / row` : null,
+        isAi: !!entry.isAi,
+        modelOptions: entry.modelOptions ?? null,
+        requiresApiKey: !!entry.requiresApiKey,
+      });
+    }
+    return providers;
+  }
+
+  // Looks up the per-action validation cost for an attribute. Mirrors
+  // getValidationPriceFromAttribute in apps/frontend/src/hooks/credits/attributes.ts:
+  // the validation price is the cost of the FIRST action in
+  // attribute.validationProviders, applied per provider step.
+  function getValidationPriceForAttribute(wfMeta) {
+    const id = wfMeta?.validationProviderActionId;
+    if (!id) return 0;
+    const entry = __cb.actionByIdLookup?.[id];
+    return entry?.credits ?? 0;
+  }
+
   function extractVisualData(row, name) {
-    const apiMatch = __cb.enrichmentLookup[name.toLowerCase()] || {};
+    const lname = name.toLowerCase();
+
+    // ---- Waterfall detection (presets first, then built-ins) ----
+    //
+    // Waterfall presets can shadow built-in attribute names (e.g. a saved
+    // "Find Email" preset that customizes the default chain). We check
+    // presets first so the user's customization wins.
+    //
+    // For each match, we resolve the provider chain through actionByIdLookup
+    // and emit a waterfall card via buildWaterfallCardData. If resolution
+    // produces zero providers (action catalog hasn't loaded, or all entries
+    // are unknown), we fall through to the standard action-card path so the
+    // user still gets something on the canvas.
+    const presetMeta = __cb.waterfallPresetByName?.[lname];
+    if (presetMeta) {
+      const providers = resolveWaterfallConfigsToProviders(presetMeta.waterfallConfigs);
+      if (providers.length > 0) {
+        const builtInForValidation =
+          presetMeta.attributeEnum
+            ? Object.values(__cb.waterfallByName || {}).find(
+                (w) => w.attributeEnum === presetMeta.attributeEnum,
+              )
+            : null;
+        return __cb.buildWaterfallCardData({
+          displayName: presetMeta.displayName || name,
+          providers,
+          attributeEnum: presetMeta.attributeEnum,
+          presetId: presetMeta.presetId,
+          packageId: "clay",
+          validationPrice: getValidationPriceForAttribute(builtInForValidation),
+          actionExecutions: 1,
+        });
+      }
+    }
+
+    const wfMeta = __cb.waterfallByName?.[lname];
+    if (wfMeta && wfMeta.actionIds?.length > 0) {
+      const providers = resolveActionIdsToProviders(wfMeta.actionIds);
+      if (providers.length > 0) {
+        return __cb.buildWaterfallCardData({
+          displayName: wfMeta.displayName || name,
+          providers,
+          attributeEnum: wfMeta.attributeEnum,
+          packageId: "clay",
+          validationPrice: getValidationPriceForAttribute(wfMeta),
+          actionExecutions: 1,
+        });
+      }
+    }
+
+    // ---- Standard action-row path ----
+
+    const apiMatch = __cb.enrichmentLookup[lname] || {};
 
     // Provider badges: badge elements use data-slot="badge" (stable attribute
     // from the Badge component). Provider badges have "+N" text; credit badges
@@ -298,7 +551,7 @@
       packageName: apiMatch.packageName ?? "Clay",
       credits: resolvedCredits,
       actionExecutions: apiMatch.actionExecutions
-        ?? __cb.waterfallExecByName[name.toLowerCase()]
+        ?? __cb.waterfallExecByName[lname]
         ?? 1,
       iconUrl: resolvedIconUrl,
       iconSvgHtml: resolvedIconSvgHtml,

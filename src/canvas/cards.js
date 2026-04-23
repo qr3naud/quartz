@@ -601,10 +601,15 @@
         icon.style.color = color;
         icon.textContent = (data.packageName || "C").charAt(0).toUpperCase();
       }
+      const isEditableName = data.isAi || data.type === "waterfall";
       const name = document.createElement("span");
-      name.className = "cb-card-name" + (data.isAi ? " cb-card-name-editable" : "");
+      name.className = "cb-card-name" + (isEditableName ? " cb-card-name-editable" : "");
       name.textContent = data.displayName;
-      if (data.isAi) {
+      if (isEditableName) {
+        // Waterfall and AI cards both let the user retitle in place. For
+        // ad-hoc waterfalls created via Cmd+Enter the title starts empty so
+        // the user can type it immediately; the contentEditable :empty::before
+        // placeholder in cards.css covers that case.
         name.contentEditable = "true";
         name.spellcheck = false;
         name.addEventListener("mousedown", (evt) => evt.stopPropagation());
@@ -646,7 +651,57 @@
 
       const badgeRow = document.createElement("div");
       badgeRow.className = "cb-card-badges";
-      if (data.badges && data.badges.length > 0) {
+
+      // Provider-icons row.
+      //
+      // For non-waterfall cards every entry in data.badges is rendered as its
+      // own <span> badge — that's the existing picker behavior where each
+      // badge is one provider icon segment.
+      //
+      // For waterfall cards we collapse them into a SINGLE clickable badge
+      // (.cb-card-badge-providers) — a stack of dedup'd provider icons plus
+      // the +N count — that opens the showProviderChain popover. This is the
+      // clickable "list of providers + per-step costs" affordance the user
+      // explicitly asked for.
+      if (data.type === "waterfall" && data.badges && data.badges.length > 0) {
+        const providerBadge = document.createElement("button");
+        providerBadge.type = "button";
+        providerBadge.className = "cb-card-badge cb-card-badge-providers";
+        providerBadge.title = "Click to see the provider chain";
+
+        const stack = document.createElement("span");
+        stack.className = "cb-card-badge-providers-stack";
+        for (const b of data.badges) {
+          if (!b.imgSrc) continue;
+          const bImg = document.createElement("img");
+          bImg.src = b.imgSrc;
+          bImg.alt = "";
+          bImg.className = "cb-card-badge-img cb-card-badge-providers-img";
+          stack.appendChild(bImg);
+        }
+        providerBadge.appendChild(stack);
+
+        const countText = document.createElement("span");
+        countText.className = "cb-card-badge-providers-count";
+        countText.textContent = `+${(data.providers || []).length}`;
+        providerBadge.appendChild(countText);
+
+        const chev = document.createElement("span");
+        chev.className = "cb-card-badge-providers-chev";
+        chev.innerHTML =
+          '<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>';
+        providerBadge.appendChild(chev);
+
+        providerBadge.addEventListener("mousedown", (evt) => evt.stopPropagation());
+        providerBadge.addEventListener("click", (evt) => {
+          evt.stopPropagation();
+          if (window.__cb.showProviderChain) {
+            window.__cb.showProviderChain(card, providerBadge);
+          }
+        });
+
+        badgeRow.appendChild(providerBadge);
+      } else if (data.badges && data.badges.length > 0) {
         for (const b of data.badges) {
           const badge = document.createElement("span");
           badge.className = "cb-card-badge";

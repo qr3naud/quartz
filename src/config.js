@@ -92,6 +92,15 @@
     actionByIdLookup: {},
     livePricingByModel: {},
     waterfallExecByName: {},
+    // Built-in Clay waterfall attributes (the WaterfallRow rows in the
+    // picker). Indexed by lowercased displayName. See fetchWaterfallExecCosts
+    // in api.js for the shape of each entry.
+    waterfallByName: {},
+    // Workspace-saved waterfall presets (PresetRow rows of type WATERFALL /
+    // PARENT_WATERFALL). Indexed by lowercased preset name. See
+    // fetchWaterfallPresets in api.js.
+    waterfallPresetByName: {},
+    waterfallParentPresetById: {},
     overlayEl: null,
     enrichmentClickPos: null,
     linkTargetCardId: null,
@@ -252,6 +261,141 @@
       const cb = window.__cb;
       if (cb._freqPickerEl) { cb._freqPickerEl.remove(); cb._freqPickerEl = null; }
       if (cb._freqPickerBackdrop) { cb._freqPickerBackdrop.remove(); cb._freqPickerBackdrop = null; }
+    },
+
+    // ---- Provider chain popover (waterfall cards) ----
+    //
+    // Pops up below the +N provider badge on a waterfall card. Lists each
+    // provider in the chain (icon + name + per-row credit pill) and shows
+    // the avg/max cost in a footer. Read-only at this stage; future
+    // iterations may add drag-to-reorder.
+    //
+    // Mirrors the showFrequencyPicker structure: full-viewport invisible
+    // backdrop catches outside clicks, the popover stops propagation, and
+    // positioning is fixed under the anchor.
+    showProviderChain(card, anchorEl) {
+      window.__cb.closeProviderChain();
+
+      const data = card?.data;
+      if (!data || !Array.isArray(data.providers) || data.providers.length === 0) return;
+
+      const backdrop = document.createElement("div");
+      backdrop.style.cssText = "position:fixed;inset:0;z-index:9999998;";
+      backdrop.addEventListener("mousedown", (evt) => {
+        evt.stopPropagation();
+        window.__cb.closeProviderChain();
+      });
+
+      const panel = document.createElement("div");
+      panel.className = "cb-provider-chain";
+      panel.addEventListener("mousedown", (evt) => evt.stopPropagation());
+
+      const header = document.createElement("div");
+      header.className = "cb-provider-chain-header";
+      const headerTitle = document.createElement("span");
+      headerTitle.className = "cb-provider-chain-header-title";
+      headerTitle.textContent = "Waterfall providers";
+      const headerCount = document.createElement("span");
+      headerCount.className = "cb-provider-chain-header-count";
+      headerCount.textContent = `${data.providers.length} step${data.providers.length === 1 ? "" : "s"}`;
+      header.appendChild(headerTitle);
+      header.appendChild(headerCount);
+      panel.appendChild(header);
+
+      const list = document.createElement("div");
+      list.className = "cb-provider-chain-list";
+
+      for (let i = 0; i < data.providers.length; i++) {
+        const p = data.providers[i];
+        const row = document.createElement("div");
+        row.className = "cb-provider-chain-row";
+
+        const ord = document.createElement("span");
+        ord.className = "cb-provider-chain-ord";
+        ord.textContent = String(i + 1);
+        row.appendChild(ord);
+
+        const icon = document.createElement("span");
+        icon.className = "cb-provider-chain-icon";
+        if (p.iconUrl) {
+          const img = document.createElement("img");
+          img.src = p.iconUrl;
+          img.alt = "";
+          icon.appendChild(img);
+        } else if (p.iconSvgHtml) {
+          icon.innerHTML = p.iconSvgHtml;
+        } else {
+          icon.textContent = (p.packageName || p.displayName || "?").charAt(0).toUpperCase();
+        }
+        row.appendChild(icon);
+
+        const meta = document.createElement("div");
+        meta.className = "cb-provider-chain-meta";
+        const nm = document.createElement("div");
+        nm.className = "cb-provider-chain-name";
+        nm.textContent = p.displayName || "Provider";
+        meta.appendChild(nm);
+        if (p.packageName && p.packageName !== p.displayName) {
+          const sub = document.createElement("div");
+          sub.className = "cb-provider-chain-sub";
+          sub.textContent = p.packageName;
+          meta.appendChild(sub);
+        }
+        row.appendChild(meta);
+
+        const cost = document.createElement("span");
+        cost.className = "cb-provider-chain-cost";
+        if (p.requiresApiKey && (p.credits == null)) {
+          cost.classList.add("cb-provider-chain-cost-key");
+          cost.textContent = "API key";
+        } else if (p.credits == null) {
+          cost.textContent = "—";
+        } else {
+          cost.textContent = `~${p.credits} / row`;
+        }
+        row.appendChild(cost);
+
+        list.appendChild(row);
+      }
+      panel.appendChild(list);
+
+      const footer = document.createElement("div");
+      footer.className = "cb-provider-chain-footer";
+      const avg = document.createElement("span");
+      avg.className = "cb-provider-chain-avg";
+      avg.innerHTML = `<span class="cb-provider-chain-foot-label">Average</span><span class="cb-provider-chain-foot-val">~${data.averageCost ?? data.credits ?? 0} / row</span>`;
+      const sep = document.createElement("span");
+      sep.className = "cb-provider-chain-foot-sep";
+      const max = document.createElement("span");
+      max.className = "cb-provider-chain-max";
+      max.innerHTML = `<span class="cb-provider-chain-foot-label">Max</span><span class="cb-provider-chain-foot-val">~${data.maxCost ?? 0} / row</span>`;
+      footer.appendChild(avg);
+      footer.appendChild(sep);
+      footer.appendChild(max);
+      panel.appendChild(footer);
+
+      document.body.appendChild(backdrop);
+      document.body.appendChild(panel);
+
+      // Position under the anchor; clamp to viewport so a card near the
+      // right edge doesn't push the panel off-screen. Default panel width
+      // is set in CSS but we also fall back to the panel's actual measured
+      // width for the clamp below.
+      const rect = anchorEl.getBoundingClientRect();
+      panel.style.position = "fixed";
+      panel.style.zIndex = "9999999";
+      panel.style.top = (rect.bottom + 6) + "px";
+      const panelW = panel.offsetWidth || 280;
+      const left = Math.min(rect.left, window.innerWidth - panelW - 12);
+      panel.style.left = Math.max(8, left) + "px";
+
+      window.__cb._providerChainEl = panel;
+      window.__cb._providerChainBackdrop = backdrop;
+    },
+    closeProviderChain() {
+      const cb = window.__cb;
+      if (cb._providerChainEl) { cb._providerChainEl.remove(); cb._providerChainEl = null; }
+      if (cb._providerChainBackdrop) { cb._providerChainBackdrop.remove(); cb._providerChainBackdrop = null; }
     },
   };
 })();

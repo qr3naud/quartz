@@ -17,6 +17,62 @@
   // intentionally excluded so coverage doesn't temporarily inflate while a
   // table is mid-run.
   // ---------------------------------------------------------------------------
+  // Combines per-provider stats blocks into a single coverage / fillRate
+  // pair for the parent waterfall card. We sum success / ran / total
+  // numerators across providers that reported data, which produces a
+  // rough "how much of the chain is covered" view. Strictly correct
+  // cover-set math would require per-row deduplication we don't have at
+  // import time. Returns null when no provider has data so the card
+  // simply omits the stats row.
+  function aggregateWaterfallStats(providers) {
+    let coverageRan = 0;
+    let coverageTotal = 0;
+    let fillSuccess = 0;
+    let fillRan = 0;
+    let spendCredits = 0;
+    let spendActions = 0;
+    let spendCells = 0;
+    let any = false;
+    let source = null;
+    let fetchedAt = null;
+    for (const p of providers || []) {
+      const s = p?.stats;
+      if (!s) continue;
+      any = true;
+      if (!source && s.source) source = s.source;
+      if (!fetchedAt && s.fetchedAt) fetchedAt = s.fetchedAt;
+      if (s.coverage) {
+        coverageRan += Number(s.coverage.ran) || 0;
+        coverageTotal = Math.max(coverageTotal, Number(s.coverage.total) || 0);
+      }
+      if (s.fillRate) {
+        fillSuccess += Number(s.fillRate.success) || 0;
+        fillRan += Number(s.fillRate.ran) || 0;
+      }
+      if (s.spend) {
+        spendCredits += Number(s.spend.credits) || 0;
+        spendActions += Number(s.spend.actionExecutions) || 0;
+        spendCells += Number(s.spend.cellCount) || 0;
+      }
+    }
+    if (!any) return null;
+    const out = { source, fetchedAt };
+    if (coverageRan > 0 && coverageTotal > 0) {
+      out.coverage = { ran: coverageRan, total: coverageTotal };
+    }
+    if (fillRan > 0) {
+      out.fillRate = { success: fillSuccess, ran: fillRan };
+    }
+    if (spendCredits > 0 || spendActions > 0 || spendCells > 0) {
+      out.spend = {
+        credits: spendCredits,
+        actionExecutions: spendActions,
+        cellCount: spendCells,
+      };
+    }
+    return out;
+  }
+
   function aggregateRunStatus(counts) {
     let success = 0;
     let noData = 0;
@@ -181,11 +237,21 @@
         keys.add(`dp-${c.data.fieldId}`);
       } else if (c.data.type === "input" && c.data.fieldId) {
         keys.add(`input-${c.data.fieldId}`);
+      } else if (c.data.type === "waterfall") {
+        // Composite waterfall card. The groupCluster carries the original
+        // table fieldGroupId — same key the import side uses to dedupe a
+        // re-imported waterfall against an already-placed one. Also stamp
+        // the embedded provider fieldIds so a later standalone ER pass
+        // doesn't re-place a step as its own card.
+        if (c.data.groupCluster) keys.add(`wf-${c.data.groupCluster}`);
+        for (const p of c.data.providers || []) {
+          if (p?.fieldId) keys.add(`field-${p.fieldId}`);
+        }
       } else if (c.data.isAi && c.data.fieldId) {
         keys.add(`ai-${c.data.fieldId}`);
       } else if (c.data.fieldId) {
-        // Action field (waterfall step or standalone ER) — dedupe by fieldId
-        // so re-importing the same table doesn't double-stamp the same step.
+        // Action field (standalone ER) — dedupe by fieldId so re-importing
+        // the same table doesn't double-stamp the same step.
         keys.add(`field-${c.data.fieldId}`);
       } else if (c.data.waterfallGroupId) {
         keys.add(`wf-${c.data.waterfallGroupId}`);
@@ -470,10 +536,15 @@
     }
 
     // -------------------------------------------------------------------------
-    // Waterfalls — each provider step becomes its own ER card (per plan).
-    // Layout: comment with the waterfall name on top, then the action steps
-    // in a row, then the merge field DP at the right end. Every member
-    // shares `data.groupCluster = wf.groupId` so they magnet visually.
+    // Waterfalls — collapsed into a single composite waterfall card per
+    // attribute. Each provider step becomes an entry in the card's
+    // providers[] array, with its own per-step stats (fillRate / spend)
+    // attached so the popover can show real numbers per provider.
+    //
+    // Layout: waterfall card on the left, optional merge-field DP pinned
+    // to its right, both magneted via the shared groupCluster (same as
+    // the previous exploded layout — but only two cards now instead of
+    // 1 + N + 1).
     // -------------------------------------------------------------------------
     for (const wf of waterfalls) {
       if (wf.steps.length === 0) continue;
@@ -482,36 +553,67 @@
       existingKeys.add(wfKey);
 
       const baseX = START_X;
-      const commentY = currentY;
-      const stepsY = currentY + COMMENT_OFFSET;
+      const stepsY = currentY;
 
-      const commentText = wf.name || "Waterfall";
-      __cb.canvas.addCommentCard(commentText, {
-        x: baseX,
-        y: commentY,
-        groupCluster: wf.groupId,
-      });
-
-      let stepX = baseX;
+      // Build providers[] from each step. We resolve via actionByIdLookup
+      // (same as buildErCardData would have done per-step) so providers
+      // carry the catalog credits / icon / packageName, plus the per-step
+      // stats map for the popover.
+      //
+      // We also mark every step's fieldId as consumed so existingKeys
+      // dedup keeps preventing the same field from being placed as a
+      // standalone ER card later in the import (basic-groups / standalone
+      // sections both check `field-${id}` keys before placing).
+      const providers = [];
       for (const step of wf.steps) {
         const fieldKey = `field-${step.fieldId}`;
-        if (existingKeys.has(fieldKey)) continue;
         existingKeys.add(fieldKey);
-        const cardData = buildErCardData({
+        const lookupKey = `${step.actionPackageId ?? "clay"}-${step.actionKey}`;
+        const info = __cb.actionByIdLookup?.[lookupKey] ?? {};
+        const ai = info.isAi ?? __cb.isAiAction(step.actionKey, info.displayName, step.actionPackageId);
+        providers.push({
           actionKey: step.actionKey,
           packageId: step.actionPackageId ?? "clay",
-          displayName: fieldById[step.fieldId]?.name || step.actionKey,
+          displayName: fieldById[step.fieldId]?.name || info.displayName || step.actionKey,
+          packageName: info.packageName,
+          iconUrl: info.iconUrl ?? null,
+          credits: typeof info.credits === "number" ? info.credits : null,
+          isAi: !!ai,
+          modelOptions: ai ? (info.modelOptions ?? __cb.getModelOptions()) : null,
+          requiresApiKey: !!info.requiresApiKey,
           stats: statsByFieldId.get(step.fieldId) ?? null,
-          groupCluster: wf.groupId,
           fieldId: step.fieldId,
-          tableId,
-          viewId,
         });
-        __cb.canvas.addCard(cardData, { x: stepX, y: stepsY });
-        stepX += CARD_W;
       }
 
-      // Merge field DP card pinned to the right of the last step.
+      const wfData = __cb.buildWaterfallCardData({
+        displayName: wf.name || "Waterfall",
+        providers,
+        attributeEnum: null,
+        packageId: "clay",
+        validationPrice: 0,
+        actionExecutions: 1,
+        groupCluster: wf.groupId,
+        // Anchor the card to the waterfall group so re-imports dedupe via
+        // `wf-${groupId}` (set on existingKeys above) AND its own data
+        // exposes both the field-equivalent linkage and the table linkage
+        // to "Open in table" (Clay's grid jump-to-column wiring).
+        fieldId: wf.steps[0]?.fieldId ?? null,
+        tableId,
+        viewId,
+      });
+      // Aggregate stats across the steps for the always-visible per-card
+      // pills (Pro Mode coverage / fill rate). Average the numerators and
+      // denominators across providers that reported data; this is a rough
+      // proxy that matches user intuition ("how much of this waterfall is
+      // covered overall"), even if it's not a strict cover-set computation.
+      const aggregated = aggregateWaterfallStats(providers);
+      if (aggregated) wfData.stats = aggregated;
+
+      __cb.canvas.addCard(wfData, { x: baseX, y: stepsY });
+
+      // Merge field DP card pinned to the right of the waterfall card.
+      let mergeX = baseX + CARD_W;
       if (wf.mergeFieldId && fieldById[wf.mergeFieldId]) {
         const mergeField = fieldById[wf.mergeFieldId];
         const dpKey = `dp-${mergeField.id}`;
@@ -524,7 +626,7 @@
           // covers a different subset.
           addDpCard(
             mergeField,
-            stepX,
+            mergeX,
             stepsY,
             statsByFieldId.get(mergeField.id) ?? null,
             wf.groupId,
@@ -534,8 +636,7 @@
         }
       }
 
-      const stepsTotalHeight = COMMENT_OFFSET + CARD_H;
-      currentY += stepsTotalHeight + CARD_V_GAP;
+      currentY += CARD_H + CARD_V_GAP;
       importedAny = true;
     }
 

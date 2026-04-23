@@ -342,6 +342,15 @@
   text-overflow: ellipsis;
 }
 
+/* Waterfall chips are visually distinct so the spreadsheet hints at the
+   composite nature of the enrichment; the full provider chain is surfaced
+   via the chip's title attribute (hover tooltip). */
+.cb-export-er-chip-waterfall {
+  background: #f0fdf4;
+  color: #047857;
+  border-color: #d1fae5;
+}
+
 /* ---- Footer ---- */
 
 .cb-export-modal-footer {

@@ -134,10 +134,18 @@
 
       const perDpCredits = totalCredits / dpCards.length;
       const perDpActions = totalActions / dpCards.length;
-      const erList = erCards.map((er) => ({
-        id: er.id,
-        name: er.data.displayName || er.data.text || "Untitled enrichment",
-      }));
+      const erList = erCards.map((er) => {
+        const isWaterfall = er.data.type === "waterfall";
+        const providerChain = isWaterfall
+          ? (er.data.providers || []).map((p) => p.displayName || "Provider").join(" → ")
+          : null;
+        return {
+          id: er.id,
+          name: er.data.displayName || er.data.text || (isWaterfall ? "Waterfall" : "Untitled enrichment"),
+          isWaterfall,
+          providerChain,
+        };
+      });
 
       for (const dp of dpCards) {
         dpInfoMap.set(dp.id, {
@@ -433,9 +441,14 @@
       chips.className = "cb-export-er-chips";
       for (const er of row.ers) {
         const chip = document.createElement("span");
-        chip.className = "cb-export-er-chip";
+        chip.className = "cb-export-er-chip" + (er.isWaterfall ? " cb-export-er-chip-waterfall" : "");
         chip.textContent = er.name;
-        chip.title = er.name;
+        // Surface the provider chain on hover for waterfall chips so users
+        // can verify the steps without leaving the modal. Standalone ERs
+        // get just the name as the tooltip (matches old behavior).
+        chip.title = er.isWaterfall && er.providerChain
+          ? `${er.name} — ${er.providerChain}`
+          : er.name;
         chips.appendChild(chip);
       }
       ersCell.appendChild(chips);

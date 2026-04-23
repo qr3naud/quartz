@@ -311,6 +311,171 @@
 }
 
 /* ==========================================================================
+   PROVIDER CHAIN POPOVER (waterfall cards)
+   ========================================================================== */
+
+.cb-provider-chain {
+  width: 320px;
+  max-width: calc(100vw - 16px);
+  max-height: 380px;
+  display: flex;
+  flex-direction: column;
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.18);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  overflow: hidden;
+}
+
+.cb-provider-chain-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px 8px;
+  border-bottom: 1px solid #f3f4f6;
+}
+
+.cb-provider-chain-header-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: #111827;
+  letter-spacing: 0.01em;
+}
+
+.cb-provider-chain-header-count {
+  font-size: 11px;
+  font-weight: 500;
+  color: #6b7280;
+  font-variant-numeric: tabular-nums;
+}
+
+.cb-provider-chain-list {
+  display: flex;
+  flex-direction: column;
+  padding: 4px;
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+}
+
+.cb-provider-chain-row {
+  display: grid;
+  grid-template-columns: 18px 22px 1fr auto;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 6px;
+}
+
+.cb-provider-chain-row:hover {
+  background: #f9fafb;
+}
+
+.cb-provider-chain-ord {
+  font-size: 11px;
+  font-weight: 600;
+  color: #9ca3af;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.cb-provider-chain-icon {
+  width: 22px;
+  height: 22px;
+  border-radius: 4px;
+  background: #f3f4f6;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  font-size: 11px;
+  font-weight: 600;
+  color: #6b7280;
+}
+
+.cb-provider-chain-icon img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.cb-provider-chain-icon svg {
+  width: 14px;
+  height: 14px;
+}
+
+.cb-provider-chain-meta {
+  min-width: 0;
+}
+
+.cb-provider-chain-name {
+  font-size: 12.5px;
+  font-weight: 500;
+  color: #111827;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cb-provider-chain-sub {
+  font-size: 10.5px;
+  color: #9ca3af;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cb-provider-chain-cost {
+  font-size: 11px;
+  font-weight: 500;
+  color: #059669;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.cb-provider-chain-cost-key {
+  color: #3b82f6;
+}
+
+.cb-provider-chain-footer {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border-top: 1px solid #f3f4f6;
+  background: #f9fafb;
+  font-size: 11.5px;
+  color: #374151;
+}
+
+.cb-provider-chain-avg,
+.cb-provider-chain-max {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.cb-provider-chain-foot-label {
+  color: #9ca3af;
+  font-weight: 500;
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.cb-provider-chain-foot-val {
+  color: #059669;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.cb-provider-chain-foot-sep {
+  flex: 1;
+  height: 1px;
+}
+
+/* ==========================================================================
    TOOLBOX (bottom center of canvas)
    ========================================================================== */
 

@@ -278,6 +278,70 @@
   letter-spacing: 0.01em;
 }
 
+/* ==========================================================================
+   WATERFALL CARDS
+   ==========================================================================
+   A waterfall card uses the same .cb-card chrome as a regular ER card —
+   the only visual differentiator is the providers badge: a single
+   clickable pill with a stack of dedup'd provider icons + "+N" count + a
+   chevron. Clicking it opens .cb-provider-chain (in pickers.css). */
+
+.cb-card-badge-providers {
+  cursor: pointer;
+  background: #ffffff;
+  border-color: #e5e7eb;
+  color: #6b7280;
+  padding-right: 5px;
+  padding-left: 4px;
+  gap: 5px;
+  font-family: inherit;
+}
+
+.cb-card-badge-providers:hover {
+  background: #f3f4f6;
+  color: #374151;
+}
+
+.cb-card-badge-providers-stack {
+  display: inline-flex;
+  align-items: center;
+  /* Slight overlap so the icon row reads as "stacked", not just spaced.
+     Cap to the first 4 — the popover shows the full chain anyway. */
+  flex-shrink: 0;
+}
+
+.cb-card-badge-providers-stack > .cb-card-badge-providers-img {
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  background: #ffffff;
+  outline: 1px solid #ffffff;
+  margin-left: -4px;
+}
+
+.cb-card-badge-providers-stack > .cb-card-badge-providers-img:first-child {
+  margin-left: 0;
+}
+
+.cb-card-badge-providers-stack > .cb-card-badge-providers-img:nth-child(n + 5) {
+  display: none;
+}
+
+.cb-card-badge-providers-count {
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+}
+
+.cb-card-badge-providers-chev {
+  display: inline-flex;
+  align-items: center;
+  color: #9ca3af;
+}
+
+.cb-card-badge-providers:hover .cb-card-badge-providers-chev {
+  color: #6b7280;
+}
+
 /* Key / credit toggle dropdown */
 
 .cb-key-toggle {
