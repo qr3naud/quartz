@@ -141,6 +141,12 @@
     validationUsePrivateKey = false,
     validationOptions = [],
     validationProvider = null,
+    // Explicit override for whether the validation row contributes to
+    // the cost math AND renders. `undefined` = use the default (active
+    // iff validationOptions has items). `true` = force-show (e.g. table
+    // imports with a configured validator but no curated options list).
+    // `false` = force-hide (right-click "Remove validation" path).
+    validationVisible,
     iconUrl = null,
     iconSvgHtml = null,
     actionExecutions = 1,
@@ -154,10 +160,14 @@
       .map(normalizeWaterfallProvider)
       .filter(Boolean);
 
-    // At construction we can't reference data.validationVisible (data is
-    // what we're building). Falls back to the same default as
-    // isValidationActive(data === undefined) → "active iff options exist".
-    const initialValidationActive = Array.isArray(validationOptions) && validationOptions.length > 0;
+    // Same predicate as isValidationActive(data) so the initial
+    // averageCost / maxCost match what recomputeWaterfallCardData would
+    // derive after any popover edit. Without this honoring, callers
+    // that flip validationVisible on the returned data afterwards would
+    // see stale credits until the user opened the popover.
+    const initialValidationActive = typeof validationVisible === "boolean"
+      ? validationVisible
+      : (Array.isArray(validationOptions) && validationOptions.length > 0);
     const totals = deriveWaterfallTotals(norm, validationPrice, validationUsePrivateKey, initialValidationActive);
     const safeName = (displayName ?? "").trim();
 
@@ -209,6 +219,12 @@
       // validationName / validationPrice / validationRequiresApiKey atomically.
       validationOptions: Array.isArray(validationOptions) ? validationOptions : [],
       validationProvider: validationProvider ?? null,
+      // Persist the explicit visibility override on data when the caller
+      // supplied one. `undefined` means "fall back to the default
+      // visibility predicate" (read by isValidationActive at recompute
+      // time). The popover's right-click context menu writes this same
+      // field to flip Add / Remove.
+      validationVisible: typeof validationVisible === "boolean" ? validationVisible : undefined,
       actionExecutions,
       providers: norm,
       badges: totals.badges,
@@ -627,6 +643,10 @@
       selectedActionId: first?.actionId ?? null,
     };
   }
+  // Exposed so table-import.js can pre-fill the validation row on
+  // imported waterfall cards using the same options-resolution logic
+  // the picker uses.
+  __cb.getValidationInfoForAttribute = getValidationInfoForAttribute;
 
   function extractVisualData(row, name) {
     const lname = name.toLowerCase();

@@ -18,17 +18,27 @@
   // table is mid-run.
   // ---------------------------------------------------------------------------
   // Combines per-provider stats blocks into a single coverage / fillRate
-  // pair for the parent waterfall card. We sum success / ran / total
-  // numerators across providers that reported data, which produces a
-  // rough "how much of the chain is covered" view. Strictly correct
-  // cover-set math would require per-row deduplication we don't have at
-  // import time. Returns null when no provider has data so the card
-  // simply omits the stats row.
+  // pair for the parent waterfall card.
+  //
+  // Coverage: MAX of step coverage.ran. Step 1 runs on the entire eligible
+  // input set; subsequent steps run on diminishing subsets (only the rows
+  // earlier steps didn't fill). The largest step.ran IS the waterfall's
+  // true denominator — summing would double-count rows that flow through
+  // multiple steps.
+  //
+  // Fill rate: success summed across providers that have runstatus-based
+  // coverage (each row succeeds at most once across the chain, so summing
+  // per-step successes equals the waterfall's total successes). Denominator
+  // anchored to coverage.ran — the waterfall's true denominator. Avoids
+  // mixing dataProfile sample sizes (often hundreds) with runstatus counts.
+  //
+  // Spend: SUM (each provider charges for whatever it ran).
+  //
+  // Returns null when no provider has data so the card omits the stats row.
   function aggregateWaterfallStats(providers) {
     let coverageRan = 0;
     let coverageTotal = 0;
     let fillSuccess = 0;
-    let fillRan = 0;
     let spendCredits = 0;
     let spendActions = 0;
     let spendCells = 0;
@@ -41,14 +51,19 @@
       any = true;
       if (!source && s.source) source = s.source;
       if (!fetchedAt && s.fetchedAt) fetchedAt = s.fetchedAt;
+
       if (s.coverage) {
-        coverageRan += Number(s.coverage.ran) || 0;
+        coverageRan = Math.max(coverageRan, Number(s.coverage.ran) || 0);
         coverageTotal = Math.max(coverageTotal, Number(s.coverage.total) || 0);
       }
-      if (s.fillRate) {
+
+      // Only count fill-rate success from providers backed by runstatus
+      // coverage. dataProfile-based fillRate uses sample sizes that can't
+      // be meaningfully combined with runstatus counts.
+      if (s.coverage && s.fillRate) {
         fillSuccess += Number(s.fillRate.success) || 0;
-        fillRan += Number(s.fillRate.ran) || 0;
       }
+
       if (s.spend) {
         spendCredits += Number(s.spend.credits) || 0;
         spendActions += Number(s.spend.actionExecutions) || 0;
@@ -59,9 +74,10 @@
     const out = { source, fetchedAt };
     if (coverageRan > 0 && coverageTotal > 0) {
       out.coverage = { ran: coverageRan, total: coverageTotal };
-    }
-    if (fillRan > 0) {
-      out.fillRate = { success: fillSuccess, ran: fillRan };
+      // Fill rate denominator = waterfall coverage. "Of the records the
+      // waterfall attempted, how many got a result." Both popover sections
+      // (coverage + fill rate) now share the same record count.
+      out.fillRate = { success: fillSuccess, ran: coverageRan };
     }
     if (spendCredits > 0 || spendActions > 0 || spendCells > 0) {
       out.spend = {
@@ -408,12 +424,20 @@
 
     // Track which fields end up consumed by waterfall step cards so they
     // aren't accidentally double-imported as standalone columns later.
+    // Validation fields (the per-step verifier columns Clay adds when the
+    // user enables validation, e.g. ZeroBounce Validate Email) are also
+    // consumed here — they get folded into the waterfall card's validation
+    // row instead of becoming N separate ER cards on the canvas.
     const waterfallFieldIds = new Set();
     const waterfallMergeFieldIds = new Set();
+    const waterfallValidationFieldIds = new Set();
     for (const group of Object.values(fieldGroupMap)) {
       if (group.type === "waterfall") {
         for (const step of group.groupDetails?.sequenceSteps ?? []) {
           waterfallFieldIds.add(step.fieldId);
+          if (step.validation?.fieldId) {
+            waterfallValidationFieldIds.add(step.validation.fieldId);
+          }
         }
         const mergeId = group.groupDetails?.mergeField?.fieldId;
         if (mergeId) waterfallMergeFieldIds.add(mergeId);
@@ -431,6 +455,7 @@
 
     const groupedFieldIds = new Set([
       ...waterfallFieldIds,
+      ...waterfallValidationFieldIds,
       ...waterfallMergeFieldIds,
       ...basicGroupFieldIds,
     ]);
@@ -466,6 +491,10 @@
       .map(([groupId, g]) => ({
         groupId,
         name: g.name ?? "",
+        // Settings.attribute is the AttributeEnum (e.g. Person_WorkEmail)
+        // — used downstream to look up the curated validation provider
+        // list so the popover dropdown can offer swap-out options.
+        attributeEnum: g.settings?.attribute ?? null,
         steps: (g.groupDetails?.sequenceSteps ?? []).filter(
           (s) => s.type === "action" && s.actionKey && visibleFieldIds.has(s.fieldId)
         ),
@@ -586,12 +615,88 @@
         });
       }
 
+      // ---- Validation row pre-fill ----
+      //
+      // Clay attaches a validation column to each waterfall step (e.g.
+      // ZeroBounce verifying every Apollo email). Without this pre-fill
+      // those columns import as N standalone "Validate Email" cards; the
+      // groupedFieldIds change above already suppresses those. Here we
+      // reverse-engineer the user's validator choice from the first
+      // step's `validation` block (Clay's pattern is one validator across
+      // the whole waterfall) and seed the validation row in the popover
+      // so it pre-selects the right provider with the right cost / key
+      // mode.
+      const firstValidation = wf.steps.find((s) => s.validation)?.validation ?? null;
+      let validationName = null;
+      let validationPrice = 0;
+      let validationRequiresApiKey = false;
+      let validationUsePrivateKey = false;
+      let validationOptions = [];
+      let validationProvider = null;
+
+      if (firstValidation) {
+        validationProvider = `${firstValidation.actionPackageId}/${firstValidation.actionKey}`;
+        // authAccountId on the validation column means the user wired up
+        // their own credentials there — treat it as private-key mode so
+        // the validation cost contributes 0.
+        validationUsePrivateKey = !!firstValidation.authAccountId;
+        const entry = __cb.actionByIdLookup?.[validationProvider];
+        if (entry) {
+          const keyOnly = !!(entry.requiresApiKey || entry.disableSharedKey);
+          validationName = entry.packageName || entry.displayName || null;
+          validationPrice = keyOnly
+            ? (entry.privateKeyCredits ?? 0)
+            : (entry.credits ?? 0);
+          validationRequiresApiKey = !!entry.requiresApiKey;
+          // Key-only validators (Debounce / LeadMagic / Enrow / etc.):
+          // auto-flip even when authAccountId is null on the column,
+          // because the only valid invocation IS with a private key.
+          if (keyOnly) validationUsePrivateKey = true;
+        }
+      }
+
+      // Look up the curated swap-out list for this attribute so the
+      // popover dropdown can offer alternatives. Mirrors the picker
+      // path. Falls through silently when the attribute isn't in
+      // __cb.waterfallByName (e.g. Clay added a new attribute we don't
+      // know about yet) — the row still renders with the inferred
+      // provider, just without alternative choices.
+      if (wf.attributeEnum && __cb.waterfallByName) {
+        const wfMeta = Object.values(__cb.waterfallByName).find(
+          (w) => w.attributeEnum === wf.attributeEnum,
+        );
+        if (wfMeta && typeof __cb.getValidationInfoForAttribute === "function") {
+          const v = __cb.getValidationInfoForAttribute(wfMeta);
+          validationOptions = v.options;
+          // If the imported provider isn't in the curated list (custom
+          // validator or older attribute mapping), clear the selection
+          // so the dropdown reads "No validation" rather than mis-
+          // selecting. The price/name we already inferred still stands
+          // and is honored by the cost math.
+          if (validationProvider && !validationOptions.some((o) => o.actionId === validationProvider)) {
+            validationProvider = null;
+          }
+        }
+      }
+
       const wfData = __cb.buildWaterfallCardData({
         displayName: wf.name || "Waterfall",
         providers,
-        attributeEnum: null,
+        attributeEnum: wf.attributeEnum,
         packageId: "clay",
-        validationPrice: 0,
+        validationPrice,
+        validationName,
+        validationRequiresApiKey,
+        validationUsePrivateKey,
+        validationOptions,
+        validationProvider,
+        // Force-show the validation row whenever the imported table
+        // configured a validator, even if validationOptions is empty
+        // (attribute not in our curated map). Passing this at build
+        // time (instead of mutating wfData after) ensures the initial
+        // averageCost / credits include the validation surcharge — no
+        // need for the user to toggle Remove / Add to "kick" the math.
+        validationVisible: !!firstValidation,
         actionExecutions: 1,
         groupCluster: wf.groupId,
         // Anchor the card to the waterfall group so re-imports dedupe via
@@ -619,16 +724,20 @@
         const dpKey = `dp-${mergeField.id}`;
         if (!existingKeys.has(dpKey)) {
           existingKeys.add(dpKey);
-          // The merge field doesn't have its own runstatus (it's a basic
-          // formula field), but its overall "filledness" is captured by
-          // dataProfile. Coverage falls through unset for merge fields —
-          // it's not really meaningful at the merge level since each step
-          // covers a different subset.
+          // The merge field IS the waterfall's output (it picks whichever
+          // provider succeeded first), so its fill rate equals the
+          // waterfall's aggregated rate. Using the merge field's own
+          // dataProfile here would show 0% — the formula isn't profiled
+          // densely enough to reflect the post-run state.
+          //
+          // Falls back to the field's own stats only when the waterfall
+          // produced none (rare — e.g. all providers in the chain are
+          // unrun and we have no runstatus to aggregate).
           addDpCard(
             mergeField,
             mergeX,
             stepsY,
-            statsByFieldId.get(mergeField.id) ?? null,
+            aggregated || statsByFieldId.get(mergeField.id) || null,
             wf.groupId,
             tableId,
             viewId
@@ -941,6 +1050,15 @@
       }
       if (Object.keys(__cb.livePricingByModel).length === 0) {
         await __cb.fetchModelPricing(ids.workspaceId);
+      }
+      // Pre-fetch the curated attribute → validators map so imported
+      // waterfall cards can render the validation dropdown with options.
+      // Without this, an "open overlay → import" path runs before the
+      // picker has been touched, leaving __cb.waterfallByName empty and
+      // validationOptions = [] on imported cards (which renders the
+      // editable-text fallback instead of the branded dropdown).
+      if (!__cb.waterfallByName || Object.keys(__cb.waterfallByName).length === 0) {
+        await __cb.fetchWaterfallExecCosts();
       }
 
       const tables = await __cb.fetchTableList(ids.workbookId);
