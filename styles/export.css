@@ -601,3 +601,349 @@
   border-color: #c7d2fe;
   cursor: not-allowed;
 }
+
+/* ==========================================================================
+   EXPORT AS JSON MODAL
+   Two-column layout: 3-option endpoint picker + explanation on the left,
+   schema-or-live JSON preview with a timing chip on the right.
+   ========================================================================== */
+
+.cb-export-json-modal {
+  /* Slightly taller than the table modal — the JSON pre needs room. */
+  max-width: 1280px;
+}
+
+.cb-export-json-body {
+  display: grid;
+  grid-template-columns: minmax(320px, 2fr) minmax(0, 3fr);
+  gap: 0;
+  padding: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* ---- Left column: endpoint picker + explanation ---- */
+
+.cb-export-json-left {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 18px 18px 18px 22px;
+  overflow-y: auto;
+  border-right: 1px solid #e5e7eb;
+  min-height: 0;
+  background: #fafbfc;
+}
+
+.cb-export-json-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.cb-export-json-endpoint {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 10px 12px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #374151;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.12s, background 0.12s, box-shadow 0.12s;
+}
+
+.cb-export-json-endpoint:hover {
+  border-color: #c7d2fe;
+}
+
+.cb-export-json-endpoint-active {
+  border-color: #6366f1;
+  background: #eef2ff;
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.12);
+}
+
+.cb-export-json-endpoint-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: #111827;
+}
+
+.cb-export-json-endpoint-tag {
+  font-size: 11px;
+  font-weight: 500;
+  color: #6b7280;
+  font-variant-numeric: tabular-nums;
+}
+
+.cb-export-json-endpoint-active .cb-export-json-endpoint-tag {
+  color: #4f46e5;
+}
+
+.cb-export-json-explain {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13px;
+  color: #374151;
+  line-height: 1.45;
+}
+
+.cb-export-json-explain-summary {
+  margin: 0 0 4px 0;
+  color: #1f2937;
+}
+
+.cb-export-json-explain-h {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #6b7280;
+  margin-top: 8px;
+}
+
+.cb-export-json-explain-p {
+  margin: 0;
+  font-size: 13px;
+  color: #374151;
+}
+
+.cb-export-json-explain-list,
+.cb-export-json-explain-calls {
+  margin: 0;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.cb-export-json-explain-list li {
+  font-size: 13px;
+  color: #374151;
+}
+
+/* Trade-off bullets — slight visual cue that these are constraints, not
+   features. Amber, not red, so it doesn't read as an error state. */
+.cb-export-json-explain-cons li {
+  color: #92400e;
+}
+
+.cb-export-json-explain-calls li {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  color: #4b5563;
+  word-break: break-all;
+}
+
+/* ---- Right column: mode toggle + timing chip + JSON preview ---- */
+
+.cb-export-json-right {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 18px 22px 18px 18px;
+  gap: 12px;
+}
+
+.cb-export-json-right-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-shrink: 0;
+}
+
+.cb-export-json-mode-toggle {
+  display: inline-flex;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  background: #f9fafb;
+  padding: 2px;
+}
+
+.cb-export-json-mode-btn {
+  height: 28px;
+  padding: 0 12px;
+  border: none;
+  background: transparent;
+  color: #6b7280;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: background 0.12s, color 0.12s;
+}
+
+.cb-export-json-mode-btn:hover {
+  color: #1f2937;
+}
+
+.cb-export-json-mode-btn-active,
+.cb-export-json-mode-btn-active:hover {
+  background: #ffffff;
+  color: #1f2937;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08);
+}
+
+.cb-export-json-timing {
+  display: inline-flex;
+  align-items: center;
+  height: 24px;
+  padding: 0 10px;
+  border-radius: 12px;
+  background: #f3f4f6;
+  color: #4b5563;
+  font-size: 12px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.cb-export-json-timing-loading {
+  background: #eef2ff;
+  color: #4f46e5;
+}
+
+.cb-export-json-timing-loading::before {
+  content: "";
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 6px;
+  border-radius: 50%;
+  border: 1.5px solid #c7d2fe;
+  border-top-color: #4f46e5;
+  animation: cb-export-json-spin 0.8s linear infinite;
+}
+
+@keyframes cb-export-json-spin {
+  to { transform: rotate(360deg); }
+}
+
+.cb-export-json-timing-ready {
+  background: #ecfdf5;
+  color: #047857;
+}
+
+.cb-export-json-timing-error {
+  background: #fef2f2;
+  color: #b91c1c;
+}
+
+/* ---- Search bar — visible only in live mode ---- */
+
+.cb-export-json-search-bar {
+  display: none;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 8px;
+}
+
+.cb-export-json-search-bar-visible {
+  display: flex;
+}
+
+.cb-export-json-search-input {
+  flex: 1;
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #1f2937;
+  font-family: inherit;
+  font-size: 13px;
+  transition: border-color 0.12s, box-shadow 0.12s;
+}
+
+.cb-export-json-search-input:focus {
+  outline: none;
+  border-color: #6366f1;
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.18);
+}
+
+.cb-export-json-search-counter {
+  font-size: 12px;
+  font-weight: 500;
+  color: #6b7280;
+  font-variant-numeric: tabular-nums;
+  min-width: 64px;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.cb-export-json-search-counter-empty {
+  color: #b91c1c;
+}
+
+.cb-export-json-preview-wrap {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+.cb-export-json-preview {
+  flex: 1;
+  margin: 0;
+  padding: 14px 16px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #0f172a;
+  color: #e2e8f0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  overflow: auto;
+  white-space: pre;
+  tab-size: 2;
+}
+
+.cb-export-json-preview-empty {
+  background: #f9fafb;
+  color: #6b7280;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  font-family: inherit;
+  font-size: 13px;
+  white-space: pre-wrap;
+  padding: 24px;
+}
+
+.cb-export-json-preview-error {
+  background: #fef2f2;
+  color: #991b1b;
+  white-space: pre-wrap;
+}
+
+/* Match highlights inside the JSON preview. The dark preview background
+   means we want a warm fill that still has good contrast against the
+   slate-100 text. The active match (the one Enter jumps to) gets a
+   stronger fill + ring so it's obvious which one is current. */
+.cb-export-json-match {
+  background: #fde68a;
+  color: #111827;
+  border-radius: 2px;
+  padding: 0 1px;
+}
+
+.cb-export-json-match-active {
+  background: #f59e0b;
+  color: #111827;
+  outline: 1px solid #b45309;
+}
+
+/* Disabled state for the download button — reuses cb-gtme-submit base. */
+.cb-export-json-download-disabled,
+.cb-export-json-download-disabled:hover {
+  background: #c7d2fe;
+  border-color: #c7d2fe;
+  cursor: not-allowed;
+}

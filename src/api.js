@@ -286,6 +286,40 @@
     }
   };
 
+  // Same endpoint as fetchTableContext, but with contextDetailLevel "full"
+  // — the DEFAULT_FIELD_CONFIG_OPTIONS preset on the server (every toggle on:
+  // status counts, action/formula error analysis, example values, error
+  // examples, full schemas, policy credit costs, profiling at sampleSize=0).
+  // Used by the JSON export modal so reps can compare a single rich call
+  // against the cheaper sculptor-in-table preset and against the multi-call
+  // combined join. NOT used by the table-import flow because the join
+  // already gives us view-filtered counts and actual Redshift spend, which
+  // the full preset can't.
+  __cb.fetchTableContextFull = async function (workspaceId, tableId) {
+    try {
+      const res = await fetch(
+        `https://api.clay.com/v3/workspaces/${workspaceId}/tables/${tableId}/context`,
+        {
+          method: "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            formatAsXML: false,
+            contextDetailLevel: "full",
+            getExampleRows: 0,
+            customOptions: {},
+          }),
+        }
+      );
+      if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
+      const body = await res.json();
+      return body?.result ?? null;
+    } catch (err) {
+      console.warn("[Clay Scoping] fetchTableContextFull failed:", err);
+      return null;
+    }
+  };
+
   // Per-column actual spend over the last N days. Backed by Redshift via
   // Kinesis ingestion (~minutes of lag). Note: realtime credit usage is only
   // complete from REALTIME_CREDIT_USAGE_START_DATE = 2025-11-05 — for tables

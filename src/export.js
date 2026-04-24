@@ -15,7 +15,7 @@
     { id: "gtme",   label: "Export to GTME Calculator", enabled: true  },
     { id: "dealops", label: "Export to DealOps",         enabled: false },
     { id: "table",  label: "Export as Table",            enabled: true  },
-    { id: "json",   label: "Export as JSON",             enabled: false },
+    { id: "json",   label: "Export as JSON",             enabled: true  },
   ];
 
   // ---- Menu ----
@@ -63,6 +63,7 @@
           closeExportMenu();
           if (opt.id === "table") __cb.openExportTableModal();
           else if (opt.id === "gtme") __cb.openGtmeExportModal();
+          else if (opt.id === "json") __cb.openExportJsonModal();
         });
       }
       menuEl.appendChild(item);
@@ -961,5 +962,1009 @@
     renderTabs();
     updateSubmitState();
     requestAnimationFrame(() => nameInput.focus());
+  };
+
+  // ==========================================================================
+  // EXPORT AS JSON
+  //
+  // Three-way endpoint picker for getting a Clay table's structure + stats
+  // out as JSON. The same data the table-import flow consumes — surfaced
+  // here so reps can grab it without going through the canvas.
+  //
+  //   1. Sculptor in-table — one cheap call. Schema-only on big tables.
+  //   2. Full preset       — one richer (slower) call. Adds status counts,
+  //                          example values, error analysis, policy credit
+  //                          costs. No view filter, no actual spend.
+  //   3. Combined join     — four parallel calls joined per fieldId, exact
+  //                          shape the import flow uses. Adds view-filtered
+  //                          record count and Redshift-backed real spend.
+  //
+  // Right column shows either a hand-written schema sample (so users can
+  // download/inspect the shape without touching the network) or the live
+  // payload for the active table. Live mode reports wall-clock latency in
+  // the header chip — for the combined option it also flags the slowest
+  // leg, since the four legs run in parallel.
+  // ==========================================================================
+
+  let jsonModalEl = null;
+  let jsonModalBackdrop = null;
+
+  // Per-endpoint metadata that drives the left-column explanation block.
+  // Kept as a plain array so the renderer can iterate it once and so adding
+  // a fourth option in the future is a one-row diff.
+  const JSON_ENDPOINT_DEFS = [
+    {
+      id: "sculptor",
+      label: "Sculptor in-table",
+      tag: "1 call · cheap",
+      summary:
+        "Single POST to /context with contextDetailLevel \"sculptor-in-table\". " +
+        "Authoritative schema — exactly what Clay's in-table sculptor LLM sees.",
+      whatYouGet: [
+        "Per-field schema (action input/output parameters, formulas, sources)",
+        "Field group info (waterfall steps, basic groups, sequence)",
+        "tableMetadata + viewInfo for the current view",
+        "dataProfile only on tables under ~1k rows (server's conditional profiling rule)",
+      ],
+      tradeoffs: [
+        "No runtime status counts — can't tell success vs error breakdowns",
+        "No fill rate on tables ≥ 1k rows (profiling skipped to stay cheap)",
+        "No example values, no error examples, no credit costs",
+      ],
+      whenToUse:
+        "You want the cheapest, most-faithful snapshot of the schema and don't need runtime stats.",
+      calls: [
+        'POST /v3/workspaces/:workspaceId/tables/:tableId/context  body { contextDetailLevel: "sculptor-in-table" }',
+      ],
+    },
+    {
+      id: "full",
+      label: "Full preset",
+      tag: "1 call · rich · slow on big tables",
+      summary:
+        "Single POST to /context with contextDetailLevel \"full\". Every server toggle on " +
+        "(DEFAULT_FIELD_CONFIG_OPTIONS): profiling at sampleSize=0, status counts, error " +
+        "analysis, example values, policy credit costs.",
+      whatYouGet: [
+        "Everything sculptor-in-table returns",
+        "dataProfile.* on every field at any table size (no 1k cap)",
+        "statusBreakdown / successCount / errorCount per field (server-side runstatus join)",
+        "exampleValues + errorExamples per field",
+        "Action / formula error analysis with descriptions",
+        "creditCost per action — list / policy values from the pricing config",
+      ],
+      tradeoffs: [
+        "Slowest single request on big tables — profiles every row (sampleSize: 0)",
+        "Returns tableRecordCount (whole table), not the view-filtered count",
+        "creditCost is policy / list pricing — NOT actual billed spend",
+      ],
+      whenToUse:
+        "You need a single rich JSON file and don't care about view filters or actual spend.",
+      calls: [
+        'POST /v3/workspaces/:workspaceId/tables/:tableId/context  body { contextDetailLevel: "full" }',
+      ],
+    },
+    {
+      id: "combined",
+      label: "Combined join",
+      tag: "4 calls · same as table import",
+      summary:
+        "Four parallel calls joined per fieldId — the exact same shape the brainstorm's " +
+        "table-import flow consumes. Adds view-filtered record count and last-30-day actual " +
+        "credit spend from Redshift on top of the sculptor context.",
+      whatYouGet: [
+        "viewCount: the view-filtered record count (denominator for fill rate)",
+        "runStatus: per-field SUCCESS / ERROR / RUNNING counts for action fields",
+        "context: same sculptor-in-table response above",
+        "spend: per-column credits + actionExecutions + cellCount over the last 30 days (Redshift)",
+        "joined: the fieldId-keyed merge { coverage, fillRate, source, spend }",
+      ],
+      tradeoffs: [
+        "Slowest wall-clock — bottlenecked by whichever leg is slowest (usually runstatus)",
+        "runStatus may still be \"_pending\" on big or recently-edited tables",
+        "Redshift spend is only complete since 2025-11-05",
+        "Only meaningful when a real Clay table is in scope on the page",
+      ],
+      whenToUse:
+        "You're scoping a real account and need actual spend + the same view filter the rep is looking at.",
+      calls: [
+        "GET  /v3/tables/:tableId/views/:viewId/count",
+        "GET  /v3/workspaces/:workspaceId/tables/:tableId/fields/runstatus",
+        'POST /v3/workspaces/:workspaceId/tables/:tableId/context  body { contextDetailLevel: "sculptor-in-table" }',
+        "GET  /v3/realtime-credit-usage/:workspaceId/table/:tableId/column/recent?days=30",
+      ],
+    },
+  ];
+
+  // Hand-written sample shapes. Stay in sync with:
+  //   apps/api/v3/clay-context/domain/table-context.ts   (TableContext, FieldConfiguration, DataProfileStats)
+  //   apps/clay-brainstorm-extension/src/api.js          (fetch wrappers)
+  //   apps/clay-brainstorm-extension/src/table-import.js (buildStatsByFieldId)
+  // These are illustrative — fields trimmed for readability. Live mode is
+  // the source of truth for the real shape on a given table.
+  const JSON_SCHEMA_SAMPLES = {
+    sculptor: `{
+  "fieldConfigurationsData": {
+    "fieldConfigs": [
+      {
+        "id": "<fieldId>",
+        "index": 0,
+        "name": "Company Domain",
+        "type": "basic",
+        "dataType": "text",
+        "dataProfile": {
+          "valueCount": 842,
+          "nullPercentage": 15.8,
+          "uniqueValueCount": 837,
+          "totalRecords": 1000,
+          "sampleSize": 1000,
+          "commonValues": [{ "value": "...", "percentage": 0 }]
+        }
+      },
+      {
+        "id": "<actionFieldId>",
+        "index": 1,
+        "name": "Find Work Email (Waterfall)",
+        "type": "action",
+        "actionInfo": {
+          "actionKey": "find_work_email_waterfall",
+          "actionPackageId": "clay",
+          "displayName": "Find Work Email",
+          "inputsBinding": { "personFullName": "/{Full Name}" },
+          "inputParameterSchema": [/* ... */],
+          "outputParameterSchema": [/* ... */]
+        },
+        "groupInfo": {
+          "groupId": "<groupId>",
+          "groupType": "waterfall",
+          "groupName": "Find Work Email",
+          "roleInGroup": "sequence_step",
+          "waterfallPosition": 0,
+          "waterfallAttribute": "Person_WorkEmail",
+          "totalWaterfallSteps": 4
+        },
+        "dataProfile": {
+          "valueCount": 0,
+          "nullPercentage": 0,
+          "uniqueValueCount": 0,
+          "totalRecords": 1000,
+          "sampleSize": 0,
+          "commonValues": []
+        }
+      }
+    ],
+    "configOptions": {
+      "includeDataProfiling": false,
+      "includeStatusCounts": false,
+      "includeFullSchemas": true,
+      "sampleSize": 1000
+      /* ... see SCULPTOR_IN_TABLE_FIELD_CONFIG_OPTIONS in table-context.ts */
+    }
+  },
+  "tableMetadata": {
+    "tableId": "<tableId>",
+    "tableName": "Outbound — Q2",
+    "workspaceName": "Acme",
+    "workbookId": "<workbookId>",
+    "viewInfo": {
+      "viewId": "<viewId>",
+      "viewName": "Default view",
+      "hasFilters": false
+    }
+  },
+  "sampleData": []
+}`,
+    full: `{
+  "fieldConfigurationsData": {
+    "fieldConfigs": [
+      {
+        "id": "<fieldId>",
+        "name": "Find Work Email (Waterfall)",
+        "type": "action",
+        "actionInfo": { /* full input/output schemas */ },
+        "dataProfile": {
+          "valueCount": 842,
+          "nullPercentage": 15.8,
+          "uniqueValueCount": 837,
+          "totalRecords": 12480,
+          "sampleSize": 12480,
+          "successCount": 842,
+          "errorCount": 95,
+          "inProgressCount": 0,
+          "notRunCount": 63,
+          "exampleValues": ["jane@acme.com", "..."],
+          "statusBreakdown": [
+            { "status": "SUCCESS", "count": 842, "description": "..." },
+            { "status": "ERROR_PROVIDER_ERROR", "count": 21, "description": "..." }
+          ],
+          "commonValues": [/* ... */]
+        },
+        "creditCost": {
+          "creditsPerCall": 1,
+          "actionExecutionCreditsPerCall": 1
+          /* policy / list pricing — NOT actual spend */
+        }
+      }
+    ],
+    "configOptions": {
+      "includeDataProfiling": true,
+      "includeStatusCounts": true,
+      "includeActionFieldAnalysis": true,
+      "includeFormulaFieldAnalysis": true,
+      "includeExampleValues": true,
+      "includeErrorExamples": true,
+      "includeCreditCosts": true,
+      "sampleSize": 0
+      /* ... see DEFAULT_FIELD_CONFIG_OPTIONS in table-context.ts */
+    }
+  },
+  "tableMetadata": { /* same as sculptor; tableRecordCount = whole table */ },
+  "sampleData": [/* up to getExampleRows rows */]
+}`,
+    combined: `{
+  "viewCount": {
+    "viewTotalRecordsCount": 8240
+  },
+  "runStatus": {
+    "<actionFieldId>": [
+      { "status": "SUCCESS",              "count": 7180 },
+      { "status": "SUCCESS_NO_DATA",      "count": 730  },
+      { "status": "ERROR_PROVIDER_ERROR", "count": 21   }
+      /* in-flight statuses (RUNNING / QUEUED / RETRY / ...) included; the
+         joiner ignores them when computing coverage */
+    ]
+  },
+  "context": {
+    /* Full sculptor-in-table response — same shape as the "Sculptor in-table"
+       option above. Use that tab for the detailed schema. */
+  },
+  "spend": [
+    {
+      "fieldId": "<actionFieldId>",
+      "creditsSpent": 7843,
+      "actionExecutionCreditsSpent": 7901,
+      "cellCount": 7931
+    }
+  ],
+  "joined": {
+    "<fieldId>": {
+      "fetchedAt": 1714000000000,
+      "source": "runstatus",
+      "coverage": { "ran": 7931, "total": 8240 },
+      "fillRate": { "success": 7180, "ran": 7931 },
+      "spend": { "credits": 7843, "actionExecutions": 7901, "cellCount": 7931 }
+    }
+  }
+}`,
+  };
+
+  // Pulls workspace / workbook / table / view IDs out of the current Clay URL
+  // path. parseIdsFromUrl in config.js stops at workbook — it's wired into
+  // the canvas which doesn't care about the table. The export modal does, so
+  // we extend it locally rather than retrofit config.js.
+  function parseTableIdsFromUrl() {
+    const parts = window.location.pathname.split("/");
+    const wsIdx = parts.indexOf("workspaces");
+    const wbIdx = parts.indexOf("workbooks");
+    const tIdx = parts.indexOf("tables");
+    const vIdx = parts.indexOf("views");
+    if (wsIdx === -1 || wbIdx === -1) return null;
+    return {
+      workspaceId: parts[wsIdx + 1] || null,
+      workbookId: parts[wbIdx + 1] || null,
+      tableId: tIdx !== -1 ? parts[tIdx + 1] || null : null,
+      viewId: vIdx !== -1 ? parts[vIdx + 1] || null : null,
+    };
+  }
+
+  // Resolves a viewId for the combined endpoint when the URL doesn't have one
+  // (e.g. user opened the modal from the workbook home). Falls back to the
+  // table's firstViewId — same default the import flow uses.
+  async function resolveViewId(workbookId, tableId, knownViewId) {
+    if (knownViewId) return knownViewId;
+    if (!workbookId || !tableId || !__cb.fetchTableList) return null;
+    try {
+      const list = await __cb.fetchTableList(workbookId);
+      const tables = list?.tables || list || [];
+      const match = (Array.isArray(tables) ? tables : []).find((t) => t.id === tableId);
+      return match?.firstViewId || match?.views?.[0]?.id || null;
+    } catch (err) {
+      console.warn("[Clay Scoping] resolveViewId failed:", err);
+      return null;
+    }
+  }
+
+  function formatDuration(ms) {
+    if (ms == null || !Number.isFinite(ms)) return "—";
+    if (ms < 1000) return `${Math.round(ms)} ms`;
+    return `${(ms / 1000).toFixed(2)} s`;
+  }
+
+  // Tiny HTML-escape pass for safe innerHTML injection. Live JSON payloads
+  // can contain user-typed strings with `<` / `&` / quotes (think of a
+  // Claygent prompt or a scraped page snippet living in a cell value), so
+  // we always escape before wrapping matches in <mark> tags.
+  const HTML_ENTITIES = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, (c) => HTML_ENTITIES[c]);
+  }
+
+  function escapeRegex(s) {
+    return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  }
+
+  // Builds an HTML string with case-insensitive matches of `query` wrapped
+  // in <mark class="cb-export-json-match"> tags, escaping non-match text
+  // as we go. Returns the count alongside so the caller can render
+  // "N / M" without re-querying the DOM. Empty / no-match queries fall
+  // through to a plain escaped string with count = 0.
+  function buildHighlightedHtml(text, query) {
+    if (!query) return { html: escapeHtml(text), count: 0 };
+    const re = new RegExp(escapeRegex(query), "gi");
+    let out = "";
+    let lastIdx = 0;
+    let count = 0;
+    let m;
+    while ((m = re.exec(text)) !== null) {
+      // Zero-width matches (shouldn't happen with our literal-escape, but
+      // belt + braces) would otherwise spin forever — bump lastIndex.
+      if (m[0].length === 0) { re.lastIndex++; continue; }
+      out += escapeHtml(text.slice(lastIdx, m.index));
+      out += `<mark class="cb-export-json-match">${escapeHtml(m[0])}</mark>`;
+      lastIdx = m.index + m[0].length;
+      count++;
+    }
+    out += escapeHtml(text.slice(lastIdx));
+    return { html: out, count };
+  }
+
+  // Wraps a Promise<T> with performance.now() bookends and returns the
+  // measured duration alongside the resolved value (or the rejection,
+  // re-thrown). Single helper so every leg is timed identically.
+  async function timed(label, promise) {
+    const started = performance.now();
+    try {
+      const value = await promise;
+      return { label, value, durationMs: performance.now() - started, error: null };
+    } catch (error) {
+      return { label, value: null, durationMs: performance.now() - started, error };
+    }
+  }
+
+  // Per-endpoint live fetch. Returns { payload, durationMs, legDurations? }.
+  // Throws when prerequisite IDs are missing so the caller can render an
+  // empty-state hint instead of a JSON blob.
+  async function fetchJsonForEndpoint(endpointId) {
+    const ids = parseTableIdsFromUrl();
+    const workspaceId = ids?.workspaceId;
+    const tableId = ids?.tableId;
+    if (!workspaceId || !tableId) {
+      const err = new Error("Open a Clay table to fetch live data.");
+      err.code = "missing_table";
+      throw err;
+    }
+
+    if (endpointId === "sculptor") {
+      const t = await timed("context", __cb.fetchTableContext(workspaceId, tableId));
+      if (t.error) throw t.error;
+      return { payload: t.value, durationMs: t.durationMs };
+    }
+
+    if (endpointId === "full") {
+      const t = await timed("context-full", __cb.fetchTableContextFull(workspaceId, tableId));
+      if (t.error) throw t.error;
+      return { payload: t.value, durationMs: t.durationMs };
+    }
+
+    if (endpointId === "combined") {
+      const viewId = await resolveViewId(ids.workbookId, tableId, ids.viewId);
+      const overall = performance.now();
+      const [viewCountR, runStatusR, contextR, spendR] = await Promise.all([
+        viewId
+          ? timed("viewCount", __cb.fetchViewCount(tableId, viewId))
+          : Promise.resolve({ label: "viewCount", value: null, durationMs: 0, error: null }),
+        timed("runStatus", __cb.fetchFieldRunStatus(workspaceId, tableId)),
+        timed("context", __cb.fetchTableContext(workspaceId, tableId)),
+        timed("spend", __cb.fetchColumnSpend(workspaceId, tableId, 30)),
+      ]);
+      const durationMs = performance.now() - overall;
+
+      const fields = contextR.value?.fieldConfigurationsData?.allFields
+        || contextR.value?.fieldConfigurationsData?.fieldConfigs
+        || [];
+      const joinedMap = __cb.joinTableStats
+        ? __cb.joinTableStats({
+            fields,
+            runStatus: runStatusR.value,
+            context: contextR.value,
+            spend: spendR.value,
+            viewCount: viewCountR.value,
+          })
+        : new Map();
+      const joined = {};
+      for (const [fieldId, stats] of joinedMap.entries()) {
+        joined[fieldId] = stats;
+      }
+
+      const legDurations = {
+        viewCount: viewCountR.durationMs,
+        runStatus: runStatusR.durationMs,
+        context: contextR.durationMs,
+        spend: spendR.durationMs,
+      };
+
+      return {
+        payload: {
+          viewCount: viewCountR.value,
+          runStatus: runStatusR.value,
+          context: contextR.value,
+          spend: spendR.value,
+          joined,
+        },
+        durationMs,
+        legDurations,
+      };
+    }
+
+    throw new Error(`Unknown endpoint: ${endpointId}`);
+  }
+
+  // Browsers force-name downloads via a synthetic <a download> click. The
+  // URL needs to be revoked or it leaks the Blob until the page closes.
+  function downloadJson(filename, text) {
+    const blob = new Blob([text], { type: "application/json;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 0);
+  }
+
+  function closeExportJsonModal() {
+    if (jsonModalEl) { jsonModalEl.remove(); jsonModalEl = null; }
+    if (jsonModalBackdrop) { jsonModalBackdrop.remove(); jsonModalBackdrop = null; }
+    document.removeEventListener("keydown", onJsonModalKeydown);
+  }
+
+  __cb.closeExportJsonModal = closeExportJsonModal;
+
+  function onJsonModalKeydown(evt) {
+    if (evt.key === "Escape") {
+      evt.stopPropagation();
+      closeExportJsonModal();
+    }
+  }
+
+  __cb.openExportJsonModal = function openExportJsonModal() {
+    closeExportJsonModal();
+
+    // Per-endpoint live cache so toggling between options doesn't refetch
+    // and the timing chip can show the prior measurement at a glance.
+    const cache = {
+      sculptor: { state: "idle", payload: null, durationMs: null, error: null, legDurations: null },
+      full:     { state: "idle", payload: null, durationMs: null, error: null, legDurations: null },
+      combined: { state: "idle", payload: null, durationMs: null, error: null, legDurations: null },
+    };
+    let selectedEndpoint = "sculptor";
+    let mode = "schema";
+
+    jsonModalBackdrop = document.createElement("div");
+    jsonModalBackdrop.className = "cb-export-modal-backdrop";
+    jsonModalBackdrop.addEventListener("mousedown", (evt) => {
+      if (evt.target === jsonModalBackdrop) closeExportJsonModal();
+    });
+
+    jsonModalEl = document.createElement("div");
+    jsonModalEl.className = "cb-export-modal cb-export-json-modal";
+
+    // ---- Header ----
+    const header = document.createElement("div");
+    header.className = "cb-export-modal-header";
+    const titleWrap = document.createElement("div");
+    titleWrap.className = "cb-export-modal-title-wrap";
+    const title = document.createElement("h2");
+    title.className = "cb-export-modal-title";
+    title.textContent = "Export as JSON";
+    const subtitle = document.createElement("div");
+    subtitle.className = "cb-export-modal-subtitle";
+    subtitle.textContent =
+      "Pick which Clay endpoint to pull the table's structure + stats from. " +
+      "Preview the schema or fetch live data, then download.";
+    titleWrap.appendChild(title);
+    titleWrap.appendChild(subtitle);
+
+    const closeBtn = document.createElement("button");
+    closeBtn.type = "button";
+    closeBtn.className = "cb-export-modal-close";
+    closeBtn.setAttribute("aria-label", "Close");
+    closeBtn.innerHTML =
+      '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
+    closeBtn.addEventListener("click", closeExportJsonModal);
+
+    header.appendChild(titleWrap);
+    header.appendChild(closeBtn);
+
+    // ---- Body (two columns) ----
+    const body = document.createElement("div");
+    body.className = "cb-export-modal-body cb-export-json-body";
+
+    // Left column ----------------------------------------------------------
+    const left = document.createElement("div");
+    left.className = "cb-export-json-left";
+
+    const picker = document.createElement("div");
+    picker.className = "cb-export-json-picker";
+    picker.setAttribute("role", "tablist");
+    const pickerButtons = new Map();
+    for (const def of JSON_ENDPOINT_DEFS) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "cb-export-json-endpoint";
+      btn.setAttribute("role", "tab");
+      btn.dataset.endpointId = def.id;
+      const label = document.createElement("span");
+      label.className = "cb-export-json-endpoint-label";
+      label.textContent = def.label;
+      const tag = document.createElement("span");
+      tag.className = "cb-export-json-endpoint-tag";
+      tag.textContent = def.tag;
+      btn.appendChild(label);
+      btn.appendChild(tag);
+      btn.addEventListener("click", () => {
+        if (selectedEndpoint === def.id) return;
+        selectedEndpoint = def.id;
+        renderAll();
+        if (mode === "live") refreshLive();
+      });
+      picker.appendChild(btn);
+      pickerButtons.set(def.id, btn);
+    }
+    left.appendChild(picker);
+
+    const explain = document.createElement("div");
+    explain.className = "cb-export-json-explain";
+    left.appendChild(explain);
+
+    // Right column ---------------------------------------------------------
+    const right = document.createElement("div");
+    right.className = "cb-export-json-right";
+
+    const rightHeader = document.createElement("div");
+    rightHeader.className = "cb-export-json-right-header";
+
+    const modeToggle = document.createElement("div");
+    modeToggle.className = "cb-export-json-mode-toggle";
+    modeToggle.setAttribute("role", "tablist");
+    const modeButtons = new Map();
+    for (const m of [{ id: "schema", label: "Schema" }, { id: "live", label: "Live data" }]) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "cb-export-json-mode-btn";
+      btn.dataset.modeId = m.id;
+      btn.textContent = m.label;
+      btn.addEventListener("click", () => {
+        if (mode === m.id) return;
+        mode = m.id;
+        renderAll();
+        if (mode === "live") refreshLive();
+      });
+      modeToggle.appendChild(btn);
+      modeButtons.set(m.id, btn);
+    }
+    rightHeader.appendChild(modeToggle);
+
+    const timing = document.createElement("div");
+    timing.className = "cb-export-json-timing";
+    rightHeader.appendChild(timing);
+
+    right.appendChild(rightHeader);
+
+    // Search bar — only meaningful in live mode (the schemas are short
+    // enough to skim). Hidden via the visible-modifier class so the
+    // mode-toggle stays as the lone right-of-header concern when user is
+    // looking at the schema.
+    const searchBar = document.createElement("div");
+    searchBar.className = "cb-export-json-search-bar";
+    const searchInput = document.createElement("input");
+    searchInput.type = "search";
+    searchInput.className = "cb-export-json-search-input";
+    searchInput.placeholder = "Search live data\u2026  (Enter \u2014 next, Shift+Enter \u2014 prev)";
+    searchInput.autocomplete = "off";
+    searchInput.spellcheck = false;
+    const searchCounter = document.createElement("span");
+    searchCounter.className = "cb-export-json-search-counter";
+    searchBar.appendChild(searchInput);
+    searchBar.appendChild(searchCounter);
+    right.appendChild(searchBar);
+
+    const previewWrap = document.createElement("div");
+    previewWrap.className = "cb-export-json-preview-wrap";
+    const preview = document.createElement("pre");
+    preview.className = "cb-export-json-preview";
+    previewWrap.appendChild(preview);
+    right.appendChild(previewWrap);
+
+    // Search state. `searchText` caches the raw JSON string so re-running
+    // the highlighter on each keystroke doesn't have to JSON.stringify the
+    // payload again. `currentMatchIdx` is -1 when there are no matches or
+    // no query.
+    let searchQuery = "";
+    let searchText = "";
+    let currentMatchIdx = -1;
+    let currentMatchCount = 0;
+
+    searchInput.addEventListener("input", () => {
+      searchQuery = searchInput.value;
+      // Always reset to the first match when the query changes — keeps
+      // jump-to-next predictable as the user refines the term.
+      currentMatchIdx = searchQuery ? 0 : -1;
+      applySearchHighlight({ scroll: !!searchQuery });
+    });
+
+    searchInput.addEventListener("keydown", (evt) => {
+      if (evt.key === "Enter") {
+        evt.preventDefault();
+        if (currentMatchCount === 0) return;
+        currentMatchIdx = evt.shiftKey
+          ? (currentMatchIdx - 1 + currentMatchCount) % currentMatchCount
+          : (currentMatchIdx + 1) % currentMatchCount;
+        focusActiveMatch();
+        renderSearchCounter();
+      } else if (evt.key === "Escape") {
+        // Local escape clears the query; we deliberately do NOT close the
+        // modal here, even though the global Escape handler would —
+        // stopPropagation prevents that from firing while the search input
+        // has focus.
+        if (searchQuery) {
+          evt.stopPropagation();
+          searchQuery = "";
+          searchInput.value = "";
+          currentMatchIdx = -1;
+          applySearchHighlight({ scroll: false });
+        }
+      }
+    });
+
+    body.appendChild(left);
+    body.appendChild(right);
+
+    // ---- Footer ----
+    const footer = document.createElement("div");
+    footer.className = "cb-export-modal-footer";
+    const footerHint = document.createElement("div");
+    footerHint.className = "cb-export-modal-footer-hint";
+    footerHint.textContent =
+      "Live mode hits Clay's APIs with your session cookies. Nothing is uploaded anywhere.";
+
+    const downloadBtn = document.createElement("button");
+    downloadBtn.type = "button";
+    downloadBtn.className = "cb-gtme-submit cb-export-json-download";
+    downloadBtn.textContent = "Download JSON";
+    downloadBtn.addEventListener("click", () => {
+      const def = JSON_ENDPOINT_DEFS.find((d) => d.id === selectedEndpoint);
+      const ids = parseTableIdsFromUrl();
+      const tablePart = ids?.tableId ? `-${ids.tableId}` : "";
+      if (mode === "schema") {
+        downloadJson(
+          `clay-context-${def.id}-schema.json`,
+          JSON_SCHEMA_SAMPLES[def.id] || "{}"
+        );
+        return;
+      }
+      const entry = cache[selectedEndpoint];
+      if (entry.state !== "ready" || entry.payload == null) return;
+      const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+      downloadJson(
+        `clay-context-${def.id}${tablePart}-${stamp}.json`,
+        JSON.stringify(entry.payload, null, 2)
+      );
+    });
+
+    const cancelBtn = document.createElement("button");
+    cancelBtn.type = "button";
+    cancelBtn.className = "cb-export-modal-done";
+    cancelBtn.textContent = "Done";
+    cancelBtn.addEventListener("click", closeExportJsonModal);
+
+    const footerActions = document.createElement("div");
+    footerActions.className = "cb-gtme-footer-actions";
+    footerActions.appendChild(cancelBtn);
+    footerActions.appendChild(downloadBtn);
+
+    footer.appendChild(footerHint);
+    footer.appendChild(footerActions);
+
+    jsonModalEl.appendChild(header);
+    jsonModalEl.appendChild(body);
+    jsonModalEl.appendChild(footer);
+    jsonModalBackdrop.appendChild(jsonModalEl);
+    document.body.appendChild(jsonModalBackdrop);
+    document.addEventListener("keydown", onJsonModalKeydown);
+
+    // ---- Render helpers ----
+
+    function renderPicker() {
+      for (const [id, btn] of pickerButtons.entries()) {
+        btn.classList.toggle("cb-export-json-endpoint-active", id === selectedEndpoint);
+        btn.setAttribute("aria-selected", id === selectedEndpoint ? "true" : "false");
+      }
+    }
+
+    function renderModeButtons() {
+      for (const [id, btn] of modeButtons.entries()) {
+        btn.classList.toggle("cb-export-json-mode-btn-active", id === mode);
+        btn.setAttribute("aria-selected", id === mode ? "true" : "false");
+      }
+    }
+
+    function renderExplain() {
+      const def = JSON_ENDPOINT_DEFS.find((d) => d.id === selectedEndpoint);
+      explain.innerHTML = "";
+      if (!def) return;
+
+      const h = (text) => {
+        const el = document.createElement("div");
+        el.className = "cb-export-json-explain-h";
+        el.textContent = text;
+        return el;
+      };
+      const p = (text, cls) => {
+        const el = document.createElement("p");
+        el.className = "cb-export-json-explain-p" + (cls ? " " + cls : "");
+        el.textContent = text;
+        return el;
+      };
+      const list = (items, cls) => {
+        const ul = document.createElement("ul");
+        ul.className = "cb-export-json-explain-list" + (cls ? " " + cls : "");
+        for (const item of items) {
+          const li = document.createElement("li");
+          li.textContent = item;
+          ul.appendChild(li);
+        }
+        return ul;
+      };
+
+      explain.appendChild(p(def.summary, "cb-export-json-explain-summary"));
+
+      explain.appendChild(h("What you get"));
+      explain.appendChild(list(def.whatYouGet));
+
+      explain.appendChild(h("Trade-offs"));
+      explain.appendChild(list(def.tradeoffs, "cb-export-json-explain-cons"));
+
+      explain.appendChild(h("When to use"));
+      explain.appendChild(p(def.whenToUse));
+
+      explain.appendChild(h("Calls"));
+      const callsList = document.createElement("ul");
+      callsList.className = "cb-export-json-explain-calls";
+      for (const c of def.calls) {
+        const li = document.createElement("li");
+        li.textContent = c;
+        callsList.appendChild(li);
+      }
+      explain.appendChild(callsList);
+    }
+
+    function renderTimingChip() {
+      timing.className = "cb-export-json-timing";
+      if (mode !== "live") {
+        timing.style.visibility = "hidden";
+        timing.textContent = "";
+        return;
+      }
+      timing.style.visibility = "visible";
+      const entry = cache[selectedEndpoint];
+      if (entry.state === "loading") {
+        timing.classList.add("cb-export-json-timing-loading");
+        timing.textContent = "Fetching…";
+        return;
+      }
+      if (entry.state === "error") {
+        timing.classList.add("cb-export-json-timing-error");
+        timing.textContent = entry.error?.message
+          ? `Error · ${formatDuration(entry.durationMs)}`
+          : `Error`;
+        timing.title = entry.error?.message || "";
+        return;
+      }
+      if (entry.state === "ready") {
+        timing.classList.add("cb-export-json-timing-ready");
+        let text = formatDuration(entry.durationMs);
+        if (entry.legDurations) {
+          let slowestKey = null;
+          let slowestMs = -1;
+          for (const [k, v] of Object.entries(entry.legDurations)) {
+            if (v != null && v > slowestMs) { slowestMs = v; slowestKey = k; }
+          }
+          if (slowestKey) {
+            text += ` (slowest: ${slowestKey} ${formatDuration(slowestMs)})`;
+          }
+        }
+        timing.textContent = text;
+        timing.title = "Wall-clock latency of the network call(s) that produced this payload.";
+        return;
+      }
+      timing.textContent = "";
+    }
+
+    function renderPreview() {
+      preview.classList.remove("cb-export-json-preview-error", "cb-export-json-preview-empty");
+      // Clear cached search text — only the live/ready branch sets it
+      // back, which is also the only branch where search makes sense.
+      searchText = "";
+      if (mode === "schema") {
+        preview.textContent = JSON_SCHEMA_SAMPLES[selectedEndpoint] || "{}";
+        applySearchHighlight({ scroll: false });
+        return;
+      }
+      const entry = cache[selectedEndpoint];
+      if (entry.state === "idle") {
+        preview.classList.add("cb-export-json-preview-empty");
+        preview.textContent = "Click \u201cLive data\u201d again or switch endpoints to fetch.";
+        applySearchHighlight({ scroll: false });
+        return;
+      }
+      if (entry.state === "loading") {
+        preview.classList.add("cb-export-json-preview-empty");
+        preview.textContent = "Fetching from Clay…";
+        applySearchHighlight({ scroll: false });
+        return;
+      }
+      if (entry.state === "error") {
+        preview.classList.add("cb-export-json-preview-error");
+        preview.textContent =
+          (entry.error?.message || "Request failed.") +
+          "\n\n" +
+          "If you're not on a Clay table page, open one and reopen this dialog. " +
+          "Otherwise, check the browser console for the underlying error.";
+        applySearchHighlight({ scroll: false });
+        return;
+      }
+      if (entry.state === "ready") {
+        try {
+          searchText = JSON.stringify(entry.payload, null, 2);
+        } catch (err) {
+          preview.classList.add("cb-export-json-preview-error");
+          preview.textContent = `Could not stringify payload: ${err.message}`;
+          applySearchHighlight({ scroll: false });
+          return;
+        }
+        applySearchHighlight({ scroll: false });
+      }
+    }
+
+    // Renders the preview's body, applying the current search highlight if
+    // one is set and we're in live/ready mode. When no query is set we use
+    // textContent (cheaper, no parse), otherwise we build escaped HTML
+    // with <mark> wrappers around matches and inject it via innerHTML.
+    function applySearchHighlight({ scroll }) {
+      const canSearch = mode === "live" && searchText !== "";
+      searchBar.classList.toggle("cb-export-json-search-bar-visible", canSearch);
+
+      if (!canSearch) {
+        currentMatchCount = 0;
+        currentMatchIdx = -1;
+        renderSearchCounter();
+        // searchText is empty here, so renderPreview already wrote the
+        // appropriate placeholder/error text via textContent. Nothing
+        // more to do.
+        return;
+      }
+
+      if (!searchQuery) {
+        preview.textContent = searchText;
+        currentMatchCount = 0;
+        currentMatchIdx = -1;
+        renderSearchCounter();
+        return;
+      }
+
+      const { html, count } = buildHighlightedHtml(searchText, searchQuery);
+      preview.innerHTML = html;
+      currentMatchCount = count;
+      if (count === 0) {
+        currentMatchIdx = -1;
+      } else {
+        // Clamp so a stale idx (from a prior, larger result set) doesn't
+        // point past the end after the user narrows the query.
+        if (currentMatchIdx < 0 || currentMatchIdx >= count) currentMatchIdx = 0;
+        markActiveMatch();
+        if (scroll) focusActiveMatch();
+      }
+      renderSearchCounter();
+    }
+
+    function markActiveMatch() {
+      const marks = preview.querySelectorAll(".cb-export-json-match");
+      for (const el of marks) el.classList.remove("cb-export-json-match-active");
+      if (currentMatchIdx >= 0 && marks[currentMatchIdx]) {
+        marks[currentMatchIdx].classList.add("cb-export-json-match-active");
+      }
+    }
+
+    function focusActiveMatch() {
+      markActiveMatch();
+      const marks = preview.querySelectorAll(".cb-export-json-match");
+      const target = marks[currentMatchIdx];
+      if (target && typeof target.scrollIntoView === "function") {
+        target.scrollIntoView({ block: "center", inline: "nearest" });
+      }
+    }
+
+    function renderSearchCounter() {
+      if (!searchQuery) {
+        searchCounter.textContent = "";
+        searchCounter.classList.remove("cb-export-json-search-counter-empty");
+        return;
+      }
+      if (currentMatchCount === 0) {
+        searchCounter.textContent = "0 matches";
+        searchCounter.classList.add("cb-export-json-search-counter-empty");
+        return;
+      }
+      searchCounter.classList.remove("cb-export-json-search-counter-empty");
+      searchCounter.textContent = `${currentMatchIdx + 1} / ${currentMatchCount}`;
+    }
+
+    function renderDownloadButton() {
+      // Always enabled in schema mode (we ship hand-written samples). In
+      // live mode, gate on a successful fetch so we never download an empty
+      // or in-flight payload.
+      const enabled = mode === "schema" || cache[selectedEndpoint].state === "ready";
+      downloadBtn.disabled = !enabled;
+      downloadBtn.classList.toggle("cb-export-json-download-disabled", !enabled);
+    }
+
+    function renderAll() {
+      renderPicker();
+      renderModeButtons();
+      renderExplain();
+      renderTimingChip();
+      renderPreview();
+      renderDownloadButton();
+    }
+
+    async function refreshLive() {
+      const entry = cache[selectedEndpoint];
+      // Already-fetched payloads are reused — saves a roundtrip when the
+      // user toggles back to a previously-viewed endpoint.
+      if (entry.state === "ready") {
+        renderTimingChip();
+        renderPreview();
+        renderDownloadButton();
+        return;
+      }
+      entry.state = "loading";
+      entry.error = null;
+      renderTimingChip();
+      renderPreview();
+      renderDownloadButton();
+
+      const endpointAtStart = selectedEndpoint;
+      try {
+        const result = await fetchJsonForEndpoint(endpointAtStart);
+        // Bail if the user switched endpoints while we were waiting — the
+        // result still gets cached for whichever endpoint requested it.
+        cache[endpointAtStart].state = "ready";
+        cache[endpointAtStart].payload = result.payload;
+        cache[endpointAtStart].durationMs = result.durationMs;
+        cache[endpointAtStart].legDurations = result.legDurations || null;
+      } catch (err) {
+        cache[endpointAtStart].state = "error";
+        cache[endpointAtStart].error = err;
+      }
+      if (selectedEndpoint === endpointAtStart) {
+        renderTimingChip();
+        renderPreview();
+        renderDownloadButton();
+      }
+    }
+
+    renderAll();
   };
 })();

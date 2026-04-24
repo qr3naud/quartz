@@ -179,6 +179,12 @@
     return map;
   }
 
+  // Re-exposed under __cb so the JSON export modal can run the exact same
+  // four-API join the import flow uses, without re-implementing the per-
+  // field merge logic. Returns a Map; the export modal converts it to a
+  // plain object before serializing.
+  __cb.joinTableStats = buildStatsByFieldId;
+
   // ---------------------------------------------------------------------------
   // Card data factory for an action field (ER) being placed on the canvas.
   // Resolves catalog metadata (icons, AI detection, default model, credits)
