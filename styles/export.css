@@ -1485,12 +1485,11 @@
 /* The very last header row (sub-columns) gets a slightly more visible
    white-ish border so the eye still registers a transition into the
    body — but with the same low contrast as the rest of the header. */
-/* Sub-header bottom border — 6px gray so it reads as the upper
-   bracket of the totals stack (matches the 6px gray under Total per
-   Table below). Stays consistent across the whole table width
-   regardless of column tint. */
+/* Sub-header bottom border — 2px white. Renders as a small clean
+   gap that lets the colored sections flow into the totals stack
+   below without a hard line interrupting them. */
 .cb-pricing-table thead .cb-pricing-head-cols th {
-  border-bottom: 6px solid #d1d5db;
+  border-bottom: 2px solid #ffffff;
 }
 
 .cb-pricing-table thead .cb-pricing-head-sections th {
@@ -1605,27 +1604,14 @@
    driven by the editable records input. */
 
 /* Total per table — typography only (col tints come from harmonized
-   rules above). The 6px bottom border is the lower bracket of the
-   totals stack (mirrors the 6px above Total per row, sandwiching
-   the two summary rows between matching dividers). The bracket
-   stays gray across the full table width — the generic colored-cell
-   white override is reverted below for this specific row so the
-   line doesn't disappear in the colored sections. */
+   rules above). 2px white bottom border mirrors the 2px white above
+   Total per row, sandwiching the two summary rows between matching
+   thin gaps that let the colored sections flow uninterrupted. */
 .cb-pricing-table-row td {
-  border-bottom: 6px solid #d1d5db;
+  border-bottom: 2px solid #ffffff;
   font-weight: 600;
   font-size: 14px;
   color: #111827;
-}
-
-.cb-pricing-table tbody tr.cb-pricing-table-row td.col-legacy,
-.cb-pricing-table tbody tr.cb-pricing-table-row td.col-legacy-dollar,
-.cb-pricing-table tbody tr.cb-pricing-table-row td.col-modern-credits,
-.cb-pricing-table tbody tr.cb-pricing-table-row td.col-modern-credits-dollar,
-.cb-pricing-table tbody tr.cb-pricing-table-row td.col-modern-actions,
-.cb-pricing-table tbody tr.cb-pricing-table-row td.col-modern-actions-dollar,
-.cb-pricing-table tbody tr.cb-pricing-table-row td.col-modern-total-dollar {
-  border-bottom-color: #d1d5db;
 }
 
 .cb-pricing-table-row .col-name,

@@ -138,17 +138,54 @@
     ],
   };
 
-  // Bands sub-modal state. Module-scoped so the period + plan
-  // selection persist across opens within the same session — small
-  // UX win since reps usually open Bands repeatedly to grab CPCs.
-  // bandsPlan defaults to "legacy" because the modal is opened from
-  // the Old vs New pricing comparison and reps almost always start
-  // by grounding the conversation in the customer's current legacy
-  // tier before walking them across to modern equivalents.
+  // Bands sub-modal state. Persisted across page reloads via
+  // localStorage (under cb-bands-prefs) so a rep's preferred view
+  // sticks across canvas reloads and tab switches — they tend to
+  // anchor an entire customer call on one combination (e.g.,
+  // "Modern + Annual" for an upmarket conversation) and re-picking
+  // it every time the modal reopens is friction. Defaults to
+  // legacy + monthly because the modal is opened from the Old vs
+  // New comparison and reps almost always start by grounding the
+  // conversation in the customer's current legacy tier before
+  // walking them across to modern equivalents. Module-scoped so
+  // both the toggle render path and the toggle click handlers read
+  // the same source of truth without a getter dance.
+  const BANDS_PREFS_KEY = "cb-bands-prefs";
+  const VALID_BANDS_PLANS = ["legacy", "modern"];
+  const VALID_BANDS_PERIODS = ["monthly", "annual"];
+
+  function loadBandsPrefs() {
+    const defaults = { plan: "legacy", period: "monthly" };
+    try {
+      const raw = localStorage.getItem(BANDS_PREFS_KEY);
+      if (!raw) return defaults;
+      const parsed = JSON.parse(raw);
+      // Defensive validation — reject anything outside the known
+      // enums so a tampered / stale key can't put the modal into an
+      // unrecoverable state. Falls back per-field, not all-or-nothing,
+      // so adding a future toggle dimension stays backwards-compatible.
+      return {
+        plan: VALID_BANDS_PLANS.includes(parsed?.plan) ? parsed.plan : defaults.plan,
+        period: VALID_BANDS_PERIODS.includes(parsed?.period) ? parsed.period : defaults.period,
+      };
+    } catch {
+      return defaults;
+    }
+  }
+
+  function saveBandsPrefs() {
+    try {
+      localStorage.setItem(BANDS_PREFS_KEY, JSON.stringify({ plan: bandsPlan, period: bandsPeriod }));
+    } catch (e) {
+      console.warn("[Clay Scoping] saveBandsPrefs failed:", e);
+    }
+  }
+
   let bandsModalEl = null;
   let bandsModalBackdrop = null;
-  let bandsPeriod = "monthly";
-  let bandsPlan = "legacy";
+  const _initialBandsPrefs = loadBandsPrefs();
+  let bandsPeriod = _initialBandsPrefs.period;
+  let bandsPlan = _initialBandsPrefs.plan;
 
   // Dollar formatting / parsing — duplicated from src/overlay.js (parseDollar /
   // formatDollar around lines 459-472). Those helpers aren't exposed via __cb,
@@ -1910,6 +1947,7 @@
       legacyBtn.classList.add("cb-bands-period-active");
       modernBtn.classList.remove("cb-bands-period-active");
       renderBandsSections();
+      saveBandsPrefs();
     });
     modernBtn.addEventListener("click", () => {
       if (bandsPlan === "modern") return;
@@ -1917,6 +1955,7 @@
       modernBtn.classList.add("cb-bands-period-active");
       legacyBtn.classList.remove("cb-bands-period-active");
       renderBandsSections();
+      saveBandsPrefs();
     });
 
     monthlyBtn.addEventListener("click", () => {
@@ -1925,6 +1964,7 @@
       monthlyBtn.classList.add("cb-bands-period-active");
       annualBtn.classList.remove("cb-bands-period-active");
       renderBandsSections();
+      saveBandsPrefs();
     });
     annualBtn.addEventListener("click", () => {
       if (bandsPeriod === "annual") return;
@@ -1932,6 +1972,7 @@
       annualBtn.classList.add("cb-bands-period-active");
       monthlyBtn.classList.remove("cb-bands-period-active");
       renderBandsSections();
+      saveBandsPrefs();
     });
 
     bandsEl.appendChild(header);
