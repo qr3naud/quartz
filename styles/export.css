@@ -1031,38 +1031,43 @@
   background: #d1fae5;
 }
 
-/* Reset button — only relevant when the user has touched the rate
-   inputs, which only happens when pricing mode is on. CSS hides it
-   in OFF state so the header stays minimal until rates are editable. */
+/* Inline Reset button — sits next to the "Total per row" label
+   inside the col-name cell, only when pricing is on (CSS gate
+   below). Small icon-only square so it tucks neatly next to the
+   uppercase label without shifting the row's vertical rhythm. */
 
-.cb-pricing-reset-btn {
+.cb-pricing-total-label-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.cb-pricing-reset-inline {
   display: none;
   align-items: center;
-  gap: 6px;
-  height: 32px;
-  padding: 0 10px;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
   border: 1px solid #d1d5db;
-  border-radius: 6px;
+  border-radius: 4px;
   background: #ffffff;
   color: #6b7280;
-  font-family: inherit;
-  font-size: 12px;
-  font-weight: 500;
   cursor: pointer;
   transition: background 0.15s, border-color 0.15s, color 0.15s;
 }
 
-.cb-pricing-reset-btn svg {
+.cb-pricing-reset-inline svg {
   flex-shrink: 0;
 }
 
-.cb-pricing-reset-btn:hover {
+.cb-pricing-reset-inline:hover {
   background: #f9fafb;
   border-color: #9ca3af;
   color: #111827;
 }
 
-.cb-pricing-modal.cb-pricing-on .cb-pricing-reset-btn {
+.cb-pricing-modal.cb-pricing-on .cb-pricing-reset-inline {
   display: inline-flex;
 }
 
@@ -1382,20 +1387,39 @@
   background: #d1fae5;
 }
 
-/* Subtle internal divider between the modern action $ column and the
-   modern Total $ column so the eye reads "this is a derived sum",
-   not a fourth modern data column. */
-.cb-pricing-table .col-modern-total-dollar {
-  border-left: 1px dashed #a7f3d0;
-}
-
-/* Vertical dividers between Enrichment / Legacy / Modern / Delta —
-   applied to the leftmost cell of each downstream section so they
-   carry through both header rows and every body row. */
+/* Vertical dividers — colored-to-colored boundaries get a white line
+   so the colored sections read as one continuous wash with no
+   visible internal grid; colored-to-blank boundaries keep the gray
+   so the structural separation is preserved.
+     col-legacy:           BLANK -> COLORED   -> gray
+     col-modern-credits:   COLORED -> COLORED -> white
+     col-modern-actions:   COLORED -> COLORED -> white
+     col-modern-total-$:   COLORED -> COLORED -> white
+     col-delta:            COLORED -> BLANK   -> gray
+*/
 .cb-pricing-table .col-legacy,
-.cb-pricing-table .col-modern-credits,
 .cb-pricing-table .col-delta {
   border-left: 1px solid #e5e7eb;
+}
+
+.cb-pricing-table .col-modern-credits,
+.cb-pricing-table .col-modern-actions,
+.cb-pricing-table .col-modern-total-dollar {
+  border-left: 1px solid #ffffff;
+}
+
+/* Horizontal between-row borders on colored cells -> white so the
+   columns read as continuous tinted bands instead of a gray-lined
+   grid. Blank cells (col-name + col-delta) keep the existing
+   #f1f5f9 light gray separator from the base tbody td rule. */
+.cb-pricing-table tbody td.col-legacy,
+.cb-pricing-table tbody td.col-legacy-dollar,
+.cb-pricing-table tbody td.col-modern-credits,
+.cb-pricing-table tbody td.col-modern-credits-dollar,
+.cb-pricing-table tbody td.col-modern-actions,
+.cb-pricing-table tbody td.col-modern-actions-dollar,
+.cb-pricing-table tbody td.col-modern-total-dollar {
+  border-bottom-color: #ffffff;
 }
 
 /* ---- Dollar columns: hidden by default, revealed by .cb-pricing-on ----
@@ -1461,8 +1485,12 @@
 /* The very last header row (sub-columns) gets a slightly more visible
    white-ish border so the eye still registers a transition into the
    body — but with the same low contrast as the rest of the header. */
+/* Sub-header bottom border — 6px gray so it reads as the upper
+   bracket of the totals stack (matches the 6px gray under Total per
+   Table below). Stays consistent across the whole table width
+   regardless of column tint. */
 .cb-pricing-table thead .cb-pricing-head-cols th {
-  border-bottom: 2px solid #ffffff;
+  border-bottom: 6px solid #d1d5db;
 }
 
 .cb-pricing-table thead .cb-pricing-head-sections th {
@@ -1525,8 +1553,10 @@
 }
 
 /* Row hover overlays the col tints with a slight darken so the focus
-   row reads, without losing the section coloring entirely. */
-.cb-pricing-table tbody tr:hover:not(.cb-pricing-total-row) td {
+   row reads, without losing the section coloring entirely. Skipped
+   on both summary rows (Total per row + Total per table) so the
+   headline numbers stay visually static. */
+.cb-pricing-table tbody tr:hover:not(.cb-pricing-total-row):not(.cb-pricing-table-row) td {
   filter: brightness(0.97);
 }
 
@@ -1575,13 +1605,27 @@
    driven by the editable records input. */
 
 /* Total per table — typography only (col tints come from harmonized
-   rules above). The thicker bottom border is the hard separator
-   between the totals stack and the per-enrichment rows. */
+   rules above). The 6px bottom border is the lower bracket of the
+   totals stack (mirrors the 6px above Total per row, sandwiching
+   the two summary rows between matching dividers). The bracket
+   stays gray across the full table width — the generic colored-cell
+   white override is reverted below for this specific row so the
+   line doesn't disappear in the colored sections. */
 .cb-pricing-table-row td {
-  border-bottom: 4px solid #d1d5db;
+  border-bottom: 6px solid #d1d5db;
   font-weight: 600;
   font-size: 14px;
   color: #111827;
+}
+
+.cb-pricing-table tbody tr.cb-pricing-table-row td.col-legacy,
+.cb-pricing-table tbody tr.cb-pricing-table-row td.col-legacy-dollar,
+.cb-pricing-table tbody tr.cb-pricing-table-row td.col-modern-credits,
+.cb-pricing-table tbody tr.cb-pricing-table-row td.col-modern-credits-dollar,
+.cb-pricing-table tbody tr.cb-pricing-table-row td.col-modern-actions,
+.cb-pricing-table tbody tr.cb-pricing-table-row td.col-modern-actions-dollar,
+.cb-pricing-table tbody tr.cb-pricing-table-row td.col-modern-total-dollar {
+  border-bottom-color: #d1d5db;
 }
 
 .cb-pricing-table-row .col-name,

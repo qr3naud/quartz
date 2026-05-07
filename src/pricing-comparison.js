@@ -572,36 +572,6 @@
     });
     state.pricingToggleBtn = pricingToggleBtn;
 
-    // Reset rates button — sits to the left of the Pricing toggle and
-    // only appears when pricing mode is on (CSS hides it otherwise).
-    // Resets the 3 editable rate inputs back to the fixed defaults;
-    // records count is left alone since it represents the user's
-    // table volume, not a "price" they're tweaking. Icon is the
-    // standard rotate-ccw glyph (cleaner at 14px than the larger
-    // refresh-circle that didn't render legibly at this size).
-    const resetBtn = document.createElement("button");
-    resetBtn.type = "button";
-    resetBtn.className = "cb-pricing-reset-btn";
-    resetBtn.title = "Reset rates to defaults ($0.05/credit, $0.008/action)";
-    resetBtn.innerHTML =
-      '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>' +
-      '<span>Reset</span>';
-    resetBtn.addEventListener("click", () => {
-      state.legacyCreditRate = FIXED_LEGACY_CREDIT_RATE;
-      state.modernCreditRate = FIXED_MODERN_CREDIT_RATE;
-      state.actionRate = FIXED_ACTION_RATE;
-      // Push the new values back into the rate inputs (refresh only
-      // updates derived dollar / delta cells, not the input values).
-      const setInput = (cls, value) => {
-        const el = modalEl.querySelector(`.${cls}`);
-        if (el) el.value = formatDollar(value);
-      };
-      setInput("cb-pricing-rate-legacy", FIXED_LEGACY_CREDIT_RATE);
-      setInput("cb-pricing-rate-modern-credits", FIXED_MODERN_CREDIT_RATE);
-      setInput("cb-pricing-rate-modern-actions", FIXED_ACTION_RATE);
-      refreshDollarCellsAndDeltas();
-    });
-
     const closeBtn = document.createElement("button");
     closeBtn.type = "button";
     closeBtn.className = "cb-export-modal-close";
@@ -612,8 +582,8 @@
 
     // Bands button — opens a sub-modal with the modern pricing tiers
     // (CPC reference for sizing the customer's tier). Only relevant
-    // when pricing mode is on (CSS hides it otherwise), sits between
-    // Reset and Pricing toggle. Layers icon = visual cue for "tiers".
+    // when pricing mode is on (CSS hides it otherwise), sits to the
+    // left of the Pricing toggle. Layers icon = visual cue for tiers.
     const bandsBtn = document.createElement("button");
     bandsBtn.type = "button";
     bandsBtn.className = "cb-bands-btn";
@@ -623,7 +593,6 @@
       '<span>Bands</span>';
     bandsBtn.addEventListener("click", openBandsModal);
 
-    headerActions.appendChild(resetBtn);
     headerActions.appendChild(bandsBtn);
     headerActions.appendChild(pricingToggleBtn);
     headerActions.appendChild(closeBtn);
@@ -717,10 +686,27 @@
     const nameCell = document.createElement("td");
     nameCell.className = "col-name";
     if (isTotal) {
+      // Label + inline Reset button (visible only when pricing is on
+      // via CSS gate). The reset sits next to the label rather than
+      // in the modal header so it's adjacent to the rate inputs it
+      // affects, on the same row.
+      const wrap = document.createElement("div");
+      wrap.className = "cb-pricing-total-label-wrap";
       const totalLabel = document.createElement("div");
       totalLabel.className = "cb-pricing-name-text cb-pricing-total-label";
       totalLabel.textContent = "Total per row";
-      nameCell.appendChild(totalLabel);
+      wrap.appendChild(totalLabel);
+
+      const inlineReset = document.createElement("button");
+      inlineReset.type = "button";
+      inlineReset.className = "cb-pricing-reset-inline";
+      inlineReset.title = "Reset rates to defaults ($0.05/credit, $0.008/action)";
+      inlineReset.innerHTML =
+        '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>';
+      inlineReset.addEventListener("click", resetRates);
+      wrap.appendChild(inlineReset);
+
+      nameCell.appendChild(wrap);
     } else {
       const nameWrap = document.createElement("div");
       nameWrap.className = "cb-pricing-name";
@@ -1010,6 +996,25 @@
     input.addEventListener("focus", () => input.select());
 
     return cell;
+  }
+
+  // Reset all 3 editable rate inputs to their fixed defaults and
+  // refresh derived cells. Records count stays as-is — it represents
+  // the user's table volume, not a "price" they're tweaking. Wired
+  // to the inline reset button next to the Total per row label.
+  function resetRates() {
+    if (!modalEl) return;
+    state.legacyCreditRate = FIXED_LEGACY_CREDIT_RATE;
+    state.modernCreditRate = FIXED_MODERN_CREDIT_RATE;
+    state.actionRate = FIXED_ACTION_RATE;
+    const setInput = (cls, value) => {
+      const el = modalEl.querySelector(`.${cls}`);
+      if (el) el.value = formatDollar(value);
+    };
+    setInput("cb-pricing-rate-legacy", FIXED_LEGACY_CREDIT_RATE);
+    setInput("cb-pricing-rate-modern-credits", FIXED_MODERN_CREDIT_RATE);
+    setInput("cb-pricing-rate-modern-actions", FIXED_ACTION_RATE);
+    refreshDollarCellsAndDeltas();
   }
 
   // In-place updater — runs after a rate input commits, the records
@@ -1625,20 +1630,20 @@
       ? [
           "Tier",
           "Annual actions",
-          "Launch CPA",
           "Launch price/mo",
-          "Growth CPA",
-          "Growth price/mo",
           "Launch annual",
+          "Launch CPA",
+          "Growth price/mo",
           "Growth annual",
+          "Growth CPA",
         ]
       : [
           "Tier",
           "Monthly actions",
-          "Launch CPA",
           "Launch price/mo",
-          "Growth CPA",
+          "Launch CPA",
           "Growth price/mo",
+          "Growth CPA",
         ];
     for (const label of headers) {
       const th = document.createElement("th");
@@ -1662,15 +1667,17 @@
       actionsCell.textContent = row.actions.toLocaleString();
       tr.appendChild(actionsCell);
 
-      tr.appendChild(buildBandsRateCell(row.launchCpa));
+      // Launch group: price/mo, then annual total (only on annual),
+      // then CPA. Growth group mirrors. Keeps each plan's columns
+      // adjacent so the eye doesn't have to jump back across the
+      // table to see the annual total for the same plan.
       tr.appendChild(buildBandsPriceCell(row.launchPrice));
-      tr.appendChild(buildBandsRateCell(row.growthCpa));
-      tr.appendChild(buildBandsPriceCell(row.growthPrice));
+      if (isAnnual) tr.appendChild(buildBandsPriceCell(row.launchAnnual));
+      tr.appendChild(buildBandsRateCell(row.launchCpa));
 
-      if (isAnnual) {
-        tr.appendChild(buildBandsPriceCell(row.launchAnnual));
-        tr.appendChild(buildBandsPriceCell(row.growthAnnual));
-      }
+      tr.appendChild(buildBandsPriceCell(row.growthPrice));
+      if (isAnnual) tr.appendChild(buildBandsPriceCell(row.growthAnnual));
+      tr.appendChild(buildBandsRateCell(row.growthCpa));
 
       tbody.appendChild(tr);
     }
