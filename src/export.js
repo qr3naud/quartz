@@ -1045,28 +1045,56 @@
       ],
     },
     {
+      id: "import",
+      label: "Import (v3.9)",
+      tag: "3 calls · what import would stamp",
+      summary:
+        "Mirrors the v3.9 table-import flow exactly. Fetches the workbook's table list (for fieldGroupMap + view), /context at full detail, and 30-day Redshift spend; then runs the same buildImportDecisionSet helper that importTableToCanvas calls — so the JSON you preview here is byte-for-byte what the canvas would receive.",
+      whatYouGet: [
+        "context + spend: same as the Full + spend legs of the import flow",
+        "joined: per-fieldId { coverage, fillRate, source, spend } — the exact stats map stamped onto cards",
+        "inputs.{ allInputRefs, actionOutputIds, leafInputFieldIds, leafInputFields }: leaf-input classification (replaces the v3.8 red-color hint)",
+        "groupedFieldIds.{ waterfall, waterfallValidation, waterfallMerge, basicGroup, all }",
+        "waterfalls / basicGroups / standaloneFields: the pre-render decision set",
+        "view.{ viewId, viewName }: which view the classification was computed against",
+      ],
+      tradeoffs: [
+        "3 network calls (table list + context-full + spend) — slightly slower than Full alone",
+        "Whole-table denominators (no view filter) — same as the import flow",
+        "Only meaningful when a real Clay table is in scope on the page",
+      ],
+      whenToUse:
+        "You want to debug or audit what the import flow would stamp onto the canvas without actually triggering it.",
+      calls: [
+        "GET  /v3/workbooks/:workbookId/tables  (for fieldGroupMap + view + fields)",
+        'POST /v3/workspaces/:workspaceId/tables/:tableId/context  body { contextDetailLevel: "full" }',
+        "GET  /v3/realtime-credit-usage/:workspaceId/table/:tableId/column/recent?days=30",
+      ],
+    },
+    {
       id: "combined",
       label: "Combined join",
-      tag: "4 calls · same as table import",
+      tag: "4 calls · legacy fan-out",
       summary:
         "Four parallel calls joined per fieldId — the exact same shape the brainstorm's " +
         "table-import flow consumes. Adds view-filtered record count and last-30-day actual " +
         "credit spend from Redshift on top of the sculptor context.",
       whatYouGet: [
-        "viewCount: the view-filtered record count (denominator for fill rate)",
-        "runStatus: per-field SUCCESS / ERROR / RUNNING counts for action fields",
+        "viewCount: the view-filtered record count (still fetched so the timing chip can show its latency, but no longer fed into joined)",
+        "runStatus: per-field SUCCESS / ERROR / RUNNING counts (also fetched for latency visibility only — joined now reads status counts straight from full's dataProfile)",
         "context: same sculptor-in-table response above",
         "spend: per-column credits + actionExecutions + cellCount over the last 30 days (Redshift)",
-        "joined: the fieldId-keyed merge { coverage, fillRate, source, spend }",
+        "joined: the fieldId-keyed merge { coverage, fillRate, source, spend } — derived from context + spend only as of v3.9",
       ],
       tradeoffs: [
         "Slowest wall-clock — bottlenecked by whichever leg is slowest (usually runstatus)",
         "runStatus may still be \"_pending\" on big or recently-edited tables",
         "Redshift spend is only complete since 2025-11-05",
         "Only meaningful when a real Clay table is in scope on the page",
+        "Since v3.9 the joiner ignores viewCount + runStatus — they're only here for per-leg latency comparison against the import flow's 2-call fan-out",
       ],
       whenToUse:
-        "You're scoping a real account and need actual spend + the same view filter the rep is looking at.",
+        "You want to compare per-leg latency of the legacy 4-call fan-out against the v3.9 import flow's 2-call (full + spend) approach. For real scoping, prefer Full unless you specifically need the view-filtered count or the live runstatus payload.",
       calls: [
         "GET  /v3/tables/:tableId/views/:viewId/count",
         "GET  /v3/workspaces/:workspaceId/tables/:tableId/fields/runstatus",
@@ -1202,6 +1230,11 @@
   "sampleData": [/* up to getExampleRows rows */]
 }`,
     combined: `{
+  /* viewCount and runStatus are still fetched in Combined mode so the
+     timing chip can show their per-leg latency, but as of v3.9 they are
+     NOT consumed by the joiner — coverage / fillRate now derive from
+     full's dataProfile.successCount + errorCount + inProgressCount. The
+     fields are kept on the payload for inspection. */
   "viewCount": {
     "viewTotalRecordsCount": 8240
   },
@@ -1210,12 +1243,10 @@
       { "status": "SUCCESS",              "count": 7180 },
       { "status": "SUCCESS_NO_DATA",      "count": 730  },
       { "status": "ERROR_PROVIDER_ERROR", "count": 21   }
-      /* in-flight statuses (RUNNING / QUEUED / RETRY / ...) included; the
-         joiner ignores them when computing coverage */
     ]
   },
   "context": {
-    /* Full sculptor-in-table response — same shape as the "Sculptor in-table"
+    /* Sculptor-in-table response — same shape as the "Sculptor in-table"
        option above. Use that tab for the detailed schema. */
   },
   "spend": [
@@ -1227,12 +1258,103 @@
     }
   ],
   "joined": {
+    /* Derived from context.fieldConfigurationsData.fieldConfigs[*].dataProfile
+       + spend. Combined mode still fetches sculptor (not full) context, so
+       action-field coverage falls back to valueCount/sampleSize instead of
+       successCount/errorCount. Use the Full option above for status-count-
+       backed coverage. */
     "<fieldId>": {
       "fetchedAt": 1714000000000,
-      "source": "runstatus",
-      "coverage": { "ran": 7931, "total": 8240 },
-      "fillRate": { "success": 7180, "ran": 7931 },
+      "source": "dataProfile",
+      "fillRate": { "success": 842, "ran": 1000 },
       "spend": { "credits": 7843, "actionExecutions": 7901, "cellCount": 7931 }
+    }
+  }
+}`,
+    import: `{
+  /* The full pre-render decision set the v3.9 import flow consumes.
+     Built by __cb.buildImportDecisionSet in src/table-import.js — same
+     helper importTableToCanvas calls, so this preview matches what the
+     canvas would receive byte-for-byte. */
+
+  "context": { /* /context (full preset) response — see Full tab above for the detailed shape */ },
+  "spend":   [ /* /realtime-credit-usage column spend rows — see Combined tab above */ ],
+
+  "view": {
+    "viewId":   "<viewId>",
+    "viewName": "Default view"
+  },
+
+  "visibleFieldIds": ["<fieldA>", "<fieldB>", "<actionFieldId>", "<mergeFieldId>"],
+
+  "inputs": {
+    /* Leaf-input rule: basic + visible + non-formula + referenced by some
+       action's inputsBinding + not itself an action output + not in any
+       group. Replaces the v3.8 red-color hint. */
+    "allInputRefs":      ["<fieldA>", "<fieldB>", "<intermediateFieldId>"],
+    "actionOutputIds":   ["<actionFieldId>", "<otherActionFieldId>"],
+    "leafInputFieldIds": ["<fieldA>", "<fieldB>"],
+    "leafInputFields": [
+      { "id": "<fieldA>", "name": "Full Name",      "type": "basic" },
+      { "id": "<fieldB>", "name": "Company Domain", "type": "basic" }
+    ]
+  },
+
+  "groupedFieldIds": {
+    "waterfall":           ["<step1FieldId>", "<step2FieldId>"],
+    "waterfallValidation": ["<validationFieldId>"],
+    "waterfallMerge":      ["<mergeFieldId>"],
+    "basicGroup":          ["<bg1Field1>", "<bg1Field2>"],
+    "all":                 ["<step1FieldId>", "<step2FieldId>", "<validationFieldId>", "<mergeFieldId>", "<bg1Field1>", "<bg1Field2>"]
+  },
+
+  "waterfalls": [
+    {
+      "groupId":       "<groupId>",
+      "name":          "Find Work Email",
+      "attributeEnum": "Person_WorkEmail",
+      "mergeFieldId":  "<mergeFieldId>",
+      "steps": [
+        {
+          "fieldId":         "<step1FieldId>",
+          "actionKey":       "find_email_apollo",
+          "actionPackageId": "clay",
+          "validation": {
+            "fieldId":         "<validationFieldId>",
+            "actionKey":       "validate_email_zerobounce",
+            "actionPackageId": "clay",
+            "authAccountId":   null
+          }
+        }
+      ]
+    }
+  ],
+
+  "basicGroups": [
+    {
+      "groupId":  "<bgGroupId>",
+      "name":     "Person Enrichment",
+      "dpFields": [{ "id": "<bg1Field1>", "name": "Job Title", "type": "basic" }],
+      "erFields": [{ "id": "<bg1Field2>", "name": "Find Job Title", "type": "action", "actionKey": "find_job_title", "actionPackageId": "clay" }]
+    }
+  ],
+
+  "standaloneFields": [
+    { "id": "<actionFieldId>", "name": "Score Lead (AI)", "type": "action", "actionKey": "use_ai", "actionPackageId": "clay" }
+  ],
+
+  "joined": {
+    "<actionFieldId>": {
+      "fetchedAt": 1714000000000,
+      "source":    "dataProfile-full",
+      "coverage":  { "ran": 7201, "total": 12480 },
+      "fillRate":  { "success": 7180, "ran": 7201 },
+      "spend":     { "credits": 7843, "actionExecutions": 7901, "cellCount": 7931 }
+    },
+    "<fieldA>": {
+      "fetchedAt": 1714000000000,
+      "source":    "dataProfile",
+      "fillRate":  { "success": 9800, "ran": 12480 }
     }
   }
 }`,
@@ -1270,6 +1392,23 @@
       return match?.firstViewId || match?.views?.[0]?.id || null;
     } catch (err) {
       console.warn("[Clay Scoping] resolveViewId failed:", err);
+      return null;
+    }
+  }
+
+  // Resolves the full table object (with fields, fieldGroupMap, views) for
+  // the Import option. The decision-set helper needs all three to build the
+  // group/input classification, so we fetch the same /v3/workbooks/.../tables
+  // payload the picker uses. Returns null on failure so the calling fetch
+  // branch can surface a graceful error in the preview.
+  async function resolveTable(workbookId, tableId) {
+    if (!workbookId || !tableId || !__cb.fetchTableList) return null;
+    try {
+      const list = await __cb.fetchTableList(workbookId);
+      const tables = list?.tables || list || [];
+      return (Array.isArray(tables) ? tables : []).find((t) => t.id === tableId) || null;
+    } catch (err) {
+      console.warn("[Clay Scoping] resolveTable failed:", err);
       return null;
     }
   }
@@ -1354,6 +1493,43 @@
       const t = await timed("context-full", __cb.fetchTableContextFull(workspaceId, tableId));
       if (t.error) throw t.error;
       return { payload: t.value, durationMs: t.durationMs };
+    }
+
+    if (endpointId === "import") {
+      // Mirrors importTableToCanvas's two-leg fan-out plus the table-list
+      // fetch the picker normally hands the import flow. We re-use the
+      // exact helper (__cb.buildImportDecisionSet) the canvas calls so the
+      // preview is byte-for-byte what would get stamped.
+      if (!__cb.buildImportDecisionSet) {
+        throw new Error("buildImportDecisionSet is not loaded — reload the extension and try again.");
+      }
+      const overall = performance.now();
+      const [tableR, contextR, spendR] = await Promise.all([
+        timed("table", resolveTable(ids.workbookId, tableId)),
+        timed("context-full", __cb.fetchTableContextFull(workspaceId, tableId)),
+        timed("spend", __cb.fetchColumnSpend(workspaceId, tableId, 30)),
+      ]);
+      const durationMs = performance.now() - overall;
+      if (!tableR.value) {
+        throw new Error(
+          "Table not found in workbook listing. Open the workbook this table belongs to and try again."
+        );
+      }
+      const decisionSet = __cb.buildImportDecisionSet({
+        table: tableR.value,
+        viewId: ids.viewId,
+        context: contextR.value,
+        spend: spendR.value,
+      });
+      return {
+        payload: decisionSet,
+        durationMs,
+        legDurations: {
+          table: tableR.durationMs,
+          context: contextR.durationMs,
+          spend: spendR.durationMs,
+        },
+      };
     }
 
     if (endpointId === "combined") {
