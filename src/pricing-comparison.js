@@ -75,6 +75,45 @@
     ],
   };
 
+  // Legacy (April 2023) pricing tier data — pulled live from
+  // GET /v3/billingplans/:workspaceId?source=frontend (publicPlans),
+  // filtered to starterApril2023 / explorerApril2023 / proApril2023
+  // (the three plans surfaced in the frontend's LEGACY_PLANS array in
+  // apps/frontend/src/components/BillingPlanSelector/planCardData.ts).
+  // Sorted by credits ascending and renumbered 1..N within each
+  // schedule. `price` is the monthly-equivalent dollar amount (annual
+  // rows = annual subscription / 12, rounded to whole dollars to match
+  // the modern table's display style); `cpc` is computed from the raw
+  // amount paid so the unit cost stays accurate even when the
+  // displayed price rounds. Note: legacy didn't bill actions as a
+  // separate dimension, so there's no companion ACTION_BANDS for
+  // legacy — the Bands sub-modal hides the Actions section when the
+  // Legacy toggle is active.
+  const LEGACY_PRICING_BANDS = {
+    monthly: [
+      { tier: 1, plans: "Starter",  credits: 2000,   price: 149,  cpc: 0.0745  },
+      { tier: 2, plans: "Starter",  credits: 3000,   price: 229,  cpc: 0.07633 },
+      { tier: 3, plans: "Explorer", credits: 10000,  price: 349,  cpc: 0.0349  },
+      { tier: 4, plans: "Explorer", credits: 14000,  price: 499,  cpc: 0.03564 },
+      { tier: 5, plans: "Explorer", credits: 20000,  price: 699,  cpc: 0.03495 },
+      { tier: 6, plans: "Pro",      credits: 50000,  price: 800,  cpc: 0.016   },
+      { tier: 7, plans: "Pro",      credits: 70000,  price: 1000, cpc: 0.01429 },
+      { tier: 8, plans: "Pro",      credits: 100000, price: 1500, cpc: 0.015   },
+      { tier: 9, plans: "Pro",      credits: 150000, price: 2000, cpc: 0.01333 },
+    ],
+    annual: [
+      { tier: 1, plans: "Starter",  credits: 24000,   price: 134,  cpc: 0.06704 },
+      { tier: 2, plans: "Starter",  credits: 36000,   price: 206,  cpc: 0.06869 },
+      { tier: 3, plans: "Explorer", credits: 120000,  price: 314,  cpc: 0.03141 },
+      { tier: 4, plans: "Explorer", credits: 168000,  price: 449,  cpc: 0.03208 },
+      { tier: 5, plans: "Explorer", credits: 240000,  price: 629,  cpc: 0.03145 },
+      { tier: 6, plans: "Pro",      credits: 600000,  price: 720,  cpc: 0.0144  },
+      { tier: 7, plans: "Pro",      credits: 840000,  price: 900,  cpc: 0.01286 },
+      { tier: 8, plans: "Pro",      credits: 1200000, price: 1350, cpc: 0.0135  },
+      { tier: 9, plans: "Pro",      credits: 1800000, price: 1800, cpc: 0.012   },
+    ],
+  };
+
   // Modern action tiers — shape is wider than credits because
   // actions split per plan (Launch + Growth columns) and the annual
   // table tacks on annualized totals. `null` cells render as em-dash
@@ -99,12 +138,17 @@
     ],
   };
 
-  // Bands sub-modal state. Module-scoped so the period selection
-  // persists across opens within the same session — small UX win
-  // since reps usually open Bands repeatedly to grab CPCs.
+  // Bands sub-modal state. Module-scoped so the period + plan
+  // selection persist across opens within the same session — small
+  // UX win since reps usually open Bands repeatedly to grab CPCs.
+  // bandsPlan defaults to "legacy" because the modal is opened from
+  // the Old vs New pricing comparison and reps almost always start
+  // by grounding the conversation in the customer's current legacy
+  // tier before walking them across to modern equivalents.
   let bandsModalEl = null;
   let bandsModalBackdrop = null;
   let bandsPeriod = "monthly";
+  let bandsPlan = "legacy";
 
   // Dollar formatting / parsing — duplicated from src/overlay.js (parseDollar /
   // formatDollar around lines 459-472). Those helpers aren't exposed via __cb,
@@ -587,7 +631,7 @@
     const bandsBtn = document.createElement("button");
     bandsBtn.type = "button";
     bandsBtn.className = "cb-bands-btn";
-    bandsBtn.title = "Show modern pricing tiers (Monthly + Annual)";
+    bandsBtn.title = "Show pricing tiers (Legacy + Modern, Monthly + Annual)";
     bandsBtn.innerHTML =
       '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>' +
       '<span>Bands</span>';
@@ -1506,12 +1550,14 @@
   // Copy-to-clipboard with visual feedback. Falls back to a synthetic
   // textarea + execCommand for browsers / contexts where the async
   // Clipboard API isn't available (rare in MV3 content scripts but
-  // worth defending against).
-  function copyToClipboard(cell, text) {
+  // worth defending against). flashText defaults to "Copied" but
+  // callers that do additional work (e.g., applyRateFromBands) pass
+  // "Applied" so the feedback reflects the bigger user-visible change.
+  function copyToClipboard(cell, text, flashText = "Copied") {
     const flash = () => {
       const original = cell.textContent;
       cell.classList.add("cb-bands-cpc-copied");
-      cell.textContent = "Copied";
+      cell.textContent = flashText;
       setTimeout(() => {
         cell.classList.remove("cb-bands-cpc-copied");
         cell.textContent = original;
@@ -1537,12 +1583,45 @@
     }
   }
 
+  // Mirror of the rate-input commit() handler at line ~1027 — pushes
+  // a rate from the Bands sub-modal back into the comparison modal's
+  // editable input + state, then refreshes derived dollar cells. The
+  // Bands modal is only reachable when pricing mode is on (the Bands
+  // button is hidden via CSS otherwise), so we can assume the rate
+  // inputs exist and are visible.
+  //
+  // target maps directly to the rate-input class used in the
+  // comparison modal:
+  //   "legacy"        -> .cb-pricing-rate-legacy        / state.legacyCreditRate
+  //   "modernCredits" -> .cb-pricing-rate-modern-credits / state.modernCreditRate
+  //   "actions"       -> .cb-pricing-rate-modern-actions / state.actionRate
+  function applyRateFromBands(target, rate) {
+    if (!modalEl) return;
+    if (target === "legacy") state.legacyCreditRate = rate;
+    else if (target === "modernCredits") state.modernCreditRate = rate;
+    else if (target === "actions") state.actionRate = rate;
+    else return;
+
+    const cls = target === "legacy"
+      ? "cb-pricing-rate-legacy"
+      : target === "modernCredits"
+        ? "cb-pricing-rate-modern-credits"
+        : "cb-pricing-rate-modern-actions";
+    const input = modalEl.querySelector(`.${cls}`);
+    if (input) input.value = formatDollar(rate);
+    refreshDollarCellsAndDeltas();
+  }
+
   // Click-to-copy rate cell shared by both bands tables. Renders an
   // em-dash (and skips the click handler) when the rate is null —
   // some plan/tier combos don't exist (e.g., Growth has no Tier 1
-  // monthly action band). Copies the raw decimal value so reps can
-  // paste directly into the rate input above or into a spreadsheet.
-  function buildBandsRateCell(rate) {
+  // monthly action band). When `target` is provided, the click also
+  // pushes the rate into the matching editable input in the
+  // comparison modal (see applyRateFromBands) so reps can drop a
+  // tier's CPC/CPA straight into the live calculation. The clipboard
+  // copy is preserved as a secondary effect so reps can still paste
+  // into a spreadsheet without re-typing.
+  function buildBandsRateCell(rate, target) {
     const cell = document.createElement("td");
     cell.className = "cb-bands-num";
     if (rate == null) {
@@ -1552,8 +1631,13 @@
     }
     cell.classList.add("cb-bands-cpc");
     cell.textContent = formatCpc(rate);
-    cell.title = "Click to copy";
-    cell.addEventListener("click", () => copyToClipboard(cell, String(rate)));
+    cell.title = target
+      ? "Click to apply to the rate field above (also copies to clipboard)"
+      : "Click to copy";
+    cell.addEventListener("click", () => {
+      copyToClipboard(cell, String(rate), target ? "Applied" : "Copied");
+      if (target) applyRateFromBands(target, rate);
+    });
     return cell;
   }
 
@@ -1565,8 +1649,12 @@
     return cell;
   }
 
-  function buildCreditsBandsTable(period) {
-    const rows = PRICING_BANDS[period];
+  function buildCreditsBandsTable(period, plan) {
+    const dataset = plan === "legacy" ? LEGACY_PRICING_BANDS : PRICING_BANDS;
+    const rows = dataset[period];
+    // Credit-row CPCs route to the legacy or modern-credits rate
+    // input based on which catalog the user is viewing.
+    const cpcTarget = plan === "legacy" ? "legacy" : "modernCredits";
     const tbl = document.createElement("table");
     tbl.className = "cb-bands-table cb-bands-credits";
 
@@ -1606,7 +1694,7 @@
       tr.appendChild(creditsCell);
 
       tr.appendChild(buildBandsPriceCell(row.price));
-      tr.appendChild(buildBandsRateCell(row.cpc));
+      tr.appendChild(buildBandsRateCell(row.cpc, cpcTarget));
 
       tbody.appendChild(tr);
     }
@@ -1671,13 +1759,16 @@
       // then CPA. Growth group mirrors. Keeps each plan's columns
       // adjacent so the eye doesn't have to jump back across the
       // table to see the annual total for the same plan.
+      // Both Launch and Growth CPAs route to the same single
+      // actionRate input in the comparison modal — there's only one
+      // action-rate dimension per row regardless of plan.
       tr.appendChild(buildBandsPriceCell(row.launchPrice));
       if (isAnnual) tr.appendChild(buildBandsPriceCell(row.launchAnnual));
-      tr.appendChild(buildBandsRateCell(row.launchCpa));
+      tr.appendChild(buildBandsRateCell(row.launchCpa, "actions"));
 
       tr.appendChild(buildBandsPriceCell(row.growthPrice));
       if (isAnnual) tr.appendChild(buildBandsPriceCell(row.growthAnnual));
-      tr.appendChild(buildBandsRateCell(row.growthCpa));
+      tr.appendChild(buildBandsRateCell(row.growthCpa, "actions"));
 
       tbody.appendChild(tr);
     }
@@ -1706,15 +1797,35 @@
     titleWrap.className = "cb-export-modal-title-wrap";
     const title = document.createElement("h2");
     title.className = "cb-export-modal-title";
-    title.textContent = "Modern pricing bands";
     const subtitle = document.createElement("div");
     subtitle.className = "cb-export-modal-subtitle";
-    subtitle.textContent = "Click any CPC or CPA to copy it to clipboard";
     titleWrap.appendChild(title);
     titleWrap.appendChild(subtitle);
 
     const headerActions = document.createElement("div");
     headerActions.className = "cb-export-modal-header-actions";
+
+    // Legacy / Modern segmented toggle. Higher-level dimension than
+    // period (which catalog vs which billing schedule) so it sits to
+    // the left. Reuses the period-toggle CSS — visually identical
+    // segmented control, just a different state binding.
+    const planToggle = document.createElement("div");
+    planToggle.className = "cb-bands-period-toggle";
+
+    const legacyBtn = document.createElement("button");
+    legacyBtn.type = "button";
+    legacyBtn.className = "cb-bands-period-btn";
+    legacyBtn.textContent = "Legacy";
+    if (bandsPlan === "legacy") legacyBtn.classList.add("cb-bands-period-active");
+
+    const modernBtn = document.createElement("button");
+    modernBtn.type = "button";
+    modernBtn.className = "cb-bands-period-btn";
+    modernBtn.textContent = "Modern";
+    if (bandsPlan === "modern") modernBtn.classList.add("cb-bands-period-active");
+
+    planToggle.appendChild(legacyBtn);
+    planToggle.appendChild(modernBtn);
 
     // Monthly / Annual segmented toggle.
     const periodToggle = document.createElement("div");
@@ -1743,15 +1854,18 @@
       '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
     closeBtn.addEventListener("click", closeBandsModal);
 
+    headerActions.appendChild(planToggle);
     headerActions.appendChild(periodToggle);
     headerActions.appendChild(closeBtn);
 
     header.appendChild(titleWrap);
     header.appendChild(headerActions);
 
-    // Body — two stacked sections (Credits + Actions). Both tables
-    // swap in place when the period toggle is flipped via
-    // renderBandsSections, which rebuilds both at once.
+    // Body — Credits section always renders; Actions section only
+    // renders for Modern (legacy didn't bill actions as a separate
+    // dimension, so there's no equivalent ACTION_BANDS dataset).
+    // Tables swap in place when toggles flip via renderBandsSections,
+    // which also refreshes the title/subtitle to reflect plan state.
     const body = document.createElement("div");
     body.className = "cb-export-modal-body cb-bands-body";
 
@@ -1762,26 +1876,48 @@
     const renderBandsSections = () => {
       tableContainer.innerHTML = "";
 
+      title.textContent = bandsPlan === "legacy" ? "Legacy pricing bands" : "Modern pricing bands";
+      subtitle.textContent = bandsPlan === "legacy"
+        ? "Click any CPC to apply it to the legacy rate (also copied to clipboard)"
+        : "Click any CPC or CPA to apply it to the matching rate (also copied to clipboard)";
+
       const creditsSection = document.createElement("div");
       creditsSection.className = "cb-bands-section";
       const creditsTitle = document.createElement("h3");
       creditsTitle.className = "cb-bands-section-title";
       creditsTitle.textContent = "Credits";
       creditsSection.appendChild(creditsTitle);
-      creditsSection.appendChild(buildCreditsBandsTable(bandsPeriod));
+      creditsSection.appendChild(buildCreditsBandsTable(bandsPeriod, bandsPlan));
       tableContainer.appendChild(creditsSection);
 
-      const actionsSection = document.createElement("div");
-      actionsSection.className = "cb-bands-section";
-      const actionsTitle = document.createElement("h3");
-      actionsTitle.className = "cb-bands-section-title";
-      actionsTitle.textContent = "Actions";
-      actionsSection.appendChild(actionsTitle);
-      actionsSection.appendChild(buildActionsBandsTable(bandsPeriod));
-      tableContainer.appendChild(actionsSection);
+      if (bandsPlan === "modern") {
+        const actionsSection = document.createElement("div");
+        actionsSection.className = "cb-bands-section";
+        const actionsTitle = document.createElement("h3");
+        actionsTitle.className = "cb-bands-section-title";
+        actionsTitle.textContent = "Actions";
+        actionsSection.appendChild(actionsTitle);
+        actionsSection.appendChild(buildActionsBandsTable(bandsPeriod));
+        tableContainer.appendChild(actionsSection);
+      }
     };
 
     renderBandsSections();
+
+    legacyBtn.addEventListener("click", () => {
+      if (bandsPlan === "legacy") return;
+      bandsPlan = "legacy";
+      legacyBtn.classList.add("cb-bands-period-active");
+      modernBtn.classList.remove("cb-bands-period-active");
+      renderBandsSections();
+    });
+    modernBtn.addEventListener("click", () => {
+      if (bandsPlan === "modern") return;
+      bandsPlan = "modern";
+      modernBtn.classList.add("cb-bands-period-active");
+      legacyBtn.classList.remove("cb-bands-period-active");
+      renderBandsSections();
+    });
 
     monthlyBtn.addEventListener("click", () => {
       if (bandsPeriod === "monthly") return;
