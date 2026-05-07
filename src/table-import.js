@@ -8,15 +8,6 @@
   let importStatusEl = null;
 
   // ---------------------------------------------------------------------------
-  // Run status aggregation
-  //
-  // Collapses the raw per-status counts the runstatus endpoint returns into
-  // the two numbers we actually display: how many records are "done" (any
-  // terminal state — success or error) and how many are "successes". In-flight
-  // statuses (RUNNING / QUEUED / RATE_LIMITED / RETRY / AWAITING_CALLBACK) are
-  // intentionally excluded so coverage doesn't temporarily inflate while a
-  // table is mid-run.
-  // ---------------------------------------------------------------------------
   // Combines per-provider stats blocks into a single coverage / fillRate
   // pair for the parent waterfall card.
   //
@@ -89,41 +80,249 @@
     return out;
   }
 
-  function aggregateRunStatus(counts) {
-    let success = 0;
-    let noData = 0;
-    let blocked = 0;
-    let error = 0;
-    if (!Array.isArray(counts)) return { success: 0, ran: 0 };
-    for (const entry of counts) {
-      const s = String(entry?.status || "");
-      const c = Number(entry?.count) || 0;
-      if (s === "SUCCESS") success += c;
-      else if (s === "SUCCESS_NO_DATA") noData += c;
-      else if (s === "SUCCESS_BLOCKED_DATA") blocked += c;
-      else if (s.startsWith("ERROR")) error += c;
+  // ---------------------------------------------------------------------------
+  // Pulls every {{fieldId}} reference out of an action field's
+  // `inputsBinding`. The format depends on how the binding was authored:
+  //
+  //   - Object-shaped (the common case for real Clay actions):
+  //       { "0": { name: "personFullName", formulaText: "{{abc-fieldId}}" }, ... }
+  //   - String-shaped (rare, set by some legacy paths):
+  //       { personFullName: "{{abc-fieldId}}" }
+  //
+  // We walk every value, peel out the `formulaText` if present, and run the
+  // same `{{...}}` regex Clay's own formula engine uses. The regex matches
+  // any `{{token}}` — table-level (t_xxx) and source-level (s_xxx)
+  // references will leak through, but the caller intersects against the
+  // table's actual `fields[].id` so non-field tokens get filtered out at
+  // the next step. Returns a Set of raw IDs.
+  // ---------------------------------------------------------------------------
+  function extractInputFieldRefs(inputsBinding) {
+    const ids = new Set();
+    if (!inputsBinding || typeof inputsBinding !== "object") return ids;
+    const re = /\{\{\s*([a-zA-Z0-9_-]+)\s*\}\}/g;
+    for (const v of Object.values(inputsBinding)) {
+      if (!v) continue;
+      const text = typeof v === "string"
+        ? v
+        : (typeof v === "object" && typeof v.formulaText === "string"
+            ? v.formulaText
+            : "");
+      if (!text) continue;
+      let m;
+      re.lastIndex = 0;
+      while ((m = re.exec(text)) !== null) {
+        if (m[1]) ids.add(m[1]);
+      }
     }
-    return { success, ran: success + noData + blocked + error };
+    return ids;
+  }
+
+  __cb.extractInputFieldRefs = extractInputFieldRefs;
+
+  // ---------------------------------------------------------------------------
+  // Resolves the value of a single named input on an action field's
+  // `inputsBinding`. Used to read the user-selected `model` off AI actions
+  // (Claygent / Use AI) so imports don't fall back to DEFAULT_AI_MODEL —
+  // the catalog's base credit cost (0.1 for use-ai, 1 for claygent) is
+  // misleading because Claygent costs depend on the model picked.
+  //
+  // Mirrors the server-side parsing in
+  // libs/shared/src/credits/credit-cost-utils.ts line 337 which does the
+  // same `actionInputs.find(i => i.name === 'model').formulaText`. Returns
+  // null when the param is unset, the binding is missing, or the value
+  // isn't a primitive string we can use directly.
+  // ---------------------------------------------------------------------------
+  function readInputBindingValue(inputsBinding, paramName) {
+    if (!inputsBinding || typeof inputsBinding !== "object" || !paramName) return null;
+    if (typeof inputsBinding[paramName] === "string") return inputsBinding[paramName];
+    for (const v of Object.values(inputsBinding)) {
+      if (v && typeof v === "object" && v.name === paramName) {
+        if (typeof v.formulaText === "string") return v.formulaText;
+        if (typeof v.value === "string") return v.value;
+        return null;
+      }
+    }
+    return null;
+  }
+
+  // Strips surrounding quotes + whitespace, the same way the server's
+  // findModelOption does in libs/shared/src/ai/models.ts line 1280. Bindings
+  // sometimes arrive as `"\"gpt-5.4\""` (quoted JSON literal) instead of
+  // bare `gpt-5.4`, depending on how the user authored the field.
+  function normalizeModelValue(raw) {
+    if (typeof raw !== "string") return null;
+    const cleaned = raw.trim().replace(/^"|"$/g, "").trim();
+    return cleaned || null;
+  }
+
+  // Mirrors libs/shared/src/ai/models.ts line 1281 findModelOption: prefer
+  // an exact id match, otherwise pick the modelOptions entry whose id is
+  // contained in the binding value (longest match wins so "gpt-4.1-mini"
+  // beats "gpt-4.1" when the binding is the longer string). Returns the
+  // matched modelOptions entry or null.
+  function matchKnownModel(normalized, modelOptions) {
+    if (!normalized || !Array.isArray(modelOptions) || modelOptions.length === 0) {
+      return null;
+    }
+    const exact = modelOptions.find((m) => m.id === normalized);
+    if (exact) return exact;
+    const candidates = modelOptions
+      .filter((m) => m?.id && normalized.includes(m.id))
+      .sort((a, b) => b.id.length - a.id.length);
+    return candidates[0] || null;
+  }
+
+  // Best-effort provider inference for an unknown model name (or for
+  // non-Use-AI/Claygent actions where the action key implies the provider).
+  // Returned values match the keys in __cb.AI_PROVIDER_ICONS so the icon
+  // override in buildErCardData picks up the right brand mark — falls back
+  // to "Custom" when nothing matches, which leaves the original action
+  // icon intact instead of showing a misleading provider mark.
+  function inferModelProvider(modelValue, actionKey) {
+    const m = (modelValue || "").toLowerCase();
+    const a = (actionKey || "").toLowerCase();
+    if (/^(gpt|chatgpt)/.test(m) || /^o[1-9](\b|-|_)/.test(m)) return "OpenAI";
+    if (/^claude/.test(m)) return "Anthropic";
+    if (/^gemini/.test(m)) return "Gemini";
+    if (/^(clay|operator-clay)/.test(m)) return "Clay";
+    if (a.includes("claude")) return "Anthropic";
+    if (a.includes("gemini")) return "Gemini";
+    if (a.includes("chat-gpt") || a.includes("chatgpt") || a.includes("openai")) return "OpenAI";
+    if (a.includes("claygent")) return "Clay";
+    return "Custom";
+  }
+
+  // Returns { selectedId, modelOptions } where modelOptions has the chosen
+  // model in it (either matched against the catalog or appended as a custom
+  // entry so the card chip renders the actual model name instead of the
+  // Argon default). Always returns an entry; the only time we fall back to
+  // DEFAULT_AI_MODEL is when the field has no model binding at all.
+  function resolveModelForCard({ rawModel, modelOptions, defaultModelId, actionKey, costFromStats }) {
+    const baseOptions = Array.isArray(modelOptions) ? modelOptions : [];
+    const normalized = normalizeModelValue(rawModel);
+
+    if (!normalized) {
+      const def = baseOptions.find((m) => m.id === defaultModelId) || baseOptions[0];
+      return { selectedId: def?.id || null, modelOptions: baseOptions };
+    }
+
+    // Skip ad-hoc creation when the binding looks like a formula (per-row
+    // model selection). We can't display N models on one card; fall back
+    // to the default and let the user re-select if they want to commit to
+    // one for the canvas estimate.
+    const looksLikeFormula = /[(){}=,]/.test(normalized) || /\s+(IF|AND|OR)\s+/i.test(normalized);
+    if (looksLikeFormula) {
+      const def = baseOptions.find((m) => m.id === defaultModelId) || baseOptions[0];
+      return { selectedId: def?.id || null, modelOptions: baseOptions };
+    }
+
+    const matched = matchKnownModel(normalized, baseOptions);
+    if (matched) {
+      return { selectedId: matched.id, modelOptions: baseOptions };
+    }
+
+    // No match — synthesize a custom entry using the server-resolved cost
+    // when available so the chip shows accurate per-row credits without
+    // any extra plumbing. The `custom: true` marker is informational
+    // (current renderers don't read it) for future code that wants to
+    // distinguish synthesized vs catalog entries.
+    const custom = {
+      id: normalized,
+      name: normalized,
+      credits: typeof costFromStats === "number" ? costFromStats : null,
+      provider: inferModelProvider(normalized, actionKey),
+      custom: true,
+    };
+    return {
+      selectedId: custom.id,
+      modelOptions: [...baseOptions, custom],
+    };
   }
 
   // ---------------------------------------------------------------------------
-  // Per-field stats join — fans the four API responses into a single
-  // Map<fieldId, statsBlock> indexed by field. The table-stamping pass below
-  // then just looks up `statsByFieldId.get(field.id)` and stuffs it onto
-  // each card's data. The shape is intentionally tolerant: any of runStatus /
-  // context / spend can be null (network failure or _pending after retries)
-  // and we just leave that part of `stats` unset.
+  // Coverage / fill-rate semantics.
+  //
+  // `ERROR_RUN_CONDITION_NOT_MET` is bucketed into `successCount`
+  // server-side via isStatusTreatedAsSuccess
+  // (libs/shared/src/fields/status-processing-utils.ts line 5). For the
+  // canvas, that's misleading: rows where the user's run-condition formula
+  // evaluated to false were never actually attempted, so they shouldn't
+  // count toward coverage OR fill rate. We peel them back out using the
+  // raw `statusBreakdown` array.
+  //
+  // Returns a stat block matching the rest of buildStatsByFieldId's output
+  // shape, or null when there's no usable data on this field.
   // ---------------------------------------------------------------------------
-  function buildStatsByFieldId({ fields, runStatus, context, spend, viewCount }) {
+  function deriveActionStatsFromDataProfile(dp) {
+    if (!dp) return null;
+    const success = Number(dp.successCount) || 0;
+    const error = Number(dp.errorCount) || 0;
+    const inProgress = Number(dp.inProgressCount) || 0;
+    const total = Number(dp.totalRecords) || 0;
+
+    let condNotMet = 0;
+    if (Array.isArray(dp.statusBreakdown)) {
+      for (const entry of dp.statusBreakdown) {
+        if (entry?.status === "ERROR_RUN_CONDITION_NOT_MET") {
+          condNotMet += Number(entry.count) || 0;
+        }
+      }
+    }
+
+    const adjustedSuccess = Math.max(0, success - condNotMet);
+    const adjustedTotal = Math.max(0, total - condNotMet);
+    const ran = adjustedSuccess + error + inProgress;
+
+    if (ran <= 0 || adjustedTotal <= 0) return null;
+    return {
+      coverage: { ran, total: adjustedTotal },
+      fillRate: { success: adjustedSuccess, ran },
+      condNotMet,
+    };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Per-field stats join — folds the /context (`full` preset) response and
+  // the /realtime-credit-usage spend response into a single Map<fieldId,
+  // statsBlock>. With `full`, the dataProfile already carries server-side
+  // run status counts (successCount / errorCount / inProgressCount /
+  // notRunCount) for action fields AND a per-field `creditCost` block
+  // resolved against the field's actual inputsBinding (so AI cost is
+  // model-aware), so we don't need a separate runstatus leg anymore.
+  //
+  // Coverage / fill rate semantics:
+  //   - Action fields  → deriveActionStatsFromDataProfile peels
+  //                      ERROR_RUN_CONDITION_NOT_MET out of successCount
+  //                      and the totalRecords denominator so coverage
+  //                      reflects "rows the user actually wanted to run".
+  //   - Basic fields   → valueCount / sampleSize from the /context
+  //                      dataProfile. With `full`'s sampleSize: 0 the
+  //                      profile spans every row (no 1k sculptor cap),
+  //                      so empty cells in a DP column drag fillRate down
+  //                      the way users expect.
+  //
+  // Credit cost (`stats.cost`) is a forward of the server-resolved
+  // ActionCostMetadata for the field. Card construction uses it to override
+  // the catalog-default `credits` so per-row cost reflects the user's actual
+  // configured model / private-key wiring.
+  //
+  // The `runStatus` and `viewCount` parameters are kept on the signature for
+  // back-compat with the JSON export modal's "Combined" option, which still
+  // fetches them so the timing chip can attribute latency per leg. The join
+  // itself ignores them — full's dataProfile is the single source of truth.
+  // ---------------------------------------------------------------------------
+  function buildStatsByFieldId({ fields, context, spend }) {
     const map = new Map();
     const fetchedAt = Date.now();
-    const totalRecords = viewCount?.viewTotalRecordsCount ?? null;
 
     const profileByFieldId = {};
+    const creditCostByFieldId = {};
     const fieldConfigs = context?.fieldConfigurationsData?.fieldConfigs;
     if (Array.isArray(fieldConfigs)) {
       for (const fc of fieldConfigs) {
-        if (fc?.id && fc?.dataProfile) profileByFieldId[fc.id] = fc.dataProfile;
+        if (!fc?.id) continue;
+        if (fc.dataProfile) profileByFieldId[fc.id] = fc.dataProfile;
+        if (fc.creditCost) creditCostByFieldId[fc.id] = fc.creditCost;
       }
     }
 
@@ -138,22 +337,24 @@
       const stats = { fetchedAt, source: null };
       let hasData = false;
 
-      if (field.type === "action" && runStatus && runStatus[field.id]) {
-        const grouped = aggregateRunStatus(runStatus[field.id]);
-        if (grouped.ran > 0 && totalRecords != null) {
-          stats.coverage = { ran: grouped.ran, total: totalRecords };
-          stats.fillRate = { success: grouped.success, ran: grouped.ran };
-          stats.source = "runstatus";
+      const dp = profileByFieldId[field.id];
+
+      if (field.type === "action" && dp) {
+        const derived = deriveActionStatsFromDataProfile(dp);
+        if (derived) {
+          stats.coverage = derived.coverage;
+          stats.fillRate = derived.fillRate;
+          stats.condNotMet = derived.condNotMet;
+          stats.source = "dataProfile-full";
           hasData = true;
         }
       }
 
-      // For basic fields (and as a backstop when runstatus didn't yield a
-      // fill rate), fall back to the dataProfile from the /context endpoint.
-      // Sample size is the denominator we trust: it's whatever the profiler
-      // actually inspected (capped at ~1k for the sculptor preset).
-      if (!stats.fillRate && profileByFieldId[field.id]) {
-        const dp = profileByFieldId[field.id];
+      // Basic fields (and any action field whose dataProfile lacks status
+      // counts) fall back to valueCount / sampleSize. With `full`'s
+      // sampleSize: 0 the profile spans every row, so empty cells in the
+      // column reduce fillRate accurately.
+      if (!stats.fillRate && dp) {
         const sampleSize = Number(dp.sampleSize) || 0;
         const valueCount = Number(dp.valueCount) || 0;
         if (sampleSize > 0) {
@@ -161,6 +362,17 @@
           if (!stats.source) stats.source = "dataProfile";
           hasData = true;
         }
+      }
+
+      // Per-field cost — server-resolved ActionCostMetadata. The shape
+      // matches libs/shared/src/credits/credit-types.ts ActionCostMetadata:
+      //   { cost, costBy, isPrivateKey, unlimited, maxResultsPerRow, ... }
+      // We forward the whole block so card construction can reason about
+      // private-key zeroing, per-result actions, and unlimited flags
+      // uniformly with how the rest of Clay computes cost.
+      if (creditCostByFieldId[field.id]) {
+        stats.cost = creditCostByFieldId[field.id];
+        hasData = true;
       }
 
       if (spendByFieldId[field.id]) {
@@ -179,30 +391,122 @@
     return map;
   }
 
+  // Resolves the effective per-row credit cost for an action field, given
+  // the catalog default ("info.credits") and the server-side
+  // ActionCostMetadata when available. Centralized so the standalone-ER
+  // path, the waterfall provider loop, and the validation row all agree.
+  //
+  //   - unlimited     → 0 (e.g. LinkedIn under the unlimited flag)
+  //   - isPrivateKey  → 0 (private-key invocations charge nothing in Clay)
+  //   - costBy=RESULT → cost × min(maxResultsPerRow, fallback)
+  //                     Mirrors getWaterfallCreditEstimate's per-result
+  //                     handling in libs/shared/src/credits/credit-cost-utils.ts
+  //                     line 555. Fallback of 5 matches
+  //                     FALLBACK_ESTIMATED_RESULTS_PER_ROW.
+  //
+  // Falls back to the catalog default when the server didn't attach a
+  // creditCost block (rare — happens when getActionCost throws or the field
+  // has no action definition).
+  function resolveEffectiveCredits(creditCost, fallback) {
+    if (!creditCost) return fallback ?? null;
+    if (creditCost.unlimited) return 0;
+    if (creditCost.isPrivateKey) return 0;
+    let cost = Number(creditCost.cost);
+    if (!Number.isFinite(cost)) return fallback ?? null;
+    if (creditCost.costBy === "result") {
+      const max = Number(creditCost.maxResultsPerRow);
+      const n = Number.isFinite(max) && max > 0 ? Math.min(max, 5) : 5;
+      cost = cost * n;
+    }
+    return cost;
+  }
+  __cb.resolveEffectiveCredits = resolveEffectiveCredits;
+
   // Re-exposed under __cb so the JSON export modal can run the exact same
-  // four-API join the import flow uses, without re-implementing the per-
-  // field merge logic. Returns a Map; the export modal converts it to a
-  // plain object before serializing.
+  // join the import flow uses, without re-implementing the per-field merge
+  // logic. Returns a Map; the export modal converts it to a plain object
+  // before serializing. Extra args (runStatus, viewCount) are tolerated and
+  // ignored so older Combined-mode callers keep working unchanged.
   __cb.joinTableStats = buildStatsByFieldId;
 
   // ---------------------------------------------------------------------------
   // Card data factory for an action field (ER) being placed on the canvas.
-  // Resolves catalog metadata (icons, AI detection, default model, credits)
-  // and folds in optional `stats` and `groupCluster` markers for cluster
+  // Resolves catalog metadata (icons, AI detection, model, credits) and
+  // folds in optional `stats` and `groupCluster` markers for cluster
   // magneting. Used both for standalone ER columns and for individual
   // waterfall steps (each step is now its own ER card).
+  //
+  // AI columns: prior versions hardcoded `selectedModel = DEFAULT_AI_MODEL`
+  // and `credits = info.credits` (the catalog base cost — 0.1 for use-ai,
+  // 1 for claygent), so every imported AI card showed up as Argon at 0.1
+  // credit regardless of what the user actually picked. We now read the
+  // configured model out of `field.typeSettings.inputsBinding[*].model`
+  // and use the server-resolved `stats.cost` (ActionCostMetadata) when
+  // available — that block is computed by getActionCost server-side with
+  // the field's actual inputsBinding, so per-row cost reflects the real
+  // model + private-key wiring.
   // ---------------------------------------------------------------------------
   function buildErCardData({ field, actionKey, packageId, displayName, stats, groupCluster, fieldId, tableId, viewId }) {
     const lookupKey = `${packageId}-${actionKey}`;
     const info = __cb.actionByIdLookup[lookupKey];
     const ai = info?.isAi ?? __cb.isAiAction(actionKey, info?.displayName ?? displayName, packageId);
-    const modelOptions = ai ? (info?.modelOptions ?? __cb.getModelOptions()) : null;
+    const baseModelOptions = ai ? (info?.modelOptions ?? __cb.getModelOptions()) : null;
     const defaultModelId = __cb.DEFAULT_AI_MODEL || "clay-argon";
-    const selectedModel = ai && modelOptions
-      ? (modelOptions.find((m) => m.id === defaultModelId)?.id ?? modelOptions[0].id)
+
+    // Read the configured model off the field's actual inputsBinding and
+    // resolve it through the catalog (with quote-stripping + longest-
+    // includes fallback that matches the server's findModelOption). When
+    // the model isn't in our catalog (e.g. a brand-new GPT release we
+    // haven't sync'd yet, or a custom Anthropic model id), we synthesize
+    // an ad-hoc modelOptions entry so the card chip renders the actual
+    // model name + provider rather than silently falling back to Argon.
+    const modelFromBinding = ai
+      ? readInputBindingValue(field?.typeSettings?.inputsBinding, "model")
       : null;
+    const { selectedId: selectedModel, modelOptions } = ai && baseModelOptions
+      ? resolveModelForCard({
+          rawModel: modelFromBinding,
+          modelOptions: baseModelOptions,
+          defaultModelId,
+          actionKey,
+          costFromStats: stats?.cost?.cost,
+        })
+      : { selectedId: null, modelOptions: baseModelOptions };
+
     const requiresApiKey = info?.requiresApiKey ?? false;
-    const credits = info?.credits ?? null;
+
+    // Catalog default. For AI actions this is the action-level base cost
+    // (e.g. 0.1 for use-ai), so it's wrong for any non-default model — we
+    // override below from either the matched modelOption or the
+    // server-resolved stats.cost.
+    let credits = info?.credits ?? null;
+
+    // Prefer the model's own creditCostMetadata when this is an AI card —
+    // matches what the canvas's model picker shows when the user later
+    // changes models, so the imported cost is consistent with the
+    // post-import cost.
+    if (ai && modelOptions && selectedModel) {
+      const modelOpt = modelOptions.find((m) => m.id === selectedModel);
+      if (modelOpt && Number.isFinite(modelOpt.credits)) {
+        credits = modelOpt.credits;
+      }
+    }
+
+    // Server-resolved cost wins when present — it already accounts for
+    // private-key zeroing, per-result multiplication, unlimited flags, and
+    // the right pricing-bucket (pre-vs-post-2026 plan). Falls back to the
+    // catalog/model default otherwise.
+    if (stats?.cost) {
+      const resolved = resolveEffectiveCredits(stats.cost, credits);
+      if (resolved != null) credits = resolved;
+    }
+
+    // Private-key state: prefer the server signal (stats.cost.isPrivateKey)
+    // because it reflects the field's actual authAccountId resolution. Falls
+    // back to the catalog "requiresApiKey + no shared cost" heuristic.
+    const usePrivateKey = stats?.cost?.isPrivateKey
+      ? true
+      : (requiresApiKey && credits == null);
 
     let iconUrl = info?.iconUrl ?? null;
     if (ai && selectedModel) {
@@ -227,7 +531,7 @@
       modelOptions,
       selectedModel,
       requiresApiKey,
-      usePrivateKey: requiresApiKey && credits == null,
+      usePrivateKey,
       fieldId: fieldId ?? field?.id,
       tableId: tableId ?? null,
       viewId: viewId ?? null,
@@ -294,14 +598,6 @@
   // the other silently breaks magneting between cards in a cluster.
   const CARD_H = 96;
 
-  function isGreenField(fieldId, viewFields) {
-    return viewFields[fieldId]?.color === "green";
-  }
-
-  function isRedField(fieldId, viewFields) {
-    return viewFields[fieldId]?.color === "red";
-  }
-
   function addDpCard(field, x, y, stats, groupCluster, tableId, viewId) {
     return __cb.canvas.addDataPointCard(field.name, {
       x,
@@ -351,13 +647,26 @@
   }
 
   // ---------------------------------------------------------------------------
-  // Records prefill — pushes the view's record count into the summary input
+  // Records prefill — pushes the table's record count into the summary input
   // and dispatches an `input` event so all the dependent recalc paths
   // (default fill rates, total credits) re-run as if the user typed it.
+  //
+  // With the import's 2-leg fan-out we no longer fetch /views/:id/count, so
+  // the denominator comes from the /context (full) response instead. We
+  // prefer `tableRunInfo.tableRowCount` (the canonical whole-table count)
+  // and fall back to any field's `dataProfile.totalRecords` because every
+  // field in the response carries the same totalRecords.
   // ---------------------------------------------------------------------------
-  function prefillRecordsCount(viewCount) {
-    const total = viewCount?.viewTotalRecordsCount;
-    if (typeof total !== "number" || total <= 0) return;
+  function prefillRecordsCount(context) {
+    const fromRunInfo = context?.tableRunInfo?.tableRowCount;
+    const firstProfile = context?.fieldConfigurationsData?.fieldConfigs?.find(
+      (fc) => fc?.dataProfile?.totalRecords != null,
+    );
+    const fromProfile = firstProfile?.dataProfile?.totalRecords;
+    const total = typeof fromRunInfo === "number" && fromRunInfo > 0
+      ? fromRunInfo
+      : (typeof fromProfile === "number" && fromProfile > 0 ? fromProfile : null);
+    if (total == null) return;
     const input = document.getElementById("cb-records-input");
     if (!input) return;
     input.value = total.toLocaleString();
@@ -365,88 +674,91 @@
   }
 
   // ---------------------------------------------------------------------------
-  // Main import entry point — turns a table response into a fully-populated
-  // canvas. Async because we fan out four parallel HTTP calls (view count,
-  // run status, table context, column spend) before we start stamping cards;
-  // every fetch is fail-soft so the import still produces structural cards
-  // even if one or more stat sources are unavailable.
+  // Pure compute phase shared by importTableToCanvas and the JSON export
+  // modal's "Import" option. Takes a `table` (from /v3/workbooks/.../tables),
+  // an optional `viewId`, the `/context` (full preset) response and the
+  // /realtime-credit-usage column spend response; returns the entire
+  // decision set the import flow needs before stamping cards:
+  //
+  //   - visibleFieldIds   : ids visible in the picked view
+  //   - groupedFieldIds   : per-bucket sets of fields consumed by groups
+  //   - inputs            : leaf-input classification (the rule that
+  //                         replaced the legacy red/green view-color hint)
+  //   - waterfalls        : per-group { steps[], mergeFieldId, attributeEnum }
+  //   - basicGroups       : per-group { dpFields[], erFields[] }
+  //   - standaloneFields  : action fields not inside any group
+  //   - joined            : the per-fieldId stats Map (from buildStatsByFieldId)
+  //
+  // The returned object is JSON-safe (Sets serialized to arrays, Maps to
+  // plain objects, field objects trimmed to the few props the canvas
+  // actually reads). The live Set/Map/full-field-object versions the
+  // import flow uses internally are stashed on a non-enumerable Symbol
+  // slot so importTableToCanvas can pull them out without re-walking the
+  // table — and so JSON.stringify silently drops them when the export
+  // modal serializes the payload (Symbol-keyed properties are ignored by
+  // the default stringifier).
   // ---------------------------------------------------------------------------
-  async function importTableToCanvas(table, overrideViewId, anchorEl) {
-    if (!__cb.canvas) return false;
+  const IMPORT_DECISION_INTERNAL = Symbol("cb.importDecisionInternal");
 
-    // Auto-enable Pro Mode + Actual view on every successful import. Pro Mode
-    // surfaces the coverage / fill-rate pills (otherwise hidden) and unhides
-    // the Projected/Actual toggle in the topbar; Actual mode flips the
-    // summary totals from catalog projections to real spend pulled from
-    // Clay's realtime credit usage pipeline. Both calls are guarded with
-    // typeof so they stay no-ops when the surrounding wiring isn't loaded.
-    if (typeof __cb.setProMode === "function") __cb.setProMode(true);
-    if (typeof __cb.setViewMode === "function") __cb.setViewMode("actual");
-
-    const ids = __cb.parseIdsFromUrl();
-    const workspaceId = ids?.workspaceId;
-    const tableId = table.id;
-
-    const fieldGroupMap = table.fieldGroupMap ?? {};
+  function buildImportDecisionSet({ table, viewId, context, spend, ignoreViewVisibility = false }) {
+    const fieldGroupMap = table?.fieldGroupMap ?? {};
     const fieldById = {};
-    for (const f of table.fields ?? []) fieldById[f.id] = f;
+    for (const f of table?.fields ?? []) fieldById[f.id] = f;
 
-    const viewId = overrideViewId || table.firstViewId;
-    const defaultView = (table.views ?? []).find((v) => v.id === viewId) ?? table.views?.[0];
+    const resolvedViewId = viewId || table?.firstViewId || null;
+    const defaultView = (table?.views ?? []).find((v) => v.id === resolvedViewId) ?? table?.views?.[0];
     const viewFields = defaultView?.fields ?? {};
 
-    showImportStatus(`Importing from ${table.name || "table"}\u2026`, anchorEl);
+    // Full-table mode (ignoreViewVisibility): the import bypasses the
+    // active view's hidden/visible flags and treats every field on the
+    // table as visible. Card stamping still uses `resolvedViewId` so
+    // right-click → "Open in table" lands on the default view, where
+    // hidden columns at least have a chance of being visible. Coverage
+    // and record-count denominators are already whole-table regardless
+    // of this flag (see the comment on importTableToCanvas).
+    const visibleFieldIds = ignoreViewVisibility
+      ? new Set((table?.fields ?? []).map((f) => f.id))
+      : new Set(
+          Object.entries(viewFields)
+            .filter(([, settings]) => settings.isVisible !== false)
+            .map(([id]) => id)
+        );
 
-    let viewCount = null;
-    let runStatus = null;
-    let context = null;
-    let spend = null;
-    try {
-      [viewCount, runStatus, context, spend] = await Promise.all([
-        viewId ? __cb.fetchViewCount(tableId, viewId).catch(() => null) : Promise.resolve(null),
-        workspaceId ? __cb.fetchFieldRunStatus(workspaceId, tableId).catch(() => null) : Promise.resolve(null),
-        workspaceId ? __cb.fetchTableContext(workspaceId, tableId).catch(() => null) : Promise.resolve(null),
-        workspaceId ? __cb.fetchColumnSpend(workspaceId, tableId, 30).catch(() => null) : Promise.resolve(null),
-      ]);
-    } finally {
-      closeImportStatus();
-    }
-
-    prefillRecordsCount(viewCount);
-
-    const statsByFieldId = buildStatsByFieldId({
-      fields: table.fields ?? [],
-      runStatus,
-      context,
-      spend,
-      viewCount,
-    });
-
-    const visibleFieldIds = new Set(
-      Object.entries(viewFields)
-        .filter(([, settings]) => settings.isVisible !== false)
-        .map(([id]) => id)
-    );
-
-    // Track which fields end up consumed by waterfall step cards so they
-    // aren't accidentally double-imported as standalone columns later.
-    // Validation fields (the per-step verifier columns Clay adds when the
-    // user enables validation, e.g. ZeroBounce Validate Email) are also
-    // consumed here — they get folded into the waterfall card's validation
-    // row instead of becoming N separate ER cards on the canvas.
+    // Group buckets — same logic that used to live inline in
+    // importTableToCanvas. Each set is a single-purpose index so the
+    // downstream filters stay O(1) per field.
+    //
+    // Per-waterfall: track which groups are "visible in this view" so
+    // the waterfall enumeration below can include their steps even when
+    // the individual step fields are hidden by the view config. In
+    // Clay's typical setup the waterfall renders as a single visual
+    // column whose merge field is the only entry in viewFields — the
+    // step fields don't appear there at all (or appear with
+    // isVisible:false), so a per-step visibleFieldIds check would drop
+    // the entire waterfall. Treating the merge / validation / any step
+    // field as a proxy for "the waterfall column is visible" matches
+    // user intuition ("if I see the waterfall in the grid, import it").
     const waterfallFieldIds = new Set();
     const waterfallMergeFieldIds = new Set();
     const waterfallValidationFieldIds = new Set();
-    for (const group of Object.values(fieldGroupMap)) {
+    const visibleWaterfallGroupIds = new Set();
+    for (const [groupId, group] of Object.entries(fieldGroupMap)) {
       if (group.type === "waterfall") {
+        let groupVisible = false;
         for (const step of group.groupDetails?.sequenceSteps ?? []) {
           waterfallFieldIds.add(step.fieldId);
+          if (visibleFieldIds.has(step.fieldId)) groupVisible = true;
           if (step.validation?.fieldId) {
             waterfallValidationFieldIds.add(step.validation.fieldId);
+            if (visibleFieldIds.has(step.validation.fieldId)) groupVisible = true;
           }
         }
         const mergeId = group.groupDetails?.mergeField?.fieldId;
-        if (mergeId) waterfallMergeFieldIds.add(mergeId);
+        if (mergeId) {
+          waterfallMergeFieldIds.add(mergeId);
+          if (visibleFieldIds.has(mergeId)) groupVisible = true;
+        }
+        if (groupVisible) visibleWaterfallGroupIds.add(groupId);
       }
     }
 
@@ -466,43 +778,54 @@
       ...basicGroupFieldIds,
     ]);
 
-    // Strict input rule (per plan): red AND basic only. An action field that
-    // happens to be colored red is treated as "do not import" — placing it
-    // as an input would lose the action semantics, and placing it as an ER
-    // would override the user's deliberate "skip" hint.
-    const allRedFields = (table.fields ?? []).filter(
-      (f) => visibleFieldIds.has(f.id) && f.type === "basic" && isRedField(f.id, viewFields)
-    );
-    const redFieldIds = new Set(allRedFields.map((f) => f.id));
+    // Leaf-input rule (replaces the v3.8 red-color hint): a field qualifies
+    // as an Input iff it's basic, visible, non-formula, referenced by some
+    // action's inputsBinding, not itself an action's output, and not
+    // already consumed by a group.
+    const allInputRefs = new Set();
+    const actionOutputIds = new Set();
+    for (const f of table?.fields ?? []) {
+      if (f.type === "action") actionOutputIds.add(f.id);
+      const bindings = f.typeSettings?.inputsBinding;
+      if (bindings) {
+        for (const id of extractInputFieldRefs(bindings)) allInputRefs.add(id);
+      }
+    }
 
-    // Anything that's red but not a basic field gets explicitly skipped from
-    // every downstream pass.
-    const skippedRedFieldIds = new Set(
-      (table.fields ?? [])
-        .filter((f) => visibleFieldIds.has(f.id) && f.type !== "basic" && isRedField(f.id, viewFields))
-        .map((f) => f.id)
+    const leafInputFields = (table?.fields ?? []).filter(
+      (f) =>
+        visibleFieldIds.has(f.id) &&
+        f.type === "basic" &&
+        !f.typeSettings?.formula &&
+        !f.typeSettings?.formulaText &&
+        !f.typeSettings?.formulaType &&
+        allInputRefs.has(f.id) &&
+        !actionOutputIds.has(f.id) &&
+        !groupedFieldIds.has(f.id)
     );
+    const leafInputFieldIds = new Set(leafInputFields.map((f) => f.id));
 
-    const standaloneFields = (table.fields ?? []).filter(
+    const standaloneFields = (table?.fields ?? []).filter(
       (f) =>
         visibleFieldIds.has(f.id) &&
         !groupedFieldIds.has(f.id) &&
-        !redFieldIds.has(f.id) &&
-        !skippedRedFieldIds.has(f.id) &&
-        (f.type === "action" || isGreenField(f.id, viewFields))
+        !leafInputFieldIds.has(f.id) &&
+        f.type === "action"
     );
 
+    // Waterfall enumeration — see visibleWaterfallGroupIds above for why
+    // step-level visibility is intentionally NOT applied here. A
+    // waterfall whose merge / validation / any step field is visible is
+    // included with ALL its action steps; only fully-invisible
+    // waterfalls (every constituent field hidden) get dropped.
     const waterfalls = Object.entries(fieldGroupMap)
-      .filter(([, g]) => g.type === "waterfall")
+      .filter(([groupId, g]) => g.type === "waterfall" && visibleWaterfallGroupIds.has(groupId))
       .map(([groupId, g]) => ({
         groupId,
         name: g.name ?? "",
-        // Settings.attribute is the AttributeEnum (e.g. Person_WorkEmail)
-        // — used downstream to look up the curated validation provider
-        // list so the popover dropdown can offer swap-out options.
         attributeEnum: g.settings?.attribute ?? null,
         steps: (g.groupDetails?.sequenceSteps ?? []).filter(
-          (s) => s.type === "action" && s.actionKey && visibleFieldIds.has(s.fieldId)
+          (s) => s.type === "action" && s.actionKey
         ),
         mergeFieldId: g.groupDetails?.mergeField?.fieldId ?? null,
       }));
@@ -517,19 +840,212 @@
           const field = fieldById[member.id];
           if (!field) continue;
           if (!visibleFieldIds.has(field.id)) continue;
-          if (redFieldIds.has(field.id)) continue;
-          if (skippedRedFieldIds.has(field.id)) continue;
+          if (leafInputFieldIds.has(field.id)) continue;
           if (field.type === "action") {
             erFields.push(field);
-          } else if (isGreenField(field.id, viewFields) || field.type === "basic") {
-            // Basic groups represent intentional user/recipe-created clusters,
-            // so we include any basic member even if it's not green-flagged.
+          } else {
             dpFields.push(field);
           }
         }
         return { groupId, name: g.name ?? "", dpFields, erFields };
       })
       .filter((g) => g.dpFields.length > 0 || g.erFields.length > 0);
+
+    const statsByFieldId = buildStatsByFieldId({
+      fields: table?.fields ?? [],
+      context,
+      spend,
+    });
+
+    // ---- JSON-safe public shape ----
+    //
+    // Field objects from /v3/workbooks/.../tables are big (settings,
+    // typeSettings, abilities, etc.) — for export we only need enough to
+    // identify each field. Trim aggressively to keep the payload digestible.
+    const trimField = (f) => {
+      const out = { id: f.id, name: f.name, type: f.type };
+      if (f.typeSettings?.actionKey) out.actionKey = f.typeSettings.actionKey;
+      if (f.typeSettings?.actionPackageId) out.actionPackageId = f.typeSettings.actionPackageId;
+      return out;
+    };
+
+    const publicShape = {
+      context,
+      spend,
+      view: {
+        viewId: resolvedViewId,
+        viewName: defaultView?.name ?? null,
+      },
+      visibleFieldIds: Array.from(visibleFieldIds),
+      inputs: {
+        allInputRefs: Array.from(allInputRefs),
+        actionOutputIds: Array.from(actionOutputIds),
+        leafInputFieldIds: Array.from(leafInputFieldIds),
+        leafInputFields: leafInputFields.map(trimField),
+      },
+      groupedFieldIds: {
+        waterfall: Array.from(waterfallFieldIds),
+        waterfallValidation: Array.from(waterfallValidationFieldIds),
+        waterfallMerge: Array.from(waterfallMergeFieldIds),
+        basicGroup: Array.from(basicGroupFieldIds),
+        all: Array.from(groupedFieldIds),
+      },
+      waterfalls: waterfalls.map((w) => ({
+        groupId: w.groupId,
+        name: w.name,
+        attributeEnum: w.attributeEnum,
+        mergeFieldId: w.mergeFieldId,
+        steps: w.steps.map((s) => ({
+          fieldId: s.fieldId,
+          actionKey: s.actionKey,
+          actionPackageId: s.actionPackageId,
+          validation: s.validation
+            ? {
+                fieldId: s.validation.fieldId ?? null,
+                actionKey: s.validation.actionKey ?? null,
+                actionPackageId: s.validation.actionPackageId ?? null,
+                authAccountId: s.validation.authAccountId ?? null,
+              }
+            : null,
+        })),
+      })),
+      basicGroups: basicGroups.map((g) => ({
+        groupId: g.groupId,
+        name: g.name,
+        dpFields: g.dpFields.map(trimField),
+        erFields: g.erFields.map(trimField),
+      })),
+      standaloneFields: standaloneFields.map(trimField),
+      joined: Object.fromEntries(statsByFieldId),
+    };
+
+    // Stash live structures on a Symbol-keyed slot. JSON.stringify ignores
+    // Symbol-keyed properties, so the export modal serializes only the
+    // public shape; importTableToCanvas pulls these out via the symbol so
+    // it doesn't have to rebuild Sets from arrays or re-resolve trimmed
+    // field summaries back to full field objects.
+    Object.defineProperty(publicShape, IMPORT_DECISION_INTERNAL, {
+      value: {
+        fieldById,
+        viewFields,
+        visibleFieldIds,
+        groupedFieldIds,
+        waterfallFieldIds,
+        waterfallValidationFieldIds,
+        waterfallMergeFieldIds,
+        basicGroupFieldIds,
+        allInputRefs,
+        actionOutputIds,
+        leafInputFieldIds,
+        leafInputFields,
+        waterfalls,
+        basicGroups,
+        standaloneFields,
+        statsByFieldId,
+      },
+      enumerable: false,
+      writable: false,
+      configurable: false,
+    });
+
+    return publicShape;
+  }
+
+  __cb.buildImportDecisionSet = buildImportDecisionSet;
+  __cb.IMPORT_DECISION_INTERNAL = IMPORT_DECISION_INTERNAL;
+
+  // ---------------------------------------------------------------------------
+  // Main import entry point — turns a table response into a fully-populated
+  // canvas. Async because we fan out two parallel HTTP calls (table context
+  // at `full` detail level + column spend) before we start stamping cards;
+  // both fetches are fail-soft so the import still produces structural cards
+  // even if one or both stat sources are unavailable.
+  //
+  // Why just two calls (down from four):
+  //   - /context with `contextDetailLevel: "full"` rolls in the per-field
+  //     run-status counts (dataProfile.successCount/errorCount/...) and
+  //     full-table profiling that the old `runStatus` and sculptor
+  //     `context` legs used to provide separately.
+  //   - The old `viewCount` leg was for view-filtered denominators; we now
+  //     use the whole-table count from dataProfile.totalRecords. We
+  //     accept this regression in exchange for one fewer round-trip and
+  //     for dropping the up-to-7s `_pending` polling on runstatus.
+  //   - `fetchColumnSpend` stays as its own leg because no /context preset
+  //     surfaces actual Redshift-billed credit usage — only policy
+  //     pricing.
+  // ---------------------------------------------------------------------------
+  async function importTableToCanvas(table, overrideViewId, anchorEl) {
+    if (!__cb.canvas) return false;
+
+    // Auto-enable Pro Mode on every successful import. Pro Mode surfaces
+    // the coverage / fill-rate pills (otherwise hidden) and unhides the
+    // Projected/Actual toggle in the topbar. The view-mode flip to
+    // "actual" is deferred until after the spend fetch returns — we only
+    // switch to Actual when there's actual Redshift-billed spend to show
+    // (otherwise the summary boxes would display 0 / 0 since Actual mode
+    // sums card.data.stats.spend, and Projected mode at least shows the
+    // model-aware catalog credits).
+    if (typeof __cb.setProMode === "function") __cb.setProMode(true);
+
+    const ids = __cb.parseIdsFromUrl();
+    const workspaceId = ids?.workspaceId;
+    const tableId = table.id;
+
+    // fieldById is used by the rendering loops below to resolve waterfall
+    // step / merge-field IDs back to full field objects (the decision set
+    // helper trims its public field summaries). Keep it local to the
+    // import flow.
+    const fieldById = {};
+    for (const f of table.fields ?? []) fieldById[f.id] = f;
+
+    // Three-state convention for `overrideViewId`:
+    //   - undefined    → fall back to table.firstViewId (default view)
+    //   - <view.id>    → use that specific view's visibility map
+    //   - null         → "Full table" — bypass view-visibility filtering
+    //                    entirely (every field on the table is treated
+    //                    as visible). We still pick firstViewId for card
+    //                    stamping so deep-linking lands somewhere useful.
+    const isFullTable = overrideViewId === null;
+    const viewId = isFullTable
+      ? (table.firstViewId ?? null)
+      : (overrideViewId || table.firstViewId);
+
+    showImportStatus(`Importing from ${table.name || "table"}\u2026`, anchorEl);
+
+    let context = null;
+    let spend = null;
+    try {
+      [context, spend] = await Promise.all([
+        workspaceId ? __cb.fetchTableContextFull(workspaceId, tableId).catch(() => null) : Promise.resolve(null),
+        workspaceId ? __cb.fetchColumnSpend(workspaceId, tableId, 30).catch(() => null) : Promise.resolve(null),
+      ]);
+    } finally {
+      closeImportStatus();
+    }
+
+    prefillRecordsCount(context);
+
+    // Single source of truth for the compute phase — re-used by the JSON
+    // export modal's Import option so users can preview / download exactly
+    // what gets stamped onto the canvas. The Symbol slot exposes the live
+    // Set/Map/full-field-object structures the rendering loops below
+    // expect (avoids re-resolving from the JSON-safe public summary).
+    const decisionSet = buildImportDecisionSet({
+      table,
+      viewId,
+      context,
+      spend,
+      ignoreViewVisibility: isFullTable,
+    });
+    const internal = decisionSet[IMPORT_DECISION_INTERNAL];
+    const visibleFieldIds = internal.visibleFieldIds;
+    const groupedFieldIds = internal.groupedFieldIds;
+    const leafInputFields = internal.leafInputFields;
+    const leafInputFieldIds = internal.leafInputFieldIds;
+    const standaloneFields = internal.standaloneFields;
+    const waterfalls = internal.waterfalls;
+    const basicGroups = internal.basicGroups;
+    const statsByFieldId = internal.statsByFieldId;
 
     const existingKeys = getExistingCardKeys();
     const CARD_H_GAP = 230;
@@ -548,12 +1064,13 @@
     let currentY = START_Y;
 
     // -------------------------------------------------------------------------
-    // Inputs (red basic fields). Laid out as a single horizontal row at the
-    // top — purely positional, no actual links between them. The "chain"
-    // term refers to spatial layout, not connections.
+    // Inputs (leaf basic fields referenced by some enrichment). Laid out as
+    // a single horizontal row at the top — purely positional, no actual
+    // links between them. The "chain" term refers to spatial layout, not
+    // connections.
     // -------------------------------------------------------------------------
     const inputChain = [];
-    for (const field of allRedFields) {
+    for (const field of leafInputFields) {
       const inputKey = `input-${field.id}`;
       if (existingKeys.has(inputKey)) continue;
       existingKeys.add(inputKey);
@@ -606,17 +1123,31 @@
         const lookupKey = `${step.actionPackageId ?? "clay"}-${step.actionKey}`;
         const info = __cb.actionByIdLookup?.[lookupKey] ?? {};
         const ai = info.isAi ?? __cb.isAiAction(step.actionKey, info.displayName, step.actionPackageId);
+        const stepStats = statsByFieldId.get(step.fieldId) ?? null;
+        // Per-step cost: prefer the server's resolved ActionCostMetadata
+        // (model-aware for Claygent inside waterfalls, private-key-zeroed
+        // when the user wired their own auth on a step). Catalog credits
+        // are only the fallback for steps the server didn't price.
+        const catalogCredits = typeof info.credits === "number" ? info.credits : null;
+        const stepCredits = stepStats?.cost
+          ? resolveEffectiveCredits(stepStats.cost, catalogCredits)
+          : catalogCredits;
         providers.push({
           actionKey: step.actionKey,
           packageId: step.actionPackageId ?? "clay",
           displayName: fieldById[step.fieldId]?.name || info.displayName || step.actionKey,
           packageName: info.packageName,
           iconUrl: info.iconUrl ?? null,
-          credits: typeof info.credits === "number" ? info.credits : null,
+          credits: stepCredits,
           isAi: !!ai,
           modelOptions: ai ? (info.modelOptions ?? __cb.getModelOptions()) : null,
           requiresApiKey: !!info.requiresApiKey,
-          stats: statsByFieldId.get(step.fieldId) ?? null,
+          // usePrivateKey on a provider is what deriveWaterfallTotals reads
+          // to decide whether to add this step's `credits` to the per-row
+          // average. Setting it from the server signal keeps the math
+          // consistent with what Clay actually charges.
+          usePrivateKey: !!stepStats?.cost?.isPrivateKey,
+          stats: stepStats,
           fieldId: step.fieldId,
         });
       }
@@ -650,14 +1181,30 @@
         if (entry) {
           const keyOnly = !!(entry.requiresApiKey || entry.disableSharedKey);
           validationName = entry.packageName || entry.displayName || null;
-          validationPrice = keyOnly
+          // Prefer the validation field's own server-resolved cost when
+          // available — for AI validators or per-result validators the
+          // catalog default is wrong. Falls back to the catalog rule
+          // (shared-key vs key-only) when the server didn't price it.
+          const validationFieldId = firstValidation.fieldId;
+          const validationStats = validationFieldId
+            ? statsByFieldId.get(validationFieldId)
+            : null;
+          const catalogValidationPrice = keyOnly
             ? (entry.privateKeyCredits ?? 0)
             : (entry.credits ?? 0);
+          const resolvedValidationPrice = validationStats?.cost
+            ? resolveEffectiveCredits(validationStats.cost, catalogValidationPrice)
+            : catalogValidationPrice;
+          validationPrice = resolvedValidationPrice ?? 0;
           validationRequiresApiKey = !!entry.requiresApiKey;
           // Key-only validators (Debounce / LeadMagic / Enrow / etc.):
           // auto-flip even when authAccountId is null on the column,
           // because the only valid invocation IS with a private key.
           if (keyOnly) validationUsePrivateKey = true;
+          // Server-side signal also flips it to private-key when the
+          // resolved appAccount isn't shared, so we don't undercharge
+          // a private-key validator that wasn't keyOnly in the catalog.
+          if (validationStats?.cost?.isPrivateKey) validationUsePrivateKey = true;
         }
       }
 
@@ -730,20 +1277,22 @@
         const dpKey = `dp-${mergeField.id}`;
         if (!existingKeys.has(dpKey)) {
           existingKeys.add(dpKey);
-          // The merge field IS the waterfall's output (it picks whichever
-          // provider succeeded first), so its fill rate equals the
-          // waterfall's aggregated rate. Using the merge field's own
-          // dataProfile here would show 0% — the formula isn't profiled
-          // densely enough to reflect the post-run state.
+          // Use the merge field's own dataProfile rather than the waterfall
+          // aggregate. With `full`'s sampleSize: 0 the merge column is
+          // profiled across every row, so empty cells (rows where every
+          // provider in the chain returned no data) drag fillRate down the
+          // way users expect. The pre-`full` workaround that overrode this
+          // with the aggregated step-by-step success rate hid those misses.
           //
-          // Falls back to the field's own stats only when the waterfall
-          // produced none (rare — e.g. all providers in the chain are
-          // unrun and we have no runstatus to aggregate).
+          // When the merge field has no profile (e.g. /context fetch
+          // failed), fall back to the aggregated waterfall stats so the
+          // card isn't completely blank.
+          const mergeStats = statsByFieldId.get(mergeField.id) || aggregated || null;
           addDpCard(
             mergeField,
             mergeX,
             stepsY,
-            aggregated || statsByFieldId.get(mergeField.id) || null,
+            mergeStats,
             wf.groupId,
             tableId,
             viewId
@@ -852,42 +1401,28 @@
     }
 
     // -------------------------------------------------------------------------
-    // Standalone fields — green basics → DP, action → ER. Plain 4-column
-    // grid below the grouped sections. groupY already sits cleanly past
-    // the last group (the loop above advances it after every group), so
-    // standaloneY just inherits it directly.
+    // Standalone fields — action fields placed as ER cards in a plain
+    // 4-column grid below the grouped sections. (Basic fields outside
+    // groups are either Inputs, already handled above, or skipped — same
+    // as today's "no view color = no import" default.) groupY already sits
+    // cleanly past the last group (the loop above advances it after every
+    // group), so standaloneY just inherits it directly.
     // -------------------------------------------------------------------------
     let standaloneY = groupY;
     let col = 0;
 
     for (const field of standaloneFields) {
-      if (isGreenField(field.id, viewFields)) {
-        const dpKey = `dp-${field.id}`;
-        if (existingKeys.has(dpKey)) continue;
-        existingKeys.add(dpKey);
+      const cardData = mapFieldToCardData(field, statsByFieldId, tableId, viewId);
+      const dedupKey = cardData.isAi
+        ? `ai-${field.id}`
+        : `field-${field.id}`;
+      if (existingKeys.has(dedupKey)) continue;
+      existingKeys.add(dedupKey);
 
-        addDpCard(
-          field,
-          START_X + col * CARD_H_GAP,
-          standaloneY,
-          statsByFieldId.get(field.id) ?? null,
-          null,
-          tableId,
-          viewId
-        );
-      } else {
-        const cardData = mapFieldToCardData(field, statsByFieldId, tableId, viewId);
-        const dedupKey = cardData.isAi
-          ? `ai-${field.id}`
-          : `field-${field.id}`;
-        if (existingKeys.has(dedupKey)) continue;
-        existingKeys.add(dedupKey);
-
-        __cb.canvas.addCard(cardData, {
-          x: START_X + col * CARD_H_GAP,
-          y: standaloneY,
-        });
-      }
+      __cb.canvas.addCard(cardData, {
+        x: START_X + col * CARD_H_GAP,
+        y: standaloneY,
+      });
 
       col++;
       if (col >= COLS) {
@@ -901,11 +1436,59 @@
       __cb.canvas.refreshClusters();
     }
 
+    // Decide the view mode AFTER cards are placed (so we can read
+    // statsByFieldId, which carries the joined spend rows). Actual only
+    // makes sense when at least one imported field has real billed spend
+    // — otherwise the summary boxes would display 0 / 0 because Actual
+    // mode sums card.data.stats.spend and ignores card.data.credits.
+    // Projected mode falls back to the model-aware catalog credits, which
+    // is the right "what would this cost?" answer when there's no
+    // historical spend to anchor on (e.g. a brand-new table or one with
+    // no runs in the last 30 days).
+    const hasAnySpend = Array.isArray(spend)
+      && spend.some((row) => Number(row?.creditsSpent) > 0
+        || Number(row?.actionExecutionCreditsSpent) > 0
+        || Number(row?.cellCount) > 0);
+    if (typeof __cb.setViewMode === "function") {
+      __cb.setViewMode(hasAnySpend ? "actual" : "projected");
+    }
+
+    // Bulk imports add many cards in sequence. Each addCard internally
+    // calls notifyCreditTotal, but the topbar summary ("Avg Credits / Row"
+    // / "Actions / Row") only reaches the user once view mode has been
+    // committed AND every card is in the array. Calling refreshCreditTotal
+    // explicitly at the end guarantees the summary reflects the imported
+    // cards without requiring a page refresh. Same idea for the per-group
+    // credit badges, which only update when their cluster membership
+    // settles — refreshClusters above takes care of cluster bookkeeping
+    // but doesn't push the credit badge text. setViewMode itself also
+    // calls refreshCreditTotal, but we run it again here so a no-op view
+    // change (e.g. user already on Projected) still produces a fresh
+    // recompute against the just-added cards.
+    if (importedAny) {
+      if (typeof __cb.canvas.refreshCreditTotal === "function") {
+        __cb.canvas.refreshCreditTotal();
+      }
+      if (typeof __cb.canvas.updateGroupCredits === "function") {
+        __cb.canvas.updateGroupCredits();
+      }
+    }
+
     return importedAny;
   }
 
   // ---------------------------------------------------------------------------
   // Table picker dropdown
+  //
+  // Promoted to a shared helper under __cb.tablePicker so the Old vs New
+  // Pricing flow (src/pricing-comparison.js) can reuse the exact same UX
+  // — table list with view sub-rows + "Full table" — without duplicating
+  // ~70 lines of DOM construction. Each click invokes the supplied
+  // `onPick(table, viewId)` callback with the Import flow's three-state
+  // viewId convention preserved:
+  //   - undefined  → use the table's default view
+  //   - <view.id>  → that specific view's visibility map
+  //   - null       → "Full table" (skip view filtering entirely)
   // ---------------------------------------------------------------------------
 
   function closeTablePicker() {
@@ -917,7 +1500,7 @@
     return (table.views ?? []).filter((v) => !v.typeSettings?.isPreconfigured);
   }
 
-  function showTablePicker(tables, anchorEl) {
+  function showTablePicker(tables, anchorEl, onPick) {
     closeTablePicker();
 
     tablePickerBackdrop = document.createElement("div");
@@ -961,10 +1544,7 @@
 
       item.addEventListener("click", () => {
         closeTablePicker();
-        importTableToCanvas(table, undefined, anchorEl).catch((err) => {
-          console.error("[Clay Scoping] Import failed:", err);
-          closeImportStatus();
-        });
+        onPick(table, undefined);
       });
 
       row.appendChild(item);
@@ -972,6 +1552,30 @@
       if (hasMultipleViews) {
         const sub = document.createElement("div");
         sub.className = "cb-table-picker-views";
+
+        // "Full table" entry — sits above the per-view list and ignores
+        // view-visibility filtering on import. Only offered when the user
+        // has multiple views (single-view tables already show every column
+        // in their default view, so the option would be a no-op there).
+        const fullBtn = document.createElement("button");
+        fullBtn.className = "cb-table-picker-item";
+        fullBtn.type = "button";
+
+        const fullName = document.createElement("span");
+        fullName.textContent = "Full table";
+        fullBtn.appendChild(fullName);
+
+        const fullBadge = document.createElement("span");
+        fullBadge.className = "cb-table-picker-default";
+        fullBadge.textContent = "all columns";
+        fullBtn.appendChild(fullBadge);
+
+        fullBtn.addEventListener("click", () => {
+          closeTablePicker();
+          onPick(table, null);
+        });
+
+        sub.appendChild(fullBtn);
 
         for (const view of views) {
           const viewBtn = document.createElement("button");
@@ -991,10 +1595,7 @@
 
           viewBtn.addEventListener("click", () => {
             closeTablePicker();
-            importTableToCanvas(table, view.id, anchorEl).catch((err) => {
-              console.error("[Clay Scoping] Import failed:", err);
-              closeImportStatus();
-            });
+            onPick(table, view.id);
           });
 
           sub.appendChild(viewBtn);
@@ -1041,6 +1642,15 @@
     }
   }
 
+  // Shared picker namespace. Both __cb.startImport (below) and
+  // __cb.startPricingComparison (src/pricing-comparison.js) drive the
+  // same DOM via these three entry points.
+  __cb.tablePicker = {
+    show: showTablePicker,
+    showLoading: showLoadingPicker,
+    close: closeTablePicker,
+  };
+
   __cb.startImport = async function (anchorEl) {
     const ids = __cb.parseIdsFromUrl();
     if (!ids) {
@@ -1074,11 +1684,18 @@
         return;
       }
 
+      const onPick = (table, viewId) => {
+        importTableToCanvas(table, viewId, anchorEl).catch((err) => {
+          console.error("[Clay Scoping] Import failed:", err);
+          closeImportStatus();
+        });
+      };
+
       if (tables.length === 1) {
         closeTablePicker();
-        await importTableToCanvas(tables[0], undefined, anchorEl);
+        onPick(tables[0], undefined);
       } else {
-        showTablePicker(tables, anchorEl);
+        showTablePicker(tables, anchorEl, onPick);
       }
     } catch (err) {
       console.error("[Clay Scoping] Failed to fetch tables:", err);

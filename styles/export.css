@@ -947,3 +947,208 @@
   border-color: #c7d2fe;
   cursor: not-allowed;
 }
+
+/* ==========================================================================
+   OLD vs NEW PRICING MODAL
+   Reuses the cb-export-modal primitives (backdrop, header, footer) defined
+   above. Body owns its own layout: a two-column totals strip on top and a
+   per-enrichment breakdown table below.
+   ========================================================================== */
+
+.cb-pricing-modal {
+  max-width: 880px;
+  height: auto;
+  max-height: 88vh;
+}
+
+.cb-pricing-body {
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ---- Totals strip ---- */
+
+.cb-pricing-totals {
+  display: grid;
+  grid-template-columns: 1fr 1.5fr;
+  gap: 1px;
+  background: #e5e7eb;
+  border-bottom: 1px solid #e5e7eb;
+  flex-shrink: 0;
+}
+
+.cb-pricing-total-col {
+  background: #ffffff;
+  padding: 18px 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.cb-pricing-col-legacy {
+  background: #fefce8;
+}
+
+.cb-pricing-col-modern {
+  background: #ecfdf5;
+}
+
+.cb-pricing-total-label {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #6b7280;
+}
+
+.cb-pricing-col-legacy .cb-pricing-total-label {
+  color: #a16207;
+}
+
+.cb-pricing-col-modern .cb-pricing-total-label {
+  color: #047857;
+}
+
+/* Two cells side-by-side inside the modern column for credits + actions. */
+.cb-pricing-total-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 18px;
+}
+
+.cb-pricing-total-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.cb-pricing-total-sub {
+  font-size: 12px;
+  color: #6b7280;
+}
+
+.cb-pricing-total-value {
+  font-size: 24px;
+  font-weight: 600;
+  color: #111827;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
+}
+
+/* ---- Per-enrichment breakdown table ---- */
+
+.cb-pricing-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 13px;
+  color: #1f2937;
+}
+
+.cb-pricing-table thead th {
+  position: sticky;
+  top: 0;
+  background: #f9fafb;
+  border-bottom: 1px solid #e5e7eb;
+  padding: 10px 14px;
+  text-align: left;
+  font-size: 12px;
+  font-weight: 600;
+  color: #6b7280;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+  z-index: 1;
+}
+
+.cb-pricing-table tbody td {
+  padding: 10px 14px;
+  border-bottom: 1px solid #f1f5f9;
+  vertical-align: middle;
+}
+
+.cb-pricing-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.cb-pricing-table tbody tr:hover {
+  background: #f9fafb;
+}
+
+.cb-pricing-table .col-name {
+  width: 38%;
+}
+
+.cb-pricing-table .col-legacy,
+.cb-pricing-table .col-modern-credits,
+.cb-pricing-table .col-modern-actions,
+.cb-pricing-table .col-delta {
+  width: 130px;
+  text-align: right;
+  white-space: nowrap;
+}
+
+/* Light tint behind the legacy column so the eye associates it with the
+   yellow legacy total above. Same idea for modern with green. */
+.cb-pricing-table .col-legacy {
+  background: #fefce8;
+}
+
+.cb-pricing-table .col-modern-credits,
+.cb-pricing-table .col-modern-actions {
+  background: #ecfdf5;
+}
+
+.cb-pricing-num {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Name cell with optional provider icon. */
+.cb-pricing-name {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.cb-pricing-icon {
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  flex-shrink: 0;
+  object-fit: contain;
+  background: #ffffff;
+}
+
+.cb-pricing-name-text-wrap {
+  min-width: 0;
+}
+
+.cb-pricing-name-text {
+  font-weight: 500;
+  color: #111827;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 280px;
+}
+
+.cb-pricing-name-sub {
+  font-size: 11px;
+  color: #6b7280;
+  margin-top: 2px;
+}
+
+/* Delta cell — green when modern saves credits, red when modern costs more.
+   "new" badge for fields with no legacy cost (impossible historically but
+   defensive against new pricing buckets that might appear). */
+.cb-pricing-delta-down {
+  color: #047857;
+  font-weight: 600;
+}
+
+.cb-pricing-delta-up {
+  color: #b91c1c;
+  font-weight: 600;
+}

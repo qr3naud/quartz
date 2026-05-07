@@ -17,7 +17,22 @@
       const pkgName = action.package?.displayName ?? "Other";
       const iconUrl = action.iconUri ?? action.package?.icon ?? null;
       const ai = __cb.isAiAction(action.key, action.displayName, action.package?.id);
+      // Each action carries up to two pricing tiers on its catalog entry:
+      //   - prePricingChange2026 → "legacy" plans (the old single-credit
+      //     dimension; actionExecution as a separate billable line did not
+      //     exist on these plans)
+      //   - postPricingChange2026 → "modern" plans (basic credits + a
+      //     separate actionExecution dimension)
+      // The default `credits / actionExecutions / privateKeyCredits`
+      // exposed below mean "modern" so the canvas / cost math keeps the
+      // pre-existing behavior. The `legacy*` siblings are read by the
+      // Old vs New Pricing modal (src/pricing-comparison.js) to render
+      // the legacy column without requiring a second /actions fetch.
+      // Falls back to the root pricing block when an action hasn't been
+      // migrated to the split shape yet (matches the server-side logic in
+      // libs/shared/src/credits/credit-cost-utils.ts getActionPricing).
       const post = action.pricing?.postPricingChange2026;
+      const pre = action.pricing?.prePricingChange2026;
       const fallback = action.pricing;
       const entry = {
         key: action.key,
@@ -40,6 +55,16 @@
         disableSharedKey: action.actionLabels?.disableSharedKey ?? false,
         privateKeyCredits:
           post?.usesPrivateKeyCredits?.basic ??
+          fallback?.usesPrivateKeyCredits?.basic ??
+          0,
+        // Legacy (pre-2026) pricing siblings. Same fallback chain as
+        // above so actions that only carry the root `pricing.credits`
+        // block (un-migrated) report the same number on both sides.
+        legacyCredits: pre?.credits?.basic ?? fallback?.credits?.basic ?? null,
+        legacyActionExecutions:
+          pre?.credits?.actionExecution ?? fallback?.credits?.actionExecution ?? null,
+        legacyPrivateKeyCredits:
+          pre?.usesPrivateKeyCredits?.basic ??
           fallback?.usesPrivateKeyCredits?.basic ??
           0,
       };
@@ -204,18 +229,23 @@
   };
 
   // -------------------------------------------------------------------------
-  // Stats endpoints used by the table import flow.
+  // Stats endpoints.
   //
-  // Four reads are stitched together on a successful import to produce the
-  // Coverage / Fill rate / Spend numbers shown on every card:
+  // As of v3.9 the import flow only fans out two of these in parallel:
   //
-  //   1. fetchViewCount       → fills the Records summary input
-  //   2. fetchFieldRunStatus  → ER coverage + fill rate (action fields only)
-  //   3. fetchTableContext    → DP fill rate via dataProfile (any field type)
-  //   4. fetchColumnSpend     → per-column actual credit spend (Redshift)
+  //   - fetchTableContextFull → schema + dataProfile (status counts,
+  //                             value counts, group info) for every field
+  //                             in one server-side pass
+  //   - fetchColumnSpend      → per-column actual credit spend (Redshift)
   //
-  // All four piggyback on the user's Clay session cookies, so no separate
-  // auth is required. Field IDs are the join key across every response.
+  // The remaining helpers (fetchViewCount, fetchFieldRunStatus,
+  // fetchTableContext) are kept exclusively for the JSON export modal's
+  // "Combined" option, which still fans out all four for per-leg latency
+  // comparison against the import flow's 2-call fan-out. They are NOT used
+  // by the import flow itself anymore.
+  //
+  // Everything piggybacks on the user's Clay session cookies, so no
+  // separate auth is required. Field IDs are the join key across responses.
   // -------------------------------------------------------------------------
 
   __cb.fetchViewCount = async function (tableId, viewId) {

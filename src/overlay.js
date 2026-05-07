@@ -67,6 +67,20 @@
     closeBtn.textContent = "Close";
     closeBtn.addEventListener("click", __cb.closeCanvas);
 
+    // Old vs New Pricing — sits to the left of Import from Table. Reuses
+    // the same shared __cb.tablePicker dropdown the Import button drives,
+    // then opens a side-by-side legacy vs modern catalog cost comparison
+    // modal (see src/pricing-comparison.js). Scale icon = "weighing two
+    // sides", which matches the modal's intent.
+    const pricingBtn = document.createElement("button");
+    pricingBtn.className = "cb-toolbar-btn cb-toolbar-pricing";
+    pricingBtn.type = "button";
+    pricingBtn.title = "Compare per-row credit cost on the legacy vs modern Clay pricing plans";
+    pricingBtn.innerHTML =
+      '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M12 3v18"/><path d="M5 8h14"/><path d="M5 8l-3 7a4 4 0 0 0 6 0L5 8z"/><path d="M19 8l-3 7a4 4 0 0 0 6 0L19 8z"/></svg>' +
+      " Old vs New Pricing";
+    pricingBtn.addEventListener("click", () => __cb.startPricingComparison(pricingBtn));
+
     const importBtn = document.createElement("button");
     importBtn.className = "cb-toolbar-btn cb-toolbar-import";
     importBtn.innerHTML =
@@ -119,7 +133,10 @@
         else __cb.overlayEl.removeAttribute("data-cb-pro-mode");
       }
       proBtn.classList.toggle("cb-toolbar-btn-pro-active", next);
-      if (__cb.tabStore) __cb.tabStore.proMode = next;
+      // Source of truth for "did the user pick Pro recently?" lives in
+      // localStorage (per-workbook, 1h TTL). Every toggle resets the
+      // window when enabling and clears the key when disabling.
+      __cb.writeProModePreference(__cb.currentWorkbookId, next);
 
       if (clustersBefore && __cb.canvas?.applyClusterReflow) {
         __cb.canvas.applyClusterReflow(clustersBefore, oldH, newH);
@@ -185,6 +202,7 @@
 
     rightGroup.appendChild(viewModeWrap);
     rightGroup.appendChild(proBtn);
+    rightGroup.appendChild(pricingBtn);
     rightGroup.appendChild(importBtn);
     rightGroup.appendChild(exportBtn);
     rightGroup.appendChild(closeBtn);
@@ -994,12 +1012,47 @@
       }
     }
 
-    // Apply the workbook-scoped pro mode flag AFTER restore: setProMode
-    // schedules a debouncedSave, which serializes the live canvas. Restoring
-    // first guarantees the serialized snapshot contains the user's actual
-    // cards rather than an empty placeholder. CSS attribute changes apply
-    // instantly, so any restored DP cards immediately reflect the new state.
-    __cb.setProMode(!!__cb.tabStore.proMode);
+    // Pro Mode persists per-workbook in localStorage with a 1h TTL — see
+    // readProModePreference in tabs.js. The preference is independent of
+    // the saved canvas state: cards may have been laid out at one pitch
+    // (saved on activeTab.state.proMode) but the user wants to reopen at
+    // another. We mirror the manual setProMode toggle flow here: render
+    // the cards at the SAVED pitch first so getSnapClusters reads the
+    // right offsetHeight, then if target differs, capture clusters, flip
+    // the attribute, and reflow Y positions to keep snap adjacency intact.
+    const targetProMode = __cb.readProModePreference(__cb.currentWorkbookId);
+    const restoredTab = __cb.tabStore.tabs.find(
+      (t) => t.id === __cb.tabStore.activeId,
+    );
+    const savedProMode = !!restoredTab?.state?.proMode;
+
+    if (savedProMode) __cb.overlayEl.setAttribute("data-cb-pro-mode", "");
+    else __cb.overlayEl.removeAttribute("data-cb-pro-mode");
+    __cb.proMode = savedProMode;
+    proBtn.classList.toggle("cb-toolbar-btn-pro-active", savedProMode);
+
+    if (savedProMode !== targetProMode) {
+      const oldH = savedProMode ? 96 : 70;
+      const newH = targetProMode ? 96 : 70;
+      const clustersBefore = __cb.canvas?.getSnapClusters
+        ? __cb.canvas.getSnapClusters()
+        : null;
+
+      __cb.proMode = targetProMode;
+      if (targetProMode) __cb.overlayEl.setAttribute("data-cb-pro-mode", "");
+      else __cb.overlayEl.removeAttribute("data-cb-pro-mode");
+      proBtn.classList.toggle("cb-toolbar-btn-pro-active", targetProMode);
+
+      if (clustersBefore && __cb.canvas?.applyClusterReflow) {
+        __cb.canvas.applyClusterReflow(clustersBefore, oldH, newH);
+      }
+      if (__cb.canvas?.updateGroupBounds) __cb.canvas.updateGroupBounds();
+      // Persist the reflowed positions + the new state.proMode so the
+      // next reopen sees a saved pitch that already matches the
+      // localStorage preference (no reflow needed on subsequent opens).
+      if (__cb.debouncedSave) __cb.debouncedSave();
+    }
+
     __cb.setViewMode(__cb.tabStore.viewMode || "projected");
 
     window.addEventListener("beforeunload", __cb.saveTabs);

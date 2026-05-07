@@ -10,6 +10,18 @@
   flex-shrink: 0;
 }
 
+/* Old vs New Pricing button — same shape as Import (gap + icon align),
+   plus a subtle scale-icon tint so the eye reads it as a comparison
+   tool rather than another import action. */
+.cb-toolbar-pricing {
+  gap: 5px;
+}
+
+.cb-toolbar-pricing svg {
+  flex-shrink: 0;
+  color: #047857;
+}
+
 /* ==========================================================================
    TABLE PICKER DROPDOWN
    ========================================================================== */
