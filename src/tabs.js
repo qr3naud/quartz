@@ -12,6 +12,49 @@
     return ids ? `cb-tabs-${ids.workbookId}` : null;
   }
 
+  // Pro Mode is a UX preference, not workbook content: the user's last
+  // toggle should survive close/reopen for a short window so they don't
+  // have to re-enable it every time. Stored per-workbook because the saved
+  // card positions are pitched at the mode they were last laid out for —
+  // see state.proMode and the open-time reflow in overlay.js.
+  const PRO_MODE_TTL_MS = 60 * 60 * 1000;
+  function proModeKey(workbookId) {
+    return `cb-pro-mode-${workbookId}`;
+  }
+
+  __cb.readProModePreference = function (workbookId) {
+    if (!workbookId) return false;
+    try {
+      const raw = localStorage.getItem(proModeKey(workbookId));
+      if (!raw) return false;
+      const parsed = JSON.parse(raw);
+      const expiresAt = parsed?.expiresAt;
+      if (typeof expiresAt === "number" && expiresAt > Date.now()) return true;
+      // Lazy-clean expired or malformed entries so localStorage doesn't
+      // accumulate stale keys for workbooks the user no longer touches.
+      localStorage.removeItem(proModeKey(workbookId));
+    } catch {
+      // Corrupt JSON or quota error — treat as "no preference".
+    }
+    return false;
+  };
+
+  __cb.writeProModePreference = function (workbookId, enabled) {
+    if (!workbookId) return;
+    try {
+      if (enabled) {
+        localStorage.setItem(
+          proModeKey(workbookId),
+          JSON.stringify({ expiresAt: Date.now() + PRO_MODE_TTL_MS }),
+        );
+      } else {
+        localStorage.removeItem(proModeKey(workbookId));
+      }
+    } catch (e) {
+      console.warn("[Clay Scoping] writeProModePreference failed:", e);
+    }
+  };
+
   let nextTemplateId = 1;
 
   __cb.generateTabId = function () {
@@ -362,6 +405,12 @@
         state.frequency = __cb.getCurrentFrequencyId
           ? __cb.getCurrentFrequencyId()
           : __cb.DEFAULT_FREQUENCY_ID;
+        // Record the pitch (70 vs 96 px card height) the cards were laid
+        // out for. On reopen, overlay.js compares this to the user's
+        // localStorage Pro Mode preference and runs applyClusterReflow if
+        // they differ, so snap-clusters survive a saved-pro/normal-reopen
+        // (or vice versa) transition.
+        state.proMode = !!__cb.proMode;
         activeTab.state = state;
       }
     }

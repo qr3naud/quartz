@@ -124,9 +124,13 @@
     // Used as the `updated_by` and `user_id` columns in Supabase.
     userId: null,
 
-    // Workbook-scoped feature flag. Toggled by the "Pro Mode" topbar button
-    // in overlay.js, persisted alongside tabStore. Drives visibility of
-    // per-DP-card fill rate badges (CSS attribute selector on overlayEl).
+    // Workbook-scoped feature flag. Toggled by the "Pro Mode" topbar
+    // button in overlay.js. The user-facing preference is persisted in
+    // localStorage with a 1h TTL (see readProModePreference in tabs.js);
+    // the saved card pitch is recorded per-tab on state.proMode so the
+    // open-time reflow knows whether to re-pitch snap clusters. Drives
+    // visibility of per-DP-card fill rate badges via the
+    // [data-cb-pro-mode] CSS attribute selector on overlayEl.
     proMode: false,
     setProMode: null,
 
