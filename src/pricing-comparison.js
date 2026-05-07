@@ -52,6 +52,60 @@
     state.pricingToggleBtn = null;
   }
 
+  // Modern pricing tier data — sourced from the pricing team. Used by
+  // the Bands sub-modal to give reps a quick reference for which tier
+  // a customer falls into and what CPC / CPA they'd pay. The two
+  // periods (monthly vs annual) share the same shape per dataset so
+  // the table renderers don't branch on period for shape.
+  const PRICING_BANDS = {
+    monthly: [
+      { tier: 1, plans: "Launch",          credits: 2500,  price: 125,   cpc: 0.05    },
+      { tier: 2, plans: "Launch + Growth", credits: 6000,  price: 290,   cpc: 0.048   },
+      { tier: 3, plans: "Launch + Growth", credits: 10000, price: 460,   cpc: 0.046   },
+      { tier: 4, plans: "Launch + Growth", credits: 20000, price: 880,   cpc: 0.044   },
+      { tier: 5, plans: "Launch + Growth", credits: 50000, price: 2125,  cpc: 0.0425  },
+    ],
+    annual: [
+      { tier: 1, plans: "Launch",              credits: 30000,   price: 113,  cpc: 0.0452  },
+      { tier: 2, plans: "Launch + Growth",     credits: 72000,   price: 261,  cpc: 0.0435  },
+      { tier: 3, plans: "Launch + Growth",     credits: 120000,  price: 414,  cpc: 0.0414  },
+      { tier: 4, plans: "Launch + Growth",     credits: 240000,  price: 792,  cpc: 0.0396  },
+      { tier: 5, plans: "Launch + Growth",     credits: 600000,  price: 1913, cpc: 0.03826 },
+      { tier: 6, plans: "Growth + Enterprise", credits: 1200000, price: 3826, cpc: 0.03826 },
+    ],
+  };
+
+  // Modern action tiers — shape is wider than credits because
+  // actions split per plan (Launch + Growth columns) and the annual
+  // table tacks on annualized totals. `null` cells render as em-dash
+  // and aren't click-to-copy. Growth CPA is consistently ~$0.001 -
+  // $0.0013 higher than Launch at equivalent tiers because Growth
+  // includes additional features (CRM, HTTP API, web intent).
+  const ACTION_BANDS = {
+    monthly: [
+      { tier: 1, actions: 15000,  launchCpa: 0.0040,  launchPrice: 60,   growthCpa: null,    growthPrice: null },
+      { tier: 2, actions: 40000,  launchCpa: 0.0038,  launchPrice: 150,  growthCpa: 0.0051,  growthPrice: 205  },
+      { tier: 3, actions: 60000,  launchCpa: 0.0033,  launchPrice: 200,  growthCpa: 0.0048,  growthPrice: 290  },
+      { tier: 4, actions: 100000, launchCpa: 0.0029,  launchPrice: 290,  growthCpa: 0.0045,  growthPrice: 450  },
+      { tier: 5, actions: 200000, launchCpa: 0.0027,  launchPrice: 540,  growthCpa: 0.0043,  growthPrice: 850  },
+    ],
+    annual: [
+      { tier: 1, actions: 180000,   launchCpa: 0.0036,   launchPrice: 54,   growthCpa: null,    growthPrice: null,  launchAnnual: 648,   growthAnnual: null  },
+      { tier: 2, actions: 480000,   launchCpa: 0.0034,   launchPrice: 135,  growthCpa: 0.0046,  growthPrice: 185,   launchAnnual: 1620,  growthAnnual: 2220  },
+      { tier: 3, actions: 720000,   launchCpa: 0.0030,   launchPrice: 180,  growthCpa: 0.0044,  growthPrice: 261,   launchAnnual: 2160,  growthAnnual: 3132  },
+      { tier: 4, actions: 1200000,  launchCpa: 0.0026,   launchPrice: 261,  growthCpa: 0.0041,  growthPrice: 405,   launchAnnual: 3132,  growthAnnual: 4860  },
+      { tier: 5, actions: 2400000,  launchCpa: 0.0024,   launchPrice: 486,  growthCpa: 0.0038,  growthPrice: 765,   launchAnnual: 5832,  growthAnnual: 9180  },
+      { tier: 6, actions: 5000000,  launchCpa: 0.00225,  launchPrice: 938,  growthCpa: 0.0036,  growthPrice: 1500,  launchAnnual: null,  growthAnnual: 18000 },
+    ],
+  };
+
+  // Bands sub-modal state. Module-scoped so the period selection
+  // persists across opens within the same session — small UX win
+  // since reps usually open Bands repeatedly to grab CPCs.
+  let bandsModalEl = null;
+  let bandsModalBackdrop = null;
+  let bandsPeriod = "monthly";
+
   // Dollar formatting / parsing — duplicated from src/overlay.js (parseDollar /
   // formatDollar around lines 459-472). Those helpers aren't exposed via __cb,
   // and inlining them here keeps this module self-contained without making
@@ -123,6 +177,7 @@
 
   function closeModal() {
     closeDownloadMenu();
+    closeBandsModal();
     if (modalEl) { modalEl.remove(); modalEl = null; }
     if (modalBackdrop) { modalBackdrop.remove(); modalBackdrop = null; }
     document.removeEventListener("keydown", onKeydown);
@@ -133,6 +188,9 @@
 
   function onKeydown(evt) {
     if (evt.key === "Escape") {
+      // Bands sub-modal owns its own Escape handling — bail here so
+      // a single Escape press doesn't dismiss both modals.
+      if (bandsModalEl) return;
       // Don't bubble Escape into the canvas's escape-to-navigate handler
       // when the user is just dismissing the modal.
       evt.stopPropagation();
@@ -484,7 +542,7 @@
     title.textContent = "Old vs New Pricing";
     const subtitle = document.createElement("div");
     subtitle.className = "cb-export-modal-subtitle";
-    subtitle.textContent = `${table.name || "Table"} \u2014 every column`;
+    subtitle.textContent = table.name || "Table";
     titleWrap.appendChild(title);
     titleWrap.appendChild(subtitle);
 
@@ -514,6 +572,36 @@
     });
     state.pricingToggleBtn = pricingToggleBtn;
 
+    // Reset rates button — sits to the left of the Pricing toggle and
+    // only appears when pricing mode is on (CSS hides it otherwise).
+    // Resets the 3 editable rate inputs back to the fixed defaults;
+    // records count is left alone since it represents the user's
+    // table volume, not a "price" they're tweaking. Icon is the
+    // standard rotate-ccw glyph (cleaner at 14px than the larger
+    // refresh-circle that didn't render legibly at this size).
+    const resetBtn = document.createElement("button");
+    resetBtn.type = "button";
+    resetBtn.className = "cb-pricing-reset-btn";
+    resetBtn.title = "Reset rates to defaults ($0.05/credit, $0.008/action)";
+    resetBtn.innerHTML =
+      '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>' +
+      '<span>Reset</span>';
+    resetBtn.addEventListener("click", () => {
+      state.legacyCreditRate = FIXED_LEGACY_CREDIT_RATE;
+      state.modernCreditRate = FIXED_MODERN_CREDIT_RATE;
+      state.actionRate = FIXED_ACTION_RATE;
+      // Push the new values back into the rate inputs (refresh only
+      // updates derived dollar / delta cells, not the input values).
+      const setInput = (cls, value) => {
+        const el = modalEl.querySelector(`.${cls}`);
+        if (el) el.value = formatDollar(value);
+      };
+      setInput("cb-pricing-rate-legacy", FIXED_LEGACY_CREDIT_RATE);
+      setInput("cb-pricing-rate-modern-credits", FIXED_MODERN_CREDIT_RATE);
+      setInput("cb-pricing-rate-modern-actions", FIXED_ACTION_RATE);
+      refreshDollarCellsAndDeltas();
+    });
+
     const closeBtn = document.createElement("button");
     closeBtn.type = "button";
     closeBtn.className = "cb-export-modal-close";
@@ -522,6 +610,21 @@
       '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
     closeBtn.addEventListener("click", closeModal);
 
+    // Bands button — opens a sub-modal with the modern pricing tiers
+    // (CPC reference for sizing the customer's tier). Only relevant
+    // when pricing mode is on (CSS hides it otherwise), sits between
+    // Reset and Pricing toggle. Layers icon = visual cue for "tiers".
+    const bandsBtn = document.createElement("button");
+    bandsBtn.type = "button";
+    bandsBtn.className = "cb-bands-btn";
+    bandsBtn.title = "Show modern pricing tiers (Monthly + Annual)";
+    bandsBtn.innerHTML =
+      '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>' +
+      '<span>Bands</span>';
+    bandsBtn.addEventListener("click", openBandsModal);
+
+    headerActions.appendChild(resetBtn);
+    headerActions.appendChild(bandsBtn);
     headerActions.appendChild(pricingToggleBtn);
     headerActions.appendChild(closeBtn);
 
@@ -552,9 +655,10 @@
     const footer = document.createElement("div");
     footer.className = "cb-export-modal-footer";
     const footerHint = document.createElement("div");
-    footerHint.className = "cb-export-modal-footer-hint";
-    footerHint.textContent =
-      "Catalog projections \u2014 actual cost depends on selected AI model and private-key wiring.";
+    footerHint.className = "cb-export-modal-footer-hint cb-pricing-footer-hint";
+    footerHint.innerHTML =
+      '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" class="cb-pricing-warn-icon"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>' +
+      '<span>Projected results only</span>';
 
     const footerActions = document.createElement("div");
     footerActions.className = "cb-gtme-footer-actions";
@@ -1362,6 +1466,337 @@
     };
     const filename = `clay-pricing-comparison-${slugify(state.table?.name)}-${timestamp()}.json`;
     triggerDownload(filename, JSON.stringify(payload, null, 2), "application/json;charset=utf-8");
+  }
+
+  // ---------------------------------------------------------------------------
+  // Bands sub-modal
+  //
+  // Reference table for modern pricing tiers, opened via the "Bands"
+  // button in the header (visible only when pricing mode is on).
+  // Click any CPC value to copy it to clipboard — quick way for reps
+  // to grab a tier's per-credit cost when filling out the editable
+  // rate inputs above.
+  // ---------------------------------------------------------------------------
+
+  function closeBandsModal() {
+    if (bandsModalEl) { bandsModalEl.remove(); bandsModalEl = null; }
+    if (bandsModalBackdrop) { bandsModalBackdrop.remove(); bandsModalBackdrop = null; }
+    document.removeEventListener("keydown", onBandsKeydown);
+  }
+
+  function onBandsKeydown(evt) {
+    if (evt.key === "Escape") {
+      evt.stopPropagation();
+      closeBandsModal();
+    }
+  }
+
+  // CPC values render with a rolling decimal precision: trim trailing
+  // zeros but keep enough digits to preserve the source value
+  // (e.g., $0.05 stays "$0.05", $0.03826 stays "$0.03826").
+  function formatCpc(cpc) {
+    return "$" + cpc.toFixed(5).replace(/0+$/, "").replace(/\.$/, "");
+  }
+
+  // Copy-to-clipboard with visual feedback. Falls back to a synthetic
+  // textarea + execCommand for browsers / contexts where the async
+  // Clipboard API isn't available (rare in MV3 content scripts but
+  // worth defending against).
+  function copyToClipboard(cell, text) {
+    const flash = () => {
+      const original = cell.textContent;
+      cell.classList.add("cb-bands-cpc-copied");
+      cell.textContent = "Copied";
+      setTimeout(() => {
+        cell.classList.remove("cb-bands-cpc-copied");
+        cell.textContent = original;
+      }, 900);
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(flash).catch((err) => {
+        console.warn("[Clay Scoping] clipboard write failed:", err);
+      });
+      return;
+    }
+    try {
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.style.cssText = "position:fixed;left:-9999px;";
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand("copy");
+      document.body.removeChild(ta);
+      flash();
+    } catch (err) {
+      console.warn("[Clay Scoping] clipboard fallback failed:", err);
+    }
+  }
+
+  // Click-to-copy rate cell shared by both bands tables. Renders an
+  // em-dash (and skips the click handler) when the rate is null —
+  // some plan/tier combos don't exist (e.g., Growth has no Tier 1
+  // monthly action band). Copies the raw decimal value so reps can
+  // paste directly into the rate input above or into a spreadsheet.
+  function buildBandsRateCell(rate) {
+    const cell = document.createElement("td");
+    cell.className = "cb-bands-num";
+    if (rate == null) {
+      cell.textContent = "\u2014";
+      cell.classList.add("cb-bands-empty");
+      return cell;
+    }
+    cell.classList.add("cb-bands-cpc");
+    cell.textContent = formatCpc(rate);
+    cell.title = "Click to copy";
+    cell.addEventListener("click", () => copyToClipboard(cell, String(rate)));
+    return cell;
+  }
+
+  function buildBandsPriceCell(value) {
+    const cell = document.createElement("td");
+    cell.className = "cb-bands-num";
+    cell.textContent = value != null ? "$" + value.toLocaleString() : "\u2014";
+    if (value == null) cell.classList.add("cb-bands-empty");
+    return cell;
+  }
+
+  function buildCreditsBandsTable(period) {
+    const rows = PRICING_BANDS[period];
+    const tbl = document.createElement("table");
+    tbl.className = "cb-bands-table cb-bands-credits";
+
+    const thead = document.createElement("thead");
+    const headRow = document.createElement("tr");
+    const headers = [
+      "Tier",
+      "Plan availability",
+      period === "monthly" ? "Monthly credits" : "Annual credits",
+      "Monthly price",
+      "CPC",
+    ];
+    for (const label of headers) {
+      const th = document.createElement("th");
+      th.textContent = label;
+      headRow.appendChild(th);
+    }
+    thead.appendChild(headRow);
+    tbl.appendChild(thead);
+
+    const tbody = document.createElement("tbody");
+    for (const row of rows) {
+      const tr = document.createElement("tr");
+
+      const tierCell = document.createElement("td");
+      tierCell.className = "cb-bands-tier";
+      tierCell.textContent = row.tier;
+      tr.appendChild(tierCell);
+
+      const plansCell = document.createElement("td");
+      plansCell.textContent = row.plans;
+      tr.appendChild(plansCell);
+
+      const creditsCell = document.createElement("td");
+      creditsCell.className = "cb-bands-num";
+      creditsCell.textContent = row.credits.toLocaleString();
+      tr.appendChild(creditsCell);
+
+      tr.appendChild(buildBandsPriceCell(row.price));
+      tr.appendChild(buildBandsRateCell(row.cpc));
+
+      tbody.appendChild(tr);
+    }
+    tbl.appendChild(tbody);
+    return tbl;
+  }
+
+  // Actions table — wider than credits because it splits per plan
+  // (Launch + Growth) and the annual variant adds Launch Annual /
+  // Growth Annual columns at the right (the monthly price x 12).
+  function buildActionsBandsTable(period) {
+    const rows = ACTION_BANDS[period];
+    const isAnnual = period === "annual";
+
+    const tbl = document.createElement("table");
+    tbl.className = "cb-bands-table";
+
+    const thead = document.createElement("thead");
+    const headRow = document.createElement("tr");
+    const headers = isAnnual
+      ? [
+          "Tier",
+          "Annual actions",
+          "Launch CPA",
+          "Launch price/mo",
+          "Growth CPA",
+          "Growth price/mo",
+          "Launch annual",
+          "Growth annual",
+        ]
+      : [
+          "Tier",
+          "Monthly actions",
+          "Launch CPA",
+          "Launch price/mo",
+          "Growth CPA",
+          "Growth price/mo",
+        ];
+    for (const label of headers) {
+      const th = document.createElement("th");
+      th.textContent = label;
+      headRow.appendChild(th);
+    }
+    thead.appendChild(headRow);
+    tbl.appendChild(thead);
+
+    const tbody = document.createElement("tbody");
+    for (const row of rows) {
+      const tr = document.createElement("tr");
+
+      const tierCell = document.createElement("td");
+      tierCell.className = "cb-bands-tier";
+      tierCell.textContent = row.tier;
+      tr.appendChild(tierCell);
+
+      const actionsCell = document.createElement("td");
+      actionsCell.className = "cb-bands-num";
+      actionsCell.textContent = row.actions.toLocaleString();
+      tr.appendChild(actionsCell);
+
+      tr.appendChild(buildBandsRateCell(row.launchCpa));
+      tr.appendChild(buildBandsPriceCell(row.launchPrice));
+      tr.appendChild(buildBandsRateCell(row.growthCpa));
+      tr.appendChild(buildBandsPriceCell(row.growthPrice));
+
+      if (isAnnual) {
+        tr.appendChild(buildBandsPriceCell(row.launchAnnual));
+        tr.appendChild(buildBandsPriceCell(row.growthAnnual));
+      }
+
+      tbody.appendChild(tr);
+    }
+    tbl.appendChild(tbody);
+    return tbl;
+  }
+
+  function openBandsModal() {
+    closeBandsModal();
+
+    bandsModalBackdrop = document.createElement("div");
+    bandsModalBackdrop.className = "cb-export-modal-backdrop cb-bands-modal-backdrop";
+    bandsModalBackdrop.addEventListener("mousedown", (evt) => {
+      if (evt.target === bandsModalBackdrop) closeBandsModal();
+    });
+
+    const bandsEl = document.createElement("div");
+    bandsEl.className = "cb-export-modal cb-bands-modal";
+    bandsModalEl = bandsEl;
+
+    // Header
+    const header = document.createElement("div");
+    header.className = "cb-export-modal-header";
+
+    const titleWrap = document.createElement("div");
+    titleWrap.className = "cb-export-modal-title-wrap";
+    const title = document.createElement("h2");
+    title.className = "cb-export-modal-title";
+    title.textContent = "Modern pricing bands";
+    const subtitle = document.createElement("div");
+    subtitle.className = "cb-export-modal-subtitle";
+    subtitle.textContent = "Click any CPC or CPA to copy it to clipboard";
+    titleWrap.appendChild(title);
+    titleWrap.appendChild(subtitle);
+
+    const headerActions = document.createElement("div");
+    headerActions.className = "cb-export-modal-header-actions";
+
+    // Monthly / Annual segmented toggle.
+    const periodToggle = document.createElement("div");
+    periodToggle.className = "cb-bands-period-toggle";
+
+    const monthlyBtn = document.createElement("button");
+    monthlyBtn.type = "button";
+    monthlyBtn.className = "cb-bands-period-btn";
+    monthlyBtn.textContent = "Monthly";
+    if (bandsPeriod === "monthly") monthlyBtn.classList.add("cb-bands-period-active");
+
+    const annualBtn = document.createElement("button");
+    annualBtn.type = "button";
+    annualBtn.className = "cb-bands-period-btn";
+    annualBtn.textContent = "Annual";
+    if (bandsPeriod === "annual") annualBtn.classList.add("cb-bands-period-active");
+
+    periodToggle.appendChild(monthlyBtn);
+    periodToggle.appendChild(annualBtn);
+
+    const closeBtn = document.createElement("button");
+    closeBtn.type = "button";
+    closeBtn.className = "cb-export-modal-close";
+    closeBtn.setAttribute("aria-label", "Close");
+    closeBtn.innerHTML =
+      '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
+    closeBtn.addEventListener("click", closeBandsModal);
+
+    headerActions.appendChild(periodToggle);
+    headerActions.appendChild(closeBtn);
+
+    header.appendChild(titleWrap);
+    header.appendChild(headerActions);
+
+    // Body — two stacked sections (Credits + Actions). Both tables
+    // swap in place when the period toggle is flipped via
+    // renderBandsSections, which rebuilds both at once.
+    const body = document.createElement("div");
+    body.className = "cb-export-modal-body cb-bands-body";
+
+    const tableContainer = document.createElement("div");
+    tableContainer.className = "cb-bands-table-container";
+    body.appendChild(tableContainer);
+
+    const renderBandsSections = () => {
+      tableContainer.innerHTML = "";
+
+      const creditsSection = document.createElement("div");
+      creditsSection.className = "cb-bands-section";
+      const creditsTitle = document.createElement("h3");
+      creditsTitle.className = "cb-bands-section-title";
+      creditsTitle.textContent = "Credits";
+      creditsSection.appendChild(creditsTitle);
+      creditsSection.appendChild(buildCreditsBandsTable(bandsPeriod));
+      tableContainer.appendChild(creditsSection);
+
+      const actionsSection = document.createElement("div");
+      actionsSection.className = "cb-bands-section";
+      const actionsTitle = document.createElement("h3");
+      actionsTitle.className = "cb-bands-section-title";
+      actionsTitle.textContent = "Actions";
+      actionsSection.appendChild(actionsTitle);
+      actionsSection.appendChild(buildActionsBandsTable(bandsPeriod));
+      tableContainer.appendChild(actionsSection);
+    };
+
+    renderBandsSections();
+
+    monthlyBtn.addEventListener("click", () => {
+      if (bandsPeriod === "monthly") return;
+      bandsPeriod = "monthly";
+      monthlyBtn.classList.add("cb-bands-period-active");
+      annualBtn.classList.remove("cb-bands-period-active");
+      renderBandsSections();
+    });
+    annualBtn.addEventListener("click", () => {
+      if (bandsPeriod === "annual") return;
+      bandsPeriod = "annual";
+      annualBtn.classList.add("cb-bands-period-active");
+      monthlyBtn.classList.remove("cb-bands-period-active");
+      renderBandsSections();
+    });
+
+    bandsEl.appendChild(header);
+    bandsEl.appendChild(body);
+    bandsModalBackdrop.appendChild(bandsEl);
+    document.body.appendChild(bandsModalBackdrop);
+
+    document.addEventListener("keydown", onBandsKeydown);
   }
 
   // ---------------------------------------------------------------------------
