@@ -951,12 +951,24 @@
 /* ==========================================================================
    OLD vs NEW PRICING MODAL
    Reuses the cb-export-modal primitives (backdrop, header, footer) defined
-   above. Body owns its own layout: a two-column totals strip on top and a
-   per-enrichment breakdown table below.
+   above. Body is a single unified table: grouped-section header
+   (Enrichment | Legacy | Modern | Δ) with sub-columns underneath, a Total
+   row at the top, then per-enrichment rows.
+
+   The table always emits the full 8-column structure (name + legacy
+   credits + legacy $ + modern credits + modern $ + modern actions +
+   modern actions $ + Δ). The 3 dollar columns are hidden via
+   display:none on every cell unless the modal carries the
+   `.cb-pricing-on` class — flipping that class on the modal root is
+   the entirety of the toggle's visual change.
    ========================================================================== */
 
+/* Modal sizes to its content (the breakdown table sets the natural
+   width). max-width caps it on small viewports; max-height keeps it
+   scrollable on long tables. */
 .cb-pricing-modal {
-  max-width: 880px;
+  width: fit-content;
+  max-width: 92vw;
   height: auto;
   max-height: 88vh;
 }
@@ -965,102 +977,198 @@
   padding: 0;
   display: flex;
   flex-direction: column;
+  overflow: auto;
 }
 
-/* ---- Totals strip ---- */
+.cb-pricing-table-container {
+  display: contents;
+}
 
-.cb-pricing-totals {
-  display: grid;
-  grid-template-columns: 1fr 1.5fr;
-  gap: 1px;
-  background: #e5e7eb;
-  border-bottom: 1px solid #e5e7eb;
+/* ---- Header actions (Pricing toggle + close X) ---- */
+
+.cb-pricing-toggle-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 12px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #374151;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.cb-pricing-toggle-btn svg {
   flex-shrink: 0;
 }
 
-.cb-pricing-total-col {
-  background: #ffffff;
-  padding: 18px 22px;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
+.cb-pricing-toggle-btn:hover {
+  background: #f9fafb;
+  border-color: #9ca3af;
 }
 
-.cb-pricing-col-legacy {
-  background: #fefce8;
-}
-
-.cb-pricing-col-modern {
+.cb-pricing-toggle-btn.cb-pricing-toggle-on {
   background: #ecfdf5;
-}
-
-.cb-pricing-total-label {
-  font-size: 11px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: #6b7280;
-}
-
-.cb-pricing-col-legacy .cb-pricing-total-label {
-  color: #a16207;
-}
-
-.cb-pricing-col-modern .cb-pricing-total-label {
+  border-color: #047857;
   color: #047857;
 }
 
-/* Two cells side-by-side inside the modern column for credits + actions. */
-.cb-pricing-total-row {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 18px;
+.cb-pricing-toggle-btn.cb-pricing-toggle-on:hover {
+  background: #d1fae5;
 }
 
-.cb-pricing-total-cell {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.cb-pricing-total-sub {
-  font-size: 12px;
-  color: #6b7280;
-}
-
-.cb-pricing-total-value {
-  font-size: 24px;
-  font-weight: 600;
-  color: #111827;
-  font-variant-numeric: tabular-nums;
-  line-height: 1.1;
-}
-
-/* ---- Per-enrichment breakdown table ---- */
+/* ---- Per-enrichment breakdown table ----
+   Fixed layout + explicit per-column widths via <colgroup> so the
+   browser doesn't fall back to colspan-equal-division for the section
+   header row (which would allocate width to display:none cells and
+   leave the visible columns crammed against each other). The dollar
+   <col>s collapse to width:0 in OFF mode so the table tightens up. */
 
 .cb-pricing-table {
-  width: 100%;
+  width: 740px;
+  table-layout: fixed;
   border-collapse: separate;
   border-spacing: 0;
   font-size: 13px;
   color: #1f2937;
 }
 
+.cb-pricing-table colgroup col.col-name { width: 300px; }
+.cb-pricing-table colgroup col.col-legacy { width: 110px; }
+.cb-pricing-table colgroup col.col-legacy-dollar { width: 0; }
+.cb-pricing-table colgroup col.col-modern-credits { width: 110px; }
+.cb-pricing-table colgroup col.col-modern-credits-dollar { width: 0; }
+.cb-pricing-table colgroup col.col-modern-actions { width: 110px; }
+.cb-pricing-table colgroup col.col-modern-actions-dollar { width: 0; }
+.cb-pricing-table colgroup col.col-modern-total-dollar { width: 0; }
+.cb-pricing-table colgroup col.col-delta { width: 110px; }
+
+/* Numeric columns right-align. */
+.cb-pricing-table .col-legacy,
+.cb-pricing-table .col-modern-credits,
+.cb-pricing-table .col-modern-actions,
+.cb-pricing-table .col-legacy-dollar,
+.cb-pricing-table .col-modern-credits-dollar,
+.cb-pricing-table .col-modern-actions-dollar,
+.cb-pricing-table .col-modern-total-dollar,
+.cb-pricing-table .col-delta {
+  text-align: right;
+  white-space: nowrap;
+}
+
+/* ---- Section column tints + vertical dividers (always on) ----
+   Light wash on legacy (yellow) / modern (green) cell groups so the
+   eye reads the columns as one contiguous block per side. Combined
+   with the 1px vertical dividers between sections, the totals strip
+   alignment is unambiguous. */
+
+.cb-pricing-table .col-legacy,
+.cb-pricing-table .col-legacy-dollar {
+  background: #fefce8;
+}
+
+.cb-pricing-table .col-modern-credits,
+.cb-pricing-table .col-modern-credits-dollar,
+.cb-pricing-table .col-modern-actions,
+.cb-pricing-table .col-modern-actions-dollar,
+.cb-pricing-table .col-modern-total-dollar {
+  background: #ecfdf5;
+}
+
+/* Subtle internal divider between the modern action $ column and the
+   modern Total $ column so the eye reads "this is a derived sum",
+   not a fourth modern data column. */
+.cb-pricing-table .col-modern-total-dollar {
+  border-left: 1px dashed #a7f3d0;
+}
+
+/* Vertical dividers — applied to the leftmost cell of each
+   downstream section. Carries through both header rows and every body
+   row because every cell with the col-* class gets the border. */
+.cb-pricing-table .col-legacy,
+.cb-pricing-table .col-modern-credits,
+.cb-pricing-table .col-delta {
+  border-left: 1px solid #e5e7eb;
+}
+
+/* ---- Dollar columns: hidden by default, revealed by .cb-pricing-on ---- */
+
+.cb-pricing-modal:not(.cb-pricing-on) .col-legacy-dollar,
+.cb-pricing-modal:not(.cb-pricing-on) .col-modern-credits-dollar,
+.cb-pricing-modal:not(.cb-pricing-on) .col-modern-actions-dollar,
+.cb-pricing-modal:not(.cb-pricing-on) .col-modern-total-dollar {
+  display: none;
+}
+
+/* When pricing is on, widen the table to fit the 4 extra dollar
+   columns and grow the modal accordingly. Per-column widths sum to
+   the table width so table-layout: fixed honors them exactly:
+   240 + 75 + 110 + 75 + 110 + 75 + 110 + 130 + 130 = 1055px. */
+.cb-pricing-modal.cb-pricing-on .cb-pricing-table {
+  width: 1055px;
+}
+
+.cb-pricing-modal.cb-pricing-on .cb-pricing-table colgroup col.col-name { width: 240px; }
+.cb-pricing-modal.cb-pricing-on .cb-pricing-table colgroup col.col-legacy { width: 75px; }
+.cb-pricing-modal.cb-pricing-on .cb-pricing-table colgroup col.col-legacy-dollar { width: 110px; }
+.cb-pricing-modal.cb-pricing-on .cb-pricing-table colgroup col.col-modern-credits { width: 75px; }
+.cb-pricing-modal.cb-pricing-on .cb-pricing-table colgroup col.col-modern-credits-dollar { width: 110px; }
+.cb-pricing-modal.cb-pricing-on .cb-pricing-table colgroup col.col-modern-actions { width: 75px; }
+.cb-pricing-modal.cb-pricing-on .cb-pricing-table colgroup col.col-modern-actions-dollar { width: 110px; }
+.cb-pricing-modal.cb-pricing-on .cb-pricing-table colgroup col.col-modern-total-dollar { width: 130px; }
+.cb-pricing-modal.cb-pricing-on .cb-pricing-table colgroup col.col-delta { width: 130px; }
+
+/* ---- Header (two rows, grouped sections) ---- */
+
 .cb-pricing-table thead th {
-  position: sticky;
-  top: 0;
   background: #f9fafb;
   border-bottom: 1px solid #e5e7eb;
   padding: 10px 14px;
-  text-align: left;
   font-size: 12px;
   font-weight: 600;
   color: #6b7280;
   text-transform: uppercase;
   letter-spacing: 0.04em;
   white-space: nowrap;
+}
+
+.cb-pricing-table thead .cb-pricing-head-sections th {
+  position: sticky;
+  top: 0;
   z-index: 1;
 }
+
+.cb-pricing-table thead .cb-pricing-head-cols th {
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.cb-pricing-table thead th.col-name {
+  text-align: left;
+}
+
+.cb-pricing-head-section {
+  text-align: center !important;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+}
+
+.cb-pricing-head-section-legacy {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.cb-pricing-head-section-modern {
+  background: #d1fae5;
+  color: #065f46;
+}
+
+/* ---- Body rows ---- */
 
 .cb-pricing-table tbody td {
   padding: 10px 14px;
@@ -1072,39 +1180,179 @@
   border-bottom: none;
 }
 
-.cb-pricing-table tbody tr:hover {
-  background: #f9fafb;
-}
-
-.cb-pricing-table .col-name {
-  width: 38%;
-}
-
-.cb-pricing-table .col-legacy,
-.cb-pricing-table .col-modern-credits,
-.cb-pricing-table .col-modern-actions,
-.cb-pricing-table .col-delta {
-  width: 130px;
-  text-align: right;
-  white-space: nowrap;
-}
-
-/* Light tint behind the legacy column so the eye associates it with the
-   yellow legacy total above. Same idea for modern with green. */
-.cb-pricing-table .col-legacy {
-  background: #fefce8;
-}
-
-.cb-pricing-table .col-modern-credits,
-.cb-pricing-table .col-modern-actions {
-  background: #ecfdf5;
+/* Row hover overlays the col tints with a slight darken so the focus
+   row reads, without losing the section coloring entirely. */
+.cb-pricing-table tbody tr:hover:not(.cb-pricing-total-row) td {
+  filter: brightness(0.97);
 }
 
 .cb-pricing-num {
   font-variant-numeric: tabular-nums;
 }
 
-/* Name cell with optional provider icon. */
+/* ---- Total row ----
+   Bolder typography + slightly stronger tint variant so the headline
+   numbers read as a summary distinct from per-enrichment rows. */
+
+.cb-pricing-total-row td {
+  border-bottom: 2px solid #d1d5db;
+  font-weight: 600;
+  font-size: 14px;
+  color: #111827;
+}
+
+.cb-pricing-total-row .col-name {
+  background: #f3f4f6;
+}
+
+.cb-pricing-total-row .col-legacy,
+.cb-pricing-total-row .col-legacy-dollar {
+  background: #fef9c3;
+}
+
+.cb-pricing-total-row .col-modern-credits,
+.cb-pricing-total-row .col-modern-credits-dollar,
+.cb-pricing-total-row .col-modern-actions,
+.cb-pricing-total-row .col-modern-actions-dollar,
+.cb-pricing-total-row .col-modern-total-dollar {
+  background: #d1fae5;
+}
+
+.cb-pricing-total-row .col-delta {
+  background: #f3f4f6;
+}
+
+.cb-pricing-total-row .cb-pricing-total-label {
+  font-weight: 700;
+  text-transform: uppercase;
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  color: #374151;
+}
+
+/* ---- Total per table row ----
+   Sits directly under "Total per row". Same column tints as the per-row
+   total (so both totals read as one summary block) but a thicker bottom
+   divider and a slightly stronger background hint that this row is
+   driven by the editable records input. */
+
+.cb-pricing-table-row td {
+  border-bottom: 2px solid #d1d5db;
+  font-weight: 600;
+  font-size: 14px;
+  color: #111827;
+}
+
+.cb-pricing-table-row .col-name {
+  background: #e5e7eb;
+}
+
+.cb-pricing-table-row .col-legacy,
+.cb-pricing-table-row .col-legacy-dollar {
+  background: #fef3c7;
+}
+
+.cb-pricing-table-row .col-modern-credits,
+.cb-pricing-table-row .col-modern-credits-dollar,
+.cb-pricing-table-row .col-modern-actions,
+.cb-pricing-table-row .col-modern-actions-dollar,
+.cb-pricing-table-row .col-modern-total-dollar {
+  background: #a7f3d0;
+}
+
+.cb-pricing-table-row .col-delta {
+  background: #e5e7eb;
+}
+
+.cb-pricing-table-label-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.cb-pricing-records-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: #4b5563;
+  text-transform: none;
+  letter-spacing: normal;
+  font-weight: 500;
+}
+
+.cb-pricing-records-x {
+  color: #6b7280;
+}
+
+.cb-pricing-records-input {
+  width: 70px;
+  font-size: 12px;
+  font-family: inherit;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  border: 1px solid #d1d5db;
+  border-radius: 4px;
+  padding: 2px 6px;
+  background: #ffffff;
+  color: #111827;
+  font-weight: 600;
+}
+
+.cb-pricing-records-input:focus {
+  outline: 2px solid #6366f1;
+  outline-offset: -1px;
+  border-color: transparent;
+}
+
+.cb-pricing-records-label {
+  color: #6b7280;
+}
+
+/* ---- Editable rate input on the Total row ----
+   Lives in a 2-line stack: input on top (rate $), computed dollar
+   below (count × rate). Mirrors the topbar cb-pricing-card pattern. */
+
+.cb-pricing-rate-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+}
+
+.cb-pricing-rate-input {
+  width: 80px;
+  font-size: 12px;
+  font-family: inherit;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  border: 1px solid #d1d5db;
+  border-radius: 4px;
+  padding: 3px 6px;
+  background: #ffffff;
+  color: #111827;
+}
+
+.cb-pricing-rate-input:focus {
+  outline: 2px solid #6366f1;
+  outline-offset: -1px;
+  border-color: transparent;
+}
+
+.cb-pricing-derived {
+  font-size: 12px;
+  color: #4b5563;
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+}
+
+.cb-pricing-total-row .cb-pricing-derived {
+  color: #111827;
+  font-weight: 600;
+}
+
+/* ---- Name cell with optional provider icon ---- */
+
 .cb-pricing-name {
   display: flex;
   align-items: center;
@@ -1131,7 +1379,6 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 280px;
 }
 
 .cb-pricing-name-sub {
@@ -1140,15 +1387,43 @@
   margin-top: 2px;
 }
 
-/* Delta cell — green when modern saves credits, red when modern costs more.
-   "new" badge for fields with no legacy cost (impossible historically but
-   defensive against new pricing buckets that might appear). */
+/* ---- Delta cell ----
+   Stacks % on top + $ diff below when pricing is on. % is the
+   primary signal (semibold, color), $ diff is a secondary line
+   (smaller, slightly muted but inheriting the up/down color). */
+
+.cb-pricing-delta-pct {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.cb-pricing-delta-dollar {
+  font-size: 11px;
+  font-weight: 500;
+  margin-top: 2px;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.85;
+}
+
 .cb-pricing-delta-down {
   color: #047857;
-  font-weight: 600;
 }
 
 .cb-pricing-delta-up {
   color: #b91c1c;
-  font-weight: 600;
+}
+
+/* ---- Footer Download button ----
+   Reuses the cb-gtme-submit primary styling (already defined for the
+   GTME / JSON modal footers above). Adds a chevron + svg layout for
+   the dropdown affordance. */
+
+.cb-pricing-download {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.cb-pricing-download svg {
+  flex-shrink: 0;
 }

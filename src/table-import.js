@@ -522,7 +522,14 @@
       displayName: ai ? (displayName || info?.displayName || "Use AI") : (info?.displayName || displayName || "Enrichment"),
       packageName: info?.packageName ?? "Clay",
       credits,
-      actionExecutions: info?.actionExecutions ?? 1,
+      // Default to 0, NOT 1 — read / lookup / source actions
+      // intentionally omit `pricing.credits.actionExecution` and bill 0
+      // actions per row server-side (calculateActionExecutionCost in
+      // apps/api uses `?? 0` for the same reason). The previous `?? 1`
+      // default overcounted every Salesforce / Pardot lookup + every
+      // records-* source action in the canvas's "Total Actions" / "Avg
+      // Actions / Row" headlines.
+      actionExecutions: info?.actionExecutions ?? 0,
       iconUrl,
       iconSvgHtml: null,
       creditText: credits != null ? `~${credits} / row` : null,
@@ -1208,6 +1215,36 @@
         }
       }
 
+      // ---- Per-row action-execution averaging ----
+      //
+      // Mirrors the credit averaging deriveWaterfallTotals already does
+      // (mean of per-step cost + validation when active). Read-only
+      // lookup steps (no `pricing.credits.actionExecution` set in their
+      // action-definition) genuinely bill 0 actions per row server-side
+      // — see calculateActionExecutionCost in apps/api which falls back
+      // to 0. The previous hardcoded `actionExecutions: 1` constant was
+      // overcounting waterfalls of all-lookup steps as 1 action / row.
+      // Validation contributes its own action execution per step it
+      // runs; a key-only validator still bills an actionExecution
+      // (private-key state suppresses credit cost, NOT the action
+      // billing line — same rule canvas/credits.js applies).
+      const validationActionsPerStep = firstValidation
+        ? (Number(__cb.actionByIdLookup?.[
+            `${firstValidation.actionPackageId ?? "clay"}-${firstValidation.actionKey}`
+          ]?.actionExecutions) || 0)
+        : 0;
+      let stepActionsSum = 0;
+      for (const step of wf.steps) {
+        const stepInfo = __cb.actionByIdLookup?.[
+          `${step.actionPackageId ?? "clay"}-${step.actionKey}`
+        ];
+        const stepActions = Number(stepInfo?.actionExecutions) || 0;
+        stepActionsSum += stepActions + validationActionsPerStep;
+      }
+      const wfActionsAvg = wf.steps.length > 0
+        ? Math.round((stepActionsSum / wf.steps.length) * 100) / 100
+        : 0;
+
       // Look up the curated swap-out list for this attribute so the
       // popover dropdown can offer alternatives. Mirrors the picker
       // path. Falls through silently when the attribute isn't in
@@ -1250,7 +1287,7 @@
         // averageCost / credits include the validation surcharge — no
         // need for the user to toggle Remove / Add to "kick" the math.
         validationVisible: !!firstValidation,
-        actionExecutions: 1,
+        actionExecutions: wfActionsAvg,
         groupCluster: wf.groupId,
         // Anchor the card to the waterfall group so re-imports dedupe via
         // `wf-${groupId}` (set on existingKeys above) AND its own data
@@ -1500,8 +1537,13 @@
     return (table.views ?? []).filter((v) => !v.typeSettings?.isPreconfigured);
   }
 
-  function showTablePicker(tables, anchorEl, onPick) {
+  function showTablePicker(tables, anchorEl, onPick, opts) {
     closeTablePicker();
+    // `fullTableOnly`: hide per-view sub-rows entirely and always invoke
+    // onPick(table, null) — used by the Old vs New Pricing flow which
+    // always wants whole-table coverage. Default behavior (Import) keeps
+    // the per-view dropdown so reps can scope to a specific view.
+    const fullTableOnly = !!opts?.fullTableOnly;
 
     tablePickerBackdrop = document.createElement("div");
     tablePickerBackdrop.className = "cb-table-picker-backdrop";
@@ -1521,7 +1563,7 @@
 
     for (const table of sorted) {
       const views = getNonPreconfiguredViews(table);
-      const hasMultipleViews = views.length > 1;
+      const hasMultipleViews = !fullTableOnly && views.length > 1;
 
       const row = document.createElement("div");
       row.className = "cb-table-picker-row";
@@ -1542,9 +1584,13 @@
         item.appendChild(chevron);
       }
 
+      // In fullTableOnly mode the click yields viewId=null directly so
+      // the consumer (pricing comparison) gets the same "ignore view
+      // visibility" semantic the multi-view "Full table" sub-row
+      // produces in normal mode.
       item.addEventListener("click", () => {
         closeTablePicker();
-        onPick(table, undefined);
+        onPick(table, fullTableOnly ? null : undefined);
       });
 
       row.appendChild(item);
