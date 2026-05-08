@@ -319,6 +319,91 @@
     return Number.isFinite(n) && n > 0 ? n : 0;
   }
 
+  // Resolves an AI field/step's per-row credit cost based on the model
+  // the user picked (read off inputsBinding) — instead of always
+  // returning the action-level base catalog credit (e.g., 0.1 for Use
+  // AI / 1 for Claygent regardless of model). Mirrors the import
+  // flow's resolveModelForCard in src/table-import.js but trimmed to
+  // just the credit number.
+  //
+  // Two intentional limitations vs the import flow:
+  //   1. Per-model pricing is plan-agnostic in Clay's data shape (no
+  //      pre/post-2026 split per model — only at the action level), so
+  //      both legacy and modern columns get the same model credit. The
+  //      Δ for AI rows ends up driven by the modern actionExecution
+  //      dimension, which IS the structural pricing change.
+  //   2. Variable-priced models (Claygent variable models when the
+  //      EnableClaygentVariablePricing flag is on) come back already
+  //      workspace-scaled via __cb.livePricingByModel (overlaid by
+  //      __cb.getModelOptions()). We use the workspace's CURRENT
+  //      plan's value for both columns since there's no multi-plan
+  //      API endpoint that returns the value for the OTHER plan.
+  //
+  // Returns null when nothing usable can be resolved — caller falls
+  // back to the existing resolveTierCredits path.
+  // Returns { credits, matched } for an AI source (field or waterfall step):
+  //   credits — the per-row credit cost (number) or null when un-resolvable
+  //             (caller falls back to resolveTierCredits in that case).
+  //             0 specifically means "key-only action, Clay bills nothing".
+  //   matched — the matched modelOption, used by callers to swap the row's
+  //             icon to the AI provider icon (matching how cards do it in
+  //             buildErCardData → AI_PROVIDER_ICONS[model.provider]).
+  function resolveAiModel(source, info) {
+    const isKeyOnly = !!(info?.requiresApiKey || info?.disableSharedKey);
+    if (isKeyOnly) return { credits: 0, matched: null };
+
+    // Prefer the LIVE getModelOptions() over info.modelOptions
+    // because info.modelOptions is frozen at fetchEnrichments time
+    // (called before fetchModelPricing in some flows), so it would
+    // have stale default credits without the workspace-scaled
+    // variable-pricing overlay.
+    const modelOptions = __cb.getModelOptions?.() ?? info?.modelOptions;
+    if (!modelOptions || modelOptions.length === 0) {
+      return { credits: null, matched: null };
+    }
+
+    // Field shape uses .typeSettings.inputsBinding (object keyed by
+    // index "0"/"1"/...); waterfall step shape uses .inputsBinding
+    // (array). __cb.readInputBindingValue handles both via
+    // Object.values, which iterates arrays the same way.
+    const inputsBinding = source?.typeSettings?.inputsBinding ?? source?.inputsBinding;
+    const rawModel = __cb.readInputBindingValue?.(inputsBinding, "model");
+    const normalized = (rawModel || "").trim().replace(/^"|"$/g, "").trim() || null;
+
+    // Per-row formula in the model slot (e.g. IF(...) picking model
+    // by row): can't pin one number, fall back to default model so
+    // the card at least shows something reasonable.
+    const looksLikeFormula = normalized
+      && (/[(){}=,]/.test(normalized) || /\s+(IF|AND|OR)\s+/i.test(normalized));
+
+    let matched = null;
+    if (normalized && !looksLikeFormula) {
+      matched = __cb.matchKnownModel?.(normalized, modelOptions);
+    }
+    if (!matched) {
+      matched = modelOptions.find((m) => m.id === __cb.DEFAULT_AI_MODEL) ?? modelOptions[0];
+    }
+
+    const credits = matched && Number.isFinite(matched.credits) ? matched.credits : null;
+    return { credits, matched };
+  }
+
+  // Maps a matched model → provider icon URL, mirroring buildErCardData's
+  // canvas-card icon selection so the comparison-modal row uses the same
+  // OpenAI / Anthropic / Gemini / Claygent icon as the imported card
+  // (instead of falling back to the action's generic magic-wand icon).
+  function aiIconUrl(matched) {
+    if (matched?.provider && __cb.AI_PROVIDER_ICONS?.[matched.provider]) {
+      return __cb.AI_PROVIDER_ICONS[matched.provider];
+    }
+    return null;
+  }
+
+  // Back-compat: callers that just want the credit number.
+  function resolveAiCredits(source, info) {
+    return resolveAiModel(source, info).credits;
+  }
+
   // ---------------------------------------------------------------------------
   // Per-table comparison rows
   //
@@ -434,16 +519,44 @@
       for (const step of steps) {
         const lookupKey = `${step.actionPackageId ?? "clay"}-${step.actionKey}`;
         const info = __cb.actionByIdLookup?.[lookupKey];
-        const legacy = resolveTierCredits(info, "legacy");
-        const modern = resolveTierCredits(info, "modern");
+
+        // Per-step credits + private-key flag — same AI branch as the
+        // standalone field loop. AI steps (e.g., a Claygent step in a
+        // waterfall) resolve their model via inputsBinding + the
+        // catalog model options. Same model credit on both tiers; the
+        // step's own authAccountId zeroes it out for private-key
+        // wiring. Falls back to the existing resolveTierCredits when
+        // model resolution returns null.
+        let stepLegacy, stepModern, stepIsPrivateKey;
+        if (info?.isAi) {
+          const modelCredits = resolveAiCredits(step, info);
+          if (modelCredits !== null) {
+            stepLegacy = modelCredits;
+            stepModern = modelCredits;
+            stepIsPrivateKey = !!step.authAccountId;
+          } else {
+            const l = resolveTierCredits(info, "legacy");
+            const m = resolveTierCredits(info, "modern");
+            stepLegacy = l.credits;
+            stepModern = m.credits;
+            stepIsPrivateKey = l.isPrivateKey;
+          }
+        } else {
+          const legacy = resolveTierCredits(info, "legacy");
+          const modern = resolveTierCredits(info, "modern");
+          stepLegacy = legacy.credits;
+          stepModern = modern.credits;
+          stepIsPrivateKey = legacy.isPrivateKey;
+        }
+
         // Validation surcharge contributes per step only when the step's
         // own provider isn't private-key (validator runs after a real
         // billed call). Matches deriveWaterfallTotals's per-provider
         // c + v formula in src/picker.js.
         legacySum +=
-          legacy.credits + (validationActive && !legacy.isPrivateKey ? validationLegacy : 0);
+          stepLegacy + (validationActive && !stepIsPrivateKey ? validationLegacy : 0);
         modernSum +=
-          modern.credits + (validationActive && !modern.isPrivateKey ? validationModern : 0);
+          stepModern + (validationActive && !stepIsPrivateKey ? validationModern : 0);
         // Action-execution averaging mirrors the credit math: per step,
         // sum the step's own actions + the validator's actions when the
         // validator actually runs. Private-key state on the STEP doesn't
@@ -480,16 +593,38 @@
       const ts = field.typeSettings ?? {};
       const lookupKey = `${ts.actionPackageId ?? "clay"}-${ts.actionKey}`;
       const info = __cb.actionByIdLookup?.[lookupKey];
-      const legacy = resolveTierCredits(info, "legacy");
-      const modern = resolveTierCredits(info, "modern");
+
+      // AI fields (Use AI / Claygent / etc.): resolve the user-picked
+      // model from inputsBinding and use its credit cost on both
+      // tiers. Per-model pricing is plan-agnostic in Clay's data
+      // shape, so legacy + modern get the same model credit; the Δ
+      // for AI rows is driven by the modern actionExecution dimension.
+      // Falls back to the action-level catalog when model resolution
+      // returns null (no inputsBinding, unknown model, etc.).
+      let legacyCredits, modernCredits;
+      let iconUrl = info?.iconUrl ?? null;
+      if (info?.isAi) {
+        const { credits: modelCredits, matched } = resolveAiModel(field, info);
+        if (modelCredits !== null) {
+          legacyCredits = modelCredits;
+          modernCredits = modelCredits;
+        } else {
+          legacyCredits = resolveTierCredits(info, "legacy").credits;
+          modernCredits = resolveTierCredits(info, "modern").credits;
+        }
+        iconUrl = aiIconUrl(matched) ?? iconUrl;
+      } else {
+        legacyCredits = resolveTierCredits(info, "legacy").credits;
+        modernCredits = resolveTierCredits(info, "modern").credits;
+      }
 
       rows.push({
         kind: "field",
         name: field.name || info?.displayName || "Enrichment",
-        iconUrl: info?.iconUrl ?? null,
+        iconUrl,
         subtitle: info?.packageName || "",
-        legacyCredits: legacy.credits,
-        modernCredits: modern.credits,
+        legacyCredits,
+        modernCredits,
         modernActions: modernActionsForField(info),
       });
     }
@@ -2008,6 +2143,15 @@
     try {
       if (Object.keys(__cb.actionByIdLookup ?? {}).length === 0) {
         await __cb.fetchEnrichments(ids.workspaceId);
+      }
+      // Variable-priced model credits are workspace-scaled and only
+      // appear in __cb.livePricingByModel after this fetch. Without
+      // it, AI fields using variable-priced models would fall back to
+      // the static DEFAULT_AI_MODELS credit (often wrong for those
+      // workspaces). Mirrors the import flow's prefetch in
+      // src/table-import.js startImport.
+      if (Object.keys(__cb.livePricingByModel ?? {}).length === 0) {
+        await __cb.fetchModelPricing(ids.workspaceId);
       }
 
       const tables = await __cb.fetchTableList(ids.workbookId);

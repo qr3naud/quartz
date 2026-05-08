@@ -119,6 +119,16 @@
 
   __cb.extractInputFieldRefs = extractInputFieldRefs;
 
+  // Exposed so src/pricing-comparison.js can reuse the same model
+  // resolution path the import uses for AI cards (read the user-
+  // selected model off field.typeSettings.inputsBinding, then match
+  // against the catalog with quote-stripping + longest-includes
+  // fallback). Function declarations below are hoisted within this
+  // IIFE so the assignment is safe even though the definitions
+  // appear further down in the file.
+  __cb.readInputBindingValue = readInputBindingValue;
+  __cb.matchKnownModel = matchKnownModel;
+
   // ---------------------------------------------------------------------------
   // Resolves the value of a single named input on an action field's
   // `inputsBinding`. Used to read the user-selected `model` off AI actions
@@ -450,7 +460,15 @@
     const lookupKey = `${packageId}-${actionKey}`;
     const info = __cb.actionByIdLookup[lookupKey];
     const ai = info?.isAi ?? __cb.isAiAction(actionKey, info?.displayName ?? displayName, packageId);
-    const baseModelOptions = ai ? (info?.modelOptions ?? __cb.getModelOptions()) : null;
+    // Prefer the LIVE getModelOptions() over info.modelOptions because
+    // info.modelOptions is frozen at fetchEnrichments time. fetchEnrichments
+    // runs BEFORE fetchModelPricing in __cb.startImport, so info.modelOptions
+    // captures DEFAULT_AI_MODELS without the workspace-scaled livePricingByModel
+    // overlay — meaning variable-priced models (e.g. workspace-tier GPT 5.4
+    // = 2.8 credits, not the static default 15) would render with the wrong
+    // per-row cost on the canvas card. getModelOptions() is recomputed every
+    // call and reads the current livePricingByModel.
+    const baseModelOptions = ai ? (__cb.getModelOptions?.() ?? info?.modelOptions) : null;
     const defaultModelId = __cb.DEFAULT_AI_MODEL || "clay-argon";
 
     // Read the configured model off the field's actual inputsBinding and
@@ -492,13 +510,28 @@
       }
     }
 
-    // Server-resolved cost wins when present — it already accounts for
-    // private-key zeroing, per-result multiplication, unlimited flags, and
-    // the right pricing-bucket (pre-vs-post-2026 plan). Falls back to the
-    // catalog/model default otherwise.
+    // Server-resolved cost is authoritative for non-AI fields (it already
+    // accounts for private-key zeroing, per-result multiplication, unlimited
+    // flags, and the right pricing bucket).
+    //
+    // For AI fields we deliberately do NOT let stats.cost override the live
+    // per-model credit resolved above. The /context creditCost on an AI
+    // field reflects the value the *server* last computed — for variable-
+    // priced models (Claygent, GPT, etc.) this is a snapshot tied to the
+    // field's history, not the current workspace-scaled price. Letting it
+    // override produces a chip ("~12 / row") that disagrees with the chip
+    // the canvas's own model dropdown shows for the same model ("~6.8 /
+    // row"). We still honor the unlimited / isPrivateKey flags from
+    // stats.cost because those are per-field signals the model lookup
+    // can't infer (an AI field configured against a custom auth account
+    // that brings its own key bills 0 regardless of the model's list price).
     if (stats?.cost) {
-      const resolved = resolveEffectiveCredits(stats.cost, credits);
-      if (resolved != null) credits = resolved;
+      if (stats.cost.unlimited || stats.cost.isPrivateKey) {
+        credits = 0;
+      } else if (!ai) {
+        const resolved = resolveEffectiveCredits(stats.cost, credits);
+        if (resolved != null) credits = resolved;
+      }
     }
 
     // Private-key state: prefer the server signal (stats.cost.isPrivateKey)
@@ -1131,14 +1164,43 @@
         const info = __cb.actionByIdLookup?.[lookupKey] ?? {};
         const ai = info.isAi ?? __cb.isAiAction(step.actionKey, info.displayName, step.actionPackageId);
         const stepStats = statsByFieldId.get(step.fieldId) ?? null;
-        // Per-step cost: prefer the server's resolved ActionCostMetadata
-        // (model-aware for Claygent inside waterfalls, private-key-zeroed
-        // when the user wired their own auth on a step). Catalog credits
-        // are only the fallback for steps the server didn't price.
+        // Per-step cost. For AI steps (Claygent inside a waterfall) we
+        // resolve the live per-model credit the same way standalone AI
+        // cards do — see buildErCardData's AI branch for the rationale.
+        // The server's stats.cost.cost on a Claygent step is a snapshot of
+        // the field's last computed cost and goes stale relative to the
+        // workspace-scaled per-model price, so the chip ends up out of
+        // sync with the canvas's own model dropdown. We still honor the
+        // unlimited / isPrivateKey flags (per-step authAccountId →
+        // private-key billing → 0 credits).
         const catalogCredits = typeof info.credits === "number" ? info.credits : null;
-        const stepCredits = stepStats?.cost
-          ? resolveEffectiveCredits(stepStats.cost, catalogCredits)
-          : catalogCredits;
+        let stepCredits;
+        if (ai) {
+          const stepField = fieldById[step.fieldId];
+          const modelOptions = __cb.getModelOptions?.() ?? info.modelOptions;
+          const rawModel = __cb.readInputBindingValue?.(
+            stepField?.typeSettings?.inputsBinding,
+            "model"
+          );
+          let modelCredit = null;
+          if (modelOptions && rawModel) {
+            const matched = __cb.matchKnownModel?.(
+              String(rawModel).replace(/^"|"$/g, "").trim(),
+              modelOptions
+            );
+            if (matched && Number.isFinite(matched.credits)) modelCredit = matched.credits;
+          }
+          if (modelCredit == null) modelCredit = catalogCredits;
+          if (stepStats?.cost?.unlimited || stepStats?.cost?.isPrivateKey) {
+            stepCredits = 0;
+          } else {
+            stepCredits = modelCredit;
+          }
+        } else {
+          stepCredits = stepStats?.cost
+            ? resolveEffectiveCredits(stepStats.cost, catalogCredits)
+            : catalogCredits;
+        }
         providers.push({
           actionKey: step.actionKey,
           packageId: step.actionPackageId ?? "clay",
@@ -1147,7 +1209,10 @@
           iconUrl: info.iconUrl ?? null,
           credits: stepCredits,
           isAi: !!ai,
-          modelOptions: ai ? (info.modelOptions ?? __cb.getModelOptions()) : null,
+          // Same staleness fix as buildErCardData above — prefer the
+          // live getModelOptions() so the popover dropdown shows
+          // workspace-scaled variable-priced credits.
+          modelOptions: ai ? (__cb.getModelOptions?.() ?? info.modelOptions) : null,
           requiresApiKey: !!info.requiresApiKey,
           // usePrivateKey on a provider is what deriveWaterfallTotals reads
           // to decide whether to add this step's `credits` to the per-row
