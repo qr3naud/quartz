@@ -32,6 +32,184 @@
   // entries become orphan keys that buildRows() never reads.
   const collapsedGroups = new Set();
 
+  // ---- Selection / drag / context menu state ----
+  //
+  // All transient — lives at module scope for the lifetime of one mount.
+  // Cleared on unmount() so re-mounting starts fresh. Selection survives
+  // refresh() for any rowId still present on the canvas; orphan ids are
+  // dropped silently when applySelectionClasses runs against the new DOM.
+
+  // rowId === cardId for DP / orphan-er rows; sectionKey ("g-{id}") for
+  // group header rows. We keep them in the same set so range-select can
+  // span row types without special-casing.
+  const selectedRowIds = new Set();
+  let selectionAnchorId = null;
+
+  // Built fresh on every render() — ordered list of row identifiers that are
+  // currently visible (skipping collapsed group bodies). Powers shift+click
+  // range selection and drag drop-target resolution.
+  let visibleRowOrder = [];
+
+  // Drag-and-drop reorder. dragState is non-null only while the user is
+  // actively dragging. dragInProgress also gates refresh() so a canvas
+  // change mid-drag doesn't tear down the dragged row's DOM.
+  let dragState = null;
+  let dragInProgress = false;
+  let dragMoveHandler = null;
+  let dragUpHandler = null;
+  let dropIndicatorEl = null;
+
+  // Context menu — single open instance at a time.
+  let contextMenuEl = null;
+  let contextMenuBackdrop = null;
+
+  // After a Group action the new section's label input wants focus so the
+  // user types the name immediately. We can't focus it synchronously
+  // because render() hasn't run yet (it fires off notifyChange →
+  // onCanvasStateChange). Stash the section key here and let the next
+  // render pick it up + clear it.
+  let pendingFocusGroupId = null;
+
+  // ---- Row identity helpers ----
+
+  function isDpRowId(rowId) {
+    if (typeof rowId !== "string" && typeof rowId !== "number") return false;
+    const card = __cb.canvas?.getCardById?.(rowId);
+    return !!card && card.data?.type === "dp";
+  }
+
+  function isErRowId(rowId) {
+    const card = __cb.canvas?.getCardById?.(rowId);
+    return !!card && isErType(card.data?.type);
+  }
+
+  function getDpRowsInSelection() {
+    return [...selectedRowIds].filter(isDpRowId);
+  }
+
+  function getCardsForSelection() {
+    const ids = [...selectedRowIds];
+    return ids
+      .map((id) => __cb.canvas?.getCardById?.(id))
+      .filter(Boolean);
+  }
+
+  // Find the snap-cluster a card belongs to. Returns the array of cardIds
+  // (the cluster), or [cardId] if the card sits alone (snap-cluster algo
+  // only emits clusters of size >= 2).
+  function getClusterForCard(cardId) {
+    const canvas = __cb.canvas;
+    if (!canvas?.getSnapClusters) return [cardId];
+    for (const cl of canvas.getSnapClusters()) {
+      if (cl.includes(cardId)) return cl.slice();
+    }
+    return [cardId];
+  }
+
+  // ---- Selection mutators ----
+
+  function setSelection(rowIds, anchor) {
+    selectedRowIds.clear();
+    for (const id of rowIds) selectedRowIds.add(id);
+    selectionAnchorId = anchor ?? (rowIds.length > 0 ? rowIds[0] : null);
+    applySelectionClasses();
+  }
+
+  function toggleSelection(rowId) {
+    if (selectedRowIds.has(rowId)) {
+      selectedRowIds.delete(rowId);
+      if (selectionAnchorId === rowId) {
+        selectionAnchorId = selectedRowIds.size > 0 ? [...selectedRowIds][0] : null;
+      }
+    } else {
+      selectedRowIds.add(rowId);
+      selectionAnchorId = rowId;
+    }
+    applySelectionClasses();
+  }
+
+  function extendSelectionTo(rowId) {
+    if (!selectionAnchorId || visibleRowOrder.length === 0) {
+      setSelection([rowId], rowId);
+      return;
+    }
+    const a = visibleRowOrder.indexOf(selectionAnchorId);
+    const b = visibleRowOrder.indexOf(rowId);
+    if (a === -1 || b === -1) {
+      setSelection([rowId], rowId);
+      return;
+    }
+    const lo = Math.min(a, b);
+    const hi = Math.max(a, b);
+    selectedRowIds.clear();
+    for (let i = lo; i <= hi; i++) selectedRowIds.add(visibleRowOrder[i]);
+    applySelectionClasses();
+  }
+
+  function clearSelection() {
+    if (selectedRowIds.size === 0 && !selectionAnchorId) return;
+    selectedRowIds.clear();
+    selectionAnchorId = null;
+    applySelectionClasses();
+  }
+
+  // Refresh the selection class on every visible row. Cheap — runs over the
+  // currently-rendered <tr>s only. Called after any selection change and
+  // after every render() so re-renders preserve the highlight.
+  function applySelectionClasses() {
+    if (!hostEl) return;
+    const rows = hostEl.querySelectorAll("[data-row-id]");
+    for (const row of rows) {
+      const id = row.getAttribute("data-row-id");
+      row.classList.toggle("cb-table-view-row-selected", selectedRowIds.has(id));
+    }
+  }
+
+  // Click handler factory for row <tr>s. We attach it on the row body and
+  // rely on stopPropagation in inputs / chips / buttons (which they already
+  // do for editing) so cell-level interactions don't accidentally toggle
+  // the row selection.
+  function onRowClick(rowId, evt) {
+    // Right-click handled separately — bail out so contextmenu doesn't
+    // race the click event for the selection state.
+    if (evt.button !== 0) return;
+    if (evt.shiftKey) {
+      extendSelectionTo(rowId);
+    } else if (evt.metaKey || evt.ctrlKey) {
+      toggleSelection(rowId);
+    } else {
+      setSelection([rowId], rowId);
+    }
+  }
+
+  // Document-level handlers installed once per mount(). Outside-clicks
+  // clear the selection unless they're inside the table or the context
+  // menu. Esc clears too.
+  function onDocClick(evt) {
+    if (!hostEl) return;
+    if (hostEl.contains(evt.target)) return;
+    if (contextMenuEl && contextMenuEl.contains(evt.target)) return;
+    clearSelection();
+  }
+
+  function onDocKeyDown(evt) {
+    if (evt.key !== "Escape") return;
+    if (dragState) {
+      cancelDrag();
+      evt.preventDefault();
+      return;
+    }
+    if (contextMenuEl) {
+      closeContextMenu();
+      evt.preventDefault();
+      return;
+    }
+    if (selectedRowIds.size > 0) {
+      clearSelection();
+      evt.preventDefault();
+    }
+  }
+
   // Sentinel key for the "Unattached enrichments" pseudo-section at the
   // top of the table. Treated like any other group id by collapsedGroups
   // so the rep's expand / collapse choice survives re-renders.
@@ -154,21 +332,44 @@
     //      titled comment) → bucket under the comment text.
     //   3. Otherwise → flat dpRows (preserves the un-grouped layout
     //      reps already had for canvas-created data points).
-    const groupSectionsMap = new Map();
-    const flatDpRows = [];
-    for (const card of allCards) {
-      if (card.data.type !== "dp") continue;
+    // Quick id → card lookup. Cheaper than calling getCardById in tight
+    // loops (Y sort, erKey lookup, drag block resolution).
+    const cardById = new Map();
+    for (const c of allCards) cardById.set(c.id, c);
+
+    // erKey: stable string identity for a row's ER set, used to detect
+    // contiguous DP rows that share the same ERs (Link result OR organic
+    // multi-DP cluster) so render() can collapse the merged ERs / credits
+    // / actions cells via rowspan. Empty erList → null erKey, which
+    // disqualifies the row from merge runs (we never collapse "no ERs").
+    function erKeyForList(ers) {
+      if (!ers || ers.length === 0) return null;
+      const ids = ers.map((e) => e.id).slice().sort();
+      return ids.join("|");
+    }
+
+    function buildDpRowFromCard(card) {
       const info = dpInfoMap.get(card.id);
-      const row = {
+      const ers = info ? info.ers : [];
+      return {
         kind: "dp",
         cardId: card.id,
+        y: card.y,
         name: card.data.text || card.data.displayName || "",
         fillRatePct: fillRatePct(card.data.fillRate),
         credits: info ? info.credits : 0,
         actions: info ? info.actions : 0,
-        ers: info ? info.ers : [],
+        ers,
+        erKey: erKeyForList(ers),
         connected: !!info && info.enrichmentCount > 0,
       };
+    }
+
+    const groupSectionsMap = new Map();
+    const flatDpRows = [];
+    for (const card of allCards) {
+      if (card.data.type !== "dp") continue;
+      const row = buildDpRowFromCard(card);
 
       let sectionKey = null;
       let sectionName = null;
@@ -188,10 +389,29 @@
           groupSectionsMap.set(sectionKey, {
             groupId: sectionKey,
             groupName: sectionName,
+            // Real cb-groups carry an editable label that writes back to
+            // the canvas's .cb-group-label input; legacy comment-card
+            // sections do not (the canvas has no input element to write
+            // through to). buildGroupHeaderRow flips between editable
+            // input and read-only span based on this flag.
+            editable: sectionKey.startsWith("g-"),
+            // Numeric canvas group id, used by commitGroupLabel to find
+            // the live .cb-group-label DOM element via [data-group-id].
+            // Null for legacy comment-card sections.
+            canvasGroupId: sectionKey.startsWith("g-")
+              ? Number(sectionKey.slice(2))
+              : null,
             rows: [],
+            // Tracked for Y sorting at render time — sections sit above
+            // the flat DP rows in topological order, but within that
+            // category we order by the topmost member's Y so reorder
+            // results are visible after refresh.
+            minY: Infinity,
           });
         }
-        groupSectionsMap.get(sectionKey).rows.push(row);
+        const section = groupSectionsMap.get(sectionKey);
+        section.rows.push(row);
+        if (card.y < section.minY) section.minY = card.y;
       } else {
         flatDpRows.push(row);
       }
@@ -213,15 +433,30 @@
       orphanErRows.push({
         kind: "orphan-er",
         cardId: card.id,
+        y: card.y,
         credits,
         actions,
         er: buildErChipData(card),
       });
     }
 
+    // Y-sort everything — drag-to-reorder shifts cards' y values directly
+    // on the canvas, and refresh() re-runs buildRows; sorting here is
+    // what makes the new order visible. Within a snap-cluster, multiple
+    // DP rows share a single (host's) y so the relative order between
+    // linked DPs is stable.
+    flatDpRows.sort((a, b) => a.y - b.y);
+    orphanErRows.sort((a, b) => a.y - b.y);
+    for (const section of groupSectionsMap.values()) {
+      section.rows.sort((a, b) => a.y - b.y);
+    }
+    const groupSections = Array.from(groupSectionsMap.values()).sort(
+      (a, b) => a.minY - b.minY,
+    );
+
     return {
       orphanErRows,
-      groupSections: Array.from(groupSectionsMap.values()),
+      groupSections,
       dpRows: flatDpRows,
     };
   }
@@ -350,6 +585,545 @@
     return card;
   }
 
+  // ---- Group action ----
+  //
+  // Mirrors a canvas Shift+Enter onto the selected DPs. Reuses the existing
+  // canvas.groupCardsByIds helper so theming, undo, persistence, and the
+  // Supabase round-trip all flow through the canonical path. We pass
+  // skipFocus because canvas.groupCardsByIds tries to focus the new
+  // group's label input on the (display:none) canvas — useless in Tables
+  // mode. Instead we stash the new group's section key in
+  // pendingFocusGroupId so the next render() can focus the section's
+  // header input in the table.
+
+  function groupSelected() {
+    const canvas = __cb.canvas;
+    if (!canvas?.groupCardsByIds) return;
+    const dpIds = getDpRowsInSelection();
+    if (dpIds.length < 2) return;
+    const beforeIds = new Set(
+      (canvas.getGroups?.() || []).map((g) => g.id),
+    );
+    canvas.groupCardsByIds(dpIds, "", { skipFocus: true });
+    const afterGroups = canvas.getGroups?.() || [];
+    // Newest group = the one whose id we didn't see before. There's at
+    // most one because groupCardsByIds creates exactly one group per call.
+    const newGroup = afterGroups.find((g) => !beforeIds.has(g.id));
+    if (newGroup) {
+      pendingFocusGroupId = `g-${newGroup.id}`;
+      // Selection becomes meaningless once the rows are grouped (the user
+      // is about to type a name) — clear so the section header focus
+      // ring is the only highlight on screen.
+      clearSelection();
+    }
+  }
+
+  function commitGroupLabel(canvasGroupId, value) {
+    if (canvasGroupId == null) return;
+    const groupEl = document.querySelector(
+      `.cb-group[data-group-id="${canvasGroupId}"]`,
+    );
+    if (!groupEl) return;
+    const labelInput = groupEl.querySelector(".cb-group-label");
+    if (!labelInput) return;
+    if (labelInput.value === value) return;
+    labelInput.value = value;
+    // Dispatch the same input event the user typing in the canvas would
+    // fire, so canvas/groups.js's listener (sync mirror, updateGroupBounds,
+    // notifyChange) runs without us replicating its bookkeeping.
+    labelInput.dispatchEvent(new Event("input", { bubbles: true }));
+  }
+
+  // ---- Link action ----
+  //
+  // Stack the selected DPs vertically at the topmost-leftmost host's
+  // (x, y) so that the snap algorithm (canvas/snap.js, ADJACENCY_TOLERANCE
+  // = 1px) merges them into a single cluster on the next refreshClusters.
+  // After the merge, every selected DP shares the union of all originally-
+  // attached ERs — buildRows will emit identical erList for each row,
+  // and the auto-rowspan rendering collapses the shared cells.
+
+  function linkSelected() {
+    const canvas = __cb.canvas;
+    if (!canvas) return;
+    const dpIds = getDpRowsInSelection();
+    if (dpIds.length < 2) return;
+    const dpCards = dpIds
+      .map((id) => canvas.getCardById(id))
+      .filter(Boolean);
+    if (dpCards.length < 2) return;
+    // Topmost, then leftmost — deterministic and matches the visible
+    // order in the table.
+    const sortedDps = dpCards.slice().sort((a, b) => a.y - b.y || a.x - b.x);
+    const host = sortedDps[0];
+    const dpHeight = __cb.proMode ? 96 : 70;
+
+    // Move each non-host DP — and EVERY card in its cluster (its
+    // attached ERs) — to land the DP at (host.x, host.y + i*dpH). Moving
+    // the whole cluster as a block preserves the DP↔ER snap adjacency
+    // AND brings the ERs into the host's cluster's neighborhood, so the
+    // refresh below produces a single super-cluster containing every
+    // selected DP + every originally-attached ER.
+    const movedCardIds = new Set([host.id]);
+    sortedDps.slice(1).forEach((dp, i) => {
+      if (movedCardIds.has(dp.id)) return; // shouldn't happen, defensive
+      const cluster = getClusterForCard(dp.id);
+      const targetX = host.x;
+      const targetY = host.y + (i + 1) * dpHeight;
+      const deltaX = targetX - dp.x;
+      const deltaY = targetY - dp.y;
+      for (const cardId of cluster) {
+        if (movedCardIds.has(cardId)) continue;
+        const c = canvas.getCardById(cardId);
+        if (!c) continue;
+        moveCardTo(c, c.x + deltaX, c.y + deltaY);
+        movedCardIds.add(cardId);
+      }
+    });
+
+    if (canvas.refreshClusters) canvas.refreshClusters();
+    if (canvas.notifyChange) canvas.notifyChange();
+  }
+
+  // Direct (x, y) mutation on a card — same pattern attachDpToOrphanEr
+  // uses to drop a new card at a precise position. We also need to update
+  // the card.el's transform so the visual matches the model immediately;
+  // refreshClusters reads the model values, but render() pulls Y from
+  // card.y so the table sort lands correctly.
+  function moveCardTo(card, x, y) {
+    if (!card) return;
+    card.x = x;
+    card.y = y;
+    if (card.el) card.el.style.transform = `translate(${x}px, ${y}px)`;
+  }
+
+  // ---- Drag-and-reorder ----
+  //
+  // The "block" being dragged is the natural unit of the row:
+  //   - DP row → its snap-cluster (DPs + ERs together).
+  //   - Orphan-ER row → that single ER card.
+  //   - Group header → every card in the cb-group.
+  //
+  // Drops are limited to the SAME section (orphan rows reorder within
+  // orphans, in-group rows within their group, flat DPs within flat DPs,
+  // groups within groups). Cross-section drops are out of scope for v1
+  // because they require group reassignment.
+
+  function getBlockCardIdsForRow(rowId) {
+    const card = __cb.canvas?.getCardById?.(rowId);
+    if (!card) return [];
+    if (card.data?.type === "dp") {
+      return getClusterForCard(card.id);
+    }
+    if (isErType(card.data?.type)) {
+      // Orphan ER rows never share their cluster with DPs, so the block
+      // is just the ER itself plus any other ERs adjacent to it (rare).
+      return getClusterForCard(card.id);
+    }
+    return [card.id];
+  }
+
+  function getBlockCardIdsForGroup(canvasGroupId) {
+    const groups = __cb.canvas?.getGroups?.() || [];
+    const g = groups.find((gg) => gg.id === canvasGroupId);
+    return g ? g.cardIds.slice() : [];
+  }
+
+  function getBlockMinY(cardIds) {
+    const canvas = __cb.canvas;
+    if (!canvas?.getCardById) return 0;
+    let min = Infinity;
+    for (const id of cardIds) {
+      const c = canvas.getCardById(id);
+      if (c && c.y < min) min = c.y;
+    }
+    return Number.isFinite(min) ? min : 0;
+  }
+
+  function shiftBlockY(cardIds, deltaY) {
+    const canvas = __cb.canvas;
+    if (!canvas?.getCardById) return;
+    for (const id of cardIds) {
+      const c = canvas.getCardById(id);
+      if (!c) continue;
+      moveCardTo(c, c.x, c.y + deltaY);
+    }
+  }
+
+  function startBlockDrag(blockKind, blockKey, evt) {
+    if (evt.button !== 0) return;
+    evt.preventDefault();
+    evt.stopPropagation();
+    let cardIds = [];
+    if (blockKind === "row") {
+      cardIds = getBlockCardIdsForRow(blockKey);
+    } else if (blockKind === "group") {
+      cardIds = getBlockCardIdsForGroup(blockKey);
+    }
+    if (cardIds.length === 0) return;
+    dragInProgress = true;
+    dragState = {
+      blockKind,
+      blockKey,
+      cardIds,
+      startY: evt.clientY,
+      hoverRowId: null,
+      dropPosition: null,
+    };
+    // Visual cue on the source row(s).
+    if (hostEl) {
+      for (const cardId of cardIds) {
+        const r = hostEl.querySelector(`[data-row-id="${cardId}"]`);
+        if (r) r.classList.add("cb-table-view-row-dragging");
+      }
+      if (blockKind === "group") {
+        const r = hostEl.querySelector(`[data-row-id="g-${blockKey}"]`);
+        if (r) r.classList.add("cb-table-view-row-dragging");
+      }
+    }
+    dragMoveHandler = (e) => onDragMove(e);
+    dragUpHandler = (e) => onDragUp(e);
+    document.addEventListener("mousemove", dragMoveHandler);
+    document.addEventListener("mouseup", dragUpHandler);
+  }
+
+  function onDragMove(evt) {
+    if (!dragState || !hostEl) return;
+    const target = evt.target instanceof Element
+      ? evt.target.closest("[data-row-id]")
+      : null;
+    if (!target) {
+      hideDropIndicator();
+      dragState.hoverRowId = null;
+      dragState.dropPosition = null;
+      return;
+    }
+    const hoverRowId = target.getAttribute("data-row-id");
+    // Block dropping onto the dragged block itself.
+    if (isOwnBlock(hoverRowId)) {
+      hideDropIndicator();
+      dragState.hoverRowId = null;
+      dragState.dropPosition = null;
+      return;
+    }
+    // Restrict to same section (group block of the hover target must
+    // match the dragged block's section).
+    if (!isSameSection(hoverRowId)) {
+      hideDropIndicator();
+      dragState.hoverRowId = null;
+      dragState.dropPosition = null;
+      return;
+    }
+    const rect = target.getBoundingClientRect();
+    const above = evt.clientY < rect.top + rect.height / 2;
+    dragState.hoverRowId = hoverRowId;
+    dragState.dropPosition = above ? "above" : "below";
+    showDropIndicator(target, above);
+  }
+
+  function onDragUp() {
+    if (!dragState) {
+      cleanupDrag();
+      return;
+    }
+    const { hoverRowId, dropPosition } = dragState;
+    if (hoverRowId && dropPosition) {
+      performDrop(hoverRowId, dropPosition);
+    }
+    cleanupDrag();
+  }
+
+  function cancelDrag() {
+    cleanupDrag();
+  }
+
+  function cleanupDrag() {
+    if (hostEl) {
+      const dragging = hostEl.querySelectorAll(".cb-table-view-row-dragging");
+      for (const r of dragging) r.classList.remove("cb-table-view-row-dragging");
+    }
+    hideDropIndicator();
+    if (dragMoveHandler) document.removeEventListener("mousemove", dragMoveHandler);
+    if (dragUpHandler) document.removeEventListener("mouseup", dragUpHandler);
+    dragMoveHandler = null;
+    dragUpHandler = null;
+    dragState = null;
+    dragInProgress = false;
+  }
+
+  // True when hoverRowId belongs to the same set of cards we're dragging.
+  // Prevents reordering against ourselves (e.g. dropping a multi-card
+  // cluster onto one of its own DP rows).
+  function isOwnBlock(hoverRowId) {
+    if (!dragState) return false;
+    if (dragState.blockKind === "group" && hoverRowId === `g-${dragState.blockKey}`) {
+      return true;
+    }
+    if (dragState.cardIds.includes(hoverRowId)) return true;
+    return false;
+  }
+
+  function getRowSection(rowId) {
+    if (!hostEl) return null;
+    const tr = hostEl.querySelector(`[data-row-id="${rowId}"]`);
+    return tr ? tr.getAttribute("data-row-section") : null;
+  }
+
+  function isSameSection(hoverRowId) {
+    if (!dragState) return false;
+    const sourceKey = dragState.blockKind === "group"
+      ? `g-${dragState.blockKey}`
+      : dragState.cardIds[0];
+    const sourceSection = getRowSection(sourceKey) || "";
+    const targetSection = getRowSection(hoverRowId) || "";
+    return sourceSection === targetSection;
+  }
+
+  function showDropIndicator(rowEl, above) {
+    if (!hostEl) return;
+    if (!dropIndicatorEl) {
+      dropIndicatorEl = document.createElement("div");
+      dropIndicatorEl.className = "cb-table-view-drop-indicator";
+      hostEl.appendChild(dropIndicatorEl);
+    }
+    const hostRect = hostEl.getBoundingClientRect();
+    const rect = rowEl.getBoundingClientRect();
+    // Indicator is positioned absolutely inside the host. We want it to
+    // sit at the top or bottom edge of the hovered row, accounting for
+    // the host's scroll offset (the table can scroll vertically when
+    // there are many rows).
+    const top = above
+      ? rect.top - hostRect.top + hostEl.scrollTop
+      : rect.bottom - hostRect.top + hostEl.scrollTop;
+    dropIndicatorEl.style.top = `${top}px`;
+    dropIndicatorEl.style.left = `${rect.left - hostRect.left}px`;
+    dropIndicatorEl.style.width = `${rect.width}px`;
+    dropIndicatorEl.style.display = "block";
+  }
+
+  function hideDropIndicator() {
+    if (dropIndicatorEl) dropIndicatorEl.style.display = "none";
+  }
+
+  // Re-stack approach: gather every block in the affected section, sort
+  // by current minY, splice the dragged block to its new index, then
+  // assign sequential Y values starting from the section's current top.
+  // This avoids overlap on the canvas AND keeps the table sort visible
+  // because sort-by-Y + sequential Y == sort-by-position.
+  function performDrop(hoverRowId, dropPosition) {
+    const canvas = __cb.canvas;
+    if (!canvas) return;
+    const sectionBlocks = collectSectionBlocks(hoverRowId);
+    if (sectionBlocks.length < 2) return;
+    const draggedKey = dragState.blockKind === "group"
+      ? `group:${dragState.blockKey}`
+      : `row:${dragState.cardIds[0]}`;
+    const draggedIdx = sectionBlocks.findIndex((b) => b.key === draggedKey);
+    if (draggedIdx === -1) return;
+    const [moved] = sectionBlocks.splice(draggedIdx, 1);
+    let targetIdx = sectionBlocks.findIndex((b) =>
+      b.cardIds.includes(hoverRowId) ||
+      b.key === `group:${hoverRowId.startsWith("g-") ? hoverRowId.slice(2) : hoverRowId}`,
+    );
+    if (targetIdx === -1) {
+      // Couldn't resolve target — bail without mutating.
+      sectionBlocks.splice(draggedIdx, 0, moved);
+      return;
+    }
+    if (dropPosition === "below") targetIdx += 1;
+    sectionBlocks.splice(targetIdx, 0, moved);
+
+    // Re-stack from the section's current minY (preserves the section's
+    // vertical position on the canvas). Sequential gap = 0 keeps clusters
+    // tight; the cards' own heights provide the visual spacing.
+    const baseY = Math.min(...sectionBlocks.map((b) => b.minY));
+    let cursorY = baseY;
+    for (const block of sectionBlocks) {
+      const deltaY = cursorY - block.minY;
+      if (deltaY !== 0) shiftBlockY(block.cardIds, deltaY);
+      cursorY += block.height;
+    }
+    if (canvas.refreshClusters) canvas.refreshClusters();
+    if (canvas.notifyChange) canvas.notifyChange();
+  }
+
+  // Build the list of {key, cardIds, minY, height} blocks for whatever
+  // section the dragged row belongs to. Same-section restriction is
+  // already enforced upstream, so we only need to enumerate one section.
+  function collectSectionBlocks(hoverRowId) {
+    const canvas = __cb.canvas;
+    if (!canvas) return [];
+    const section = getRowSection(hoverRowId) || "";
+    const blocks = [];
+    if (section === "groups") {
+      // Groups section: each block is one cb-group.
+      for (const g of canvas.getGroups?.() || []) {
+        const cardIds = g.cardIds.slice();
+        if (cardIds.length === 0) continue;
+        const minY = getBlockMinY(cardIds);
+        const height = blockHeight(cardIds);
+        blocks.push({
+          key: `group:${g.id}`,
+          cardIds,
+          minY,
+          height,
+        });
+      }
+    } else if (section === "orphan") {
+      // Orphan section: each ER (or ER-only cluster) is its own block.
+      const seen = new Set();
+      for (const c of canvas.getCards()) {
+        if (!isErType(c.data?.type)) continue;
+        if (seen.has(c.id)) continue;
+        const cluster = getClusterForCard(c.id);
+        // Skip clusters that contain a DP — they belong to a DP section,
+        // not the orphan section.
+        const hasDp = cluster.some((id) => {
+          const cc = canvas.getCardById(id);
+          return cc?.data?.type === "dp";
+        });
+        if (hasDp) continue;
+        for (const id of cluster) seen.add(id);
+        blocks.push({
+          key: `row:${c.id}`,
+          cardIds: cluster,
+          minY: getBlockMinY(cluster),
+          height: blockHeight(cluster),
+        });
+      }
+    } else if (section === "flat") {
+      // Flat DP rows (no group, no comment-card cluster) — one block per
+      // snap-cluster.
+      const seen = new Set();
+      for (const c of canvas.getCards()) {
+        if (c.data?.type !== "dp") continue;
+        if (c.groupId != null) continue;
+        if (c.data.groupCluster) continue;
+        if (seen.has(c.id)) continue;
+        const cluster = getClusterForCard(c.id);
+        for (const id of cluster) seen.add(id);
+        blocks.push({
+          key: `row:${c.id}`,
+          cardIds: cluster,
+          minY: getBlockMinY(cluster),
+          height: blockHeight(cluster),
+        });
+      }
+    } else if (section.startsWith("section:")) {
+      // Inside a group (real cb-group OR legacy comment-card section) —
+      // each snap-cluster of DPs in that group is one block.
+      const sectionKey = section.slice("section:".length);
+      const isRealGroup = sectionKey.startsWith("g-");
+      const realGroupId = isRealGroup ? Number(sectionKey.slice(2)) : null;
+      const commentClusterId = !isRealGroup && sectionKey.startsWith("c-")
+        ? sectionKey.slice(2)
+        : null;
+      const seen = new Set();
+      for (const c of canvas.getCards()) {
+        if (c.data?.type !== "dp") continue;
+        if (isRealGroup && c.groupId !== realGroupId) continue;
+        if (commentClusterId != null && c.data.groupCluster !== commentClusterId) continue;
+        if (seen.has(c.id)) continue;
+        const cluster = getClusterForCard(c.id);
+        for (const id of cluster) seen.add(id);
+        blocks.push({
+          key: `row:${c.id}`,
+          cardIds: cluster,
+          minY: getBlockMinY(cluster),
+          height: blockHeight(cluster),
+        });
+      }
+    }
+    blocks.sort((a, b) => a.minY - b.minY);
+    return blocks;
+  }
+
+  // Vertical span of a block — max(card.y + card.h) - min(card.y). Used
+  // to size the post-drop sequential layout so blocks don't overlap.
+  function blockHeight(cardIds) {
+    const canvas = __cb.canvas;
+    if (!canvas?.getCardById) return 0;
+    let minY = Infinity;
+    let maxBottom = -Infinity;
+    for (const id of cardIds) {
+      const c = canvas.getCardById(id);
+      if (!c) continue;
+      const h = c.el?.offsetHeight || (__cb.proMode ? 96 : 70);
+      if (c.y < minY) minY = c.y;
+      const bottom = c.y + h;
+      if (bottom > maxBottom) maxBottom = bottom;
+    }
+    if (!Number.isFinite(minY) || !Number.isFinite(maxBottom)) return 0;
+    return maxBottom - minY;
+  }
+
+  // ---- Context menu ----
+
+  function openContextMenu(x, y) {
+    closeContextMenu();
+    const dpIds = getDpRowsInSelection();
+    const items = [];
+    if (dpIds.length >= 2) {
+      items.push({
+        id: "group",
+        label: `Group ${dpIds.length} data points`,
+        action: () => groupSelected(),
+      });
+      items.push({
+        id: "link",
+        label: `Link ${dpIds.length} data points (share enrichments)`,
+        action: () => linkSelected(),
+      });
+    }
+    if (items.length === 0) return;
+
+    contextMenuBackdrop = document.createElement("div");
+    contextMenuBackdrop.className = "cb-table-view-context-backdrop";
+    contextMenuBackdrop.addEventListener("mousedown", (evt) => {
+      evt.stopPropagation();
+      closeContextMenu();
+    });
+
+    contextMenuEl = document.createElement("div");
+    contextMenuEl.className = "cb-table-view-context-menu";
+    contextMenuEl.addEventListener("mousedown", (evt) => evt.stopPropagation());
+    for (const item of items) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "cb-table-view-context-menu-option";
+      btn.textContent = item.label;
+      btn.addEventListener("click", () => {
+        closeContextMenu();
+        item.action();
+      });
+      contextMenuEl.appendChild(btn);
+    }
+
+    document.body.appendChild(contextMenuBackdrop);
+    document.body.appendChild(contextMenuEl);
+    // Keep the menu inside the viewport even when right-clicking near the
+    // bottom-right edge.
+    const rect = contextMenuEl.getBoundingClientRect();
+    const left = Math.min(x, window.innerWidth - rect.width - 8);
+    const top = Math.min(y, window.innerHeight - rect.height - 8);
+    contextMenuEl.style.left = `${Math.max(8, left)}px`;
+    contextMenuEl.style.top = `${Math.max(8, top)}px`;
+  }
+
+  function closeContextMenu() {
+    if (contextMenuEl) { contextMenuEl.remove(); contextMenuEl = null; }
+    if (contextMenuBackdrop) { contextMenuBackdrop.remove(); contextMenuBackdrop = null; }
+  }
+
+  function onRowContextMenu(rowId, evt) {
+    evt.preventDefault();
+    evt.stopPropagation();
+    if (!selectedRowIds.has(rowId)) {
+      setSelection([rowId], rowId);
+    }
+    openContextMenu(evt.clientX, evt.clientY);
+  }
+
   // ---- Rendering ----
 
   function render() {
@@ -410,7 +1184,10 @@
 
     const thead = document.createElement("thead");
     const headRow = document.createElement("tr");
+    // Leftmost "drag" column carries the gripper handle on every body row.
+    // Empty header label so the column reads as control affordance, not data.
     const headers = [
+      { label: "", cls: "col-drag" },
       { label: "Data point", cls: "col-dp" },
       { label: "Fill rate (%)", cls: "col-fill" },
       { label: "Credits / row", cls: "col-credits" },
@@ -433,6 +1210,11 @@
       dpRows.length +
       groupSections.reduce((sum, g) => sum + g.rows.length, 0);
 
+    // Reset the rendered-row-order list every render(). Built incrementally
+    // as we append rows so shift+click range select uses the same order
+    // the user sees on screen.
+    visibleRowOrder = [];
+
     if (orphanErRows.length === 0 && totalDpCount === 0) {
       const empty = document.createElement("tr");
       empty.className = "cb-table-view-empty-row";
@@ -453,20 +1235,35 @@
         const orphansCollapsed = collapsedGroups.has(ORPHAN_SECTION_KEY);
         tbody.appendChild(buildOrphanGroupHeaderRow(orphanErRows, headers.length, orphansCollapsed));
         if (!orphansCollapsed) {
-          for (const row of orphanErRows) tbody.appendChild(buildOrphanDpStyleRow(row));
+          for (const row of orphanErRows) {
+            tbody.appendChild(buildOrphanDpStyleRow(row));
+            visibleRowOrder.push(String(row.cardId));
+          }
         }
       }
       // Group sections render as a header row spanning all columns,
-      // followed by the cluster's DP rows (unless collapsed). Order matches
-      // the canvas (groups in insertion order = top-to-bottom layout order).
+      // followed by the cluster's DP rows (unless collapsed). Within each
+      // section we run rowspan-merge annotation so contiguous DPs that
+      // share the same ER list collapse into a single visual cell — the
+      // direct outcome of Link, plus a passive polish for any other
+      // multi-DP cluster that organically forms on the canvas.
       for (const section of groupSections) {
         const isCollapsed = collapsedGroups.has(section.groupId);
         tbody.appendChild(buildGroupHeaderRow(section, headers.length, isCollapsed));
+        visibleRowOrder.push(section.groupId);
         if (!isCollapsed) {
-          for (const row of section.rows) tbody.appendChild(buildDpRow(row));
+          annotateMergeRuns(section.rows);
+          for (const row of section.rows) {
+            tbody.appendChild(buildDpRow(row, `section:${section.groupId}`));
+            visibleRowOrder.push(String(row.cardId));
+          }
         }
       }
-      for (const row of dpRows) tbody.appendChild(buildDpRow(row));
+      annotateMergeRuns(dpRows);
+      for (const row of dpRows) {
+        tbody.appendChild(buildDpRow(row, "flat"));
+        visibleRowOrder.push(String(row.cardId));
+      }
     }
 
     tbody.appendChild(buildAddDpRow(headers.length));
@@ -476,13 +1273,66 @@
     wrap.appendChild(tableContainer);
 
     hostEl.appendChild(wrap);
+
+    // Re-apply selection highlight and consume any pending focus request
+    // (Group action stashes the new section's key here; we focus the
+    // matching label input now that it's in the DOM).
+    applySelectionClasses();
+    if (pendingFocusGroupId) {
+      const labelInput = hostEl.querySelector(
+        `[data-row-id="${pendingFocusGroupId}"] .cb-table-view-group-row-label-input`,
+      );
+      if (labelInput) {
+        labelInput.focus();
+        labelInput.select();
+      }
+      pendingFocusGroupId = null;
+    }
+  }
+
+  // Walk a section's DP rows in render order, group consecutive rows by
+  // erKey, and stamp each row with mergeMode + mergeSpan. mergeMode is one
+  // of "first" (host of a >=2-row merge — render the merged cells with
+  // rowspan), "skip" (a follower in a merge run — don't emit the merged
+  // cells), or "single" (no merge). The row builder reads these flags
+  // when constructing <td>s.
+  function annotateMergeRuns(rows) {
+    let i = 0;
+    while (i < rows.length) {
+      const key = rows[i].erKey;
+      // erKey is null for rows with no enrichments; never merge those —
+      // collapsing "no ERs" cells across rows would visually imply a
+      // shared ER set when there's nothing to share.
+      if (!key) {
+        rows[i].mergeMode = "single";
+        rows[i].mergeSpan = 1;
+        i++;
+        continue;
+      }
+      let j = i;
+      while (j < rows.length && rows[j].erKey === key) j++;
+      const span = j - i;
+      if (span === 1) {
+        rows[i].mergeMode = "single";
+        rows[i].mergeSpan = 1;
+      } else {
+        rows[i].mergeMode = "first";
+        rows[i].mergeSpan = span;
+        for (let k = i + 1; k < j; k++) {
+          rows[k].mergeMode = "skip";
+          rows[k].mergeSpan = 1;
+        }
+      }
+      i = j;
+    }
   }
 
   // Yellow group-header row that sits above the unattached-enrichments
   // section. Reuses the .cb-table-view-group-row scaffolding (chevron +
   // icon + label + count + collapse toggle) so the orphan section
   // collapses the same way Use Case sections do; the yellow palette is
-  // applied via .cb-table-view-orphan-group-row.
+  // applied via .cb-table-view-orphan-group-row. Not draggable — orphan
+  // section position is fixed at the top.
   function buildOrphanGroupHeaderRow(orphanErRows, colSpan, isCollapsed) {
     const tr = document.createElement("tr");
     tr.className =
@@ -541,6 +1391,36 @@
     return tr;
   }
 
+  // Build a drag-handle <td> for the leftmost column. Mousedown initiates
+  // a drag of `blockKind` (`row` for an orphan/DP row, `group` for a
+  // group header) keyed by `blockKey`. Visual: a 6-dot gripper icon that
+  // shows on row hover (CSS controls visibility).
+  function buildDragHandleCell(blockKind, blockKey) {
+    const td = document.createElement("td");
+    td.className = "col-drag";
+    const handle = document.createElement("span");
+    handle.className = "cb-table-view-drag-handle";
+    handle.title = "Drag to reorder";
+    handle.setAttribute("aria-hidden", "true");
+    handle.innerHTML = gripperSvg(12);
+    handle.addEventListener("mousedown", (evt) => {
+      // Stop propagation so the row click handler doesn't toggle selection
+      // when the user starts a drag.
+      evt.stopPropagation();
+      startBlockDrag(blockKind, blockKey, evt);
+    });
+    td.appendChild(handle);
+    return td;
+  }
+
+  // Wires generic row interaction handlers (selection click, right-click
+  // context menu) onto a <tr>. Caller is responsible for adding the
+  // data-row-id and data-row-section attributes before calling.
+  function attachRowInteractionHandlers(tr, rowId) {
+    tr.addEventListener("click", (evt) => onRowClick(rowId, evt));
+    tr.addEventListener("contextmenu", (evt) => onRowContextMenu(rowId, evt));
+  }
+
   // Looks like a regular DP row but the DP cell carries an editable
   // placeholder input ("Add data point name…") rather than a value bound
   // to an existing card. Committing a non-empty name calls
@@ -552,6 +1432,11 @@
     const tr = document.createElement("tr");
     tr.className = "cb-table-view-dp-row cb-table-view-orphan-dp-row";
     tr.setAttribute("data-card-id", String(row.cardId));
+    tr.setAttribute("data-row-id", String(row.cardId));
+    tr.setAttribute("data-row-section", "orphan");
+    attachRowInteractionHandlers(tr, String(row.cardId));
+
+    tr.appendChild(buildDragHandleCell("row", String(row.cardId)));
 
     const dpCell = document.createElement("td");
     dpCell.className = "col-dp";
@@ -631,10 +1516,21 @@
     if (canvas.notifyChange) canvas.notifyChange();
   }
 
-  function buildDpRow(row) {
+  function buildDpRow(row, sectionId) {
     const tr = document.createElement("tr");
-    tr.className = "cb-table-view-dp-row" + (row.connected ? "" : " cb-table-view-dp-row-unconnected");
+    const mergeMode = row.mergeMode || "single";
+    const mergeSpan = row.mergeSpan || 1;
+    const classes = ["cb-table-view-dp-row"];
+    if (!row.connected) classes.push("cb-table-view-dp-row-unconnected");
+    if (mergeMode === "first" && mergeSpan > 1) classes.push("cb-table-view-dp-row-merge-first");
+    if (mergeMode === "skip") classes.push("cb-table-view-dp-row-merge-follow");
+    tr.className = classes.join(" ");
     tr.setAttribute("data-card-id", String(row.cardId));
+    tr.setAttribute("data-row-id", String(row.cardId));
+    tr.setAttribute("data-row-section", sectionId || "flat");
+    attachRowInteractionHandlers(tr, String(row.cardId));
+
+    tr.appendChild(buildDragHandleCell("row", String(row.cardId)));
 
     const dpCell = document.createElement("td");
     dpCell.className = "col-dp";
@@ -643,6 +1539,10 @@
     dpInput.className = "cb-table-view-cell-input cb-table-view-cell-input-text";
     dpInput.value = row.name;
     dpInput.placeholder = "Type data point\u2026";
+    // Stop propagation on the input itself so clicking-to-edit doesn't
+    // also toggle row selection. Same trick the existing chip x button uses.
+    dpInput.addEventListener("mousedown", (evt) => evt.stopPropagation());
+    dpInput.addEventListener("click", (evt) => evt.stopPropagation());
     dpInput.addEventListener("keydown", (evt) => {
       if (evt.key === "Enter") evt.target.blur();
     });
@@ -659,6 +1559,8 @@
     fillInput.step = "1";
     fillInput.className = "cb-table-view-cell-input cb-table-view-cell-input-num";
     fillInput.value = String(row.fillRatePct);
+    fillInput.addEventListener("mousedown", (evt) => evt.stopPropagation());
+    fillInput.addEventListener("click", (evt) => evt.stopPropagation());
     fillInput.addEventListener("keydown", (evt) => {
       if (evt.key === "Enter") evt.target.blur();
     });
@@ -670,37 +1572,44 @@
     fillCell.appendChild(fillSuffix);
     tr.appendChild(fillCell);
 
-    const creditsCell = document.createElement("td");
-    creditsCell.className = "col-credits cb-table-view-cell-readonly";
-    creditsCell.textContent = formatNumber(row.credits);
-    tr.appendChild(creditsCell);
+    // Credits / actions / ERs collapse into the "first" row of a merge
+    // run via rowspan. Followers ("skip") emit no <td> for these columns
+    // — the host's rowspan covers them.
+    if (mergeMode !== "skip") {
+      const creditsCell = document.createElement("td");
+      creditsCell.className = "col-credits cb-table-view-cell-readonly";
+      if (mergeSpan > 1) creditsCell.rowSpan = mergeSpan;
+      creditsCell.textContent = formatNumber(row.credits);
+      tr.appendChild(creditsCell);
 
-    const actionsCell = document.createElement("td");
-    actionsCell.className = "col-actions cb-table-view-cell-readonly";
-    actionsCell.textContent = formatNumber(row.actions);
-    tr.appendChild(actionsCell);
+      const actionsCell = document.createElement("td");
+      actionsCell.className = "col-actions cb-table-view-cell-readonly";
+      if (mergeSpan > 1) actionsCell.rowSpan = mergeSpan;
+      actionsCell.textContent = formatNumber(row.actions);
+      tr.appendChild(actionsCell);
 
-    const ersCell = document.createElement("td");
-    ersCell.className = "col-ers";
-    const chipsWrap = document.createElement("div");
-    chipsWrap.className = "cb-table-view-er-chips";
-    for (const er of row.ers) {
-      // DP rows used to render non-removable chips on the theory that the
-      // row's × delete handled cleanup. That breaks for DPs with 2+ ERs:
-      // there's no way to drop a single enrichment without leaving the
-      // table view. The row × still deletes the DP itself; the chip ×
-      // only deletes the ER it sits on.
-      chipsWrap.appendChild(buildErChipEl(er, /* removable */ true));
+      const ersCell = document.createElement("td");
+      ersCell.className = "col-ers" + (mergeSpan > 1 ? " cb-table-view-cell-merged" : "");
+      if (mergeSpan > 1) ersCell.rowSpan = mergeSpan;
+      const chipsWrap = document.createElement("div");
+      chipsWrap.className = "cb-table-view-er-chips";
+      for (const er of row.ers) {
+        chipsWrap.appendChild(buildErChipEl(er, /* removable */ true));
+      }
+      const addErBtn = document.createElement("button");
+      addErBtn.type = "button";
+      addErBtn.className = "cb-table-view-add-er-chip";
+      addErBtn.title = "Add an enrichment to this data point";
+      addErBtn.innerHTML = plusSvg(11) + "<span>Add enrichment</span>";
+      addErBtn.addEventListener("mousedown", (evt) => evt.stopPropagation());
+      addErBtn.addEventListener("click", (evt) => {
+        evt.stopPropagation();
+        startAddEnrichment(row.cardId);
+      });
+      chipsWrap.appendChild(addErBtn);
+      ersCell.appendChild(chipsWrap);
+      tr.appendChild(ersCell);
     }
-    const addErBtn = document.createElement("button");
-    addErBtn.type = "button";
-    addErBtn.className = "cb-table-view-add-er-chip";
-    addErBtn.title = "Add an enrichment to this data point";
-    addErBtn.innerHTML = plusSvg(11) + "<span>Add enrichment</span>";
-    addErBtn.addEventListener("click", () => startAddEnrichment(row.cardId));
-    chipsWrap.appendChild(addErBtn);
-    ersCell.appendChild(chipsWrap);
-    tr.appendChild(ersCell);
 
     const endCell = document.createElement("td");
     endCell.className = "col-actions-end";
@@ -710,7 +1619,11 @@
     delBtn.title = "Delete this data point from the canvas";
     delBtn.setAttribute("aria-label", "Delete data point");
     delBtn.innerHTML = xSvg(13);
-    delBtn.addEventListener("click", () => removeCardById(row.cardId));
+    delBtn.addEventListener("mousedown", (evt) => evt.stopPropagation());
+    delBtn.addEventListener("click", (evt) => {
+      evt.stopPropagation();
+      removeCardById(row.cardId);
+    });
     endCell.appendChild(delBtn);
     tr.appendChild(endCell);
 
@@ -745,18 +1658,20 @@
     return chip;
   }
 
-  // Group-section header row — non-editable, spans every column. Used to
-  // visually segment the table when the user has imported clusters via the
-  // POC importer (or the Clay-table import's basic-group flow). Clicking
-  // anywhere on the row toggles collapse — collapsed groups render the
-  // header alone (the DP rows are skipped in render()), with the chevron
-  // rotated to point right.
+  // Group-section header row. For real cb-groups the label is an inline
+  // input that writes back to the canvas's .cb-group-label on commit;
+  // legacy comment-card sections render a non-editable span (no canvas
+  // input to write through to). Clicking the chevron / icon / count
+  // toggles collapse; clicking the label focuses the input. Drag handle
+  // on the leftmost column reorders groups.
   function buildGroupHeaderRow(section, colSpan, isCollapsed) {
     const tr = document.createElement("tr");
     tr.className =
       "cb-table-view-group-row" +
       (isCollapsed ? " cb-table-view-group-row-collapsed" : "");
     tr.setAttribute("data-group-id", String(section.groupId));
+    tr.setAttribute("data-row-id", String(section.groupId));
+    tr.setAttribute("data-row-section", "groups");
     tr.setAttribute("role", "button");
     tr.setAttribute("aria-expanded", isCollapsed ? "false" : "true");
     tr.tabIndex = 0;
@@ -764,6 +1679,23 @@
     td.colSpan = colSpan;
     const wrap = document.createElement("div");
     wrap.className = "cb-table-view-group-row-inner";
+
+    // Drag handle lives inside the group-row inner container so it sits
+    // flush with the chevron / icon / label flex axis. Stops propagation
+    // so the toggle handler below doesn't fire on mousedown.
+    const dragHandle = document.createElement("span");
+    dragHandle.className = "cb-table-view-drag-handle cb-table-view-drag-handle-group";
+    dragHandle.title = "Drag to reorder group";
+    dragHandle.setAttribute("aria-hidden", "true");
+    dragHandle.innerHTML = gripperSvg(12);
+    dragHandle.addEventListener("mousedown", (evt) => {
+      // Only real cb-groups can reorder (canvas Group order persists).
+      // Legacy comment-card sections are virtual — no group object to
+      // shift — so the handle is dead for them.
+      if (section.canvasGroupId == null) return;
+      evt.stopPropagation();
+      startBlockDrag("group", section.canvasGroupId, evt);
+    });
 
     const chevron = document.createElement("span");
     chevron.className = "cb-table-view-group-row-chevron";
@@ -773,17 +1705,45 @@
     const icon = document.createElement("span");
     icon.className = "cb-table-view-group-row-icon";
     icon.innerHTML = folderSvg(13);
-    const label = document.createElement("span");
-    label.className = "cb-table-view-group-row-label";
-    label.textContent = section.groupName;
+
+    let labelEl;
+    if (section.editable) {
+      const labelInput = document.createElement("input");
+      labelInput.type = "text";
+      labelInput.className = "cb-table-view-group-row-label-input";
+      labelInput.value = section.groupName || "";
+      labelInput.placeholder = "Group name";
+      labelInput.addEventListener("mousedown", (evt) => evt.stopPropagation());
+      labelInput.addEventListener("click", (evt) => evt.stopPropagation());
+      labelInput.addEventListener("keydown", (evt) => {
+        if (evt.key === "Enter") {
+          evt.preventDefault();
+          evt.target.blur();
+        } else if (evt.key === "Escape") {
+          evt.preventDefault();
+          labelInput.value = section.groupName || "";
+          evt.target.blur();
+        }
+      });
+      labelInput.addEventListener("blur", () => {
+        commitGroupLabel(section.canvasGroupId, labelInput.value);
+      });
+      labelEl = labelInput;
+    } else {
+      labelEl = document.createElement("span");
+      labelEl.className = "cb-table-view-group-row-label";
+      labelEl.textContent = section.groupName;
+    }
+
     const count = document.createElement("span");
     count.className = "cb-table-view-group-row-count";
     const dpCount = section.rows.length;
     count.textContent = `${dpCount} data point${dpCount === 1 ? "" : "s"}`;
 
+    wrap.appendChild(dragHandle);
     wrap.appendChild(chevron);
     wrap.appendChild(icon);
-    wrap.appendChild(label);
+    wrap.appendChild(labelEl);
     wrap.appendChild(count);
     td.appendChild(wrap);
     tr.appendChild(td);
@@ -797,10 +1757,28 @@
       render();
     };
 
-    tr.addEventListener("click", toggle);
+    // Click toggles collapse. Header rows intentionally don't enter the
+    // row-selection state — there's no Group / Link action that applies
+    // to a section header itself, so highlighting it would be confusing.
+    tr.addEventListener("click", (evt) => {
+      if (evt.button !== 0) return;
+      toggle();
+    });
+    // Right-click on a header opens the context menu IF there's already
+    // a DP selection (so reps can Group / Link without leaving the
+    // header row). With no prior selection the menu has nothing to offer
+    // — preserve the browser's default menu by not preventDefault'ing.
+    tr.addEventListener("contextmenu", (evt) => {
+      if (selectedRowIds.size === 0) return;
+      evt.preventDefault();
+      evt.stopPropagation();
+      openContextMenu(evt.clientX, evt.clientY);
+    });
     // Keyboard parity for accessibility: Enter / Space mirrors the click
     // toggle. preventDefault on Space keeps the page from scrolling.
+    // Skipped when focus is in the label input (Enter there commits).
     tr.addEventListener("keydown", (evt) => {
+      if (evt.target.tagName === "INPUT") return;
       if (evt.key === "Enter" || evt.key === " ") {
         evt.preventDefault();
         toggle();
@@ -931,14 +1909,47 @@
     );
   }
 
+  // Six-dot gripper — same visual idiom Notion / Linear use for drag
+  // affordances. Renders inside the leftmost col-drag cell (or, on group
+  // header rows, inside the inner flex container next to the chevron).
+  function gripperSvg(size) {
+    const s = String(size);
+    return (
+      `<svg xmlns="http://www.w3.org/2000/svg" width="${s}" height="${s}" viewBox="0 0 24 24" ` +
+      'fill="currentColor" aria-hidden="true">' +
+      '<circle cx="9" cy="6" r="1.5"/>' +
+      '<circle cx="15" cy="6" r="1.5"/>' +
+      '<circle cx="9" cy="12" r="1.5"/>' +
+      '<circle cx="15" cy="12" r="1.5"/>' +
+      '<circle cx="9" cy="18" r="1.5"/>' +
+      '<circle cx="15" cy="18" r="1.5"/>' +
+      '</svg>'
+    );
+  }
+
   // ---- Public API ----
 
   __cb.tableView = {
     mount(host) {
       hostEl = host;
       render();
+      // Document-level listeners: outside-clicks clear the selection;
+      // Esc cancels drag / closes context menu / clears selection. Both
+      // are removed on unmount() so they don't leak across mode toggles.
+      document.addEventListener("mousedown", onDocClick);
+      document.addEventListener("keydown", onDocKeyDown);
     },
     unmount() {
+      document.removeEventListener("mousedown", onDocClick);
+      document.removeEventListener("keydown", onDocKeyDown);
+      // Clear transient state so a remount starts fresh — selection and
+      // drag indicators wouldn't make sense across a tear-down.
+      cleanupDrag();
+      closeContextMenu();
+      selectedRowIds.clear();
+      selectionAnchorId = null;
+      visibleRowOrder = [];
+      pendingFocusGroupId = null;
       if (hostEl) hostEl.innerHTML = "";
       hostEl = null;
       tableEl = null;
@@ -951,6 +1962,9 @@
       // notifyChange → onCanvasStateChange.
       const active = document.activeElement;
       if (active && hostEl.contains(active) && active.tagName === "INPUT") return;
+      // Skip during an active drag so the dragged row's DOM doesn't get
+      // torn down mid-gesture (which would crash mouseup with no source).
+      if (dragInProgress) return;
       // hostEl IS the scroll container (.cb-table-view-area has overflow:
       // auto). render() wipes hostEl.innerHTML, which resets scrollTop to 0,
       // making every chip-× / row-× / picker-confirm snap the user back to

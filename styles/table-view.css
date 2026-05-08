@@ -223,6 +223,197 @@
   text-align: right;
 }
 
+/* Drag column: leftmost, narrow, holds the gripper handle. The handle
+   is hidden until the row is hovered (or being dragged) to keep the
+   spreadsheet read clean. The cell itself stays click-through so
+   clicking the row body still hits the row's selection handler. */
+.cb-table-view-table .col-drag {
+  width: 24px;
+  padding: 0 !important;
+  position: relative;
+}
+
+/* ============================================================================
+ * Selection / drag / context menu
+ * ========================================================================= */
+
+.cb-table-view-row-selected td {
+  background: #eef2ff !important;
+}
+
+.cb-table-view-row-selected.cb-table-view-dp-row .cb-table-view-cell-input-text {
+  color: #1f2937;
+}
+
+/* Drag handle — six-dot gripper, only visible on row hover. Cursor flips
+   to grab so the affordance is unmissable when you mouse over a row. */
+.cb-table-view-drag-handle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  margin-left: 2px;
+  border-radius: 4px;
+  color: #9ca3af;
+  cursor: grab;
+  opacity: 0;
+  transition: opacity 0.12s, background 0.12s, color 0.12s;
+  user-select: none;
+}
+
+.cb-table-view-drag-handle:hover {
+  background: #f3f4f6;
+  color: #4b5563;
+}
+
+.cb-table-view-drag-handle:active,
+.cb-table-view-row-dragging .cb-table-view-drag-handle {
+  cursor: grabbing;
+  background: #e0e7ff;
+  color: #4338ca;
+  opacity: 1 !important;
+}
+
+.cb-table-view-table tbody tr:hover .cb-table-view-drag-handle {
+  opacity: 1;
+}
+
+/* Group headers: the drag handle lives inside .cb-table-view-group-row-inner
+   (next to the chevron) instead of in a dedicated col-drag cell, so it has
+   slightly different hover spacing. */
+.cb-table-view-drag-handle-group {
+  margin-left: -4px;
+  margin-right: 2px;
+}
+
+/* Source-row visual cue while dragging: faint indigo outline on every
+   card in the dragged block (DP + its ERs all dim together). */
+.cb-table-view-row-dragging td {
+  background: #f5f3ff !important;
+  opacity: 0.6;
+}
+
+/* Drop indicator — 2px indigo line absolutely positioned inside the host
+   container, aligned to the top or bottom edge of the hovered row. */
+.cb-table-view-drop-indicator {
+  position: absolute;
+  height: 2px;
+  background: #6366f1;
+  border-radius: 2px;
+  pointer-events: none;
+  z-index: 5;
+  display: none;
+  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.18);
+}
+
+/* Context menu — same backdrop+menu pattern as the export menu / table picker. */
+.cb-table-view-context-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 9999998;
+}
+
+.cb-table-view-context-menu {
+  position: fixed;
+  z-index: 9999999;
+  min-width: 220px;
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  box-shadow: 0 10px 25px rgba(15, 23, 42, 0.15), 0 4px 10px rgba(15, 23, 42, 0.08);
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.cb-table-view-context-menu-option {
+  display: block;
+  width: 100%;
+  padding: 8px 12px;
+  background: transparent;
+  border: none;
+  border-radius: 5px;
+  color: #1f2937;
+  font-family: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.1s, color 0.1s;
+}
+
+.cb-table-view-context-menu-option:hover {
+  background: #eef2ff;
+  color: #4338ca;
+}
+
+/* ============================================================================
+ * Auto-rowspan merged cells (Link result + organic multi-DP clusters)
+ * ========================================================================= */
+
+/* Host of a merged run (the first row carries the rowspan'd <td>s).
+   Visually flat with the follower rows so the run reads as a stack. */
+.cb-table-view-dp-row-merge-first td.col-credits,
+.cb-table-view-dp-row-merge-first td.col-actions,
+.cb-table-view-dp-row-merge-first td.col-ers {
+  vertical-align: middle;
+  background: #fafbff;
+  border-left: 2px solid #c7d2fe;
+}
+
+/* Follower rows in a merge run: keep the DP / fill / handle / row-delete
+   columns visible, but the credits / actions / ERs cells are absent (the
+   host's rowspan covers them). Subtle dotted border on the row's bottom
+   gives a "still part of the merged group" visual. */
+.cb-table-view-dp-row-merge-follow td {
+  border-bottom-style: dashed;
+  border-bottom-color: #e0e7ff;
+}
+
+.cb-table-view-dp-row-merge-first td {
+  border-bottom-style: dashed;
+  border-bottom-color: #e0e7ff;
+}
+
+/* Restore the hard bottom border on the LAST follower so the merge run
+   ends visibly. Done via a default selector — rule above is overridden
+   by tbody tr:last-child td below. */
+.cb-table-view-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+/* ============================================================================
+ * Editable group label (real cb-groups only — POC import / canvas Shift+Enter)
+ * ========================================================================= */
+
+.cb-table-view-group-row-label-input {
+  flex: 0 1 auto;
+  min-width: 80px;
+  max-width: 480px;
+  padding: 4px 8px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  color: inherit;
+  transition: background 0.12s, border-color 0.12s;
+  box-sizing: border-box;
+}
+
+.cb-table-view-group-row-label-input:hover {
+  background: rgba(255, 255, 255, 0.65);
+}
+
+.cb-table-view-group-row-label-input:focus {
+  outline: none;
+  background: #ffffff;
+  border-color: #6366f1;
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.18);
+}
+
 /* Unconnected DP rows: muted so reps see at-a-glance which DPs still need
    enrichments wired up. */
 .cb-table-view-dp-row-unconnected td {

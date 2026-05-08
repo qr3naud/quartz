@@ -255,6 +255,11 @@
       header.appendChild(delBtn);
       el.appendChild(header);
       const group = { id: getNextGroupId(), cardIds: allCardIds, el, level: isSuper ? 1 : 0, color: null };
+      // Stamped on the live DOM so external consumers (the table view's
+      // editable section header, future plugins) can address a specific
+      // group without exposing the internal `groups` array. Persisted
+      // groups get the same attribute via restoreGroup below.
+      el.setAttribute("data-group-id", String(group.id));
       delBtn.addEventListener("click", (evt) => {
         evt.stopPropagation();
         disbandGroup(group.id);
@@ -303,6 +308,7 @@
       header.appendChild(delBtn);
       el.appendChild(header);
       const group = { id: gs.id, cardIds: new Set(gs.cardIds), el, level: gs.level || 0, color: gs.color || null };
+      el.setAttribute("data-group-id", String(group.id));
       delBtn.addEventListener("click", (evt) => {
         evt.stopPropagation();
         disbandGroup(group.id);
