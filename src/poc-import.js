@@ -271,27 +271,32 @@
 
   // ---- Canvas application --------------------------------------------------
   //
-  // Each Use Case becomes a cluster: one comment card carrying the use case
-  // name + N DP cards in a 4-col grid below it, all sharing a unique
-  // `groupCluster` id. Layout math mirrors src/table-import.js's basic-group
-  // section so the resulting clusters look identical to a table-import.
+  // Each Use Case becomes a real cb-group (the labeled, bordered container
+  // Shift+Enter creates from a multi-card selection). The Use Case title
+  // becomes the group's editable label; the DPs are independent cards
+  // wrapped by the group container — they keep their own positions,
+  // selection, and credit math instead of being magnetically snapped via
+  // a `groupCluster`. Implementation: stamp DPs first, collect their ids,
+  // then call `canvas.groupCardsByIds(ids, label)` which drives the same
+  // path the Shift+Enter shortcut uses.
 
   // Card dimensions — must match the values in src/table-import.js (CARD_W,
-  // CARD_H) so adjacency / cluster-snap math agrees with imported tables.
+  // CARD_H) so a future mixed canvas (POC import + table import) lays out
+  // consistently.
   const CARD_W = 220;
   const CARD_H = 96;
-  const COMMENT_OFFSET = CARD_H;
+  // Vertical reserve above the first card row of each group so the group's
+  // dashed border + title header has room to draw without overlapping the
+  // previous group below it. Mirrors the topPad+hdrH math in
+  // canvas/groups.js updateGroupBounds (level 0: pad=20, hdrH=48 → ~68px),
+  // rounded up for safety.
+  const GROUP_HEADER_RESERVE = 80;
   const GROUP_V_GAP = 40;
   const COLS = 4;
 
-  function shortId() {
-    return Math.random().toString(36).slice(2, 8);
-  }
-
-  // Find the lowest currently-used Y so new clusters get dropped beneath
-  // anything already on the canvas (mirrors startAddDataPoint in
-  // src/table-view.js). Returns the next free Y; START_Y when the canvas
-  // is empty.
+  // Find the lowest currently-used Y so new groups drop beneath anything
+  // already on the canvas (mirrors startAddDataPoint in src/table-view.js).
+  // Returns the next free Y; 100 when the canvas is empty.
   function findStartingY() {
     const canvas = __cb.canvas;
     if (!canvas) return 100;
@@ -312,57 +317,57 @@
     }
 
     const startX = 80;
-    let currentY = findStartingY() + COMMENT_OFFSET;
+    let currentY = findStartingY() + GROUP_HEADER_RESERVE;
     let totalDpAdded = 0;
     let totalGroupsAdded = 0;
 
-    const groups = [];
+    const buckets = [];
     for (const uc of parsed.useCases) {
       if (uc.dataPoints.length === 0) continue;
-      groups.push({
-        clusterId: `poc-uc-${uc.num}-${shortId()}`,
+      buckets.push({
         title: uc.displayName,
         dataPoints: uc.dataPoints,
       });
     }
     if (parsed.untitled.length > 0) {
-      groups.push({
-        clusterId: `poc-untitled-${shortId()}`,
+      buckets.push({
         title: "POC data points",
         dataPoints: parsed.untitled,
       });
     }
 
-    if (groups.length === 0) {
+    if (buckets.length === 0) {
       throw new Error(
         "Couldn't find any \"Required data points:\" bullets in the document.",
       );
     }
 
-    for (const g of groups) {
-      // Comment card sits one card-height above the first DP row. The
-      // adjacency-tolerant snap-cluster mechanism in canvas/snap.js
-      // requires the comment's bottom edge to be flush with the first DP
-      // row's top edge — same offset table-import.js uses for basic groups.
-      canvas.addCommentCard(g.title, {
-        x: startX,
-        y: currentY - COMMENT_OFFSET,
-        groupCluster: g.clusterId,
-      });
-
-      for (let i = 0; i < g.dataPoints.length; i++) {
+    for (const bucket of buckets) {
+      const stampedIds = [];
+      for (let i = 0; i < bucket.dataPoints.length; i++) {
         const r = Math.floor(i / COLS);
         const c = i % COLS;
-        canvas.addDataPointCard(g.dataPoints[i], {
+        // No `groupCluster` here on purpose — we want the cards to be
+        // independent (free to move, no snap-magnet). The cb-group we
+        // create below is what binds them together visually with a title.
+        const card = canvas.addDataPointCard(bucket.dataPoints[i], {
           x: startX + c * CARD_W,
           y: currentY + r * CARD_H,
-          groupCluster: g.clusterId,
         });
+        if (card?.id != null) stampedIds.push(card.id);
       }
 
-      const rowCount = Math.max(1, Math.ceil(g.dataPoints.length / COLS));
-      currentY += rowCount * CARD_H + COMMENT_OFFSET + GROUP_V_GAP;
-      totalDpAdded += g.dataPoints.length;
+      // Wrap them in a labeled group container. groupCardsByIds requires
+      // ≥2 cards — single-DP buckets fall through ungrouped (they show up
+      // as flat rows in the table view, which is the right call when
+      // there's only one DP to title anyway).
+      if (stampedIds.length >= 2 && typeof canvas.groupCardsByIds === "function") {
+        canvas.groupCardsByIds(stampedIds, bucket.title);
+      }
+
+      const rowCount = Math.max(1, Math.ceil(bucket.dataPoints.length / COLS));
+      currentY += rowCount * CARD_H + GROUP_V_GAP + GROUP_HEADER_RESERVE;
+      totalDpAdded += bucket.dataPoints.length;
       totalGroupsAdded += 1;
     }
 

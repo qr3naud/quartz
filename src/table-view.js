@@ -107,12 +107,21 @@
       }
     }
 
-    // Index comment cards by their groupCluster id. Comments only become
-    // group-section headers when they're attached to a cluster — a free-
-    // floating comment without `groupCluster` is just a sticky note and
-    // should NOT pull DPs into a fake group. The POC importer + the
-    // table-import "basic group" path both stamp comments with a
-    // groupCluster, so this is a safe signal.
+    // Real cb-groups (Shift+Enter / POC importer) — keyed by numeric
+    // groupId. The label comes off the live group's input element so
+    // renames in the canvas propagate without a separate event hookup.
+    const realGroups = typeof canvas.getGroups === "function" ? canvas.getGroups() : [];
+    const groupNameById = new Map();
+    for (const g of realGroups) {
+      const name = (g.label || "").trim();
+      if (name) groupNameById.set(g.id, name);
+    }
+
+    // Legacy comment-card-cluster fallback — pre-v3.18.3 POC imports +
+    // the Clay-table import's basic-group flow stamp a comment card with
+    // a `groupCluster` id and tag DPs with the matching `data.groupCluster`.
+    // We keep rendering those as sections so existing canvases don't
+    // suddenly lose their grouping after the upgrade.
     const commentByCluster = new Map();
     for (const card of allCards) {
       if (card.data?.type !== "comment") continue;
@@ -124,11 +133,13 @@
       }
     }
 
-    // Group-aware DP bucketing. A DP card joins a group section iff its
-    // own `groupCluster` matches a cluster that has a titled comment.
-    // Everything else goes into the flat dpRows bucket so today's
-    // ungrouped behavior (the entire DP list rendering as flat rows)
-    // is preserved for non-imported DPs.
+    // Group-aware DP bucketing. Precedence:
+    //   1. Real cb-group (card.groupId set by groupSelectedCards) →
+    //      bucket under the group's title.
+    //   2. Legacy comment-card cluster (data.groupCluster matches a
+    //      titled comment) → bucket under the comment text.
+    //   3. Otherwise → flat dpRows (preserves the un-grouped layout
+    //      reps already had for canvas-created data points).
     const groupSectionsMap = new Map();
     const flatDpRows = [];
     for (const card of allCards) {
@@ -145,16 +156,28 @@
         connected: !!info && info.enrichmentCount > 0,
       };
 
-      const cluster = card.data.groupCluster;
-      if (cluster && commentByCluster.has(cluster)) {
-        if (!groupSectionsMap.has(cluster)) {
-          groupSectionsMap.set(cluster, {
-            groupId: cluster,
-            groupName: commentByCluster.get(cluster),
+      let sectionKey = null;
+      let sectionName = null;
+      if (card.groupId != null && groupNameById.has(card.groupId)) {
+        sectionKey = `g-${card.groupId}`;
+        sectionName = groupNameById.get(card.groupId);
+      } else {
+        const cluster = card.data.groupCluster;
+        if (cluster && commentByCluster.has(cluster)) {
+          sectionKey = `c-${cluster}`;
+          sectionName = commentByCluster.get(cluster);
+        }
+      }
+
+      if (sectionKey) {
+        if (!groupSectionsMap.has(sectionKey)) {
+          groupSectionsMap.set(sectionKey, {
+            groupId: sectionKey,
+            groupName: sectionName,
             rows: [],
           });
         }
-        groupSectionsMap.get(cluster).rows.push(row);
+        groupSectionsMap.get(sectionKey).rows.push(row);
       } else {
         flatDpRows.push(row);
       }

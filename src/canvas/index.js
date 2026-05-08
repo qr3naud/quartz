@@ -701,6 +701,29 @@
     getGroupLifecycleHelpers().groupSelectedCards(initialLabel, opts);
   }
 
+  // Programmatic counterpart to the Shift+Enter shortcut: wraps a known set
+  // of card ids in a real cb-group with `label` as the editable title.
+  // Used by the POC importer so each Use Case becomes a labeled group
+  // (rather than a comment-card cluster). Implementation drives the
+  // existing groupSelectedCards path by temporarily seeding the selection
+  // with the target ids — that way one code path owns group lifecycle,
+  // theming, credit recompute, and undo bookkeeping.
+  function groupCardsByIds(cardIds, label, opts) {
+    if (!Array.isArray(cardIds) || cardIds.length < 2) return;
+    for (const id of selectedCards) {
+      cards.find((c) => c.id === id)?.el.classList.remove("cb-card-selected");
+    }
+    selectedCards.clear();
+    clearGroupSelection();
+    for (const id of cardIds) {
+      const c = cards.find((cc) => cc.id === id);
+      if (!c) continue;
+      selectedCards.add(id);
+      c.el?.classList.add("cb-card-selected");
+    }
+    groupSelectedCards(label || "", { skipFocus: true, ...(opts || {}) });
+  }
+
   function disbandGroup(id) {
     getGroupLifecycleHelpers().disbandGroup(id);
   }
@@ -1335,6 +1358,19 @@
 
   const api = {
     addCard, addDataPointCard, addInputCard, addCommentCard, groupSelectedCards,
+    groupCardsByIds,
+    // Live snapshot of cb-groups (the labeled card containers Shift+Enter
+    // creates). Read-only consumers — currently the table view, which
+    // renders group-titled sections — should treat the returned objects
+    // as plain data. The label is read out of the input element each
+    // call, mirroring how persistence.js serializes groups, so renames
+    // propagate without callers having to subscribe to anything extra.
+    getGroups: () => groups.map((g) => ({
+      id: g.id,
+      level: g.level,
+      cardIds: Array.from(g.cardIds),
+      label: g.el?.querySelector(".cb-group-label")?.value || "",
+    })),
     destroy, serialize, restore, setActiveTool, getActiveTool,
     zoomIn: () => zoomBy(0.15),
     zoomOut: () => zoomBy(-0.15),
