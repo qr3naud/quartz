@@ -38,8 +38,17 @@
     return type === "dp" || type === "input" || type === "comment";
   }
 
+  // Anything that isn't a DP / input / comment is an ER. Note: action cards
+  // added via the picker (extractVisualData) intentionally leave `data.type`
+  // unset — that's the established convention used in src/export.js
+  // (`!isNonErType(c.data.type)`) and in addCard's frequency-seeding path
+  // (cards.js line 565, also `!isNonErType(...)`). The previous version
+  // here added an extra `type !== undefined` clause that broke that
+  // convention: picker-added enrichments slipped through as "non-ER",
+  // which meant clicking "Add enrichment" from a DP row produced a card
+  // that sat in the cluster but never got listed in the row's chip column.
   function isErType(type) {
-    return !isNonErType(type) && type !== undefined;
+    return !isNonErType(type);
   }
 
   function fillRatePct(fr) {
