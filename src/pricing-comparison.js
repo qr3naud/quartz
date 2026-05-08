@@ -119,22 +119,94 @@
     return (Number(tier.amount) / 100) / Number(tier.actionExecutionLimit);
   }
 
-  // Builds the title/tooltip string surfaced on auto-filled inputs so
-  // reps can see at a glance what the highlighted border represents.
+  // Normalized (name, schedule) pair pulled off __cb.currentPlanPricing.
   // Strips a trailing "Plan" from displayName when the API includes it
-  // (e.g., "Pro Plan") so the suffix doesn't read "Pro Plan (annual)
-  // plan". Schedule wording cleans "annually" -> "annual".
-  function autoFillTitle() {
+  // (e.g., "Pro Plan") so suffixes don't read "Pro Plan (annual) plan".
+  // Schedule wording cleans "annually" -> "annual" for natural reading.
+  // Returns null when no plan info is loaded yet.
+  function autoFillContext() {
     const info = __cb.currentPlanPricing;
-    if (!info) return "";
+    if (!info) return null;
     const name = (info.displayName || "").replace(/\s+plan$/i, "").trim() || info.displayName;
     const sched = info.billingSchedule === "annually"
       ? "annual"
       : info.billingSchedule === "monthly"
         ? "monthly"
         : null;
-    const schedSuffix = sched ? ` (${sched})` : "";
-    return `Auto-filled from your ${name}${schedSuffix} plan — edit to override`;
+    return { name, sched };
+  }
+
+  // Builds the title/tooltip string surfaced on auto-filled inputs so
+  // reps can see at a glance what the highlighted border represents.
+  function autoFillTitle() {
+    const ctx = autoFillContext();
+    if (!ctx) return "";
+    const schedSuffix = ctx.sched ? ` (${ctx.sched})` : "";
+    return `Auto-filled from your ${ctx.name}${schedSuffix} plan — edit to override`;
+  }
+
+  // Match the workspace's active plan to a row in the credits bands
+  // table for the (plan, period) currently shown. Returns the matching
+  // row's `credits` value (used as the row key) when:
+  //   - The bands plan toggle matches the customer's plan generation
+  //     (legacy bands view + customer on legacy plan, or vice versa).
+  //   - The bands period toggle matches their billing schedule
+  //     (annually -> "annual"; monthly -> "monthly").
+  //   - Their basicCredits is on file (skipped for placeholder plans).
+  // Returning null means "no row is the current one" — the caller
+  // simply doesn't apply the cb-bands-row-current treatment.
+  function matchingBandsCreditsKey(plan, period) {
+    const info = __cb.currentPlanPricing;
+    if (!info || !info.basicCredits) return null;
+    const planMatches = (plan === "legacy" && info.isLegacy) || (plan === "modern" && info.isModern);
+    if (!planMatches) return null;
+    const schedMatches =
+      (period === "monthly" && info.billingSchedule === "monthly") ||
+      (period === "annual" && info.billingSchedule === "annually");
+    if (!schedMatches) return null;
+    return info.basicCredits;
+  }
+
+  // Same as matchingBandsCreditsKey but for the action-bands table.
+  // Only modern plans have an action billing dimension, so plan is
+  // always "modern" when this fires. Returns the workspace's
+  // actionLimit (the row key) or null when no match.
+  function matchingBandsActionsKey(period) {
+    const info = __cb.currentPlanPricing;
+    if (!info || !info.isModern || !info.actionLimit) return null;
+    const schedMatches =
+      (period === "monthly" && info.billingSchedule === "monthly") ||
+      (period === "annual" && info.billingSchedule === "annually");
+    if (!schedMatches) return null;
+    return info.actionLimit;
+  }
+
+  // Refreshes the "auto-filled" pill that lives next to the inline
+  // Reset button on the Total per row. Visibility flips based on
+  // whether ANY rate input is still in its auto-filled state — once
+  // the rep edits every auto-filled input, the pill disappears
+  // (their numbers, not the workspace's). Tooltip is rebuilt to
+  // reflect the currently-autofilled rates so a hover always shows
+  // accurate values, not stale ones from open time.
+  function refreshAutoFillPill() {
+    if (!modalEl) return;
+    const pill = modalEl.querySelector(".cb-pricing-autofill-pill");
+    if (!pill) return;
+    const ctx = autoFillContext();
+    const anyAutoFilled =
+      state.legacyAutoFilled || state.modernAutoFilled || state.actionAutoFilled;
+    if (!anyAutoFilled || !ctx) {
+      pill.removeAttribute("data-active");
+      pill.removeAttribute("title");
+      return;
+    }
+    const parts = [];
+    if (state.legacyAutoFilled) parts.push(`Legacy CPC ${formatDollar(state.legacyCreditRate)}`);
+    if (state.modernAutoFilled) parts.push(`Modern CPC ${formatDollar(state.modernCreditRate)}`);
+    if (state.actionAutoFilled) parts.push(`CPA ${formatDollar(state.actionRate)}`);
+    const schedSuffix = ctx.sched ? ` (${ctx.sched})` : "";
+    pill.setAttribute("data-active", "true");
+    pill.title = `Auto-filled from your ${ctx.name}${schedSuffix} plan — ${parts.join(", ")}`;
   }
 
   // Modern pricing tier data — sourced from the pricing team. Used by
@@ -1037,6 +1109,13 @@
     modalBackdrop.appendChild(modalEl);
     document.body.appendChild(modalBackdrop);
 
+    // Modal is now mounted — sync the auto-filled pill so it reflects
+    // the initial autofill state on open. Has to happen after mount
+    // because refreshAutoFillPill queries modalEl for the pill, and
+    // during the breakdown-table build the pill lives inside a
+    // detached subtree until the table is appended to body below.
+    refreshAutoFillPill();
+
     document.addEventListener("keydown", onKeydown);
   }
 
@@ -1079,6 +1158,18 @@
         '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>';
       inlineReset.addEventListener("click", resetRates);
       wrap.appendChild(inlineReset);
+
+      // "auto-filled" pill — soft purple chip surfaced when at least
+      // one rate input is still in its plan-derived state. Hover
+      // tooltip lists the plan + currently-autofilled rates.
+      // refreshAutoFillPill (called from openComparisonModal after
+      // mount, plus on every commit/reset) drives data-active
+      // visibility + tooltip; the initial sync can't happen here
+      // because the row isn't attached to modalEl yet.
+      const autoFillPill = document.createElement("span");
+      autoFillPill.className = "cb-pricing-autofill-pill";
+      autoFillPill.textContent = "auto-filled";
+      wrap.appendChild(autoFillPill);
 
       nameCell.appendChild(wrap);
     } else {
@@ -1405,6 +1496,7 @@
       }
       input.value = formatDollar(next);
       refreshDollarCellsAndDeltas();
+      refreshAutoFillPill();
     };
     input.addEventListener("blur", commit);
     input.addEventListener("keydown", (evt) => {
@@ -1454,6 +1546,7 @@
     setInput("cb-pricing-rate-modern-credits", state.modernCreditRate, state.modernAutoFilled);
     setInput("cb-pricing-rate-modern-actions", state.actionRate, state.actionAutoFilled);
     refreshDollarCellsAndDeltas();
+    refreshAutoFillPill();
   }
 
   // In-place updater — runs after a rate input commits, the records
@@ -2050,6 +2143,13 @@
     // Credit-row CPCs route to the legacy or modern-credits rate
     // input based on which catalog the user is viewing.
     const cpcTarget = plan === "legacy" ? "legacy" : "modernCredits";
+    // The workspace's tier in this view, if it lines up with what we
+    // pulled from currentPlanPricing. Used to mark the matching row
+    // with cb-bands-row-current so reps can see at a glance which
+    // tier the customer is paying for. Returns null when nothing
+    // matches (different schedule view, customer on a tier outside
+    // the public catalog like a custom Enterprise contract, etc.).
+    const currentCreditsKey = matchingBandsCreditsKey(plan, period);
     const tbl = document.createElement("table");
     tbl.className = "cb-bands-table cb-bands-credits";
 
@@ -2073,6 +2173,10 @@
     const tbody = document.createElement("tbody");
     for (const row of rows) {
       const tr = document.createElement("tr");
+      if (currentCreditsKey != null && row.credits === currentCreditsKey) {
+        tr.classList.add("cb-bands-row-current");
+        tr.title = `Your current tier (${autoFillContext()?.name ?? "this plan"})`;
+      }
 
       const tierCell = document.createElement("td");
       tierCell.className = "cb-bands-tier";
@@ -2103,6 +2207,7 @@
   function buildActionsBandsTable(period) {
     const rows = ACTION_BANDS[period];
     const isAnnual = period === "annual";
+    const currentActionsKey = matchingBandsActionsKey(period);
 
     const tbl = document.createElement("table");
     tbl.className = "cb-bands-table";
@@ -2139,6 +2244,10 @@
     const tbody = document.createElement("tbody");
     for (const row of rows) {
       const tr = document.createElement("tr");
+      if (currentActionsKey != null && row.actions === currentActionsKey) {
+        tr.classList.add("cb-bands-row-current");
+        tr.title = `Your current tier (${autoFillContext()?.name ?? "this plan"})`;
+      }
 
       const tierCell = document.createElement("td");
       tierCell.className = "cb-bands-tier";
