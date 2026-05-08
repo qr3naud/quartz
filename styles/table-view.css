@@ -383,25 +383,61 @@
 /* ---- Group header row ----
 
    Group sections appear when an imported cluster has a titled comment card
-   (POC importer or basic-group table import). The header sits flush to its
-   data point rows beneath, with a subtle indigo tint so reps can scan
-   sections at a glance. Hover stays neutral — clicking the header is a
-   no-op today (no expand/collapse), so we don't want to imply otherwise. */
+   (POC importer or basic-group table import). Clicking anywhere on the
+   header toggles collapse: the chevron rotates from pointing-down (open)
+   to pointing-right (collapsed) and the DP rows below are removed from
+   the DOM entirely (no animation — re-render is cheap). State is tracked
+   in `collapsedGroups: Set<groupId>` at table-view.js module scope so
+   re-renders triggered by canvas state changes preserve the rep's choice. */
+.cb-table-view-group-row {
+  cursor: pointer;
+  user-select: none;
+}
+
 .cb-table-view-group-row td {
   padding: 10px 14px !important;
   background: #f5f3ff;
   border-top: 1px solid #ddd6fe;
   border-bottom: 1px solid #ddd6fe;
+  transition: background 0.12s;
 }
 
-.cb-table-view-group-row:hover {
-  background: #f5f3ff !important;
+.cb-table-view-group-row:hover td {
+  background: #ede9fe !important;
+}
+
+.cb-table-view-group-row:focus-visible {
+  outline: none;
+}
+
+.cb-table-view-group-row:focus-visible td {
+  background: #ede9fe !important;
+  box-shadow: inset 0 0 0 2px #a78bfa;
 }
 
 .cb-table-view-group-row-inner {
   display: inline-flex;
   align-items: center;
   gap: 8px;
+}
+
+.cb-table-view-group-row-chevron {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #6d28d9;
+  transition: transform 0.18s ease;
+}
+
+/* Collapsed state — chevron rotates to point right. The downward-facing
+   chevron in expanded state matches the visual idiom of native disclosure
+   triangles in macOS / GitHub / Linear. */
+.cb-table-view-group-row-collapsed .cb-table-view-group-row-chevron {
+  transform: rotate(-90deg);
+}
+
+.cb-table-view-group-row-collapsed td {
+  border-bottom-color: #ede9fe;
 }
 
 .cb-table-view-group-row-icon {

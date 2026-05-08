@@ -24,6 +24,14 @@
   let hostEl = null;
   let tableEl = null;
 
+  // Tracks which group sections are currently collapsed (Set<groupClusterId>).
+  // Lives at module scope so re-renders triggered by canvas state changes
+  // (picker confirms, undo, realtime updates) preserve the user's expand /
+  // collapse choices instead of snapping every group back open. Cleared
+  // implicitly when a group's cluster id disappears from the canvas — the
+  // entries become orphan keys that buildRows() never reads.
+  const collapsedGroups = new Set();
+
   // ---- Card-type helpers (mirror src/export.js) ----
 
   function isNonErType(type) {
@@ -405,11 +413,14 @@
     } else {
       for (const row of orphanErRows) tbody.appendChild(buildOrphanErRow(row));
       // Group sections render as a header row spanning all columns,
-      // followed by the cluster's DP rows. Order matches the canvas
-      // (groups in insertion order = top-to-bottom layout order).
+      // followed by the cluster's DP rows (unless collapsed). Order matches
+      // the canvas (groups in insertion order = top-to-bottom layout order).
       for (const section of groupSections) {
-        tbody.appendChild(buildGroupHeaderRow(section, headers.length));
-        for (const row of section.rows) tbody.appendChild(buildDpRow(row));
+        const isCollapsed = collapsedGroups.has(section.groupId);
+        tbody.appendChild(buildGroupHeaderRow(section, headers.length, isCollapsed));
+        if (!isCollapsed) {
+          for (const row of section.rows) tbody.appendChild(buildDpRow(row));
+        }
       }
       for (const row of dpRows) tbody.appendChild(buildDpRow(row));
     }
@@ -574,16 +585,29 @@
 
   // Group-section header row — non-editable, spans every column. Used to
   // visually segment the table when the user has imported clusters via the
-  // POC importer (or the Clay-table import's basic-group flow). Clicking the
-  // header doesn't expand/collapse today; the rows underneath always render.
-  function buildGroupHeaderRow(section, colSpan) {
+  // POC importer (or the Clay-table import's basic-group flow). Clicking
+  // anywhere on the row toggles collapse — collapsed groups render the
+  // header alone (the DP rows are skipped in render()), with the chevron
+  // rotated to point right.
+  function buildGroupHeaderRow(section, colSpan, isCollapsed) {
     const tr = document.createElement("tr");
-    tr.className = "cb-table-view-group-row";
+    tr.className =
+      "cb-table-view-group-row" +
+      (isCollapsed ? " cb-table-view-group-row-collapsed" : "");
     tr.setAttribute("data-group-id", String(section.groupId));
+    tr.setAttribute("role", "button");
+    tr.setAttribute("aria-expanded", isCollapsed ? "false" : "true");
+    tr.tabIndex = 0;
     const td = document.createElement("td");
     td.colSpan = colSpan;
     const wrap = document.createElement("div");
     wrap.className = "cb-table-view-group-row-inner";
+
+    const chevron = document.createElement("span");
+    chevron.className = "cb-table-view-group-row-chevron";
+    chevron.innerHTML = chevronDownSvg(12);
+    chevron.setAttribute("aria-hidden", "true");
+
     const icon = document.createElement("span");
     icon.className = "cb-table-view-group-row-icon";
     icon.innerHTML = folderSvg(13);
@@ -594,11 +618,33 @@
     count.className = "cb-table-view-group-row-count";
     const dpCount = section.rows.length;
     count.textContent = `${dpCount} data point${dpCount === 1 ? "" : "s"}`;
+
+    wrap.appendChild(chevron);
     wrap.appendChild(icon);
     wrap.appendChild(label);
     wrap.appendChild(count);
     td.appendChild(wrap);
     tr.appendChild(td);
+
+    const toggle = () => {
+      if (collapsedGroups.has(section.groupId)) {
+        collapsedGroups.delete(section.groupId);
+      } else {
+        collapsedGroups.add(section.groupId);
+      }
+      render();
+    };
+
+    tr.addEventListener("click", toggle);
+    // Keyboard parity for accessibility: Enter / Space mirrors the click
+    // toggle. preventDefault on Space keeps the page from scrolling.
+    tr.addEventListener("keydown", (evt) => {
+      if (evt.key === "Enter" || evt.key === " ") {
+        evt.preventDefault();
+        toggle();
+      }
+    });
+
     return tr;
   }
 
@@ -684,6 +730,17 @@
       '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>' +
       '<polyline points="17 8 12 3 7 8"/>' +
       '<line x1="12" y1="3" x2="12" y2="15"/>' +
+      '</svg>'
+    );
+  }
+
+  function chevronDownSvg(size) {
+    const s = String(size);
+    return (
+      `<svg xmlns="http://www.w3.org/2000/svg" width="${s}" height="${s}" viewBox="0 0 24 24" ` +
+      'fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" ' +
+      'stroke-linejoin="round" aria-hidden="true">' +
+      '<polyline points="6 9 12 15 18 9"/>' +
       '</svg>'
     );
   }
