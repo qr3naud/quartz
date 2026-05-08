@@ -366,7 +366,8 @@
     // index "0"/"1"/...); waterfall step shape uses .inputsBinding
     // (array). __cb.readInputBindingValue handles both via
     // Object.values, which iterates arrays the same way.
-    const inputsBinding = source?.typeSettings?.inputsBinding ?? source?.inputsBinding;
+    const typeSettings = source?.typeSettings ?? source ?? {};
+    const inputsBinding = typeSettings.inputsBinding ?? source?.inputsBinding;
     const rawModel = __cb.readInputBindingValue?.(inputsBinding, "model");
     const normalized = (rawModel || "").trim().replace(/^"|"$/g, "").trim() || null;
 
@@ -382,6 +383,27 @@
     }
     if (!matched) {
       matched = modelOptions.find((m) => m.id === __cb.DEFAULT_AI_MODEL) ?? modelOptions[0];
+    }
+
+    // BYOK check — server-side rule from credit-cost-utils.ts:
+    //   const isPublicKey = Boolean(appAccount?.isSharedPublicKey);
+    //   const isPrivateKey = Boolean(authAccountId) && !isPublicKey;
+    // We still want `matched` populated so the row keeps the right model
+    // name + provider icon — the user wired up GPT 5.4 with their own
+    // OpenAI key, the row should show OpenAI's icon and "GPT 5.4", just
+    // priced at 0 credits because Clay isn't billing for this run.
+    // authAccountId can live on field.typeSettings (standalone fields)
+    // or on the step itself (waterfall sequence steps).
+    const authAccountId = typeSettings.authAccountId ?? source?.authAccountId ?? null;
+    if (authAccountId) {
+      const account = __cb.appAccountById?.[authAccountId];
+      // Default to "private" when we couldn't fetch the account (e.g. the
+      // user lacks read access to it). This matches the server's
+      // assume-private fallback in credit-cost-utils.ts.
+      const isPublicKey = !!account?.isSharedPublicKey;
+      if (!isPublicKey) {
+        return { credits: 0, matched };
+      }
     }
 
     const credits = matched && Number.isFinite(matched.credits) ? matched.credits : null;
@@ -402,6 +424,19 @@
   // Back-compat: callers that just want the credit number.
   function resolveAiCredits(source, info) {
     return resolveAiModel(source, info).credits;
+  }
+
+  // Mirrors the server-side rule for "is this row billed?":
+  //   key-only action OR (authAccountId set AND not Clay-shared public key)
+  // Used both to set the per-row "Private key" chip in the UI and (for
+  // non-AI rows) by resolveTierCredits's privateKeyCredits branch.
+  function resolvePrivateKeyState(source, info) {
+    if (info?.requiresApiKey || info?.disableSharedKey) return true;
+    const ts = source?.typeSettings ?? source ?? {};
+    const authAccountId = ts.authAccountId ?? source?.authAccountId ?? null;
+    if (!authAccountId) return false;
+    const account = __cb.appAccountById?.[authAccountId];
+    return !account?.isSharedPublicKey;
   }
 
   // ---------------------------------------------------------------------------
@@ -493,10 +528,18 @@
         const vKey = `${firstValidation.actionPackageId ?? "clay"}-${firstValidation.actionKey}`;
         const vInfo = __cb.actionByIdLookup?.[vKey];
         if (vInfo) {
-          // authAccountId on the validation column = user wired their own
-          // creds, treat as private key (zero cost) for both tiers.
+          // BYOK rule (mirrors credit-cost-utils.ts): private-key only when
+          // (a) the action is genuinely key-only (LeadMagic / Debounce /
+          // etc.) OR (b) authAccountId is set AND the account is NOT a
+          // Clay-shared public key. The previous `!!authAccountId`
+          // heuristic wrongly zeroed validators wired to Clay-shared OpenAI
+          // / Anthropic accounts (which still bill credits).
           const vKeyOnly = !!(vInfo.requiresApiKey || vInfo.disableSharedKey);
-          validationUsesPrivateKey = !!firstValidation.authAccountId || vKeyOnly;
+          const vAccount = firstValidation.authAccountId
+            ? __cb.appAccountById?.[firstValidation.authAccountId]
+            : null;
+          const vIsByokAuth = !!firstValidation.authAccountId && !vAccount?.isSharedPublicKey;
+          validationUsesPrivateKey = vIsByokAuth || vKeyOnly;
           validationLegacy = validationUsesPrivateKey
             ? (Number(vInfo.legacyPrivateKeyCredits) || 0)
             : (Number(vInfo.legacyCredits) || 0);
@@ -516,6 +559,10 @@
       let legacySum = 0;
       let modernSum = 0;
       let modernActionsSum = 0;
+      // Track whether every step is BYOK / key-only so we can stamp the
+      // "Private key" chip on the waterfall row only when the whole
+      // chain is unbilled (mixed waterfalls would be misleading).
+      let allStepsPrivateKey = true;
       for (const step of steps) {
         const lookupKey = `${step.actionPackageId ?? "clay"}-${step.actionKey}`;
         const info = __cb.actionByIdLookup?.[lookupKey];
@@ -533,7 +580,16 @@
           if (modelCredits !== null) {
             stepLegacy = modelCredits;
             stepModern = modelCredits;
-            stepIsPrivateKey = !!step.authAccountId;
+            // BYOK rule: authAccountId set AND the account is NOT a
+            // Clay-shared public key → no real billed call → skip the
+            // validator surcharge below. Using `!!step.authAccountId`
+            // alone would wrongly skip the validator for AI steps wired
+            // to Clay-shared auth accounts (which still bill credits and
+            // still run the validator).
+            const stepAccount = step.authAccountId
+              ? __cb.appAccountById?.[step.authAccountId]
+              : null;
+            stepIsPrivateKey = !!step.authAccountId && !stepAccount?.isSharedPublicKey;
           } else {
             const l = resolveTierCredits(info, "legacy");
             const m = resolveTierCredits(info, "modern");
@@ -566,6 +622,7 @@
         // with a key-only validator now correctly reads as ~0 actions/row
         // instead of the previous hardcoded 1.
         modernActionsSum += modernActionsForField(info) + (validationActive ? validationActions : 0);
+        if (!stepIsPrivateKey) allStepsPrivateKey = false;
       }
 
       const legacyAvg = Math.round((legacySum / steps.length) * 100) / 100;
@@ -582,6 +639,10 @@
         legacyCredits: legacyAvg,
         modernCredits: modernAvg,
         modernActions: modernActionsAvg,
+        // Only chip the row when EVERY step is unbilled — a mixed
+        // waterfall (some steps Clay-shared, some BYOK) bills credits
+        // and shouldn't read as "free" at a glance.
+        isPrivateKey: allStepsPrivateKey,
       });
     }
 
@@ -626,6 +687,9 @@
         legacyCredits,
         modernCredits,
         modernActions: modernActionsForField(info),
+        // BYOK / key-only chip indicator. Mirrors what the server
+        // would compute as creditCost.isPrivateKey for this field.
+        isPrivateKey: resolvePrivateKeyState(field, info),
       });
     }
 
@@ -946,6 +1010,21 @@
         nameTextWrap.appendChild(sub);
       }
       nameWrap.appendChild(nameTextWrap);
+      // BYOK / key-only chip — re-uses the EXACT same KEY_SVG and
+      // visual treatment as the canvas ER cards' private-key badge
+      // (.cb-card-badge.cb-card-badge-key in styles/cards.css), so the
+      // modal and the cards stay in sync. Tooltip explains why credits
+      // for this row read as 0 (the field is wired to a private key,
+      // so Clay isn't billing for the call).
+      if (row.isPrivateKey) {
+        const chip = document.createElement("span");
+        chip.className = "cb-pricing-private-key-chip";
+        chip.title = "Wired to a private key — Clay isn't billing credits for this field";
+        chip.innerHTML =
+          '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 256 256"><path fill="#3b82f6" d="M216.57,39.43A80,80,0,0,0,83.91,120.78L28.69,176A15.86,15.86,0,0,0,24,187.31V216a16,16,0,0,0,16,16H72a8,8,0,0,0,8-8V208H96a8,8,0,0,0,8-8V184h16a8,8,0,0,0,5.66-2.34l9.56-9.57A79.73,79.73,0,0,0,160,176h.1A80,80,0,0,0,216.57,39.43Z"/><path fill="#93c5fd" d="M224,98.1c-1.09,34.09-29.75,61.86-63.89,61.9H160a63.7,63.7,0,0,1-23.65-4.51,8,8,0,0,0-8.84,1.68L116.69,168H96a8,8,0,0,0-8,8v16H72a8,8,0,0,0-8,8v16H40V187.31l58.83-58.82a8,8,0,0,0,1.68-8.84A63.72,63.72,0,0,1,96,95.92c0-34.14,27.81-62.8,61.9-63.89A64,64,0,0,1,224,98.1ZM192,76a12,12,0,1,1-12-12A12,12,0,0,1,192,76Z"/></svg>'
+          + '<span>Private key</span>';
+        nameWrap.appendChild(chip);
+      }
       nameCell.appendChild(nameWrap);
     }
     tr.appendChild(nameCell);
@@ -2152,6 +2231,16 @@
       // src/table-import.js startImport.
       if (Object.keys(__cb.livePricingByModel ?? {}).length === 0) {
         await __cb.fetchModelPricing(ids.workspaceId);
+      }
+      // App accounts let resolveAiModel below differentiate Clay-managed
+      // shared keys (still billed) from BYOK / user-pasted private keys
+      // (free) when an AI field has a non-default authAccountId. Mirrors
+      // the server-side rule in libs/shared/src/credits/credit-cost-utils.ts.
+      // The import flow gets this signal "for free" from
+      // /context's stats.cost.isPrivateKey; the comparison modal doesn't
+      // fetch /context, so we replicate the rule client-side.
+      if (Object.keys(__cb.appAccountById ?? {}).length === 0) {
+        await __cb.fetchAppAccounts(ids.workspaceId);
       }
 
       const tables = await __cb.fetchTableList(ids.workbookId);

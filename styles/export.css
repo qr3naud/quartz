@@ -1747,6 +1747,34 @@
   margin-top: 2px;
 }
 
+/* "Private key" chip — sits to the right of the name when the row is
+   wired to a BYOK / key-only auth (Clay isn't billing for the call).
+   Matches the canvas ER card's private-key badge 1:1 (.cb-card-badge.
+   cb-card-badge-key in styles/cards.css): white pill, light gray
+   border, blue text + two-tone blue key icon. align-self: flex-end
+   pulls it to the bottom of the row regardless of name-wrap height,
+   matching the user request to bottom-align the chip. */
+.cb-pricing-private-key-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+  padding: 0 7px;
+  border: 1px solid #e5e7eb;
+  border-radius: 11px;
+  background: #ffffff;
+  color: #3b82f6;
+  font-size: 11px;
+  line-height: 1;
+  white-space: nowrap;
+  flex-shrink: 0;
+  align-self: flex-end;
+}
+
+.cb-pricing-private-key-chip svg {
+  flex-shrink: 0;
+}
+
 /* ---- Delta cell ----
    Stacks % on top + $ diff below when pricing is on. % is the
    primary signal (semibold, color), $ diff is a secondary line

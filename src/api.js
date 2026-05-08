@@ -350,6 +350,38 @@
     }
   };
 
+  // App accounts (auth accounts) for the workspace. Used to differentiate
+  // "Clay-managed shared key" (bills credits) from "user-pasted private key"
+  // (BYOK, free) on AI fields where the user picked a non-default
+  // authAccountId. Mirrors the server-side rule in
+  // libs/shared/src/credits/credit-cost-utils.ts:
+  //   isPublicKey = appAccount.isSharedPublicKey
+  //   isPrivateKey = Boolean(authAccountId) && !isPublicKey
+  // Without this lookup, the comparison modal can't tell the two apart from
+  // typeSettings.authAccountId alone (the import flow gets it for free via
+  // /context's stats.cost.isPrivateKey, but the modal doesn't fetch /context).
+  // Caches into __cb.appAccountById so repeated comparison runs don't refetch.
+  __cb.appAccountById = __cb.appAccountById || {};
+  __cb.fetchAppAccounts = async function (workspaceId) {
+    try {
+      const res = await fetch(
+        `https://api.clay.com/v3/workspaces/${workspaceId}/app-accounts`,
+        { credentials: "include" }
+      );
+      if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
+      const accounts = await res.json();
+      if (Array.isArray(accounts)) {
+        for (const a of accounts) {
+          if (a?.id) __cb.appAccountById[a.id] = a;
+        }
+      }
+      return accounts;
+    } catch (err) {
+      console.warn("[Clay Scoping] fetchAppAccounts failed:", err);
+      return null;
+    }
+  };
+
   // Per-column actual spend over the last N days. Backed by Redshift via
   // Kinesis ingestion (~minutes of lag). Note: realtime credit usage is only
   // complete from REALTIME_CREDIT_USAGE_START_DATE = 2025-11-05 — for tables
