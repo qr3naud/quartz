@@ -71,12 +71,33 @@
   const DEFAULT_FREQUENCY_ID = "annually";
 
   window.__cb = {
-    TOOLBAR_SELECTOR:
-      "#clay-app > div > main > div > div > div > div > div > " +
-      "div.flex.min-h-0.flex-1.flex-col > div > div > div > " +
-      "div.relative.flex.size-full.shrink.grow.flex-col.overflow-hidden > " +
-      "div.flex.flex-none.flex-row.items-center.justify-between.px-3.py-2 > " +
-      "div.flex.flex-row.items-center.gap-x-2",
+    // The workbook header row is the only `flex-none justify-between px-3 py-2`
+    // row on a workbook page in both the legacy layout and the new shadcn
+    // SidebarProvider layout (rolled out to workspace 4515 first). Anchoring on
+    // the row's class shape — instead of a deep `#clay-app > div > main > ...`
+    // chain — keeps injection working as Clay reshuffles ancestor wrappers.
+    // The row's two children are always:
+    //   LEFT  cluster `div.flex.flex-row.items-center`            (view tools)
+    //   RIGHT cluster `div.flex.flex-row.items-center[.gap-x-2]`  (Sculptor/Tools)
+    // We want the RIGHT cluster — picking the LAST flex-row items-center child
+    // is resilient to whether `gap-x-2` is present (the new layout dropped it).
+    findToolbar() {
+      const header = document.querySelector(
+        "div.flex.flex-none.flex-row.items-center.justify-between.px-3.py-2",
+      );
+      if (!header) return null;
+      for (let i = header.children.length - 1; i >= 0; i--) {
+        const c = header.children[i];
+        if (
+          c.classList.contains("flex") &&
+          c.classList.contains("flex-row") &&
+          c.classList.contains("items-center")
+        ) {
+          return c;
+        }
+      }
+      return null;
+    },
 
     INJECTED_ATTR: "data-clay-brainstorm-injected",
 

@@ -49,7 +49,7 @@
   }
 
   function tryInjectIntoToolbar() {
-    const toolbar = document.querySelector(__cb.TOOLBAR_SELECTOR);
+    const toolbar = __cb.findToolbar();
     if (toolbar && !toolbar.hasAttribute(__cb.INJECTED_ATTR)) {
       toolbar.setAttribute(__cb.INJECTED_ATTR, "true");
       toolbar.prepend(buildButton());
