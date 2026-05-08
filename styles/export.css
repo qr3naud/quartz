@@ -1699,6 +1699,21 @@
   border-color: transparent;
 }
 
+/* Highlighted treatment for inputs seeded from the workspace's actual
+   contract pricing (driven by applyCurrentPlanAutoFill in
+   pricing-comparison.js). Indigo border + light tint mirrors the focus
+   color so reps recognize the visual language. Hover hint to reinforce
+   that the value is editable; focus state still wins on top via the
+   :focus rule above. */
+.cb-pricing-rate-input.cb-pricing-rate-autofilled {
+  border-color: #6366f1;
+  background: #eef2ff;
+}
+
+.cb-pricing-rate-input.cb-pricing-rate-autofilled:hover {
+  background: #e0e7ff;
+}
+
 .cb-pricing-derived {
   font-size: 12px;
   color: #4b5563;

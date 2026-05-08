@@ -26,6 +26,19 @@
     legacyCreditRate: FIXED_LEGACY_CREDIT_RATE,
     modernCreditRate: FIXED_MODERN_CREDIT_RATE,
     actionRate: FIXED_ACTION_RATE,
+    // Tracks which rate inputs were seeded from the workspace's actual
+    // contract pricing (vs the FIXED list-price defaults). Drives the
+    // highlighted-border treatment via cb-pricing-rate-autofilled and
+    // cleared per-side as soon as the rep edits that input — once they
+    // override, the cell isn't "auto" anymore. The action slot is only
+    // populated for self-serve modern plans where the workspace's action
+    // limit matches a public tier in __cb.actionTiersCatalog (Launch /
+    // Growth); Enterprise placeholder limits and legacy plans don't have
+    // a CPA dimension to derive, so actionRate stays at FIXED in those
+    // cases — same graceful no-op as the credit side.
+    legacyAutoFilled: false,
+    modernAutoFilled: false,
+    actionAutoFilled: false,
     // Records multiplier for the "Total per table" row. Initialized
     // from the topbar's records input on modal open (so the comparison
     // matches whatever volume the rep already had in mind on the
@@ -44,12 +57,84 @@
     state.legacyCreditRate = FIXED_LEGACY_CREDIT_RATE;
     state.modernCreditRate = FIXED_MODERN_CREDIT_RATE;
     state.actionRate = FIXED_ACTION_RATE;
+    state.legacyAutoFilled = false;
+    state.modernAutoFilled = false;
+    state.actionAutoFilled = false;
     state.recordsCount = FIXED_RECORDS_DEFAULT;
     state.rows = null;
     state.totals = null;
     state.table = null;
     state.tableContainer = null;
     state.pricingToggleBtn = null;
+  }
+
+  // Seed the matching side's credit rate from the workspace's active
+  // plan + price tier (populated by fetchCurrentPlanPricing in
+  // src/api.js). The other side stays at the FIXED list-price default
+  // so the "Old vs New" contrast remains meaningful even when one
+  // anchor is the customer's actual contract. No-op when the prefetch
+  // didn't yield a usable CPC (free / trial / Enterprise placeholder /
+  // network failure).
+  //
+  // For modern plans we additionally try to derive the workspace's
+  // CPA by joining the cached action-tier catalog
+  // (__cb.actionTiersCatalog from fetchActionTiers) on (planId,
+  // actionLimit, billingSchedule). Match guarantees the rep sees the
+  // exact $/action they're paying for that month. Misses (Enterprise
+  // placeholder limits, legacy plans, network failures) leave
+  // actionRate at its FIXED default.
+  function applyCurrentPlanAutoFill() {
+    const info = __cb.currentPlanPricing;
+    if (!info || info.cpc == null) return;
+    if (info.isLegacy) {
+      state.legacyCreditRate = info.cpc;
+      state.legacyAutoFilled = true;
+    } else if (info.isModern) {
+      state.modernCreditRate = info.cpc;
+      state.modernAutoFilled = true;
+
+      const cpa = lookupActionRate(info);
+      if (cpa != null) {
+        state.actionRate = cpa;
+        state.actionAutoFilled = true;
+      }
+    }
+  }
+
+  // Joins currentPlanPricing against the public action-tier catalog
+  // to find the workspace's specific tier and compute its CPA. All
+  // three of (planId, actionLimit, billingSchedule) must be present
+  // and match a public tier — any miss returns null, which keeps the
+  // action input at its FIXED $0.008 default. Returns $/action.
+  function lookupActionRate(info) {
+    if (!info?.planId || !info.actionLimit || !info.billingSchedule) return null;
+    const catalog = __cb.actionTiersCatalog;
+    if (!Array.isArray(catalog) || catalog.length === 0) return null;
+    const tier = catalog.find((t) =>
+      t?.billingPlanId === info.planId &&
+      Number(t?.actionExecutionLimit) === info.actionLimit &&
+      t?.billingSchedule === info.billingSchedule
+    );
+    if (!tier || !Number.isFinite(Number(tier.amount)) || Number(tier.amount) <= 0) return null;
+    return (Number(tier.amount) / 100) / Number(tier.actionExecutionLimit);
+  }
+
+  // Builds the title/tooltip string surfaced on auto-filled inputs so
+  // reps can see at a glance what the highlighted border represents.
+  // Strips a trailing "Plan" from displayName when the API includes it
+  // (e.g., "Pro Plan") so the suffix doesn't read "Pro Plan (annual)
+  // plan". Schedule wording cleans "annually" -> "annual".
+  function autoFillTitle() {
+    const info = __cb.currentPlanPricing;
+    if (!info) return "";
+    const name = (info.displayName || "").replace(/\s+plan$/i, "").trim() || info.displayName;
+    const sched = info.billingSchedule === "annually"
+      ? "annual"
+      : info.billingSchedule === "monthly"
+        ? "monthly"
+        : null;
+    const schedSuffix = sched ? ` (${sched})` : "";
+    return `Auto-filled from your ${name}${schedSuffix} plan — edit to override`;
   }
 
   // Modern pricing tier data — sourced from the pricing team. Used by
@@ -802,6 +887,12 @@
     const fromTopbar = typeof __cb.getRecordsCount === "function" ? __cb.getRecordsCount() : 0;
     state.recordsCount = fromTopbar > 0 ? fromTopbar : FIXED_RECORDS_DEFAULT;
 
+    // Seed the matching side's credit rate from the workspace's active
+    // plan, if fetchCurrentPlanPricing populated one. Done after the
+    // FIXED defaults are established by closeModal -> resetModalState
+    // so the auto-fill cleanly overrides exactly one side.
+    applyCurrentPlanAutoFill();
+
     modalBackdrop = document.createElement("div");
     modalBackdrop.className = "cb-export-modal-backdrop";
     modalBackdrop.addEventListener("mousedown", (evt) => {
@@ -980,7 +1071,10 @@
       const inlineReset = document.createElement("button");
       inlineReset.type = "button";
       inlineReset.className = "cb-pricing-reset-inline";
-      inlineReset.title = "Reset rates to defaults ($0.05/credit, $0.008/action)";
+      // Tooltip stays generic because "defaults" is now plan-aware:
+      // resetRates re-applies the workspace's auto-filled CPC when one
+      // exists, otherwise falls back to $0.05/credit + $0.008/action.
+      inlineReset.title = "Reset rates to defaults";
       inlineReset.innerHTML =
         '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>';
       inlineReset.addEventListener("click", resetRates);
@@ -1266,6 +1360,17 @@
     input.inputMode = "decimal";
     input.className = `cb-pricing-rate-input ${rateClass}`;
     input.value = formatDollar(rateValue);
+    // Highlight inputs seeded from the workspace's actual contract
+    // pricing (see applyCurrentPlanAutoFill). Cleared on commit so
+    // any user edit immediately drops the special treatment.
+    const isAutoFilled =
+      (rateClass === "cb-pricing-rate-legacy" && state.legacyAutoFilled) ||
+      (rateClass === "cb-pricing-rate-modern-credits" && state.modernAutoFilled) ||
+      (rateClass === "cb-pricing-rate-modern-actions" && state.actionAutoFilled);
+    if (isAutoFilled) {
+      input.classList.add("cb-pricing-rate-autofilled");
+      input.title = autoFillTitle();
+    }
     wrap.appendChild(input);
     const derived = document.createElement("div");
     derived.className = `cb-pricing-derived ${derivedClass}`;
@@ -1275,9 +1380,29 @@
 
     const commit = () => {
       const next = parseDollar(input.value);
-      if (rateClass === "cb-pricing-rate-legacy") state.legacyCreditRate = next;
-      else if (rateClass === "cb-pricing-rate-modern-credits") state.modernCreditRate = next;
-      else if (rateClass === "cb-pricing-rate-modern-actions") state.actionRate = next;
+      if (rateClass === "cb-pricing-rate-legacy") {
+        // Drop the auto-filled state on user override only when the
+        // value actually changed — re-committing the same number on
+        // blur shouldn't strip the highlight (e.g. the rep clicked
+        // the input to inspect, then tabbed away).
+        if (next !== state.legacyCreditRate) state.legacyAutoFilled = false;
+        state.legacyCreditRate = next;
+      } else if (rateClass === "cb-pricing-rate-modern-credits") {
+        if (next !== state.modernCreditRate) state.modernAutoFilled = false;
+        state.modernCreditRate = next;
+      } else if (rateClass === "cb-pricing-rate-modern-actions") {
+        if (next !== state.actionRate) state.actionAutoFilled = false;
+        state.actionRate = next;
+      }
+      const wasAutoFilled = input.classList.contains("cb-pricing-rate-autofilled");
+      const stillAutoFilled =
+        (rateClass === "cb-pricing-rate-legacy" && state.legacyAutoFilled) ||
+        (rateClass === "cb-pricing-rate-modern-credits" && state.modernAutoFilled) ||
+        (rateClass === "cb-pricing-rate-modern-actions" && state.actionAutoFilled);
+      if (wasAutoFilled && !stillAutoFilled) {
+        input.classList.remove("cb-pricing-rate-autofilled");
+        input.removeAttribute("title");
+      }
       input.value = formatDollar(next);
       refreshDollarCellsAndDeltas();
     };
@@ -1293,22 +1418,41 @@
     return cell;
   }
 
-  // Reset all 3 editable rate inputs to their fixed defaults and
-  // refresh derived cells. Records count stays as-is — it represents
-  // the user's table volume, not a "price" they're tweaking. Wired
-  // to the inline reset button next to the Total per row label.
+  // Reset all 3 editable rate inputs to their initial values and
+  // refresh derived cells. "Initial" means the FIXED list-price
+  // defaults overlaid by applyCurrentPlanAutoFill — so a rep on
+  // legacy Pro Annual who tweaked their CPC then hit Reset goes
+  // back to their actual contract CPC, not the generic $0.05 list
+  // default. The auto-filled flags + highlighted border come back
+  // along with the value so the visual state matches a fresh open.
+  // Records count stays as-is — it represents the user's table
+  // volume, not a "price" they're tweaking. Wired to the inline
+  // reset button next to the Total per row label.
   function resetRates() {
     if (!modalEl) return;
     state.legacyCreditRate = FIXED_LEGACY_CREDIT_RATE;
     state.modernCreditRate = FIXED_MODERN_CREDIT_RATE;
     state.actionRate = FIXED_ACTION_RATE;
-    const setInput = (cls, value) => {
+    state.legacyAutoFilled = false;
+    state.modernAutoFilled = false;
+    state.actionAutoFilled = false;
+    applyCurrentPlanAutoFill();
+
+    const setInput = (cls, value, autoFilled) => {
       const el = modalEl.querySelector(`.${cls}`);
-      if (el) el.value = formatDollar(value);
+      if (!el) return;
+      el.value = formatDollar(value);
+      if (autoFilled) {
+        el.classList.add("cb-pricing-rate-autofilled");
+        el.title = autoFillTitle();
+      } else {
+        el.classList.remove("cb-pricing-rate-autofilled");
+        el.removeAttribute("title");
+      }
     };
-    setInput("cb-pricing-rate-legacy", FIXED_LEGACY_CREDIT_RATE);
-    setInput("cb-pricing-rate-modern-credits", FIXED_MODERN_CREDIT_RATE);
-    setInput("cb-pricing-rate-modern-actions", FIXED_ACTION_RATE);
+    setInput("cb-pricing-rate-legacy", state.legacyCreditRate, state.legacyAutoFilled);
+    setInput("cb-pricing-rate-modern-credits", state.modernCreditRate, state.modernAutoFilled);
+    setInput("cb-pricing-rate-modern-actions", state.actionRate, state.actionAutoFilled);
     refreshDollarCellsAndDeltas();
   }
 
@@ -2241,6 +2385,22 @@
       // fetch /context, so we replicate the rule client-side.
       if (Object.keys(__cb.appAccountById ?? {}).length === 0) {
         await __cb.fetchAppAccounts(ids.workspaceId);
+      }
+      // Plan-derived CPC + action-tier catalog for auto-filling the
+      // matching editable rate inputs (legacy plan -> legacy CPC field,
+      // modern plan -> modern CPC + modern actions fields). Cached on
+      // first call; subsequent opens reuse without a refetch. Failures
+      // are non-fatal — the modal falls back to FIXED list-price
+      // defaults for whichever fetch missed.
+      const planPricingPromises = [];
+      if (__cb.currentPlanPricing == null) {
+        planPricingPromises.push(__cb.fetchCurrentPlanPricing(ids.workspaceId));
+      }
+      if (__cb.actionTiersCatalog == null) {
+        planPricingPromises.push(__cb.fetchActionTiers());
+      }
+      if (planPricingPromises.length > 0) {
+        await Promise.all(planPricingPromises);
       }
 
       const tables = await __cb.fetchTableList(ids.workbookId);

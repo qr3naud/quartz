@@ -112,6 +112,17 @@
     enrichmentLookup: {},
     actionByIdLookup: {},
     livePricingByModel: {},
+    // Active plan + derived CPC for the current workspace, populated by
+    // fetchCurrentPlanPricing in api.js. Drives the auto-fill behavior in
+    // the Old vs New comparison modal — null until the prefetch resolves
+    // (or if the workspace is on a free / trial / Enterprise placeholder
+    // plan that has no usable contract CPC).
+    currentPlanPricing: null,
+    // Public action-tier catalog (every Launch/Growth tier with amount +
+    // actionExecutionLimit + billingPlanId), populated by fetchActionTiers.
+    // Joined with currentPlanPricing in applyCurrentPlanAutoFill to derive
+    // the workspace's specific CPA. null until the prefetch resolves.
+    actionTiersCatalog: null,
     waterfallExecByName: {},
     // Built-in Clay waterfall attributes (the WaterfallRow rows in the
     // picker). Indexed by lowercased displayName. See fetchWaterfallExecCosts

@@ -99,6 +99,158 @@
     }
   };
 
+  // Fetches the workspace's currently-active billing plan + price tier and
+  // derives a CPC ($/credit) from the contract numbers. Used by the Old vs
+  // New comparison modal to auto-fill the matching side's editable rate
+  // input (legacy plan -> legacy rate, modern plan -> modern rate). The
+  // other side stays at its FIXED list-price default so the comparison
+  // still shows a meaningful "what would you pay on the other catalog"
+  // contrast even when one side is anchored to the customer's contract.
+  //
+  // Source: GET /v3/billingplans/:workspaceId?source=frontend, the same
+  // endpoint useBillingPlans drives in apps/frontend (see
+  // apps/frontend/src/state/Billing/useBillingPlans.ts). We only read
+  // currentPlan.priceInfo here — publicPlans aren't needed for the modal.
+  //
+  // Plan classification mirrors libs/shared/src/billing/Billing.ts:
+  //   - Legacy: April-2023 generation + the older basic/explorer/pro/proV2
+  //   - Modern: launch / growth / postPricingChange2026* (the
+  //     NewAvailableBillingPlanTypes set)
+  // Free / Trial plans skip auto-fill entirely (no meaningful CPC).
+  // Enterprise placeholder rows (amount: 0, basicCredits: 1B "unlimited"
+  // sentinel) are guarded out via the hasUsablePrice check below — they'd
+  // produce a $0 / call CPC that would lie about the customer's spend.
+  __cb.fetchCurrentPlanPricing = async function (workspaceId) {
+    // Mirrors the legacy/modern split in libs/shared/src/billing/Billing.ts:
+    // anything not in NewAvailableBillingPlanTypes is legacy. The bare
+    // "enterprise" type is canonical for custom-negotiated contracts on
+    // the legacy catalog (most real Enterprise customers, e.g. workspace
+    // 348241). "enterpriseApril2023" is deprecated but still in flight
+    // for a few accounts. "postPricingChange2026Enterprise" is the modern
+    // Enterprise catalog (e.g. internal Clay workspace 4515, which uses
+    // a $0/1B-credit placeholder Stripe subscription billed manually —
+    // its priceInfo can't be derived from, so the hasUsablePrice guard
+    // below skips auto-fill for it without needing a workspace allowlist).
+    const LEGACY_TYPES = new Set([
+      "starterApril2023", "explorerApril2023", "proApril2023",
+      "basic", "explorer", "pro", "proV2",
+      "enterprise", "enterpriseApril2023",
+    ]);
+    const MODERN_TYPES = new Set([
+      "launch", "growth",
+      "postPricingChange2026Free", "postPricingChange2026Trial",
+      "postPricingChange2026Enterprise",
+    ]);
+
+    try {
+      // Fan out to both endpoints in parallel — billingplans gives us the
+      // plan type + per-credit numbers, workspaces gives us the action
+      // execution limit. The action limit lets applyCurrentPlanAutoFill
+      // match the workspace to a row in the public action-tier catalog
+      // (fetched separately by fetchActionTiers below), which is what
+      // unlocks CPA auto-fill for modern Launch / Growth customers.
+      const [billingRes, workspaceRes] = await Promise.all([
+        fetch(
+          `https://api.clay.com/v3/billingplans/${workspaceId}?source=frontend`,
+          { credentials: "include" }
+        ),
+        fetch(
+          `https://api.clay.com/v3/workspaces/${workspaceId}`,
+          { credentials: "include" }
+        ),
+      ]);
+      if (!billingRes.ok) throw new Error(`billingplans HTTP ${billingRes.status} ${billingRes.statusText}`);
+      const data = await billingRes.json();
+      const cp = data?.currentPlan;
+      if (!cp) {
+        __cb.currentPlanPricing = null;
+        return;
+      }
+
+      // The /v3/workspaces fetch is best-effort — its only job here is
+      // unlocking action-rate auto-fill for self-serve modern plans. A
+      // failure (or an Enterprise placeholder limit) just leaves the
+      // action-rate input at its FIXED default. The credit auto-fill
+      // path, the higher-value side, only depends on billingplans.
+      let actionLimit = null;
+      if (workspaceRes.ok) {
+        try {
+          const wsData = await workspaceRes.json();
+          const limit = Number(wsData?.creditBudgets?.actionExecution);
+          // Same sentinel guard as basicCredits: Enterprise placeholders
+          // come back as 1B+ ("unlimited") and don't correspond to any
+          // public action tier, so reject them.
+          if (Number.isFinite(limit) && limit > 0 && limit < 100_000_000) {
+            actionLimit = limit;
+          }
+        } catch {
+          // Non-fatal — leave actionLimit null.
+        }
+      }
+
+      // The action-tier catalog is keyed by Clay-internal billingPlanId
+      // (e.g., plan_vsdV8nMgFJ4eq for Launch), not the human plan type.
+      // billingplans returns the id alongside type on each entry in
+      // publicPlans, so we just look ours up there — no extra fetch.
+      const planId = (data?.publicPlans ?? []).find((p) => p?.type === cp.type)?.id ?? null;
+
+      const isLegacyType = LEGACY_TYPES.has(cp.type);
+      const isModernType = MODERN_TYPES.has(cp.type);
+      const pi = cp.priceInfo ?? {};
+      const amount = Number(pi.amount);
+      const credits = Number(pi.basicCredits);
+      // basicCredits cap (100M) excludes the Enterprise "unlimited"
+      // sentinel value (1B credits, $0 amount) which would otherwise
+      // produce a degenerate $0/credit and silently mislead the rep.
+      const hasUsablePrice =
+        Number.isFinite(amount) && amount > 0 &&
+        Number.isFinite(credits) && credits > 0 && credits < 100_000_000;
+      const cpc = hasUsablePrice ? (amount / 100) / credits : null;
+
+      __cb.currentPlanPricing = {
+        planType: cp.type,
+        planId,
+        displayName: cp.displayName ?? cp.type,
+        billingSchedule: pi.billingSchedule ?? null,
+        basicCredits: credits || null,
+        amountCents: amount || null,
+        actionLimit,
+        cpc,
+        isLegacy: isLegacyType && cpc !== null,
+        isModern: isModernType && cpc !== null,
+      };
+    } catch (err) {
+      console.warn("[Clay Scoping] current plan pricing fetch failed:", err);
+      __cb.currentPlanPricing = null;
+    }
+  };
+
+  // Fetches the public action-tier catalog (every Launch/Growth tier
+  // with its Stripe-derived amount). Used by applyCurrentPlanAutoFill
+  // to look up the workspace's specific tier price by joining
+  // (currentPlanPricing.planId, currentPlanPricing.actionLimit,
+  // currentPlanPricing.billingSchedule) → tier.amount, then deriving
+  // CPA = (amount / 100) / actionExecutionLimit.
+  //
+  // Catalog rarely changes (action tier prices are catalog-wide, not
+  // per-workspace), so the fetch is cached on __cb.actionTiersCatalog
+  // for the page session — same caching pattern as livePricingByModel
+  // and currentPlanPricing.
+  __cb.fetchActionTiers = async function () {
+    try {
+      const res = await fetch(
+        "https://api.clay.com/v3/action-tiers-with-prices",
+        { credentials: "include" }
+      );
+      if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
+      const data = await res.json();
+      __cb.actionTiersCatalog = Array.isArray(data?.result) ? data.result : [];
+    } catch (err) {
+      console.warn("[Clay Scoping] action tiers fetch failed:", err);
+      __cb.actionTiersCatalog = [];
+    }
+  };
+
   // Fetches Clay's built-in waterfall attributes (the WaterfallRow rows in
   // the picker). For each attribute we keep:
   //   - displayName, attributeEnum, icon
