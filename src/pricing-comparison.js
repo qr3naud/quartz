@@ -198,7 +198,7 @@
     if (!anyAutoFilled || !ctx) {
       pill.removeAttribute("data-active");
       pill.removeAttribute("data-tooltip");
-      pill.removeAttribute("title");
+      pill.removeAttribute("aria-label");
       return;
     }
     const parts = [];
@@ -208,11 +208,11 @@
     const schedSuffix = ctx.sched ? ` (${ctx.sched})` : "";
     const tooltip = `Auto-filled from your ${ctx.name}${schedSuffix} plan — ${parts.join(", ")}`;
     pill.setAttribute("data-active", "true");
-    // Custom CSS tooltip (deterministic, no native title delay) +
-    // title fallback for screen readers and any context where the
-    // CSS pseudo-element gets clipped.
+    // Custom CSS tooltip (deterministic, no native delay) drives the
+    // visual; aria-label carries the same info for screen readers
+    // without triggering the native browser tooltip on top of ours.
     pill.setAttribute("data-tooltip", tooltip);
-    pill.title = tooltip;
+    pill.setAttribute("aria-label", tooltip);
   }
 
   // Modern pricing tier data — sourced from the pricing team. Used by
@@ -1168,13 +1168,14 @@
       // "Auto Filled" pill — soft purple chip surfaced when at least
       // one rate input is still in its plan-derived state. Hover
       // shows a custom CSS tooltip (via data-tooltip) listing the
-      // plan + currently-autofilled rates. Native title tooltip is
-      // also set as an accessibility fallback for screen readers
-      // and contexts where the CSS tooltip might be clipped.
-      // refreshAutoFillPill (called from openComparisonModal after
-      // mount, plus on every commit/reset) drives data-active
-      // visibility + tooltip text; initial sync can't happen here
-      // because the row isn't attached to modalEl yet.
+      // plan + currently-autofilled rates. aria-label mirrors the
+      // tooltip text for screen readers — we deliberately don't set
+      // `title` so the native browser tooltip doesn't double up on
+      // top of our custom one. refreshAutoFillPill (called from
+      // openComparisonModal after mount, plus on every commit/reset)
+      // drives data-active visibility + tooltip text; initial sync
+      // can't happen here because the row isn't attached to modalEl
+      // yet.
       const autoFillPill = document.createElement("span");
       autoFillPill.className = "cb-pricing-autofill-pill";
       autoFillPill.textContent = "Auto Filled";
