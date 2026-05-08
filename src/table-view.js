@@ -32,6 +32,11 @@
   // entries become orphan keys that buildRows() never reads.
   const collapsedGroups = new Set();
 
+  // Sentinel key for the "Unattached enrichments" pseudo-section at the
+  // top of the table. Treated like any other group id by collapsedGroups
+  // so the rep's expand / collapse choice survives re-renders.
+  const ORPHAN_SECTION_KEY = "__orphans__";
+
   // ---- Card-type helpers (mirror src/export.js) ----
 
   function isNonErType(type) {
@@ -443,7 +448,19 @@
       empty.appendChild(td);
       tbody.appendChild(empty);
     } else {
-      for (const row of orphanErRows) tbody.appendChild(buildOrphanErRow(row));
+      // Unattached enrichments live under their own yellow header section
+      // at the top — visually parallel to the purple Use Case / group
+      // sections below. Each row inside looks like a regular DP row, with
+      // an editable name input that, when committed, creates a new DP
+      // adjacent to the ER (forming a snap-cluster) so the row promotes
+      // itself to a connected DP row on the next render.
+      if (orphanErRows.length > 0) {
+        const orphansCollapsed = collapsedGroups.has(ORPHAN_SECTION_KEY);
+        tbody.appendChild(buildOrphanGroupHeaderRow(orphanErRows, headers.length, orphansCollapsed));
+        if (!orphansCollapsed) {
+          for (const row of orphanErRows) tbody.appendChild(buildOrphanDpStyleRow(row));
+        }
+      }
       // Group sections render as a header row spanning all columns,
       // followed by the cluster's DP rows (unless collapsed). Order matches
       // the canvas (groups in insertion order = top-to-bottom layout order).
@@ -466,19 +483,107 @@
     hostEl.appendChild(wrap);
   }
 
-  function buildOrphanErRow(row) {
+  // Yellow group-header row that sits above the unattached-enrichments
+  // section. Reuses the .cb-table-view-group-row scaffolding (chevron +
+  // icon + label + count + collapse toggle) so the orphan section
+  // collapses the same way Use Case sections do; the yellow palette is
+  // applied via .cb-table-view-orphan-group-row.
+  function buildOrphanGroupHeaderRow(orphanErRows, colSpan, isCollapsed) {
     const tr = document.createElement("tr");
-    tr.className = "cb-table-view-orphan-er-row";
+    tr.className =
+      "cb-table-view-group-row cb-table-view-orphan-group-row" +
+      (isCollapsed ? " cb-table-view-group-row-collapsed" : "");
+    tr.setAttribute("data-group-id", ORPHAN_SECTION_KEY);
+    tr.setAttribute("role", "button");
+    tr.setAttribute("aria-expanded", isCollapsed ? "false" : "true");
+    tr.tabIndex = 0;
+    const td = document.createElement("td");
+    td.colSpan = colSpan;
+    const wrap = document.createElement("div");
+    wrap.className = "cb-table-view-group-row-inner";
+
+    const chevron = document.createElement("span");
+    chevron.className = "cb-table-view-group-row-chevron";
+    chevron.innerHTML = chevronDownSvg(12);
+    chevron.setAttribute("aria-hidden", "true");
+
+    const icon = document.createElement("span");
+    icon.className = "cb-table-view-group-row-icon";
+    icon.innerHTML = warningSvg(13);
+
+    const label = document.createElement("span");
+    label.className = "cb-table-view-group-row-label";
+    label.textContent = "Unattached enrichments";
+
+    const count = document.createElement("span");
+    count.className = "cb-table-view-group-row-count";
+    const n = orphanErRows.length;
+    count.textContent = `${n} enrichment${n === 1 ? "" : "s"}`;
+
+    wrap.appendChild(chevron);
+    wrap.appendChild(icon);
+    wrap.appendChild(label);
+    wrap.appendChild(count);
+    td.appendChild(wrap);
+    tr.appendChild(td);
+
+    const toggle = () => {
+      if (collapsedGroups.has(ORPHAN_SECTION_KEY)) {
+        collapsedGroups.delete(ORPHAN_SECTION_KEY);
+      } else {
+        collapsedGroups.add(ORPHAN_SECTION_KEY);
+      }
+      render();
+    };
+    tr.addEventListener("click", toggle);
+    tr.addEventListener("keydown", (evt) => {
+      if (evt.key === "Enter" || evt.key === " ") {
+        evt.preventDefault();
+        toggle();
+      }
+    });
+
+    return tr;
+  }
+
+  // Looks like a regular DP row but the DP cell carries an editable
+  // placeholder input ("Add data point name…") rather than a value bound
+  // to an existing card. Committing a non-empty name calls
+  // attachDpToOrphanEr which stamps a new DP card edge-to-edge with the
+  // ER so the next refreshClusters round picks them up as a single
+  // cluster — and the row promotes itself out of the orphan section on
+  // the next render.
+  function buildOrphanDpStyleRow(row) {
+    const tr = document.createElement("tr");
+    tr.className = "cb-table-view-dp-row cb-table-view-orphan-dp-row";
     tr.setAttribute("data-card-id", String(row.cardId));
 
     const dpCell = document.createElement("td");
     dpCell.className = "col-dp";
-    const placeholder = document.createElement("span");
-    placeholder.className = "cb-table-view-orphan-placeholder";
-    placeholder.textContent = "Unattached enrichment";
-    dpCell.appendChild(placeholder);
+    const dpInput = document.createElement("input");
+    dpInput.type = "text";
+    dpInput.className = "cb-table-view-cell-input cb-table-view-cell-input-text";
+    dpInput.placeholder = "Add data point name\u2026";
+    let committed = false;
+    dpInput.addEventListener("keydown", (evt) => {
+      if (evt.key === "Enter") {
+        evt.preventDefault();
+        evt.target.blur();
+      }
+    });
+    dpInput.addEventListener("blur", () => {
+      if (committed) return;
+      const text = dpInput.value.trim();
+      if (text.length === 0) return;
+      committed = true;
+      attachDpToOrphanEr(row.cardId, text);
+    });
+    dpCell.appendChild(dpInput);
     tr.appendChild(dpCell);
 
+    // Fill rate stays muted until the row promotes to a real DP — there's
+    // no card to write the value to yet. The rep can edit it from the
+    // promoted row on the next render.
     const fillCell = document.createElement("td");
     fillCell.className = "col-fill cb-table-view-cell-muted";
     fillCell.textContent = "\u2014";
@@ -496,7 +601,14 @@
 
     const ersCell = document.createElement("td");
     ersCell.className = "col-ers";
-    ersCell.appendChild(buildErChipEl(row.er, /* removable */ true));
+    const chipsWrap = document.createElement("div");
+    chipsWrap.className = "cb-table-view-er-chips";
+    // Removable chip: the only way to delete an unattached enrichment
+    // (since the row's × delete is reserved for DP cards). Once the row
+    // promotes to a DP row, the chip becomes non-removable and the row
+    // delete button takes over.
+    chipsWrap.appendChild(buildErChipEl(row.er, /* removable */ true));
+    ersCell.appendChild(chipsWrap);
     tr.appendChild(ersCell);
 
     const endCell = document.createElement("td");
@@ -504,6 +616,25 @@
     tr.appendChild(endCell);
 
     return tr;
+  }
+
+  // Stamps a new DP card flush against the ER's left edge (at y matching
+  // the ER) so the snap-cluster mechanism picks them up as a single
+  // cluster on the next refreshClusters round. Uses CARD_W=220 because
+  // every other layout helper in the extension assumes that width — we
+  // can't read the prospective DP's offsetWidth before the card exists.
+  function attachDpToOrphanEr(erCardId, text) {
+    const canvas = __cb.canvas;
+    if (!canvas?.getCardById || !canvas.addDataPointCard) return;
+    const er = canvas.getCardById(erCardId);
+    if (!er) return;
+    const DP_W = 220;
+    canvas.addDataPointCard(text, {
+      x: er.x - DP_W,
+      y: er.y,
+    });
+    if (canvas.refreshClusters) canvas.refreshClusters();
+    if (canvas.notifyChange) canvas.notifyChange();
   }
 
   function buildDpRow(row) {
@@ -784,6 +915,19 @@
       'fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" ' +
       'stroke-linejoin="round" aria-hidden="true">' +
       '<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>' +
+      '</svg>'
+    );
+  }
+
+  function warningSvg(size) {
+    const s = String(size);
+    return (
+      `<svg xmlns="http://www.w3.org/2000/svg" width="${s}" height="${s}" viewBox="0 0 24 24" ` +
+      'fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" ' +
+      'stroke-linejoin="round" aria-hidden="true">' +
+      '<path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>' +
+      '<line x1="12" y1="9" x2="12" y2="13"/>' +
+      '<line x1="12" y1="17" x2="12.01" y2="17"/>' +
       '</svg>'
     );
   }
