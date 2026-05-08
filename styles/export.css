@@ -1769,6 +1769,12 @@
   white-space: nowrap;
   flex-shrink: 0;
   align-self: flex-end;
+  /* margin-left: auto eats remaining flex slack so the chip pins to
+     the right edge of the name cell regardless of how short or long
+     the field name is — without it, the chip floats up against the
+     name and its X position depends on text length, which reads as
+     "noise" when scanning a column of rows. */
+  margin-left: auto;
 }
 
 .cb-pricing-private-key-chip svg {
