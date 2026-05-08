@@ -55,7 +55,7 @@
 
   function buildRows() {
     const canvas = __cb.canvas;
-    if (!canvas) return { orphanErRows: [], dpRows: [] };
+    if (!canvas) return { orphanErRows: [], groupSections: [], dpRows: [] };
 
     const allCards = canvas.getCards();
     const clusters = canvas.getSnapClusters();
@@ -99,11 +99,34 @@
       }
     }
 
-    const dpRows = [];
+    // Index comment cards by their groupCluster id. Comments only become
+    // group-section headers when they're attached to a cluster — a free-
+    // floating comment without `groupCluster` is just a sticky note and
+    // should NOT pull DPs into a fake group. The POC importer + the
+    // table-import "basic group" path both stamp comments with a
+    // groupCluster, so this is a safe signal.
+    const commentByCluster = new Map();
+    for (const card of allCards) {
+      if (card.data?.type !== "comment") continue;
+      const cluster = card.data.groupCluster;
+      if (!cluster) continue;
+      const text = (card.data.text || card.data.displayName || "").trim();
+      if (text && !commentByCluster.has(cluster)) {
+        commentByCluster.set(cluster, text);
+      }
+    }
+
+    // Group-aware DP bucketing. A DP card joins a group section iff its
+    // own `groupCluster` matches a cluster that has a titled comment.
+    // Everything else goes into the flat dpRows bucket so today's
+    // ungrouped behavior (the entire DP list rendering as flat rows)
+    // is preserved for non-imported DPs.
+    const groupSectionsMap = new Map();
+    const flatDpRows = [];
     for (const card of allCards) {
       if (card.data.type !== "dp") continue;
       const info = dpInfoMap.get(card.id);
-      dpRows.push({
+      const row = {
         kind: "dp",
         cardId: card.id,
         name: card.data.text || card.data.displayName || "",
@@ -112,7 +135,21 @@
         actions: info ? info.actions : 0,
         ers: info ? info.ers : [],
         connected: !!info && info.enrichmentCount > 0,
-      });
+      };
+
+      const cluster = card.data.groupCluster;
+      if (cluster && commentByCluster.has(cluster)) {
+        if (!groupSectionsMap.has(cluster)) {
+          groupSectionsMap.set(cluster, {
+            groupId: cluster,
+            groupName: commentByCluster.get(cluster),
+            rows: [],
+          });
+        }
+        groupSectionsMap.get(cluster).rows.push(row);
+      } else {
+        flatDpRows.push(row);
+      }
     }
 
     // Orphan ERs: any ER card not in a DP-bearing cluster. This includes
@@ -137,7 +174,11 @@
       });
     }
 
-    return { orphanErRows, dpRows };
+    return {
+      orphanErRows,
+      groupSections: Array.from(groupSectionsMap.values()),
+      dpRows: flatDpRows,
+    };
   }
 
   function buildErChipData(er) {
@@ -287,6 +328,26 @@
 
     const introActions = document.createElement("div");
     introActions.className = "cb-table-view-intro-actions";
+
+    // "Upload POC" sits to the LEFT of "Add enrichment" so the rep's eye
+    // lands on the import option first when they're starting fresh — POC
+    // import is the bulk-action shortcut, "Add enrichment" is the granular
+    // follow-up. uploadSvg is a stylized cloud-upload icon distinct from
+    // the plus glyph used for additive actions.
+    const uploadPocBtn = document.createElement("button");
+    uploadPocBtn.type = "button";
+    uploadPocBtn.className = "cb-table-view-add-er-btn cb-table-view-upload-poc-btn";
+    uploadPocBtn.title = "Import data points from a POC overview document";
+    uploadPocBtn.innerHTML = uploadSvg(13) + "<span>Upload POC</span>";
+    uploadPocBtn.addEventListener("click", () => {
+      if (typeof __cb.startPocImport === "function") {
+        __cb.startPocImport(uploadPocBtn);
+      } else {
+        console.error("[Clay Scoping] POC import module not loaded.");
+      }
+    });
+    introActions.appendChild(uploadPocBtn);
+
     const addOrphanErBtn = document.createElement("button");
     addOrphanErBtn.type = "button";
     addOrphanErBtn.className = "cb-table-view-add-er-btn";
@@ -301,7 +362,7 @@
     const tableContainer = document.createElement("div");
     tableContainer.className = "cb-table-view-table-container";
 
-    const { orphanErRows, dpRows } = buildRows();
+    const { orphanErRows, groupSections, dpRows } = buildRows();
 
     const table = document.createElement("table");
     table.className = "cb-table-view-table";
@@ -328,18 +389,28 @@
 
     const tbody = document.createElement("tbody");
 
-    if (orphanErRows.length === 0 && dpRows.length === 0) {
+    const totalDpCount =
+      dpRows.length +
+      groupSections.reduce((sum, g) => sum + g.rows.length, 0);
+
+    if (orphanErRows.length === 0 && totalDpCount === 0) {
       const empty = document.createElement("tr");
       empty.className = "cb-table-view-empty-row";
       const td = document.createElement("td");
       td.colSpan = headers.length;
-      td.className = "cb-table-view-empty";
       td.textContent =
-        "No data points yet. Click \u201c+ Add data point\u201d below or \u201cAdd enrichment\u201d above to get started.";
+        "No data points yet. Click \u201cUpload POC\u201d to import from a doc, \u201c+ Add data point\u201d below, or \u201cAdd enrichment\u201d above to get started.";
       empty.appendChild(td);
       tbody.appendChild(empty);
     } else {
       for (const row of orphanErRows) tbody.appendChild(buildOrphanErRow(row));
+      // Group sections render as a header row spanning all columns,
+      // followed by the cluster's DP rows. Order matches the canvas
+      // (groups in insertion order = top-to-bottom layout order).
+      for (const section of groupSections) {
+        tbody.appendChild(buildGroupHeaderRow(section, headers.length));
+        for (const row of section.rows) tbody.appendChild(buildDpRow(row));
+      }
       for (const row of dpRows) tbody.appendChild(buildDpRow(row));
     }
 
@@ -501,6 +572,36 @@
     return chip;
   }
 
+  // Group-section header row — non-editable, spans every column. Used to
+  // visually segment the table when the user has imported clusters via the
+  // POC importer (or the Clay-table import's basic-group flow). Clicking the
+  // header doesn't expand/collapse today; the rows underneath always render.
+  function buildGroupHeaderRow(section, colSpan) {
+    const tr = document.createElement("tr");
+    tr.className = "cb-table-view-group-row";
+    tr.setAttribute("data-group-id", String(section.groupId));
+    const td = document.createElement("td");
+    td.colSpan = colSpan;
+    const wrap = document.createElement("div");
+    wrap.className = "cb-table-view-group-row-inner";
+    const icon = document.createElement("span");
+    icon.className = "cb-table-view-group-row-icon";
+    icon.innerHTML = folderSvg(13);
+    const label = document.createElement("span");
+    label.className = "cb-table-view-group-row-label";
+    label.textContent = section.groupName;
+    const count = document.createElement("span");
+    count.className = "cb-table-view-group-row-count";
+    const dpCount = section.rows.length;
+    count.textContent = `${dpCount} data point${dpCount === 1 ? "" : "s"}`;
+    wrap.appendChild(icon);
+    wrap.appendChild(label);
+    wrap.appendChild(count);
+    td.appendChild(wrap);
+    tr.appendChild(td);
+    return tr;
+  }
+
   function buildAddDpRow(colSpan) {
     const tr = document.createElement("tr");
     tr.className = "cb-table-view-add-dp-row";
@@ -570,6 +671,30 @@
       'stroke-linejoin="round" aria-hidden="true">' +
       '<line x1="18" y1="6" x2="6" y2="18"/>' +
       '<line x1="6" y1="6" x2="18" y2="18"/>' +
+      '</svg>'
+    );
+  }
+
+  function uploadSvg(size) {
+    const s = String(size);
+    return (
+      `<svg xmlns="http://www.w3.org/2000/svg" width="${s}" height="${s}" viewBox="0 0 24 24" ` +
+      'fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" ' +
+      'stroke-linejoin="round" aria-hidden="true">' +
+      '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>' +
+      '<polyline points="17 8 12 3 7 8"/>' +
+      '<line x1="12" y1="3" x2="12" y2="15"/>' +
+      '</svg>'
+    );
+  }
+
+  function folderSvg(size) {
+    const s = String(size);
+    return (
+      `<svg xmlns="http://www.w3.org/2000/svg" width="${s}" height="${s}" viewBox="0 0 24 24" ` +
+      'fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" ' +
+      'stroke-linejoin="round" aria-hidden="true">' +
+      '<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>' +
       '</svg>'
     );
   }

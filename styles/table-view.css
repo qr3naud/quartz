@@ -9,7 +9,15 @@
 
 .cb-overlay[data-cb-brainstorm-view="table"] .cb-canvas-area,
 .cb-overlay[data-cb-brainstorm-view="table"] .cb-toolbox,
-.cb-overlay[data-cb-brainstorm-view="table"] .cb-zoom-controls {
+.cb-overlay[data-cb-brainstorm-view="table"] .cb-zoom-controls,
+/* Presence UI is canvas-anchored (avatar pile sits in the top-right of the
+   canvas area; remote cursors render inside the canvas pan/zoom layer). In
+   table mode the canvas is hidden, so the cursors would float over an empty
+   container and the avatar pile would visually clash with the table content
+   underneath. Hide both — collaborators are still tracked behind the scenes
+   and reappear instantly when the user flips back to Cards. */
+.cb-overlay[data-cb-brainstorm-view="table"] .cb-collab-widget,
+.cb-overlay[data-cb-brainstorm-view="table"] .cb-cursors-layer {
   display: none !important;
 }
 
@@ -98,6 +106,20 @@
   background: #f9fafb;
   border-color: #9ca3af;
   color: #111827;
+}
+
+/* "Upload POC" gets a slightly stronger indigo treatment so it reads as the
+   primary bulk-import shortcut against the secondary "Add enrichment". */
+.cb-table-view-upload-poc-btn {
+  background: #eef2ff;
+  border-color: #c7d2fe;
+  color: #4338ca;
+}
+
+.cb-table-view-upload-poc-btn:hover {
+  background: #e0e7ff;
+  border-color: #a5b4fc;
+  color: #3730a3;
 }
 
 /* ---- Table container + table ---- */
@@ -358,6 +380,56 @@
   opacity: 1;
 }
 
+/* ---- Group header row ----
+
+   Group sections appear when an imported cluster has a titled comment card
+   (POC importer or basic-group table import). The header sits flush to its
+   data point rows beneath, with a subtle indigo tint so reps can scan
+   sections at a glance. Hover stays neutral — clicking the header is a
+   no-op today (no expand/collapse), so we don't want to imply otherwise. */
+.cb-table-view-group-row td {
+  padding: 10px 14px !important;
+  background: #f5f3ff;
+  border-top: 1px solid #ddd6fe;
+  border-bottom: 1px solid #ddd6fe;
+}
+
+.cb-table-view-group-row:hover {
+  background: #f5f3ff !important;
+}
+
+.cb-table-view-group-row-inner {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.cb-table-view-group-row-icon {
+  display: inline-flex;
+  align-items: center;
+  color: #6d28d9;
+}
+
+.cb-table-view-group-row-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: #4c1d95;
+  letter-spacing: 0.005em;
+}
+
+.cb-table-view-group-row-count {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  background: #ede9fe;
+  border: 1px solid #ddd6fe;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 500;
+  color: #6d28d9;
+  letter-spacing: 0.02em;
+}
+
 /* ---- Add data point footer row ---- */
 
 .cb-table-view-add-dp-row td {
@@ -405,14 +477,15 @@
 }
 
 /* ---- Empty state ---- */
-
+/* Match the Add data point footer row's content height exactly so the
+   "No data points yet…" message and the "+ Add data point" button form a
+   visually balanced two-row stack instead of a tiny line + a fat button.
+   Padding mirrors .cb-table-view-add-dp-btn (12px 14px), font-size matches
+   too — that puts both rows at the same intrinsic line-box height. */
 .cb-table-view-empty-row td {
-  padding: 0 !important;
-}
-
-.cb-table-view-empty {
-  padding: 56px 24px;
+  padding: 12px 14px !important;
   text-align: center;
   color: #6b7280;
-  font-size: 14px;
+  font-size: 13px;
+  line-height: 1.4;
 }
