@@ -285,6 +285,17 @@
   // consistently.
   const CARD_W = 220;
   const CARD_H = 96;
+  // Per-card stride: card size + gap. The gap MUST exceed
+  // ADJACENCY_TOLERANCE (1px in canvas/snap.js) on both axes — otherwise
+  // touching-edge cards end up bucketed into the same snap-cluster, which
+  // visually fuses them into one bordered block. Without this gap the
+  // cards inside a cb-group would still snap-cluster despite being
+  // "independent" (the group container only governs the bordered shell;
+  // individual snap-cluster behavior still fires off card-to-card
+  // adjacency). 20px horizontal / 24px vertical mirror the existing
+  // table-import strides (CARD_H_GAP=230, CARD_V_GAP=120).
+  const CARD_X_STRIDE = CARD_W + 20;
+  const CARD_Y_STRIDE = CARD_H + 24;
   // Vertical reserve above the first card row of each group so the group's
   // dashed border + title header has room to draw without overlapping the
   // previous group below it. Mirrors the topPad+hdrH math in
@@ -351,8 +362,8 @@
         // independent (free to move, no snap-magnet). The cb-group we
         // create below is what binds them together visually with a title.
         const card = canvas.addDataPointCard(bucket.dataPoints[i], {
-          x: startX + c * CARD_W,
-          y: currentY + r * CARD_H,
+          x: startX + c * CARD_X_STRIDE,
+          y: currentY + r * CARD_Y_STRIDE,
         });
         if (card?.id != null) stampedIds.push(card.id);
       }
@@ -366,7 +377,7 @@
       }
 
       const rowCount = Math.max(1, Math.ceil(bucket.dataPoints.length / COLS));
-      currentY += rowCount * CARD_H + GROUP_V_GAP + GROUP_HEADER_RESERVE;
+      currentY += rowCount * CARD_Y_STRIDE + GROUP_V_GAP + GROUP_HEADER_RESERVE;
       totalDpAdded += bucket.dataPoints.length;
       totalGroupsAdded += 1;
     }
