@@ -1889,21 +1889,29 @@
     thead.appendChild(headRowCols);
     tbl.appendChild(thead);
 
-    const tbody = document.createElement("tbody");
+    // Two <tbody> elements so the totals are addressable independently
+    // from the per-enrichment data rows. CSS uses .cb-pricing-totals to
+    // size both summary rows to a single shared height per pricing
+    // mode, and scopes the "remove border on last visible row" trick
+    // to .cb-pricing-rows so the Total per table 2px white separator
+    // is preserved even though it's now :last-child of its own tbody.
+    //
+    // The same totals object passes through both rows so
+    // recomputeAiCredits keeps legacyCredits / modernCredits in sync
+    // across them and the downstream readers (rowDollars, CSV / JSON
+    // exporters via state.totals) stay one mutation path.
+    const totalsBody = document.createElement("tbody");
+    totalsBody.className = "cb-pricing-totals";
+    totalsBody.appendChild(buildRowEl(totals, { isTotal: true }));
+    totalsBody.appendChild(buildTotalPerTableRowEl(totals));
+    tbl.appendChild(totalsBody);
 
-    // Pass the live totals object straight through so recomputeAiCredits
-    // can mutate its legacyCredits / modernCredits in place when the rep
-    // edits a CPC input. Both Total per row and Total per table reference
-    // the same object, and so do downstream readers like rowDollars and
-    // the CSV / JSON exporters via state.totals — keeping one mutation
-    // path means Total cells, Δ %, and exports all stay in sync.
-    tbody.appendChild(buildRowEl(totals, { isTotal: true }));
-    tbody.appendChild(buildTotalPerTableRowEl(totals));
-
+    const rowsBody = document.createElement("tbody");
+    rowsBody.className = "cb-pricing-rows";
     for (const row of rows) {
-      tbody.appendChild(buildRowEl(row));
+      rowsBody.appendChild(buildRowEl(row));
     }
-    tbl.appendChild(tbody);
+    tbl.appendChild(rowsBody);
     return tbl;
   }
 

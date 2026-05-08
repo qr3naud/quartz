@@ -1563,6 +1563,15 @@
   border-bottom: 1px solid #ffffff;
   padding: 10px 14px;
   font-size: 12px;
+  /* Explicit pixel line-height (instead of `normal` ≈ 14.4px) locks
+     Row 1's rendered height to exactly 35px: 10px padding-top + 14px
+     content + 10px padding-bottom + 1px white border-bottom. Row 2
+     pins itself at top: 35px below, so the border-bottom sits in the
+     last visible pixel of Row 1's stuck box and stays painted as
+     body cells scroll underneath. Without an explicit line-height
+     here, browser font-metric drift could push Row 1 to 36px and
+     Row 2 would overlap (and hide) that 1px white separator. */
+  line-height: 14px;
   font-weight: 600;
   color: #6b7280;
   text-transform: uppercase;
@@ -1580,13 +1589,35 @@
   border-bottom: 2px solid #ffffff;
 }
 
+/* Sticky header — both rows pin to the modal body's scroll context
+   (.cb-export-modal-body has overflow:auto; .cb-pricing-table-container
+   uses display:contents so it doesn't introduce a new positioning
+   ancestor). Row 1 sits at top:0; Row 2 sits directly below it at the
+   height of Row 1. The rowspan=2 cells (Enrichment, Δ) stay at top:0
+   and naturally span both sticky positions because rowspan inflates
+   their box. Each Row 2 <th> already has its own opaque section tint
+   (col-legacy / col-modern-* rules above), so body cells won't bleed
+   through during scroll. */
 .cb-pricing-table thead .cb-pricing-head-sections th {
   position: sticky;
   top: 0;
-  z-index: 1;
+  /* Higher than Row 2 (z-index: 1) so even if subpixel rounding ever
+     made Row 2's top edge bleed by ~1px, Row 1's painted bottom
+     border (the white separator) still wins the stacking contest. */
+  z-index: 2;
 }
 
 .cb-pricing-table thead .cb-pricing-head-cols th {
+  position: sticky;
+  /* Pins exactly at Row 1's rendered bottom edge (35px = 10px padding
+     + 14px line-height + 10px padding + 1px white border-bottom).
+     Row 1's padding/font-size/line-height rule above is what makes
+     this number deterministic — change them together if you tune
+     either. The 1px white border-bottom on Row 1 lives inside the
+     35px and is painted by Row 1's opaque cells, so it stays visible
+     when body rows scroll under both sticky headers. */
+  top: 35px;
+  z-index: 1;
   font-size: 11px;
   font-weight: 500;
 }
@@ -1635,7 +1666,12 @@
   vertical-align: middle;
 }
 
-.cb-pricing-table tbody tr:last-child td {
+/* Drop the bottom border on the last per-enrichment row so the table
+   ends cleanly. Scoped to the data tbody (.cb-pricing-rows) because
+   the totals tbody (.cb-pricing-totals) needs its last row's 2px
+   white border-bottom intact (sandwiches the two summary rows
+   between matching white gaps — see .cb-pricing-table-row td below). */
+.cb-pricing-table tbody.cb-pricing-rows tr:last-child td {
   border-bottom: none;
 }
 
@@ -1705,6 +1741,50 @@
 .cb-pricing-table-row .col-name,
 .cb-pricing-table-row .col-delta {
   background: #f3f4f6;
+}
+
+/* ---- Shared totals-row height per pricing mode ----
+   The two summary rows (Total per row + Total per table) intentionally
+   render at the same height in each mode so they read as one block,
+   regardless of which side currently has more content inside it.
+
+   Natural heights diverge by mode (measured via Playwright in
+   /tmp/clay-pricing-measure against this exact CSS):
+     - OFF: Total per row would be ~61px (its dollar cells contain
+       rate-input + derived stacks that still inflate the row even
+       though the dollar columns are visibility:collapse'd — Chromium
+       leaves cells inside a collapsed <col> in flow, only collapsing
+       width, see https://crbug.com/83903). Total per table is ~41px
+       (records input + 2px white border-bottom).
+     - ON: Total per row is ~61px (rate inputs now visible).
+       Total per table is still ~41px (just records input + border).
+
+   Strategy:
+     1. Hide the rate-wrap in OFF mode so Total per row stops being
+        inflated by hidden content (drops its natural height to ~36px,
+        the name-cell label only).
+     2. Lock both rows to a single height per mode via `height` on the
+        <tr>, treated as min-height by table layout (cells can grow if
+        needed but stay synced to each other):
+        - OFF: 41px = Total per table's natural height (records input
+          and its containing cell with the 2px white border-bottom).
+          The +1px vs Total per row's 1px border-bottom would otherwise
+          show as a 1px offsetHeight discrepancy with `height: 40px`.
+        - ON:  61px = Total per row's natural height (rate-input
+          2-line stack drives it).
+   Tweak both numbers together if the underlying inputs/borders change. */
+.cb-pricing-modal:not(.cb-pricing-on) .cb-pricing-rate-wrap {
+  display: none;
+}
+
+.cb-pricing-modal:not(.cb-pricing-on) .cb-pricing-table tbody.cb-pricing-totals .cb-pricing-total-row,
+.cb-pricing-modal:not(.cb-pricing-on) .cb-pricing-table tbody.cb-pricing-totals .cb-pricing-table-row {
+  height: 41px;
+}
+
+.cb-pricing-modal.cb-pricing-on .cb-pricing-table tbody.cb-pricing-totals .cb-pricing-total-row,
+.cb-pricing-modal.cb-pricing-on .cb-pricing-table tbody.cb-pricing-totals .cb-pricing-table-row {
+  height: 61px;
 }
 
 /* Label + records input lay out in a single row so the per-table
