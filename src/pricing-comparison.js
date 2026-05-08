@@ -197,6 +197,7 @@
       state.legacyAutoFilled || state.modernAutoFilled || state.actionAutoFilled;
     if (!anyAutoFilled || !ctx) {
       pill.removeAttribute("data-active");
+      pill.removeAttribute("data-tooltip");
       pill.removeAttribute("title");
       return;
     }
@@ -205,8 +206,13 @@
     if (state.modernAutoFilled) parts.push(`Modern CPC ${formatDollar(state.modernCreditRate)}`);
     if (state.actionAutoFilled) parts.push(`CPA ${formatDollar(state.actionRate)}`);
     const schedSuffix = ctx.sched ? ` (${ctx.sched})` : "";
+    const tooltip = `Auto-filled from your ${ctx.name}${schedSuffix} plan — ${parts.join(", ")}`;
     pill.setAttribute("data-active", "true");
-    pill.title = `Auto-filled from your ${ctx.name}${schedSuffix} plan — ${parts.join(", ")}`;
+    // Custom CSS tooltip (deterministic, no native title delay) +
+    // title fallback for screen readers and any context where the
+    // CSS pseudo-element gets clipped.
+    pill.setAttribute("data-tooltip", tooltip);
+    pill.title = tooltip;
   }
 
   // Modern pricing tier data — sourced from the pricing team. Used by
@@ -1159,16 +1165,19 @@
       inlineReset.addEventListener("click", resetRates);
       wrap.appendChild(inlineReset);
 
-      // "auto-filled" pill — soft purple chip surfaced when at least
+      // "Auto Filled" pill — soft purple chip surfaced when at least
       // one rate input is still in its plan-derived state. Hover
-      // tooltip lists the plan + currently-autofilled rates.
+      // shows a custom CSS tooltip (via data-tooltip) listing the
+      // plan + currently-autofilled rates. Native title tooltip is
+      // also set as an accessibility fallback for screen readers
+      // and contexts where the CSS tooltip might be clipped.
       // refreshAutoFillPill (called from openComparisonModal after
       // mount, plus on every commit/reset) drives data-active
-      // visibility + tooltip; the initial sync can't happen here
+      // visibility + tooltip text; initial sync can't happen here
       // because the row isn't attached to modalEl yet.
       const autoFillPill = document.createElement("span");
       autoFillPill.className = "cb-pricing-autofill-pill";
-      autoFillPill.textContent = "auto-filled";
+      autoFillPill.textContent = "Auto Filled";
       wrap.appendChild(autoFillPill);
 
       nameCell.appendChild(wrap);

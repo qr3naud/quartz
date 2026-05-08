@@ -1071,7 +1071,7 @@
   display: inline-flex;
 }
 
-/* "auto-filled" pill — soft-purple chip surfaced next to the inline
+/* "Auto Filled" pill — soft-purple chip surfaced next to the inline
    Reset button in the Total per row label whenever at least one rate
    input is still in its plan-derived state. Hidden by default;
    refreshAutoFillPill in pricing-comparison.js toggles data-active
@@ -1080,6 +1080,7 @@
    mode (where the dollar columns are hidden anyway). cursor:help
    signals "hover for details" without implying click behavior. */
 .cb-pricing-autofill-pill {
+  position: relative;
   display: none;
   align-items: center;
   font-size: 11px;
@@ -1103,6 +1104,42 @@
 
 .cb-pricing-modal.cb-pricing-on .cb-pricing-autofill-pill[data-active="true"] {
   display: inline-flex;
+}
+
+/* Custom CSS tooltip — bypasses the unreliable / delayed native
+   title rendering. Drawn from data-tooltip (set in
+   refreshAutoFillPill alongside the title fallback) and positioned
+   below the pill so it doesn't collide with the table header above.
+   200ms delay so a casual mouse pass-through doesn't flash it,
+   then a quick fade in. pointer-events:none on the tooltip itself
+   prevents it from capturing the mouse and triggering :hover loops. */
+.cb-pricing-autofill-pill[data-tooltip]::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  width: 280px;
+  padding: 8px 12px;
+  background: #1f2937;
+  color: #f9fafb;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.45;
+  letter-spacing: 0;
+  text-align: left;
+  white-space: normal;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-2px);
+  transition: opacity 0.12s ease-out 0.2s, transform 0.12s ease-out 0.2s;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  z-index: 10000;
+}
+
+.cb-pricing-autofill-pill[data-tooltip]:hover::after {
+  opacity: 1;
+  transform: translateY(0);
 }
 
 /* Bands button — same shape as Reset (only visible when pricing is
@@ -1264,25 +1301,19 @@
 
 /* Highlight the row matching the workspace's active plan + tier
    (driven by matchingBandsCreditsKey / matchingBandsActionsKey in
-   pricing-comparison.js). Uses a soft purple to differentiate from
-   the indigo auto-filled input treatment — both are part of the
-   plan-aware UX but signal different things (input value vs catalog
-   anchor). The inset left accent acts like a focus ring on the row
-   so the eye lands on it immediately when the modal opens. Uses a
-   higher-specificity selector + !important on the background to win
-   over the generic hover state above without ordering gymnastics. */
+   pricing-comparison.js). Uses the same indigo language as the
+   Download button, the period-active toggle, and the auto-filled
+   input border — one shared visual cue across the modal for "this
+   is plan-derived". Uses a higher-specificity selector + !important
+   on the background to win over the generic hover state above. */
 .cb-bands-table tbody tr.cb-bands-row-current td,
 .cb-bands-table tbody tr.cb-bands-row-current:hover td {
-  background: #f5f3ff !important;
-  color: #4c1d95;
-}
-
-.cb-bands-table tbody tr.cb-bands-row-current td:first-child {
-  box-shadow: inset 4px 0 0 #8b5cf6;
+  background: #eef2ff !important;
+  color: #3730a3;
 }
 
 .cb-bands-table tbody tr.cb-bands-row-current .cb-bands-tier {
-  color: #6d28d9;
+  color: #4f46e5;
 }
 
 .cb-bands-num {
