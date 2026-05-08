@@ -589,6 +589,45 @@
     return resolveAiModel(source, info).credits;
   }
 
+  // True when the matched model has its credit cost computed live from
+  // the workspace's centsPerCredit (the modern variable-pricing path
+  // for Claygent — see model-base-cost.service.ts on the backend). The
+  // signal we use is "the model name appears in __cb.livePricingByModel"
+  // because /v3/model-pricing/.../base-costs only returns variable-
+  // priced models. Fixed-priced models (older content-gen, etc.) are
+  // absent from that map and keep their hardcoded DEFAULT_AI_MODELS
+  // credits — they don't recompute when the rep slides the CPC inputs.
+  function isVariablePricedAiModel(matched) {
+    if (!matched?.id) return false;
+    return __cb.livePricingByModel?.[matched.id] != null;
+  }
+
+  // In-place updater that re-derives row.legacyCredits / row.modernCredits
+  // from the AI cents anchor + the current state.legacyCreditRate /
+  // state.modernCreditRate. Mutating the existing fields keeps every
+  // downstream reader (rowDollars, rowDeltaPct, formatNumber, CSV/JSON
+  // export) untouched. No-op for rows without an aiCentsPerRow anchor —
+  // non-AI rows and fixed-priced AI rows continue to render exactly as
+  // they did before this feature.
+  //
+  // Math: at the auto-filled CPC the legacy/modern columns reproduce the
+  // workspace's modelCredits exactly (because aiCentsPerRow was anchored
+  // at modelCredits × cpcAnchor × 100). Any rep override scales linearly
+  // — a 2× CPC halves the credits, a 0.5× CPC doubles them. Validators
+  // and non-AI waterfall steps live in the static _nonAi* portion and
+  // pass through unchanged, so a mixed waterfall only flexes the AI
+  // step's contribution to the per-step average.
+  function recomputeAiCredits(row) {
+    if (!row || !Number(row.aiCentsPerRow)) return;
+    const cents = Number(row.aiCentsPerRow);
+    const lRate = state.legacyCreditRate;
+    const mRate = state.modernCreditRate;
+    row.legacyCredits = (Number(row._nonAiLegacyCredits) || 0)
+      + (lRate > 0 ? cents / (lRate * 100) : 0);
+    row.modernCredits = (Number(row._nonAiModernCredits) || 0)
+      + (mRate > 0 ? cents / (mRate * 100) : 0);
+  }
+
   // Mirrors the server-side rule for "is this row billed?":
   //   key-only action OR (authAccountId set AND not Clay-shared public key)
   // Used both to set the per-row "Private key" chip in the UI and (for
@@ -722,10 +761,26 @@
       let legacySum = 0;
       let modernSum = 0;
       let modernActionsSum = 0;
+      // Parallel "split" buckets for variable-priced AI vs everything
+      // else, used by recomputeAiCredits to recompute legacyCredits /
+      // modernCredits live from the rep's CPC inputs. Validators always
+      // land in the non-AI bucket (they're typically lookups; AI
+      // validators are vanishingly rare and accepting that minor drift
+      // keeps the math straightforward).
+      let aiCentsSum = 0;
+      let nonAiLegacySum = 0;
+      let nonAiModernSum = 0;
       // Track whether every step is BYOK / key-only so we can stamp the
       // "Private key" chip on the waterfall row only when the whole
       // chain is unbilled (mixed waterfalls would be misleading).
       let allStepsPrivateKey = true;
+      // Anchor for converting modelCredits -> $/call cents. Read from
+      // the workspace's priceInfo headline CPC (currentPlanPricing.cpc)
+      // so the auto-filled rate input reproduces the original
+      // modelCredits exactly. Null when the workspace has no usable
+      // contract CPC (placeholder Enterprise / trial / free) -> AI
+      // variable adaptation degrades to current static behavior.
+      const cpcAnchor = Number(__cb.currentPlanPricing?.cpc) || 0;
       for (const step of steps) {
         const lookupKey = `${step.actionPackageId ?? "clay"}-${step.actionKey}`;
         const info = __cb.actionByIdLookup?.[lookupKey];
@@ -733,13 +788,20 @@
         // Per-step credits + private-key flag — same AI branch as the
         // standalone field loop. AI steps (e.g., a Claygent step in a
         // waterfall) resolve their model via inputsBinding + the
-        // catalog model options. Same model credit on both tiers; the
-        // step's own authAccountId zeroes it out for private-key
-        // wiring. Falls back to the existing resolveTierCredits when
-        // model resolution returns null.
+        // catalog model options. The step's own authAccountId zeroes
+        // it out for private-key wiring. Falls back to the existing
+        // resolveTierCredits when model resolution returns null.
         let stepLegacy, stepModern, stepIsPrivateKey;
+        // Per-step split contribution: stepAiCents lands in the
+        // variable-AI bucket (recomputed live), stepNonAiLegacy /
+        // stepNonAiModern land in the static bucket. For non-variable
+        // paths these collapse to the legacy behavior (everything in
+        // non-AI) so recomputeAiCredits is a no-op for those rows.
+        let stepAiCents = 0;
+        let stepNonAiLegacy = 0;
+        let stepNonAiModern = 0;
         if (info?.isAi) {
-          const modelCredits = resolveAiCredits(step, info);
+          const { credits: modelCredits, matched } = resolveAiModel(step, info);
           if (modelCredits !== null) {
             stepLegacy = modelCredits;
             stepModern = modelCredits;
@@ -753,12 +815,24 @@
               ? __cb.appAccountById?.[step.authAccountId]
               : null;
             stepIsPrivateKey = !!step.authAccountId && !stepAccount?.isSharedPublicKey;
+            if (modelCredits > 0 && cpcAnchor > 0 && isVariablePricedAiModel(matched)) {
+              // Variable-priced AI: stash the USD cents anchor instead
+              // of credits so the row recomputes when CPC inputs change.
+              stepAiCents = modelCredits * cpcAnchor * 100;
+            } else {
+              // Fixed-priced AI (or no cpc anchor): treat like a static
+              // step — same credits both columns, no live recomputation.
+              stepNonAiLegacy = stepLegacy;
+              stepNonAiModern = stepModern;
+            }
           } else {
             const l = resolveTierCredits(info, "legacy");
             const m = resolveTierCredits(info, "modern");
             stepLegacy = l.credits;
             stepModern = m.credits;
             stepIsPrivateKey = l.isPrivateKey;
+            stepNonAiLegacy = stepLegacy;
+            stepNonAiModern = stepModern;
           }
         } else {
           const legacy = resolveTierCredits(info, "legacy");
@@ -766,16 +840,26 @@
           stepLegacy = legacy.credits;
           stepModern = modern.credits;
           stepIsPrivateKey = legacy.isPrivateKey;
+          stepNonAiLegacy = stepLegacy;
+          stepNonAiModern = stepModern;
         }
 
         // Validation surcharge contributes per step only when the step's
         // own provider isn't private-key (validator runs after a real
         // billed call). Matches deriveWaterfallTotals's per-provider
         // c + v formula in src/picker.js.
-        legacySum +=
-          stepLegacy + (validationActive && !stepIsPrivateKey ? validationLegacy : 0);
-        modernSum +=
-          stepModern + (validationActive && !stepIsPrivateKey ? validationModern : 0);
+        const validationLegacyContrib =
+          validationActive && !stepIsPrivateKey ? validationLegacy : 0;
+        const validationModernContrib =
+          validationActive && !stepIsPrivateKey ? validationModern : 0;
+        legacySum += stepLegacy + validationLegacyContrib;
+        modernSum += stepModern + validationModernContrib;
+        // Split-bucket aggregation parallel to legacySum / modernSum:
+        // the validator surcharge always lands in the non-AI bucket so
+        // it stays static when only the AI portion recomputes.
+        aiCentsSum += stepAiCents;
+        nonAiLegacySum += stepNonAiLegacy + validationLegacyContrib;
+        nonAiModernSum += stepNonAiModern + validationModernContrib;
         // Action-execution averaging mirrors the credit math: per step,
         // sum the step's own actions + the validator's actions when the
         // validator actually runs. Private-key state on the STEP doesn't
@@ -791,6 +875,9 @@
       const legacyAvg = Math.round((legacySum / steps.length) * 100) / 100;
       const modernAvg = Math.round((modernSum / steps.length) * 100) / 100;
       const modernActionsAvg = Math.round((modernActionsSum / steps.length) * 100) / 100;
+      const aiCentsAvg = aiCentsSum / steps.length;
+      const nonAiLegacyAvg = nonAiLegacySum / steps.length;
+      const nonAiModernAvg = nonAiModernSum / steps.length;
 
       const firstStepInfo =
         __cb.actionByIdLookup?.[`${steps[0].actionPackageId ?? "clay"}-${steps[0].actionKey}`];
@@ -806,6 +893,11 @@
         // waterfall (some steps Clay-shared, some BYOK) bills credits
         // and shouldn't read as "free" at a glance.
         isPrivateKey: allStepsPrivateKey,
+        // Split buckets: aiCentsPerRow > 0 unlocks live recomputation
+        // via recomputeAiCredits. nonAi* hold the static remainder.
+        aiCentsPerRow: aiCentsAvg,
+        _nonAiLegacyCredits: nonAiLegacyAvg,
+        _nonAiModernCredits: nonAiModernAvg,
       });
     }
 
@@ -820,18 +912,29 @@
 
       // AI fields (Use AI / Claygent / etc.): resolve the user-picked
       // model from inputsBinding and use its credit cost on both
-      // tiers. Per-model pricing is plan-agnostic in Clay's data
-      // shape, so legacy + modern get the same model credit; the Δ
-      // for AI rows is driven by the modern actionExecution dimension.
-      // Falls back to the action-level catalog when model resolution
-      // returns null (no inputsBinding, unknown model, etc.).
+      // tiers. For variable-priced models (in __cb.livePricingByModel)
+      // we additionally stash the USD cents anchor so the LEGACY /
+      // MODERN columns recompute live when the rep edits the CPC
+      // inputs. Falls back to the action-level catalog when model
+      // resolution returns null (no inputsBinding, unknown model).
       let legacyCredits, modernCredits;
+      let rowAiCents = 0;
       let iconUrl = info?.iconUrl ?? null;
       if (info?.isAi) {
         const { credits: modelCredits, matched } = resolveAiModel(field, info);
         if (modelCredits !== null) {
           legacyCredits = modelCredits;
           modernCredits = modelCredits;
+          // Variable-pricing path: anchor on workspace CPC so the
+          // auto-filled rate input reproduces the modelCredits exactly,
+          // and any rep override scales linearly. The cpc==null branch
+          // (placeholder Enterprise / trial / free) leaves rowAiCents
+          // at 0 so recomputeAiCredits is a no-op for this row -> same
+          // value on both sides, current behavior preserved.
+          const cpcAnchor = Number(__cb.currentPlanPricing?.cpc) || 0;
+          if (modelCredits > 0 && cpcAnchor > 0 && isVariablePricedAiModel(matched)) {
+            rowAiCents = modelCredits * cpcAnchor * 100;
+          }
         } else {
           legacyCredits = resolveTierCredits(info, "legacy").credits;
           modernCredits = resolveTierCredits(info, "modern").credits;
@@ -853,16 +956,48 @@
         // BYOK / key-only chip indicator. Mirrors what the server
         // would compute as creditCost.isPrivateKey for this field.
         isPrivateKey: resolvePrivateKeyState(field, info),
+        // Split buckets — see waterfall branch above. For non-AI rows
+        // and fixed-priced AI, aiCentsPerRow stays 0 (no live recompute).
+        // For variable-priced AI, the static portion is 0 (the entire
+        // credit cost varies with CPC).
+        aiCentsPerRow: rowAiCents,
+        _nonAiLegacyCredits: rowAiCents > 0 ? 0 : legacyCredits,
+        _nonAiModernCredits: rowAiCents > 0 ? 0 : modernCredits,
       });
     }
 
     const totals = rows.reduce(
-      (acc, r) => ({
-        legacyCredits: acc.legacyCredits + (Number(r.legacyCredits) || 0),
-        modernCredits: acc.modernCredits + (Number(r.modernCredits) || 0),
-        modernActions: acc.modernActions + (Number(r.modernActions) || 0),
-      }),
-      { legacyCredits: 0, modernCredits: 0, modernActions: 0 }
+      (acc, r) => {
+        // Treat the totals object like a row so recomputeAiCredits can
+        // operate on it: aggregate aiCentsPerRow + the static non-AI
+        // remainder in parallel with the existing totals. For rows
+        // without an AI cents anchor (non-AI / fixed-priced AI), the
+        // entire row.legacyCredits / row.modernCredits flows into the
+        // non-AI bucket so the sum stays correct under recomputation.
+        const rowAiCents = Number(r.aiCentsPerRow) || 0;
+        const rowNonAiL = rowAiCents > 0
+          ? (Number(r._nonAiLegacyCredits) || 0)
+          : (Number(r.legacyCredits) || 0);
+        const rowNonAiM = rowAiCents > 0
+          ? (Number(r._nonAiModernCredits) || 0)
+          : (Number(r.modernCredits) || 0);
+        return {
+          legacyCredits: acc.legacyCredits + (Number(r.legacyCredits) || 0),
+          modernCredits: acc.modernCredits + (Number(r.modernCredits) || 0),
+          modernActions: acc.modernActions + (Number(r.modernActions) || 0),
+          aiCentsPerRow: acc.aiCentsPerRow + rowAiCents,
+          _nonAiLegacyCredits: acc._nonAiLegacyCredits + rowNonAiL,
+          _nonAiModernCredits: acc._nonAiModernCredits + rowNonAiM,
+        };
+      },
+      {
+        legacyCredits: 0,
+        modernCredits: 0,
+        modernActions: 0,
+        aiCentsPerRow: 0,
+        _nonAiLegacyCredits: 0,
+        _nonAiModernCredits: 0,
+      }
     );
 
     return { rows, totals, viewName: defaultView?.name ?? null };
@@ -1139,6 +1274,12 @@
     const tr = document.createElement("tr");
     if (isTotal) tr.className = "cb-pricing-total-row";
 
+    // Mutate row.legacyCredits / row.modernCredits to reflect the
+    // current CPC rate state before any cell reads happen below. No-op
+    // for non-AI / fixed-priced AI rows; for variable-priced AI rows
+    // the values get re-derived from the cents anchor + state rates.
+    recomputeAiCredits(row);
+
     const nameCell = document.createElement("td");
     nameCell.className = "col-name";
     if (isTotal) {
@@ -1310,6 +1451,12 @@
     const tr = document.createElement("tr");
     tr.className = "cb-pricing-table-row";
     const mul = state.recordsCount;
+
+    // Treat the totals object as a row for AI recomputation: mutates
+    // totals.legacyCredits / totals.modernCredits from the aggregated
+    // aiCentsPerRow + nonAi remainders. Has to run before any cell
+    // text below reads totals.legacyCredits / totals.modernCredits.
+    recomputeAiCredits(totals);
 
     const nameCell = document.createElement("td");
     nameCell.className = "col-name";
@@ -1565,7 +1712,9 @@
   // multiplier }) so the math is consistent for the per-row Total
   // (multiplier 1), the per-table Total (multiplier = recordsCount),
   // and per-enrichment rows (multiplier 1). Updates:
-  //   - Numeric cells when multiplier !== 1 (per-table only)
+  //   - Numeric credit cells when multiplier !== 1 (per-table) OR
+  //     when the row has a variable-priced AI anchor (legacyCredits /
+  //     modernCredits change with the rate inputs)
   //   - The 3 dollar cells everywhere
   //   - The Δ cell everywhere (multiplier cancels in the % calc, so
   //     the same rowDeltaPct(row, mode) call works for any row)
@@ -1581,18 +1730,38 @@
       const row = ctx.row;
       const mul = ctx.multiplier || 1;
 
-      if (mul !== 1) {
+      // Mutates row.legacyCredits / row.modernCredits in place when
+      // the row has an AI cents anchor; no-op otherwise. Has to fire
+      // before any cell-text reads below, since the rep just edited
+      // the rate that drives those fields.
+      recomputeAiCredits(row);
+
+      // Update numeric credit cells when either the row is multiplied
+      // by records (per-table summary) OR its credits change with the
+      // rate inputs (variable-priced AI). Pure non-AI rows with mul===1
+      // skip this branch since their credits never change.
+      const isAiVariableRow = Number(row.aiCentsPerRow) > 0;
+      if (mul !== 1 || isAiVariableRow) {
         // `.col-legacy` is a strict class match — does NOT match
         // `.col-legacy-dollar` (those are separate class names, not
         // a prefix relationship), so we get the credit/action numeric
         // cell directly without needing a :not() exclusion.
-        // Per-table rows round to whole numbers (large-volume noise).
+        // Per-table rows round to whole numbers (large-volume noise);
+        // per-row AI rows keep precision via formatNumber's natural
+        // 2-decimal rendering.
         const lc = tr.querySelector(".col-legacy");
         const mc = tr.querySelector(".col-modern-credits");
         const ma = tr.querySelector(".col-modern-actions");
-        if (lc) lc.textContent = formatNumber(Math.round((Number(row.legacyCredits) || 0) * mul));
-        if (mc) mc.textContent = formatNumber(Math.round((Number(row.modernCredits) || 0) * mul));
-        if (ma) ma.textContent = formatNumber(Math.round((Number(row.modernActions) || 0) * mul));
+        if (mul !== 1) {
+          if (lc) lc.textContent = formatNumber(Math.round((Number(row.legacyCredits) || 0) * mul));
+          if (mc) mc.textContent = formatNumber(Math.round((Number(row.modernCredits) || 0) * mul));
+          if (ma) ma.textContent = formatNumber(Math.round((Number(row.modernActions) || 0) * mul));
+        } else {
+          // Per-row credit refresh for AI variable rows: actions don't
+          // change with CPC inputs, so leave .col-modern-actions alone.
+          if (lc) lc.textContent = formatNumber(Number(row.legacyCredits) || 0);
+          if (mc) mc.textContent = formatNumber(Number(row.modernCredits) || 0);
+        }
       }
 
       // Dollar cells share one formatter selection per row: per-row
@@ -1722,14 +1891,14 @@
 
     const tbody = document.createElement("tbody");
 
-    const totalRow = {
-      legacyCredits: totals.legacyCredits,
-      modernCredits: totals.modernCredits,
-      modernActions: totals.modernActions,
-    };
-
-    tbody.appendChild(buildRowEl(totalRow, { isTotal: true }));
-    tbody.appendChild(buildTotalPerTableRowEl(totalRow));
+    // Pass the live totals object straight through so recomputeAiCredits
+    // can mutate its legacyCredits / modernCredits in place when the rep
+    // edits a CPC input. Both Total per row and Total per table reference
+    // the same object, and so do downstream readers like rowDollars and
+    // the CSV / JSON exporters via state.totals — keeping one mutation
+    // path means Total cells, Δ %, and exports all stay in sync.
+    tbody.appendChild(buildRowEl(totals, { isTotal: true }));
+    tbody.appendChild(buildTotalPerTableRowEl(totals));
 
     for (const row of rows) {
       tbody.appendChild(buildRowEl(row));
@@ -1924,8 +2093,19 @@
     return { headers, rows: dataRows };
   }
 
+  // Sync every row + totals to the current rate state before
+  // serializing so downloads reflect the rep's latest CPC overrides.
+  // No-op for pure non-AI rows; for variable-priced AI rows this
+  // re-derives legacyCredits / modernCredits from the cents anchor.
+  function syncAiCreditsBeforeExport() {
+    if (!state.rows) return;
+    for (const r of state.rows) recomputeAiCredits(r);
+    if (state.totals) recomputeAiCredits(state.totals);
+  }
+
   function downloadCsv() {
     if (!state.rows || !state.totals) return;
+    syncAiCreditsBeforeExport();
     const escape = (v) => {
       const s = String(v ?? "");
       return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
@@ -1938,6 +2118,7 @@
 
   function downloadJson() {
     if (!state.rows || !state.totals) return;
+    syncAiCreditsBeforeExport();
     const pricing = state.pricingMode;
     const payload = {
       table: {
