@@ -364,12 +364,7 @@
     const introTitle = document.createElement("div");
     introTitle.className = "cb-table-view-intro-title";
     introTitle.textContent = "Spreadsheet view";
-    const introSub = document.createElement("div");
-    introSub.className = "cb-table-view-intro-sub";
-    introSub.textContent =
-      "Edit data points and add enrichments inline. Changes write back to the canvas immediately.";
     intro.appendChild(introTitle);
-    intro.appendChild(introSub);
 
     const introActions = document.createElement("div");
     introActions.className = "cb-table-view-intro-actions";
@@ -603,10 +598,9 @@
     ersCell.className = "col-ers";
     const chipsWrap = document.createElement("div");
     chipsWrap.className = "cb-table-view-er-chips";
-    // Removable chip: the only way to delete an unattached enrichment
-    // (since the row's × delete is reserved for DP cards). Once the row
-    // promotes to a DP row, the chip becomes non-removable and the row
-    // delete button takes over.
+    // Removable chip: the only way to delete an unattached enrichment,
+    // since orphan-ER rows have no row-level × (the row goes away with
+    // the ER itself).
     chipsWrap.appendChild(buildErChipEl(row.er, /* removable */ true));
     ersCell.appendChild(chipsWrap);
     tr.appendChild(ersCell);
@@ -691,7 +685,12 @@
     const chipsWrap = document.createElement("div");
     chipsWrap.className = "cb-table-view-er-chips";
     for (const er of row.ers) {
-      chipsWrap.appendChild(buildErChipEl(er, /* removable */ false));
+      // DP rows used to render non-removable chips on the theory that the
+      // row's × delete handled cleanup. That breaks for DPs with 2+ ERs:
+      // there's no way to drop a single enrichment without leaving the
+      // table view. The row × still deletes the DP itself; the chip ×
+      // only deletes the ER it sits on.
+      chipsWrap.appendChild(buildErChipEl(er, /* removable */ true));
     }
     const addErBtn = document.createElement("button");
     addErBtn.type = "button";
@@ -952,7 +951,17 @@
       // notifyChange → onCanvasStateChange.
       const active = document.activeElement;
       if (active && hostEl.contains(active) && active.tagName === "INPUT") return;
+      // hostEl IS the scroll container (.cb-table-view-area has overflow:
+      // auto). render() wipes hostEl.innerHTML, which resets scrollTop to 0,
+      // making every chip-× / row-× / picker-confirm snap the user back to
+      // the top. Capture and restore around the re-render so the table
+      // looks visually stable across mutations.
+      const prevScrollTop = hostEl.scrollTop;
       render();
+      if (prevScrollTop > 0) {
+        const maxScroll = hostEl.scrollHeight - hostEl.clientHeight;
+        hostEl.scrollTop = Math.min(prevScrollTop, Math.max(0, maxScroll));
+      }
     },
     isMounted() {
       return !!hostEl;

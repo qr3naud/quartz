@@ -104,25 +104,17 @@
     // Cards / Tables view toggle. Label flips dynamically: when the canvas
     // is showing it reads "Tables" (the action), and vice versa. Clicking
     // calls __cb.setBrainstormView, which mounts/unmounts the spreadsheet
-    // and persists the choice per-tab via debouncedSave.
-    const TABLE_ICON_SVG =
+    // and persists the choice per-tab via debouncedSave. Single
+    // arrow-right-left icon reads as "swap views" in both directions, so
+    // we don't have to swap glyphs along with the label.
+    const SWAP_VIEW_ICON_SVG =
       '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" ' +
       'fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" ' +
       'stroke-linejoin="round" aria-hidden="true">' +
-      '<rect x="3" y="3" width="18" height="18" rx="2"/>' +
-      '<line x1="3" y1="9" x2="21" y2="9"/>' +
-      '<line x1="3" y1="15" x2="21" y2="15"/>' +
-      '<line x1="9" y1="3" x2="9" y2="21"/>' +
-      '<line x1="15" y1="3" x2="15" y2="21"/>' +
-      '</svg>';
-    const CARDS_ICON_SVG =
-      '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" ' +
-      'fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" ' +
-      'stroke-linejoin="round" aria-hidden="true">' +
-      '<rect x="3" y="4" width="8" height="7" rx="1.5"/>' +
-      '<rect x="13" y="4" width="8" height="11" rx="1.5"/>' +
-      '<rect x="3" y="13" width="8" height="7" rx="1.5"/>' +
-      '<rect x="13" y="17" width="8" height="3" rx="1"/>' +
+      '<path d="m16 3 4 4-4 4"/>' +
+      '<path d="M20 7H4"/>' +
+      '<path d="m8 21-4-4 4-4"/>' +
+      '<path d="M4 17h16"/>' +
       '</svg>';
 
     const viewToggleBtn = document.createElement("button");
@@ -135,9 +127,19 @@
 
     function renderViewToggle() {
       const inTable = __cb.brainstormView === "table";
-      // Label = the action, so it reads "what you'll switch to".
-      viewToggleBtn.innerHTML = (inTable ? CARDS_ICON_SVG : TABLE_ICON_SVG) +
-        " " + (inTable ? "Cards" : "Tables");
+      // Both labels are rendered inside the button as a grid-stack; CSS
+      // hides whichever isn't active. The button therefore always reserves
+      // width for the longer label ("Tables"), so toggling never shifts
+      // the button's neighbours. data-state is read by the CSS to decide
+      // which copy to hide.
+      const state = inTable ? "cards" : "tables";
+      viewToggleBtn.setAttribute("data-state", state);
+      viewToggleBtn.innerHTML =
+        SWAP_VIEW_ICON_SVG +
+        '<span class="cb-toolbar-view-toggle-label">' +
+          '<span data-label="tables">Tables</span>' +
+          '<span data-label="cards">Cards</span>' +
+        "</span>";
       viewToggleBtn.title = inTable
         ? "Switch back to the canvas view"
         : "Switch to a spreadsheet view of your data points and enrichments";
@@ -264,10 +266,10 @@
     };
 
     rightGroup.appendChild(viewModeWrap);
-    rightGroup.appendChild(viewToggleBtn);
     rightGroup.appendChild(proBtn);
     rightGroup.appendChild(pricingBtn);
     rightGroup.appendChild(importBtn);
+    rightGroup.appendChild(viewToggleBtn);
     rightGroup.appendChild(exportBtn);
     rightGroup.appendChild(closeBtn);
     topBar.appendChild(leftGroup);

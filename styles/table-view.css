@@ -17,7 +17,12 @@
    underneath. Hide both — collaborators are still tracked behind the scenes
    and reappear instantly when the user flips back to Cards. */
 .cb-overlay[data-cb-brainstorm-view="table"] .cb-collab-widget,
-.cb-overlay[data-cb-brainstorm-view="table"] .cb-cursors-layer {
+.cb-overlay[data-cb-brainstorm-view="table"] .cb-cursors-layer,
+/* The "?" helper popover documents canvas-only concepts (Navigate / DP /
+   Enrichment tools, Enter-to-link, Cmd+Enter waterfall, etc.). None of it
+   applies in Tables view, where every action is a button click. Hide the
+   trigger so the bottom-left corner stays clean. */
+.cb-overlay[data-cb-brainstorm-view="table"] .cb-help-wrap {
   display: none !important;
 }
 
@@ -32,6 +37,34 @@
   flex-direction: column;
   background: #f8fafc;
   overflow: auto;
+}
+
+/* Explicit flex gap between the swap icon and the "Cards" / "Tables" label.
+   The base .cb-toolbar-btn rule doesn't define a gap, so the other toolbar
+   buttons (Pricing, Import) rely on a literal " " text node — which renders
+   tight, especially next to the dense arrow-swap glyph. Matches the Pro Mode
+   button's `gap: 6px` for visual parity. */
+.cb-toolbar-view-toggle {
+  gap: 6px;
+}
+
+/* Pin the button's width so toggling between "Cards" and "Tables" doesn't
+   reflow the toolbar. Both labels are rendered into a 1×1 grid; whichever
+   isn't active is hidden via `visibility: hidden` (so it still reserves
+   space). The grid track therefore always sizes to the wider of the two
+   labels — currently "Tables" — without us hardcoding a pixel min-width. */
+.cb-toolbar-view-toggle-label {
+  display: inline-grid;
+  justify-items: center;
+}
+
+.cb-toolbar-view-toggle-label > span {
+  grid-area: 1 / 1;
+}
+
+.cb-toolbar-view-toggle[data-state="cards"] .cb-toolbar-view-toggle-label > [data-label="tables"],
+.cb-toolbar-view-toggle[data-state="tables"] .cb-toolbar-view-toggle-label > [data-label="cards"] {
+  visibility: hidden;
 }
 
 /* Active-state highlight for the toggle button itself. Same visual idiom as
@@ -74,12 +107,6 @@
   font-size: 16px;
   font-weight: 600;
   color: #111827;
-}
-
-.cb-table-view-intro-sub {
-  font-size: 13px;
-  color: #6b7280;
-  margin-top: 2px;
 }
 
 .cb-table-view-intro-actions {
