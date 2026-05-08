@@ -323,9 +323,25 @@
 
     watchForDialog();
 
-    if (!tryOpenPicker()) {
+    const opened = tryOpenPicker();
+    if (!opened) {
       if (tryOpenToolsSidebar()) {
-        setTimeout(() => tryOpenPicker(), 150);
+        setTimeout(() => {
+          const retry = tryOpenPicker();
+          if (!retry) {
+            console.warn(
+              "[Clay Scoping] Couldn't find Clay's enrichment button. " +
+              "If you're in Tables view, switch to Cards and try again, " +
+              "or make sure you're on a table page (URL contains /tables/...)."
+            );
+          }
+        }, 150);
+      } else {
+        console.warn(
+          "[Clay Scoping] Couldn't find Clay's enrichment button or Tools " +
+          "sidebar trigger. If you're not on a table page, navigate to one " +
+          "and try again."
+        );
       }
     }
   };
@@ -338,6 +354,14 @@
       'button, [role="button"], [role="menuitem"]'
     );
     for (const btn of buttons) {
+      // Critical: skip buttons inside our own overlay. The table view's
+      // "Add enrichment" mini-chip and the "Add enrichment" button at the
+      // top of the spreadsheet both have textContent === "add enrichment",
+      // and an early build accidentally matched them here — clicking our
+      // own button recurses back into startPickerMode and stack-overflows
+      // before Clay's dialog ever opens. Clay's real button lives in
+      // #clay-app, never inside .cb-overlay, so this is safe.
+      if (btn.closest(".cb-overlay")) continue;
       const text = (btn.textContent || "").trim().toLowerCase();
       const label = (btn.getAttribute("aria-label") || "").toLowerCase();
       if (
