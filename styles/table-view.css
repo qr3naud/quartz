@@ -1,0 +1,418 @@
+/* ============================================================================
+ * Cards / Tables view toggle
+ *
+ * The canvas area and the spreadsheet view live side-by-side inside .cb-main;
+ * `data-cb-brainstorm-view` on the overlay flips visibility. The toggle
+ * button label/icon is stamped from JS so we only need a single CSS hook for
+ * its state highlight.
+ * ========================================================================= */
+
+.cb-overlay[data-cb-brainstorm-view="table"] .cb-canvas-area,
+.cb-overlay[data-cb-brainstorm-view="table"] .cb-toolbox,
+.cb-overlay[data-cb-brainstorm-view="table"] .cb-zoom-controls {
+  display: none !important;
+}
+
+.cb-overlay[data-cb-brainstorm-view="table"] .cb-table-view-area {
+  display: flex !important;
+}
+
+.cb-table-view-area {
+  display: none;
+  flex: 1 1 auto;
+  min-height: 0;
+  flex-direction: column;
+  background: #f8fafc;
+  overflow: auto;
+}
+
+/* Active-state highlight for the toggle button itself. Same visual idiom as
+   the Pro Mode active state — slightly elevated indigo background. */
+.cb-toolbar-btn-view-toggle-active {
+  background: #eef2ff;
+  border-color: #c7d2fe;
+  color: #4338ca;
+}
+
+.cb-toolbar-btn-view-toggle-active:hover {
+  background: #e0e7ff;
+  border-color: #a5b4fc;
+}
+
+/* ============================================================================
+ * Table content
+ * ========================================================================= */
+
+.cb-table-view-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 20px 24px 32px;
+  max-width: 1280px;
+  width: 100%;
+  margin: 0 auto;
+  box-sizing: border-box;
+}
+
+.cb-table-view-intro {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.cb-table-view-intro-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: #111827;
+}
+
+.cb-table-view-intro-sub {
+  font-size: 13px;
+  color: #6b7280;
+  margin-top: 2px;
+}
+
+.cb-table-view-intro-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.cb-table-view-add-er-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 12px;
+  background: #ffffff;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  color: #374151;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
+}
+
+.cb-table-view-add-er-btn:hover {
+  background: #f9fafb;
+  border-color: #9ca3af;
+  color: #111827;
+}
+
+/* ---- Table container + table ---- */
+
+.cb-table-view-table-container {
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  overflow: hidden;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+}
+
+.cb-table-view-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 13px;
+  color: #1f2937;
+}
+
+.cb-table-view-table thead th {
+  position: sticky;
+  top: 0;
+  background: #f9fafb;
+  border-bottom: 1px solid #e5e7eb;
+  padding: 10px 14px;
+  text-align: left;
+  font-size: 11px;
+  font-weight: 600;
+  color: #6b7280;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+  z-index: 1;
+}
+
+.cb-table-view-table tbody td {
+  padding: 8px 14px;
+  border-bottom: 1px solid #f1f5f9;
+  vertical-align: middle;
+}
+
+.cb-table-view-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.cb-table-view-table tbody tr:hover {
+  background: #f9fafb;
+}
+
+/* Column sizing */
+.cb-table-view-table .col-dp {
+  width: 26%;
+  min-width: 200px;
+}
+
+.cb-table-view-table .col-fill {
+  width: 130px;
+  white-space: nowrap;
+}
+
+.cb-table-view-table .col-credits,
+.cb-table-view-table .col-actions {
+  width: 110px;
+  font-variant-numeric: tabular-nums;
+}
+
+.cb-table-view-table .col-ers {
+  width: auto;
+}
+
+.cb-table-view-table .col-actions-end {
+  width: 44px;
+  text-align: right;
+}
+
+/* Unconnected DP rows: muted so reps see at-a-glance which DPs still need
+   enrichments wired up. */
+.cb-table-view-dp-row-unconnected td {
+  color: #6b7280;
+}
+
+.cb-table-view-dp-row-unconnected .cb-table-view-cell-input-text {
+  color: #374151;
+}
+
+/* Orphan-ER rows sit at the top with a subtle yellow tint so reps can spot
+   enrichments that haven't been linked to any data point yet. */
+.cb-table-view-orphan-er-row {
+  background: #fffbeb;
+}
+
+.cb-table-view-orphan-er-row:hover {
+  background: #fef3c7 !important;
+}
+
+.cb-table-view-orphan-placeholder {
+  color: #b45309;
+  font-style: italic;
+  font-size: 12.5px;
+}
+
+.cb-table-view-cell-muted {
+  color: #9ca3af;
+}
+
+/* ---- Editable cells ---- */
+
+.cb-table-view-cell-input {
+  width: 100%;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  padding: 5px 8px;
+  background: transparent;
+  font-family: inherit;
+  font-size: 13px;
+  color: #1f2937;
+  transition: background 0.12s, border-color 0.12s;
+  box-sizing: border-box;
+}
+
+.cb-table-view-cell-input:hover {
+  background: #f3f4f6;
+}
+
+.cb-table-view-cell-input:focus {
+  outline: none;
+  background: #ffffff;
+  border-color: #6366f1;
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.18);
+}
+
+.cb-table-view-cell-input-num {
+  width: 70px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.cb-table-view-cell-suffix {
+  display: inline-block;
+  margin-left: 4px;
+  color: #6b7280;
+  font-size: 12px;
+}
+
+.cb-table-view-cell-readonly {
+  color: #1f2937;
+  font-weight: 500;
+}
+
+/* ---- ER chips ---- */
+
+.cb-table-view-er-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.cb-table-view-er-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 4px 3px 10px;
+  background: #eef2ff;
+  color: #4338ca;
+  border: 1px solid #e0e7ff;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+  max-width: 280px;
+}
+
+.cb-table-view-er-chip-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 240px;
+}
+
+.cb-table-view-er-chip-waterfall {
+  background: #f0fdf4;
+  color: #047857;
+  border-color: #d1fae5;
+}
+
+.cb-table-view-er-chip-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: 999px;
+  color: inherit;
+  cursor: pointer;
+  opacity: 0.6;
+  transition: background 0.12s, opacity 0.12s;
+}
+
+.cb-table-view-er-chip-remove:hover {
+  background: rgba(0, 0, 0, 0.08);
+  opacity: 1;
+}
+
+/* "+ Add enrichment" mini-chip on each DP row. Lower visual weight than the
+   real chips so it reads as a control, not data. */
+.cb-table-view-add-er-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 10px;
+  background: transparent;
+  color: #6366f1;
+  border: 1px dashed #c7d2fe;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
+}
+
+.cb-table-view-add-er-chip:hover {
+  background: #eef2ff;
+  border-color: #6366f1;
+  border-style: solid;
+  color: #4338ca;
+}
+
+/* ---- Row delete button ---- */
+
+.cb-table-view-row-delete {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  color: #9ca3af;
+  cursor: pointer;
+  opacity: 0;
+  transition: background 0.12s, color 0.12s, opacity 0.12s;
+}
+
+.cb-table-view-table tbody tr:hover .cb-table-view-row-delete {
+  opacity: 1;
+}
+
+.cb-table-view-row-delete:hover {
+  background: #fee2e2;
+  color: #dc2626;
+  opacity: 1;
+}
+
+/* ---- Add data point footer row ---- */
+
+.cb-table-view-add-dp-row td {
+  padding: 0 !important;
+  border-top: 1px solid #e5e7eb;
+  background: #f9fafb;
+}
+
+.cb-table-view-add-dp-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 12px 14px;
+  background: transparent;
+  border: none;
+  color: #6366f1;
+  font-size: 13px;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+
+.cb-table-view-add-dp-btn:hover {
+  background: #eef2ff;
+  color: #4338ca;
+}
+
+.cb-table-view-add-dp-input {
+  width: 100%;
+  padding: 12px 14px;
+  background: #ffffff;
+  border: none;
+  border-top: 2px solid #6366f1;
+  font-family: inherit;
+  font-size: 13px;
+  color: #111827;
+  box-sizing: border-box;
+}
+
+.cb-table-view-add-dp-input:focus {
+  outline: none;
+  background: #ffffff;
+}
+
+/* ---- Empty state ---- */
+
+.cb-table-view-empty-row td {
+  padding: 0 !important;
+}
+
+.cb-table-view-empty {
+  padding: 56px 24px;
+  text-align: center;
+  color: #6b7280;
+  font-size: 14px;
+}

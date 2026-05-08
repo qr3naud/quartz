@@ -166,6 +166,16 @@
     proMode: false,
     setProMode: null,
 
+    // "canvas" (default) vs "table" — Cards/Tables view toggle in the
+    // topbar (overlay.js). Persisted per-tab on state.brainstormView so
+    // reps can keep some tabs as canvases (brainstorming) and others as
+    // tables (review). Drives the canvas-area-vs-table-area swap via the
+    // [data-cb-brainstorm-view] CSS attribute selector on overlayEl. The
+    // table is built by src/table-view.js (window.__cb.tableView).
+    brainstormView: "canvas",
+    setBrainstormView: null,
+    tableView: null,
+
     // "projected" (default — catalog credits × records) vs "actual" (real
     // spend pulled from Clay's realtime credit usage warehouse, attached to
     // ER cards via data.stats.spend at import time). Toggled by the

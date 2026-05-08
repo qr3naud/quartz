@@ -411,6 +411,10 @@
         // they differ, so snap-clusters survive a saved-pro/normal-reopen
         // (or vice versa) transition.
         state.proMode = !!__cb.proMode;
+        // Cards/Tables view choice: per-tab so reps can keep some tabs as
+        // canvases (brainstorming) and others as tables (review/scoping).
+        // Defaults to "canvas" anywhere the field is absent.
+        state.brainstormView = __cb.brainstormView === "table" ? "table" : "canvas";
         activeTab.state = state;
       }
     }
@@ -1219,12 +1223,16 @@
       __cb.canvas = __cb.initCanvas(canvasArea);
       // Re-install the wrapped save-plus-collaborators-refresh callback.
       // overlay.js installs this initially; switchTab must preserve it.
+      // Keep the table-view refresh hook in sync — without it, edits made
+      // on a tab that opens directly into Tables view wouldn't propagate
+      // to the spreadsheet rows after a tab switch.
       __cb.onCanvasStateChange = function () {
         __cb.debouncedSave();
         const ids = __cb.parseIdsFromUrl();
         if (ids && __cb.refreshCollaborators) {
           setTimeout(() => __cb.refreshCollaborators(ids.workbookId), 800);
         }
+        if (__cb.tableView?.refresh) __cb.tableView.refresh();
       };
     }
 
@@ -1268,6 +1276,13 @@
         tab?.state?.frequency || __cb.DEFAULT_FREQUENCY_ID,
         { skipSave: true }
       );
+    }
+
+    // Re-apply Cards/Tables choice for the tab we just switched into. Falls
+    // back to "canvas" so legacy tabs (no brainstormView field) and freshly
+    // created tabs (state = {}) land on the canvas as expected.
+    if (__cb.setBrainstormView) {
+      __cb.setBrainstormView(tab?.state?.brainstormView === "table" ? "table" : "canvas");
     }
 
     __cb.saveTabs();

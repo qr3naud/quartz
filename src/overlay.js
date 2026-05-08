@@ -101,6 +101,69 @@
     proBtn.innerHTML = PRO_ICON_SVG + " Pro Mode";
     proBtn.addEventListener("click", () => __cb.setProMode(!__cb.proMode));
 
+    // Cards / Tables view toggle. Label flips dynamically: when the canvas
+    // is showing it reads "Tables" (the action), and vice versa. Clicking
+    // calls __cb.setBrainstormView, which mounts/unmounts the spreadsheet
+    // and persists the choice per-tab via debouncedSave.
+    const TABLE_ICON_SVG =
+      '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" ' +
+      'fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" ' +
+      'stroke-linejoin="round" aria-hidden="true">' +
+      '<rect x="3" y="3" width="18" height="18" rx="2"/>' +
+      '<line x1="3" y1="9" x2="21" y2="9"/>' +
+      '<line x1="3" y1="15" x2="21" y2="15"/>' +
+      '<line x1="9" y1="3" x2="9" y2="21"/>' +
+      '<line x1="15" y1="3" x2="15" y2="21"/>' +
+      '</svg>';
+    const CARDS_ICON_SVG =
+      '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" ' +
+      'fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" ' +
+      'stroke-linejoin="round" aria-hidden="true">' +
+      '<rect x="3" y="4" width="8" height="7" rx="1.5"/>' +
+      '<rect x="13" y="4" width="8" height="11" rx="1.5"/>' +
+      '<rect x="3" y="13" width="8" height="7" rx="1.5"/>' +
+      '<rect x="13" y="17" width="8" height="3" rx="1"/>' +
+      '</svg>';
+
+    const viewToggleBtn = document.createElement("button");
+    viewToggleBtn.className = "cb-toolbar-btn cb-toolbar-view-toggle";
+    viewToggleBtn.type = "button";
+    viewToggleBtn.addEventListener("click", () => {
+      const next = __cb.brainstormView === "table" ? "canvas" : "table";
+      __cb.setBrainstormView(next);
+    });
+
+    function renderViewToggle() {
+      const inTable = __cb.brainstormView === "table";
+      // Label = the action, so it reads "what you'll switch to".
+      viewToggleBtn.innerHTML = (inTable ? CARDS_ICON_SVG : TABLE_ICON_SVG) +
+        " " + (inTable ? "Cards" : "Tables");
+      viewToggleBtn.title = inTable
+        ? "Switch back to the canvas view"
+        : "Switch to a spreadsheet view of your data points and enrichments";
+      viewToggleBtn.classList.toggle("cb-toolbar-btn-view-toggle-active", inTable);
+    }
+
+    __cb.setBrainstormView = function (value) {
+      const next = value === "table" ? "table" : "canvas";
+      const prev = __cb.brainstormView;
+      __cb.brainstormView = next;
+      if (__cb.overlayEl) {
+        __cb.overlayEl.setAttribute("data-cb-brainstorm-view", next);
+      }
+      // Mount/unmount the spreadsheet on transition. The canvas DOM stays
+      // mounted in both states (CSS hides it via [data-cb-brainstorm-view]),
+      // so we don't have to teardown/reinit __cb.canvas.
+      if (next === "table") {
+        const host = __cb.overlayEl?.querySelector(".cb-table-view-area");
+        if (host && __cb.tableView?.mount) __cb.tableView.mount(host);
+      } else {
+        if (__cb.tableView?.unmount) __cb.tableView.unmount();
+      }
+      renderViewToggle();
+      if (prev !== next && __cb.debouncedSave) __cb.debouncedSave();
+    };
+
     // Toggle the workbook-scoped pro mode flag. Visibility of the per-card
     // fill-rate badges is CSS-driven via `[data-cb-pro-mode]` on the overlay,
     // so individual cards don't need to be re-rendered. We use the debounced
@@ -201,6 +264,7 @@
     };
 
     rightGroup.appendChild(viewModeWrap);
+    rightGroup.appendChild(viewToggleBtn);
     rightGroup.appendChild(proBtn);
     rightGroup.appendChild(pricingBtn);
     rightGroup.appendChild(importBtn);
@@ -570,9 +634,18 @@
     canvasArea.className = "cb-canvas-area";
     canvasArea.id = "cb-canvas-area";
 
+    // Table view host. Mounted in the same flex container as the canvas so
+    // the swap is a pure CSS visibility toggle keyed off
+    // [data-cb-brainstorm-view]. Stays empty until __cb.setBrainstormView
+    // ("table") triggers __cb.tableView.mount.
+    const tableArea = document.createElement("div");
+    tableArea.className = "cb-table-view-area";
+    tableArea.id = "cb-table-view-area";
+
     const mainArea = document.createElement("div");
     mainArea.className = "cb-main";
     mainArea.appendChild(canvasArea);
+    mainArea.appendChild(tableArea);
 
     const toolbox = document.createElement("div");
     toolbox.className = "cb-toolbox";
@@ -908,6 +981,11 @@
           // updated contributor row before we re-query.
           setTimeout(() => __cb.refreshCollaborators(ids.workbookId), 800);
         }
+        // Spreadsheet view re-derives every row from getCards/getSnapClusters,
+        // so any add/remove/edit on the canvas (incl. picker confirms and
+        // realtime card moves) propagates here. Cheap when unmounted (early
+        // return inside refresh).
+        if (__cb.tableView?.refresh) __cb.tableView.refresh();
       };
       __cb.setCanvasMode = setSelectedMode;
       setSelectedMode("navigate");
@@ -1055,6 +1133,14 @@
 
     __cb.setViewMode(__cb.tabStore.viewMode || "projected");
 
+    // Restore the per-tab Cards/Tables choice. Defaults to "canvas" — tabs
+    // saved before this feature shipped won't carry the field, and we want
+    // them to land in the familiar canvas view on first open.
+    const savedBrainstormView = restoredTab?.state?.brainstormView === "table"
+      ? "table"
+      : "canvas";
+    __cb.setBrainstormView(savedBrainstormView);
+
     window.addEventListener("beforeunload", __cb.saveTabs);
   };
 
@@ -1068,6 +1154,10 @@
     }
     __cb.saveTabs();
     __cb.cancelPendingSave();
+    // Unmount the table view BEFORE destroying the canvas so the spreadsheet
+    // doesn't try to re-render against an in-progress teardown via any
+    // late-firing onCanvasStateChange callback.
+    if (__cb.tableView?.unmount) __cb.tableView.unmount();
     if (__cb.canvas) {
       __cb.canvas.destroy();
       __cb.canvas = null;
@@ -1095,6 +1185,8 @@
     __cb.setCanvasMode = null;
     __cb.setProMode = null;
     __cb.setViewMode = null;
+    __cb.setBrainstormView = null;
+    __cb.brainstormView = "canvas";
     __cb.setGlobalFrequency = null;
     __cb.getRecordsCount = null;
     __cb.getCreditCost = null;
