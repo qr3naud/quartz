@@ -1124,6 +1124,9 @@
       proBtn.classList.toggle("cb-toolbar-btn-pro-active", targetProMode);
 
       if (clustersBefore && __cb.canvas?.applyClusterReflow) {
+        // applyClusterReflow ends in a full refreshClusters at the new
+        // pitch, so the relational cluster model is synced from
+        // snap-derived geometry once cards have been re-positioned.
         __cb.canvas.applyClusterReflow(clustersBefore, oldH, newH);
       }
       if (__cb.canvas?.updateGroupBounds) __cb.canvas.updateGroupBounds();
@@ -1131,6 +1134,15 @@
       // next reopen sees a saved pitch that already matches the
       // localStorage preference (no reflow needed on subsequent opens).
       if (__cb.debouncedSave) __cb.debouncedSave();
+    } else if (__cb.canvas?.refreshClusters) {
+      // Same-pitch open: canvas.restore ran refreshClusterVisuals only
+      // (to avoid clobbering saved clusterIds at the wrong pitch), so
+      // we need to drive a full snap-reconcile here now that the
+      // attribute matches the saved layout. For legacy state this is
+      // where the cluster model first gets populated from geometry;
+      // for state with explicit clusterIds the snap-derivation
+      // matches and IDs are preserved.
+      __cb.canvas.refreshClusters();
     }
 
     __cb.setViewMode(__cb.tabStore.viewMode || "projected");

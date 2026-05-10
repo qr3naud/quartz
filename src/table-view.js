@@ -103,6 +103,16 @@
     return __cb.canvas?.getCardById?.(cardId) || null;
   }
 
+  // Read the relational cluster id off a canvas card. Used by
+  // buildDpRow to surface the membership in `data-cluster-id` so the
+  // DOM mirrors the model. Returns null for unclustered cards (or any
+  // missing card id).
+  function getClusterIdForCardId(cardId) {
+    if (cardId == null) return null;
+    const card = __cb.canvas?.getCardById?.(cardId);
+    return card?.clusterId ?? null;
+  }
+
   function isDpRowId(rowId) {
     const card = getCardForRowId(rowId);
     return !!card && card.data?.type === "dp";
@@ -133,15 +143,17 @@
     return [...selectedRowIds].map(getCardForRowId).filter(Boolean);
   }
 
-  // Find the snap-cluster a card belongs to. cardId must already be the
-  // canvas-native NUMERIC id. Returns the array of cardIds (the cluster),
-  // or [cardId] if the card sits alone (snap-cluster algo only emits
-  // clusters of size >= 2).
+  // Find the cluster a card belongs to. cardId must already be the
+  // canvas-native NUMERIC id. Returns the array of cardIds (the
+  // cluster), or [cardId] if the card sits alone (getClusters() only
+  // emits clusters of size >= 2). Reads the model-backed cluster id
+  // off the canvas card so the lookup is O(N) over cards, not O(N²)
+  // over snap-derived geometry.
   function getClusterForCard(cardId) {
     const canvas = __cb.canvas;
-    if (!canvas?.getSnapClusters) return [cardId];
-    for (const cl of canvas.getSnapClusters()) {
-      if (cl.includes(cardId)) return cl.slice();
+    if (!canvas?.getClusters) return [cardId];
+    for (const cl of canvas.getClusters()) {
+      if (cl.cardIds.includes(cardId)) return cl.cardIds.slice();
     }
     return [cardId];
   }
@@ -304,7 +316,11 @@
     if (!canvas) return { orphanErRows: [], groupSections: [], dpRows: [] };
 
     const allCards = canvas.getCards();
-    const clusters = canvas.getSnapClusters();
+    // Model-backed cluster membership: each cluster is `{id, cardIds}`.
+    // We only need cardIds for the cost/coverage reducers below so flatten
+    // here; richer per-cluster metadata (name, ordering, etc.) can be
+    // surfaced once we have a use case that needs it.
+    const clusters = canvas.getClusters().map((cl) => cl.cardIds);
 
     // Map each cluster's ER cards to the DPs that "claim" them. Clusters
     // without DPs leave their ERs eligible for the orphan section below.
@@ -651,9 +667,12 @@
   }
 
   // Picker entry point. Setting linkTargetCardId hands placement off to
-  // picker.js → placeCardsAdjacentTo, which finds the best adjacent side and
-  // calls refreshClusters() so the new ER joins the DP's snap-cluster
-  // automatically. We don't need to compute coordinates ourselves.
+  // picker.js → placeCardsAdjacentTo, which now reads the target's
+  // `clusterId` and stamps it on every newly-added card so the ER joins
+  // the cluster relationally at creation time (not just geometrically
+  // via the next snap-reconcile). For targets that aren't yet in any
+  // cluster, the new card lands as a singleton and refreshClusters
+  // promotes the adjacency into a fresh cluster id.
   function startAddEnrichment(targetCardId) {
     if (!__cb.canvas || !__cb.startPickerMode) return;
     if (targetCardId) __cb.linkTargetCardId = targetCardId;
@@ -785,54 +804,29 @@
 
   // ---- Link action ----
   //
-  // Stack the selected DPs vertically at the topmost-leftmost host's
-  // (x, y) so that the snap algorithm (canvas/snap.js, ADJACENCY_TOLERANCE
-  // = 1px) merges them into a single cluster on the next refreshClusters.
-  // After the merge, every selected DP shares the union of all originally-
-  // attached ERs — buildRows will emit identical erList for each row,
-  // and the auto-rowspan rendering collapses the shared cells.
+  // Merge the selected rows into a single cluster via the relational
+  // model (`canvas.linkCardsByIds`). The canvas takes care of:
+  //   - allocating / reusing a cluster id (existing cluster ids on
+  //     any input are preserved so saved state stays stable across
+  //     repeated link operations)
+  //   - pulling in cluster-mates (an ER attached to one of the
+  //     selected DPs joins the merged cluster automatically)
+  //   - laying out the resulting cluster into snap-adjacent positions
+  //     so canvas-mode geometry agrees with the model
+  //
+  // Pre-refactor this function stacked card.y values and relied on
+  // refreshClusters' snap-derivation to imply membership; now the
+  // membership is the source of truth and geometry is the consequence.
 
   function linkSelected() {
     const canvas = __cb.canvas;
-    if (!canvas) return;
-    // String row-ids → numeric card-ids before any canvas lookup
-    // (getCardById uses ===, so type-coercion silently fails). Accepts
-    // both DPs and ERs so the action also handles "stack these orphan
-    // enrichments together" and "snap this orphan ER to a DP".
-    const cards = getCardRowsInSelection()
-      .map(getCardForRowId)
-      .filter(Boolean);
-    if (cards.length < 2) return;
-    // Topmost, then leftmost — deterministic and matches the visible
-    // order in the table.
-    const sorted = cards.slice().sort((a, b) => a.y - b.y || a.x - b.x);
-    const host = sorted[0];
-    const cardHeight = __cb.proMode ? 96 : 70;
+    if (!canvas?.linkCardsByIds) return;
+    const cardIds = getCardRowsInSelection()
+      .map(parseCardIdFromRowId)
+      .filter((id) => id != null);
+    if (cardIds.length < 2) return;
 
-    // Move each non-host card — and EVERY card in its cluster (DP rows
-    // carry their attached ERs along, ER rows carry any cluster-mates) —
-    // to land the host position at (host.x, host.y + i*cardHeight).
-    // Moving the whole cluster as a block preserves snap adjacency AND
-    // brings cluster-mates into the host's neighborhood, so refresh
-    // below produces a single super-cluster containing every selected
-    // card + every originally-attached neighbor.
-    const movedCardIds = new Set([host.id]);
-    sorted.slice(1).forEach((c, i) => {
-      if (movedCardIds.has(c.id)) return; // shouldn't happen, defensive
-      const cluster = getClusterForCard(c.id);
-      const targetX = host.x;
-      const targetY = host.y + (i + 1) * cardHeight;
-      const deltaX = targetX - c.x;
-      const deltaY = targetY - c.y;
-      for (const cardId of cluster) {
-        if (movedCardIds.has(cardId)) continue;
-        const cc = canvas.getCardById(cardId);
-        if (!cc) continue;
-        moveCardTo(cc, cc.x + deltaX, cc.y + deltaY);
-        movedCardIds.add(cardId);
-      }
-    });
-
+    canvas.linkCardsByIds(cardIds);
     if (canvas.refreshClusters) canvas.refreshClusters();
     if (canvas.notifyChange) canvas.notifyChange();
   }
@@ -1814,25 +1808,40 @@
     return tr;
   }
 
-  // Stamps a new DP card flush against the topmost-leftmost ER's left
-  // edge (at y matching the anchor ER) so the snap-cluster mechanism
-  // picks them up as a single cluster on the next refreshClusters round.
-  // For multi-ER orphan clusters we anchor on the topmost-leftmost ER —
-  // adjacency to any one cluster member transitively brings the new DP
-  // into the whole cluster.
+  // Promote an orphan ER row by attaching a freshly-named DP card to
+  // its cluster. Drives the relational model directly: we resolve (or
+  // allocate) the orphan ERs' cluster id, stamp it on the new DP at
+  // creation time, then call linkCardsByIds so the canvas runs its
+  // shared layout helper to position every cluster member into a
+  // snap-adjacent arrangement (DP on the left, ERs on the right).
+  // refreshClusters' snap-reconcile then confirms the membership.
   function attachDpToOrphanCluster(erCardIds, text) {
     const canvas = __cb.canvas;
     if (!canvas?.getCardById || !canvas.addDataPointCard) return;
     if (!Array.isArray(erCardIds) || erCardIds.length === 0) return;
     const ers = erCardIds.map((id) => canvas.getCardById(id)).filter(Boolean);
     if (ers.length === 0) return;
-    // Topmost, then leftmost — same anchor logic linkSelected uses.
+
+    // Anchor on the topmost-leftmost ER so the new cluster lands near
+    // where the user was looking on the canvas. Place the new DP just
+    // to the LEFT of the anchor as a starting position; linkCardsByIds
+    // re-lays out the cluster so the exact starting (x, y) is mostly a
+    // hint for how `anchorX`/`anchorY` resolve inside layoutCardsAsCluster.
     const anchor = ers.slice().sort((a, b) => a.y - b.y || a.x - b.x)[0];
     const DP_W = 220;
-    canvas.addDataPointCard(text, {
+    const newDp = canvas.addDataPointCard(text, {
       x: anchor.x - DP_W,
       y: anchor.y,
     });
+    if (!newDp) return;
+
+    // Pull the new DP and every existing cluster-mate of the orphan
+    // ERs into one cluster via the relational API. linkCardsByIds
+    // reuses an existing cluster id when present (so persisted state
+    // stays stable), allocates a new one otherwise.
+    const memberIds = [newDp.id, ...erCardIds];
+    if (canvas.linkCardsByIds) canvas.linkCardsByIds(memberIds);
+
     if (canvas.refreshClusters) canvas.refreshClusters();
     if (canvas.notifyChange) canvas.notifyChange();
   }
@@ -1849,6 +1858,13 @@
     tr.setAttribute("data-card-id", String(row.cardId));
     tr.setAttribute("data-row-id", String(row.cardId));
     tr.setAttribute("data-row-section", sectionId || "flat");
+    // Surface the relational cluster id in the DOM so future features
+    // (sort/filter, cluster naming, "select all in cluster", etc.) can
+    // attach without re-deriving membership. Null when the DP isn't
+    // in any cluster — emitted as the literal "null" so attribute-
+    // selector queries can target unclustered rows specifically.
+    const clusterId = getClusterIdForCardId(row.cardId);
+    tr.setAttribute("data-cluster-id", clusterId == null ? "null" : String(clusterId));
     attachRowInteractionHandlers(tr, String(row.cardId));
 
     tr.appendChild(buildDragHandleCell("row", String(row.cardId)));

@@ -115,7 +115,10 @@
       refreshClusters,
       updateGroupCredits,
       updateDpCosts,
-      getSnapClusters,
+      // Model-backed cluster lookup, used by applyClusterFrequency to
+      // propagate per-ER frequency picks across the rest of the
+      // cluster ("update one, all update").
+      getClusters,
     } = deps;
 
     // Keep this predicate in sync with the identical one in credits.js —
@@ -568,7 +571,21 @@
         if (data.frequencyCustom == null) data.frequencyCustom = false;
       }
 
-      const card = { id, x, y, data, el: null, handles: {}, groupId: null };
+      // `clusterId` is the relational source of truth for cluster
+      // membership; null means the card is unclustered. Picker /
+      // importer adds typically leave it null and rely on
+      // refreshClusters' snap-reconcile to assign one based on
+      // adjacency. Restore + table-view ops pass it explicitly.
+      const card = {
+        id,
+        x,
+        y,
+        data,
+        el: null,
+        handles: {},
+        groupId: null,
+        clusterId: opts?.clusterId ?? null,
+      };
       const el = document.createElement("div");
       el.className = "cb-card";
       el.setAttribute("data-card-id", card.id);
@@ -1006,7 +1023,16 @@
         stats,
         groupCluster: opts?.groupCluster ?? null,
       };
-      const card = { id, x, y, data, el: null, handles: {}, groupId: null };
+      const card = {
+        id,
+        x,
+        y,
+        data,
+        el: null,
+        handles: {},
+        groupId: null,
+        clusterId: opts?.clusterId ?? null,
+      };
 
       const el = document.createElement("div");
       el.className = "cb-card cb-card-dp";
@@ -1164,7 +1190,16 @@
         viewId: opts?.viewId ?? null,
         groupCluster: opts?.groupCluster ?? null,
       };
-      const card = { id, x, y, data, el: null, handles: {}, groupId: null };
+      const card = {
+        id,
+        x,
+        y,
+        data,
+        el: null,
+        handles: {},
+        groupId: null,
+        clusterId: opts?.clusterId ?? null,
+      };
 
       const el = document.createElement("div");
       el.className = "cb-card cb-card-input";
@@ -1251,7 +1286,16 @@
         displayName: text || "",
         groupCluster: opts?.groupCluster ?? null,
       };
-      const card = { id, x, y, data, el: null, handles: {}, groupId: null };
+      const card = {
+        id,
+        x,
+        y,
+        data,
+        el: null,
+        handles: {},
+        groupId: null,
+        clusterId: opts?.clusterId ?? null,
+      };
 
       const el = document.createElement("div");
       el.className = "cb-card cb-card-comment";
@@ -1357,9 +1401,13 @@
     // are skipped; they don't carry a frequency. Standalone ERs (no cluster
     // match, or a singleton cluster) update just themselves.
     function applyClusterFrequency(originCardId, freqId) {
-      const clusters = typeof getSnapClusters === "function" ? getSnapClusters() : [];
-      const match = clusters.find((ids) => ids.includes(originCardId));
-      const targetIds = match ? match : [originCardId];
+      // Use the model-backed cluster lookup. `getClusters()` returns
+      // `{ id, cardIds }[]`; we pull the cardIds for the cluster
+      // containing the origin card. Standalone ERs (no cluster match)
+      // update only themselves.
+      const clusters = typeof getClusters === "function" ? getClusters() : [];
+      const match = clusters.find((cl) => cl.cardIds.includes(originCardId));
+      const targetIds = match ? match.cardIds : [originCardId];
       for (const id of targetIds) {
         const card = getCardById(id);
         if (!card || !card.data || isNonErType(card.data.type)) continue;

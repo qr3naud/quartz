@@ -4,7 +4,13 @@
   window.__cbCanvasModules = window.__cbCanvasModules || {};
 
   window.__cbCanvasModules.createCreditHelpers = function createCreditHelpers(deps) {
-    const { cardsRef, groupsRef, getCardById, getSnapClusters } = deps;
+    // `getClusters()` returns the model-backed `[{id, cardIds}]` shape;
+    // we destructure into the local `getClusterCardIds` adapter so the
+    // existing per-cluster reducers can keep iterating cardId arrays
+    // unchanged. Migrating to the richer `{id, cardIds}` shape is a
+    // separate cleanup we'll pick up alongside per-cluster metadata.
+    const { cardsRef, groupsRef, getCardById, getClusters } = deps;
+    const getClusterCardIds = () => getClusters().map((cl) => cl.cardIds);
 
     function isNonErType(type) {
       return type === "dp" || type === "input" || type === "comment";
@@ -85,7 +91,7 @@
     }
 
     function updateDpCosts() {
-      const clusters = getSnapClusters();
+      const clusters = getClusterCardIds();
       const allCards = cardsRef();
       const dpCostMap = new Map();
 
@@ -147,7 +153,7 @@
     }
 
     function updateGroupCredits() {
-      const clusters = getSnapClusters();
+      const clusters = getClusterCardIds();
 
       for (const g of groupsRef()) {
         const badge = g.el.querySelector(".cb-group-credits");

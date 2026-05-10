@@ -102,7 +102,9 @@
     if (!canvas) return [];
 
     const allCards = canvas.getCards();
-    const clusters = canvas.getSnapClusters();
+    // Model-backed cluster membership; getClusters() returns
+    // `{id, cardIds}[]` and we only need cardIds for the cost reducer.
+    const clusters = canvas.getClusters().map((cl) => cl.cardIds);
 
     // Map dpId -> { credits, actions, ers, enrichmentCount }. Built from
     // clusters first; DPs not in the map fall through to the unconnected

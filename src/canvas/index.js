@@ -7,6 +7,12 @@
   let panX = 0, panY = 0, scale = 1;
   let cards = [], groups = [];
   let nextCardId = 1, nextGroupId = 1;
+  // Monotonic id counter for relational cluster membership (see
+  // `getClusters` / `assignToCluster`). Survives across snap-reconcile
+  // because `syncClusterModelFromSnap` reuses existing cluster ids
+  // whenever any member already has one — only fully-new clusters
+  // bump the counter.
+  let nextClusterId = 1;
   let selectedCards = new Set();
   let dragState = null, panState = null, selBoxState = null, groupDragState = null;
   let spaceHeld = false;
@@ -141,9 +147,11 @@
         refreshClusters,
         updateGroupCredits,
         updateDpCosts,
-        // Used by the per-ER frequency badge to propagate a picked value
-        // across every ER in the same snap-cluster ("update one, all update").
-        getSnapClusters,
+        // Used by the per-ER frequency badge to propagate a picked
+        // value across every ER in the same cluster ("update one, all
+        // update"). Now reads from the relational model rather than
+        // re-deriving from snap geometry.
+        getClusters,
       });
     }
     return __cards;
@@ -155,7 +163,7 @@
         cardsRef: () => cards,
         groupsRef: () => groups,
         panRef: () => ({ panX, panY, scale }),
-        nextIdsRef: () => ({ nextCardId, nextGroupId }),
+        nextIdsRef: () => ({ nextCardId, nextGroupId, nextClusterId }),
         setPanScale: (next) => {
           panX = next.panX;
           panY = next.panY;
@@ -164,6 +172,7 @@
         setNextIds: (next) => {
           nextCardId = next.nextCardId ?? nextCardId;
           nextGroupId = next.nextGroupId ?? nextGroupId;
+          nextClusterId = next.nextClusterId ?? nextClusterId;
         },
         applyTransform,
         addCard,
@@ -174,6 +183,13 @@
         updateDpCosts,
         setRestoring: (next) => {
           restoring = next;
+        },
+        // Legacy state migration: persistence calls this once after
+        // restore() if the loaded blob carried no cluster ids. We use
+        // snap-derived geometry as the seed and stamp explicit ids so
+        // subsequent saves carry the model forward.
+        backfillClusterModel: () => {
+          syncClusterModelFromSnap();
         },
       });
     }
@@ -190,14 +206,240 @@
     return __snap;
   }
 
-  function getSnapClusters() {
-    return getSnapHelpers().getSnapClusters();
+  // ---- Cluster model (relational) ----
+  //
+  // The relational model is the source of truth for cluster membership;
+  // snap-adjacency is just the writer that keeps the model in sync with
+  // canvas geometry on every settle point (drag-end, restore, picker
+  // placement, undo/redo, importer drops). Writers that originate
+  // OUTSIDE the canvas (e.g. table-view "link") call assignToCluster +
+  // layoutCluster so canvas geometry is also kept consistent.
+  //
+  // `getClusters()` returns an array of `{ id, cardIds }` for clusters
+  // of size >= 2 — singletons (clusterId === null) are filtered out for
+  // parity with the legacy `getSnapClusters()` shape.
+
+  function getClusters() {
+    const byId = new Map();
+    for (const c of cards) {
+      if (c.clusterId == null) continue;
+      const arr = byId.get(c.clusterId);
+      if (arr) arr.push(c.id);
+      else byId.set(c.clusterId, [c.id]);
+    }
+    const out = [];
+    for (const [id, cardIds] of byId) {
+      if (cardIds.length < 2) continue;
+      out.push({ id, cardIds });
+    }
+    return out;
   }
 
-  function refreshClusters() {
+  // Convenience for callers that previously used the cardIds-only shape
+  // returned by getSnapClusters(). Returned arrays are independent
+  // copies (safe to sort/mutate by callers).
+  function getClusterCardIds() {
+    return getClusters().map((cl) => cl.cardIds.slice());
+  }
+
+  // Assign a set of cards to a cluster id. Pass `null` to detach. After
+  // the assignment, callers SHOULD layout the affected cards into a
+  // snap-adjacent arrangement so the next snap-reconcile cycle (in
+  // refreshClusters) doesn't immediately clear the new membership.
+  // assignToCluster does NOT call layoutCluster automatically because
+  // the canvas itself uses this internally during snap-reconcile.
+  function assignToCluster(cardIds, clusterId) {
+    if (!Array.isArray(cardIds)) return;
+    if (clusterId != null) ensureNextClusterId(clusterId);
+    for (const id of cardIds) {
+      const c = getCardById(id);
+      if (!c) continue;
+      c.clusterId = clusterId;
+    }
+  }
+
+  function ensureNextClusterId(id) {
+    if (typeof id === "number" && id >= nextClusterId) {
+      nextClusterId = id + 1;
+    }
+  }
+
+  function allocateClusterId() {
+    return nextClusterId++;
+  }
+
+  // Reconcile the model from current geometry. Called from
+  // refreshClusters() so snap-adjacency stays the dominant writer in
+  // canvas-driven flows (drag-end, picker placement, importer drops).
+  // Existing cluster ids are preserved whenever possible: if any member
+  // of a snap-cluster already has a clusterId, that id wins (smallest if
+  // multiple). Only fully-new snap-clusters allocate a new id.
+  function syncClusterModelFromSnap() {
+    const snapClusters = getSnapHelpers().getSnapClusters();
+    const inAnyCluster = new Set();
+
+    for (const cluster of snapClusters) {
+      let canonical = null;
+      for (const id of cluster) {
+        const c = getCardById(id);
+        if (c?.clusterId == null) continue;
+        if (canonical == null || c.clusterId < canonical) canonical = c.clusterId;
+      }
+      if (canonical == null) {
+        canonical = allocateClusterId();
+      } else {
+        ensureNextClusterId(canonical);
+      }
+      for (const id of cluster) {
+        const c = getCardById(id);
+        if (!c) continue;
+        c.clusterId = canonical;
+        inAnyCluster.add(id);
+      }
+    }
+
+    // Cards no longer in any snap-cluster are detached from the model.
+    // Mirrors today's behavior where dragging a card out of a cluster
+    // immediately stops cost-sharing — kept stable in the table view too
+    // because both readers go through getClusters() now.
+    for (const c of cards) {
+      if (!inAnyCluster.has(c.id)) c.clusterId = null;
+    }
+  }
+
+  // Render-only variant: redraws snap outlines and recomputes costs
+  // from the current relational model, WITHOUT running snap-reconcile.
+  // Called from persistence paths (restore, undo, redo) where the
+  // model is already settled and a snap-reconcile would clobber saved
+  // membership when geometry hasn't been remeasured at the right
+  // proMode pitch yet (overlay.js applies the saved Pro Mode attribute
+  // AFTER restore, so cards are temporarily measured at the wrong
+  // height). Geometry-driven flows (drag-end, picker placement,
+  // importer drops) call refreshClusters() instead, which IS the
+  // snap-as-writer path.
+  function refreshClusterVisuals() {
     getSnapHelpers().renderClusterOutlines();
     updateDpCosts();
     updateGroupCredits();
+  }
+
+  function refreshClusters() {
+    syncClusterModelFromSnap();
+    refreshClusterVisuals();
+  }
+
+  // Reposition a set of cards into a snap-adjacent arrangement so
+  // canvas-mode geometry agrees with the assignment. Mirrors the
+  // bucketing rule used by the canvas Enter shortcut (linkSelectedCards):
+  // comments above, inputs to the LEFT, DPs in an adaptive grid, ERs to
+  // the RIGHT. Uses the cluster's topmost-leftmost member as the anchor
+  // so existing clusters stay near their original canvas position.
+  // Used by table-view-driven mutations (link, attach DP to cluster) to
+  // keep the canvas representation valid without making the table view
+  // care about coordinates.
+  function layoutCardsAsCluster(cardIds, opts) {
+    if (!Array.isArray(cardIds) || cardIds.length === 0) return;
+    const list = cardIds
+      .map((id) => getCardById(id))
+      .filter(Boolean);
+    if (list.length === 0) return;
+
+    const anchorX = opts?.anchorX != null
+      ? opts.anchorX
+      : Math.min(...list.map((c) => c.x));
+    const anchorY = opts?.anchorY != null
+      ? opts.anchorY
+      : Math.min(...list.map((c) => c.y));
+
+    const commentCards = list.filter((c) => c.data.type === "comment");
+    const inputCards = list.filter((c) => c.data.type === "input");
+    const dpCards = list.filter((c) => c.data.type === "dp");
+    const erCards = list.filter((c) =>
+      c.data.type !== "comment" && c.data.type !== "input" && c.data.type !== "dp",
+    );
+    for (const arr of [commentCards, inputCards, dpCards, erCards]) {
+      arr.sort((a, b) => a.y - b.y || a.x - b.x);
+    }
+
+    const cardW = getCardRect(list[0]).w;
+    const cardH = getCardRect(list[0]).h;
+    const dpCols = dpCards.length > 0
+      ? Math.max(1, Math.ceil(Math.sqrt(dpCards.length)))
+      : 0;
+    const inputColW = inputCards.length > 0 ? cardW : 0;
+    const commentRowH = commentCards.length > 0 ? cardH : 0;
+
+    const dpOriginX = anchorX + inputColW;
+    const dpOriginY = anchorY + commentRowH;
+
+    for (let i = 0; i < commentCards.length; i++) {
+      commentCards[i].x = dpOriginX + i * cardW;
+      commentCards[i].y = anchorY;
+      commentCards[i].el.style.transform =
+        `translate(${commentCards[i].x}px, ${commentCards[i].y}px)`;
+    }
+    for (let i = 0; i < inputCards.length; i++) {
+      inputCards[i].x = anchorX;
+      inputCards[i].y = dpOriginY + i * cardH;
+      inputCards[i].el.style.transform =
+        `translate(${inputCards[i].x}px, ${inputCards[i].y}px)`;
+    }
+    for (let i = 0; i < dpCards.length; i++) {
+      const r = Math.floor(i / dpCols);
+      const c = i % dpCols;
+      dpCards[i].x = dpOriginX + c * cardW;
+      dpCards[i].y = dpOriginY + r * cardH;
+      dpCards[i].el.style.transform =
+        `translate(${dpCards[i].x}px, ${dpCards[i].y}px)`;
+    }
+    const erColX = dpCards.length > 0
+      ? dpOriginX + dpCols * cardW
+      : dpOriginX;
+    for (let i = 0; i < erCards.length; i++) {
+      erCards[i].x = erColX;
+      erCards[i].y = dpOriginY + i * cardH;
+      erCards[i].el.style.transform =
+        `translate(${erCards[i].x}px, ${erCards[i].y}px)`;
+    }
+  }
+
+  // Programmatic cluster join — the relational counterpart to the
+  // canvas Enter shortcut. Used by the table view to merge selected
+  // rows into one cluster without manipulating x/y. Reuses any
+  // existing cluster id present among the inputs (topmost-leftmost
+  // wins) so dragging a row into an established cluster keeps the
+  // cluster's stable id, which surfaces in saved state and undo.
+  function linkCardsByIds(cardIds) {
+    if (!Array.isArray(cardIds) || cardIds.length < 2) return null;
+    const list = cardIds
+      .map((id) => getCardById(id))
+      .filter(Boolean);
+    if (list.length < 2) return null;
+
+    const anchor = list.slice().sort((a, b) => a.y - b.y || a.x - b.x)[0];
+    const existingIds = list
+      .map((c) => c.clusterId)
+      .filter((id) => id != null);
+    const targetId = existingIds.length > 0
+      ? Math.min(...existingIds)
+      : allocateClusterId();
+
+    // Pull every card that previously shared a cluster with one of our
+    // inputs: when a DP gets linked, its existing ER cluster-mates have
+    // to come along, otherwise refreshClusters' snap-reconcile would
+    // strand them. Defensive against the (rare) case where a caller
+    // hands in only a subset of the cluster.
+    const all = new Set();
+    for (const c of list) all.add(c.id);
+    for (const id of existingIds) {
+      for (const c of cards) {
+        if (c.clusterId === id) all.add(c.id);
+      }
+    }
+
+    assignToCluster([...all], targetId);
+    layoutCardsAsCluster([...all], { anchorX: anchor.x, anchorY: anchor.y });
+    return targetId;
   }
 
   function screenToCanvas(sx, sy) {
@@ -261,7 +503,7 @@
     groups = [];
     selectedCards.clear();
     selectedGroupId = null;
-    nextCardId = nextGroupId = 1;
+    nextCardId = nextGroupId = nextClusterId = 1;
   }
 
   function undo() {
@@ -274,7 +516,10 @@
     const { view: _v, ...stateToRestore } = lastSnapshot;
     getPersistenceHelpers().restore(stateToRestore);
     restoring = false;
-    refreshClusters();
+    // Visuals-only: the undo snapshot already carries the relational
+    // cluster model, so re-running snap-reconcile would only risk
+    // clobbering saved membership. See refreshClusterVisuals comment.
+    refreshClusterVisuals();
     notifyCreditTotal();
     if (__cb.onCanvasStateChange) __cb.onCanvasStateChange();
   }
@@ -289,7 +534,7 @@
     const { view: _v, ...stateToRestore } = lastSnapshot;
     getPersistenceHelpers().restore(stateToRestore);
     restoring = false;
-    refreshClusters();
+    refreshClusterVisuals();
     notifyCreditTotal();
     if (__cb.onCanvasStateChange) __cb.onCanvasStateChange();
   }
@@ -408,7 +653,7 @@
         cardsRef: () => cards,
         groupsRef: () => groups,
         getCardById,
-        getSnapClusters,
+        getClusters,
       });
     }
     return __credits.notifyCreditTotal();
@@ -448,9 +693,13 @@
     if (!selectionHintEl) return;
 
     if (selectedCards.size >= 2) {
-      const clusters = getSnapClusters();
+      // Model-backed cluster lookup so the hint hides correctly even
+      // when relational membership exists without snap-adjacency
+      // (e.g. a table-view link that hasn't yet been laid out into
+      // adjacent positions on the canvas).
+      const clusters = getClusters();
       const allInOneCluster = clusters.some((cl) => {
-        const clSet = new Set(cl);
+        const clSet = new Set(cl.cardIds);
         for (const id of selectedCards) { if (!clSet.has(id)) return false; }
         return true;
       });
@@ -666,7 +915,7 @@
         cardsRef: () => cards,
         groupsRef: () => groups,
         getCardById,
-        getSnapClusters,
+        getClusters,
       });
     }
     return __credits.updateDpCosts();
@@ -738,7 +987,7 @@
         cardsRef: () => cards,
         groupsRef: () => groups,
         getCardById,
-        getSnapClusters,
+        getClusters,
       });
     }
     return __credits.updateGroupCredits();
@@ -749,83 +998,19 @@
   }
 
   // ---- Link selected cards ----
-
+  //
+  // Canvas Enter shortcut. Delegates to the relational
+  // `linkCardsByIds` helper so the magnet-link UX shares one code path
+  // with the table view's "Link" action — both flow through
+  // assignToCluster + layoutCardsAsCluster, which preserves the legacy
+  // bucketing layout (comments on top, inputs LEFT, DPs grid, ERs RIGHT)
+  // while making cluster membership relational instead of geometry-
+  // implicit.
   function linkSelectedCards() {
     if (selectedCards.size < 2) return;
-    const sel = [...selectedCards].map((id) => getCardById(id)).filter(Boolean);
-    if (sel.length < 2) return;
-
-    // Mirror the import flow's bucketing so the magnet shortcut produces
-    // the same cluster shape as a fresh table import: comment row on top
-    // of the DP grid, DPs in an adaptive grid in the middle, inputs to
-    // the LEFT of the DPs, ERs to the RIGHT. Sort within each bucket by
-    // current position so the magnet preserves the user's top-to-bottom,
-    // left-to-right intent within a category.
-    const commentCards = sel.filter((c) => c.data.type === "comment");
-    const inputCards = sel.filter((c) => c.data.type === "input");
-    const dpCards = sel.filter((c) => c.data.type === "dp");
-    const erCards = sel.filter((c) =>
-      c.data.type !== "comment" && c.data.type !== "input" && c.data.type !== "dp"
-    );
-    for (const arr of [commentCards, inputCards, dpCards, erCards]) {
-      arr.sort((a, b) => a.y - b.y || a.x - b.x);
-    }
-
-    const anchorX = Math.min(...sel.map((c) => c.x));
-    const anchorY = Math.min(...sel.map((c) => c.y));
-    const cardW = getCardRect(sel[0]).w;
-    const cardH = getCardRect(sel[0]).h;
-
-    // Adaptive square-ish grid for DPs — better for hand-curated small
-    // selections than the import's fixed 4-col layout.
-    const dpCols = dpCards.length > 0
-      ? Math.max(1, Math.ceil(Math.sqrt(dpCards.length)))
-      : 0;
-    const inputColW = inputCards.length > 0 ? cardW : 0;
-    const commentRowH = commentCards.length > 0 ? cardH : 0;
-
-    // DP grid origin: shifted right by the input column (if any) and down
-    // by the comment row (if any) so the comments and inputs magnet to it.
-    const dpOriginX = anchorX + inputColW;
-    const dpOriginY = anchorY + commentRowH;
-
-    // Comments: row directly above the DP grid (or above the ER column
-    // when there are no DPs), one card per slot. Comment[0] sits above
-    // DP[0] so they magnet vertically.
-    for (let i = 0; i < commentCards.length; i++) {
-      commentCards[i].x = dpOriginX + i * cardW;
-      commentCards[i].y = anchorY;
-      commentCards[i].el.style.transform = `translate(${commentCards[i].x}px, ${commentCards[i].y}px)`;
-    }
-
-    // Inputs: column to the LEFT of the DP grid, same y range as DP rows.
-    for (let i = 0; i < inputCards.length; i++) {
-      inputCards[i].x = anchorX;
-      inputCards[i].y = dpOriginY + i * cardH;
-      inputCards[i].el.style.transform = `translate(${inputCards[i].x}px, ${inputCards[i].y}px)`;
-    }
-
-    // DPs: row-major adaptive grid.
-    for (let i = 0; i < dpCards.length; i++) {
-      const r = Math.floor(i / dpCols);
-      const c = i % dpCols;
-      dpCards[i].x = dpOriginX + c * cardW;
-      dpCards[i].y = dpOriginY + r * cardH;
-      dpCards[i].el.style.transform = `translate(${dpCards[i].x}px, ${dpCards[i].y}px)`;
-    }
-
-    // ERs: column to the RIGHT of the DP grid (or column 0 when there
-    // are no DPs, so they still sit beside any inputs and below any
-    // comments — keeping the cluster compact).
-    const erColX = dpCards.length > 0
-      ? dpOriginX + dpCols * cardW
-      : dpOriginX;
-    for (let i = 0; i < erCards.length; i++) {
-      erCards[i].x = erColX;
-      erCards[i].y = dpOriginY + i * cardH;
-      erCards[i].el.style.transform = `translate(${erCards[i].x}px, ${erCards[i].y}px)`;
-    }
-
+    const ids = [...selectedCards];
+    const targetClusterId = linkCardsByIds(ids);
+    if (targetClusterId == null) return;
     updateGroupBounds();
     refreshClusters();
     notifyChange();
@@ -932,7 +1117,7 @@
   // adjacency (1px tolerance) can't bridge. We compute each member's row
   // index in the OLD layout, then re-emit at `leadY + row * newH`. X
   // positions are untouched. Singletons (clusters of size < 2) are filtered
-  // out by getSnapClusters already, so isolated cards aren't affected.
+  // out by getClusters already, so isolated cards aren't affected.
   function applyClusterReflow(clusters, oldH, newH) {
     if (!clusters || oldH === newH) return;
     for (const cluster of clusters) {
@@ -1273,7 +1458,14 @@
     // undo/redo already do before calling persistence.restore.
     clearCanvas();
     getPersistenceHelpers().restore(state);
-    refreshClusters();
+    // Visuals-only after restore: the saved state already carries the
+    // relational cluster model (or has just been backfilled from snap
+    // by persistence). Running a full snap-reconcile here would
+    // clobber saved membership when overlay.js hasn't yet applied the
+    // saved Pro Mode pitch — the next user-initiated geometry change
+    // (drag-end) goes through the full refreshClusters path and re-
+    // reconciles from snap with the correct card heights.
+    refreshClusterVisuals();
     lastSnapshot = captureSnapshot();
     undoStack = [];
     redoStack = [];
@@ -1313,7 +1505,7 @@
     closeCanvasMenu();
     getUiHelpers().destroy();
     if (selectionHintEl) { selectionHintEl.remove(); selectionHintEl = null; }
-    panX = panY = 0; scale = 1; nextCardId = nextGroupId = 1;
+    panX = panY = 0; scale = 1; nextCardId = nextGroupId = nextClusterId = 1;
     if (canvasArea) { canvasArea.removeEventListener("mousedown", onCanvasMouseDown); canvasArea.removeEventListener("wheel", onWheel); }
     document.removeEventListener("mousemove", onMouseMove); document.removeEventListener("mouseup", onMouseUp);
     document.removeEventListener("keydown", onKeyDown); document.removeEventListener("keyup", onKeyUp);
@@ -1376,7 +1568,26 @@
     zoomOut: () => zoomBy(-0.15),
     refreshClusters,
     getCardById,
-    getSnapClusters,
+    // Live snapshot of cluster membership backed by the explicit
+    // `card.clusterId` model. Both the canvas (credits) and the table
+    // view read this. Returns clusters of size >= 2 only — singletons
+    // are filtered out for parity with the previous getSnapClusters
+    // shape that callers were built against.
+    getClusters,
+    // Same shape as the legacy getSnapClusters() (array of cardId
+    // arrays). Kept as a separate accessor so callers that only need
+    // the cardIds don't have to map themselves; new code should prefer
+    // getClusters() because the {id, cardIds} shape lets you address
+    // a specific cluster.
+    getSnapClusters: getClusterCardIds,
+    // Programmatic write paths — use these from the table view instead
+    // of stacking x/y to imply cluster membership. assignToCluster sets
+    // the relational id; layoutCardsAsCluster repositions the cards
+    // into a snap-adjacent arrangement so canvas geometry agrees;
+    // linkCardsByIds is the convenience that does both.
+    assignToCluster,
+    layoutCardsAsCluster,
+    linkCardsByIds,
     applyClusterReflow,
     // Live snapshot of the cards array. External read-only consumers (e.g. the
     // export-as-table modal) need this to enumerate every card. Mutating the

@@ -975,10 +975,20 @@
       }
     }
 
+    // Inherit the target card's cluster id at creation time so the new
+    // ER joins the cluster relationally even before snap-reconcile
+    // confirms the adjacency. Matters for table-view-initiated adds:
+    // there the table doesn't observe the canvas geometry and would
+    // otherwise have to wait for refreshClusters to reflect the
+    // membership in the next render. addCard's `clusterId` opt is a
+    // no-op when the target has no cluster (target.clusterId === null);
+    // refreshClusters' snap-reconcile then assigns or extends a cluster
+    // based on the new adjacency.
+    const targetClusterId = target.clusterId ?? null;
     for (let i = 0; i < newCards.length; i++) {
       const x = target.x + bestSide.dx + i * bestSide.stackDx;
       const y = target.y + bestSide.dy + i * bestSide.stackDy;
-      __cb.canvas.addCard(newCards[i], { x, y });
+      __cb.canvas.addCard(newCards[i], { x, y, clusterId: targetClusterId });
     }
 
     if (__cb.canvas.refreshClusters) __cb.canvas.refreshClusters();
