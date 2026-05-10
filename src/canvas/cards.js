@@ -576,6 +576,11 @@
       // importer adds typically leave it null and rely on
       // refreshClusters' snap-reconcile to assign one based on
       // adjacency. Restore + table-view ops pass it explicitly.
+      //
+      // `tableOrder` drives row order in the table view, decoupling
+      // table sort from canvas geometry so reordering rows in the
+      // table never mutates card.x/y. null falls back to y-sort. See
+      // src/table-view.js blockSortKey() for the comparator.
       const card = {
         id,
         x,
@@ -585,6 +590,7 @@
         handles: {},
         groupId: null,
         clusterId: opts?.clusterId ?? null,
+        tableOrder: opts?.tableOrder ?? null,
       };
       const el = document.createElement("div");
       el.className = "cb-card";
@@ -1038,6 +1044,7 @@
         handles: {},
         groupId: null,
         clusterId: opts?.clusterId ?? null,
+        tableOrder: opts?.tableOrder ?? null,
       };
 
       const el = document.createElement("div");
@@ -1205,6 +1212,7 @@
         handles: {},
         groupId: null,
         clusterId: opts?.clusterId ?? null,
+        tableOrder: opts?.tableOrder ?? null,
       };
 
       const el = document.createElement("div");
@@ -1301,6 +1309,7 @@
         handles: {},
         groupId: null,
         clusterId: opts?.clusterId ?? null,
+        tableOrder: opts?.tableOrder ?? null,
       };
 
       const el = document.createElement("div");

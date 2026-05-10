@@ -64,6 +64,12 @@
         // instead of re-deriving from x/y on every render. Cards that
         // aren't in any cluster carry `clusterId: null` (and are filtered
         // out of getClusters() — singletons aren't returned).
+        //
+        // `tableOrder` decouples table-view row order from canvas
+        // geometry. Null = sort by y in the table (legacy behavior /
+        // cards never reordered in the table). Set by the table view's
+        // performDrop and survives reload + realtime sync. Ignored
+        // anywhere outside the table view.
         cards: cardsRef().map((c) => ({
           id: c.id,
           x: c.x,
@@ -71,6 +77,7 @@
           data: c.data,
           groupId: c.groupId,
           clusterId: c.clusterId ?? null,
+          tableOrder: c.tableOrder ?? null,
         })),
         groups: groupsRef().map((g) => ({
           id: g.id,
@@ -118,6 +125,7 @@
             y: cs.y,
             id: cs.id,
             clusterId: cs.clusterId,
+            tableOrder: cs.tableOrder,
             fillRate: cs.data.fillRate,
             fillRateCustom: cs.data.fillRateCustom,
             stats: cs.data.stats,
@@ -132,6 +140,7 @@
           y: cs.y,
           id: cs.id,
           clusterId: cs.clusterId,
+          tableOrder: cs.tableOrder,
           fieldId: cs.data.fieldId,
           tableId: cs.data.tableId,
           viewId: cs.data.viewId,
@@ -142,13 +151,20 @@
           y: cs.y,
           id: cs.id,
           clusterId: cs.clusterId,
+          tableOrder: cs.tableOrder,
           groupCluster: cs.data.groupCluster,
         });
         // ER cards: addCard(cs.data, ...) passes the full data object
         // through — data.stats, data.groupCluster, and data.fieldId ride
         // along automatically since addCard mutates a copy of `data`
         // rather than re-building it from scratch.
-        else addCard(cs.data, { x: cs.x, y: cs.y, id: cs.id, clusterId: cs.clusterId });
+        else addCard(cs.data, {
+          x: cs.x,
+          y: cs.y,
+          id: cs.id,
+          clusterId: cs.clusterId,
+          tableOrder: cs.tableOrder,
+        });
       }
       for (const gs of state.groups || []) {
         restoreGroup(gs);

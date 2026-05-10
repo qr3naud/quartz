@@ -275,23 +275,69 @@
   // of a snap-cluster already has a clusterId, that id wins (smallest if
   // multiple). Only fully-new snap-clusters allocate a new id.
   //
-  // `opts.dragCardIds` (Set<cardId> | null) scopes DEMOTION to a known
-  // set of cards. Without this guard, deleting a "bridge" card from a
-  // chain-shaped cluster (DP — ER1 — ER2 — ER3) demotes the now-isolated
-  // DP as collateral damage on the snap-reconcile that follows the
-  // remove. Drag handlers pass the cards the user actually moved; every
-  // other caller (removeCard, picker placement, importers, link,
-  // waterfall, align, reflow) passes an empty Set so existing
-  // membership stays durable across geometric side effects. A null
-  // `dragCardIds` preserves the legacy "demote everything not adjacent"
-  // behavior — we still pass it through internal callers (eg. legacy
-  // backfill) where the model is being seeded from scratch.
+  // `opts.dragCardIds` (Set<cardId> | null) scopes both PROMOTION and
+  // DEMOTION to a known set of cards. Snap-as-writer is a UX shortcut
+  // for explicit user drags and for legacy backfill — non-drag callers
+  // should never have their geometry silently rewrite saved cluster
+  // membership.
+  //
+  // - Demotion (clearing clusterId on cards no longer geometrically
+  //   adjacent): only cards in `dragCardIds` are eligible. Without this
+  //   guard, deleting a "bridge" card from a chain-shaped cluster
+  //   (DP — ER1 — ER2 — ER3) demotes the now-isolated DP as collateral
+  //   damage on the snap-reconcile that follows the remove. Added in
+  //   v3.20.2.
+  //
+  // - Promotion: standard promotion (assign canonical clusterId to all
+  //   members of a snap-cluster) runs unconditionally for snap-clusters
+  //   whose existing non-null clusterIds are all the SAME id (or all
+  //   null) — those are pure backfill / canonicalization and never
+  //   destroy saved membership. Snap-clusters that span TWO OR MORE
+  //   distinct existing cluster ids ("cross-cluster merges") only
+  //   promote when a dragged card is present. This is what stops the
+  //   table-view "swap two independent DPs → they get linked" bug:
+  //   non-drag flows that happen to land previously independent
+  //   clusters snap-adjacent leave their cluster ids intact.
+  //
+  // Drag handlers pass the cards the user actually moved; every other
+  // caller (removeCard, picker placement, importers, link, waterfall,
+  // align, reflow, table-view writers, overlay first-open refresh)
+  // passes an empty Set so demotion stays scoped AND cross-cluster
+  // merges are blocked. A null `dragCardIds` preserves the legacy
+  // "snap is the dominant writer" behavior for both directions — we
+  // still pass it through internal callers (eg. legacy backfill) where
+  // the model is being seeded from scratch and geometry is the only
+  // available signal.
   function syncClusterModelFromSnap(opts) {
     const dragCardIds = opts?.dragCardIds ?? null;
     const snapClusters = getSnapHelpers().getSnapClusters();
     const inAnyCluster = new Set();
 
     for (const cluster of snapClusters) {
+      // Inspect existing clusterIds among members up front. A snap-
+      // cluster whose members carry 2+ distinct non-null clusterIds is
+      // a cross-cluster merge candidate — only allowed when a dragged
+      // card is involved. Pure backfill (all null) and canonicalization
+      // (all share one id, or fill-in nulls toward one id) is always
+      // safe and runs regardless of dragCardIds.
+      const existingIds = new Set();
+      for (const id of cluster) {
+        const c = getCardById(id);
+        if (c?.clusterId != null) existingIds.add(c.clusterId);
+      }
+      const isCrossClusterMerge = existingIds.size >= 2;
+      if (
+        isCrossClusterMerge &&
+        dragCardIds &&
+        !cluster.some((id) => dragCardIds.has(id))
+      ) {
+        // Track membership so demotion below doesn't strip clusterId
+        // from cards that are still geometrically in some cluster —
+        // we just aren't re-canonicalizing this one.
+        for (const id of cluster) inAnyCluster.add(id);
+        continue;
+      }
+
       let canonical = null;
       for (const id of cluster) {
         const c = getCardById(id);

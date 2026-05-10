@@ -113,6 +113,48 @@
     return card?.clusterId ?? null;
   }
 
+  // ---- Table-view ordering ----
+  //
+  // `card.tableOrder` is the source of truth for row order in the table
+  // view. It's set by performDrop (drag-to-reorder) and survives reload
+  // + realtime sync via persistence.js. Outside the table view, nothing
+  // reads or writes it — the canvas keeps using card.x/card.y.
+  //
+  // Cards without a tableOrder (newly added, or pre-tableOrder legacy
+  // state) fall back to y-sort, and sort AFTER cards that do have one
+  // — so newly added rows naturally append below already-ordered ones
+  // until the user reorders again. Mixed states resolve cleanly the
+  // next time performDrop reassigns sequential ids over the section.
+  //
+  // Single comparator helper used everywhere we sort rows / blocks so
+  // the precedence rule stays consistent. `getOrder(item)` returns the
+  // item's tableOrder (or null), `getY(item)` returns its y fallback.
+  function tableOrderForCardId(cardId) {
+    if (cardId == null) return null;
+    const card = __cb.canvas?.getCardById?.(cardId);
+    return card?.tableOrder ?? null;
+  }
+
+  // Min tableOrder across a list of cards (skipping nulls). Returns
+  // null when no member has a tableOrder. Used so a multi-card block
+  // (snap-cluster, group) sorts at its earliest member's position.
+  function tableOrderForCardIds(cardIds) {
+    let min = null;
+    for (const id of cardIds) {
+      const o = tableOrderForCardId(id);
+      if (o == null) continue;
+      if (min == null || o < min) min = o;
+    }
+    return min;
+  }
+
+  function compareByTableOrderThenY(aOrder, aY, bOrder, bY) {
+    if (aOrder != null && bOrder != null) return aOrder - bOrder;
+    if (aOrder != null) return -1;
+    if (bOrder != null) return 1;
+    return aY - bY;
+  }
+
   function isDpRowId(rowId) {
     const card = getCardForRowId(rowId);
     return !!card && card.data?.type === "dp";
@@ -576,14 +618,26 @@
         level: sectionInfo.level,
         parentId: sectionInfo.parentId,
         rows: [],
-        // Tracked for Y sorting at render time — sections sit above
+        // Tracked for sorting at render time — sections sit above
         // the flat DP rows in topological order, but within that
-        // category we order by the topmost member's Y so reorder
-        // results are visible after refresh.
+        // category we order by the topmost member's tableOrder (when
+        // any member has one) and fall back to topmost Y. Same
+        // precedence rule as compareByTableOrderThenY.
         minY: Infinity,
+        minTableOrder: null,
       };
       groupSectionsMap.set(sectionInfo.key, section);
       return section;
+    }
+
+    function trackSectionMin(section, y, order) {
+      if (y < section.minY) section.minY = y;
+      if (order != null && (section.minTableOrder == null || order < section.minTableOrder)) {
+        section.minTableOrder = order;
+      }
+    }
+    function trackSectionMinFromCard(section, card) {
+      trackSectionMin(section, card.y, card.tableOrder ?? null);
     }
 
     for (const card of allCards) {
@@ -593,7 +647,7 @@
       if (sectionInfo) {
         const section = ensureSection(sectionInfo);
         section.rows.push(row);
-        if (card.y < section.minY) section.minY = card.y;
+        trackSectionMinFromCard(section, card);
         // Also materialize the parent super-group header so the
         // hierarchy renders even when the super itself has no DPs
         // directly attached (the common case — every DP lives in some
@@ -609,10 +663,11 @@
               canvasGroupId: parentGroup.id,
               editable: true,
             });
-            // Track the super's minY off its children so render can
-            // sort top-level sections by topmost-member Y consistently
-            // whether the super has direct DPs or only inner groups.
-            if (card.y < parentSection.minY) parentSection.minY = card.y;
+            // Track the super's min off its children so render can
+            // sort top-level sections by topmost-member tableOrder /
+            // Y consistently whether the super has direct DPs or only
+            // inner groups.
+            trackSectionMinFromCard(parentSection, card);
           }
         }
       } else {
@@ -743,7 +798,7 @@
       const section = ensureSection(sectionInfo);
       for (const row of clusterMap.values()) {
         section.rows.push(row);
-        if (row.y < section.minY) section.minY = row.y;
+        trackSectionMin(section, row.y, tableOrderForCardId(row.cardId));
       }
       // Materialize parent super if we landed in a nested inner so the
       // hierarchy renders even when no DP routed it in already.
@@ -759,21 +814,33 @@
             editable: true,
           });
           for (const row of clusterMap.values()) {
-            if (row.y < parentSection.minY) parentSection.minY = row.y;
+            trackSectionMin(parentSection, row.y, tableOrderForCardId(row.cardId));
           }
         }
       }
     }
 
-    // Y-sort everything — drag-to-reorder shifts cards' y values directly
-    // on the canvas, and refresh() re-runs buildRows; sorting here is
-    // what makes the new order visible. Within a snap-cluster, multiple
-    // DP rows share a single (host's) y so the relative order between
-    // linked DPs is stable.
-    flatDpRows.sort((a, b) => a.y - b.y);
-    orphanErRows.sort((a, b) => a.y - b.y);
+    // Sort everything by tableOrder (set by drag-to-reorder in the
+    // table view), falling back to canvas y for cards that have never
+    // been reordered in the table. Cards with tableOrder come BEFORE
+    // unordered ones so freshly added rows append at the bottom of an
+    // already-ordered section. Within a snap-cluster, multiple DP rows
+    // share a single (host's) y so the relative order between linked
+    // DPs is stable.
+    function sortRowsByOrder(rows) {
+      rows.sort((a, b) =>
+        compareByTableOrderThenY(
+          tableOrderForCardId(a.cardId),
+          a.y,
+          tableOrderForCardId(b.cardId),
+          b.y,
+        ),
+      );
+    }
+    sortRowsByOrder(flatDpRows);
+    sortRowsByOrder(orphanErRows);
     for (const section of groupSectionsMap.values()) {
-      section.rows.sort((a, b) => a.y - b.y);
+      sortRowsByOrder(section.rows);
     }
 
     // Aggregated subtree count for super-group sections so the header
@@ -796,7 +863,7 @@
     }
 
     const groupSections = Array.from(groupSectionsMap.values()).sort(
-      (a, b) => a.minY - b.minY,
+      (a, b) => compareByTableOrderThenY(a.minTableOrder, a.minY, b.minTableOrder, b.minY),
     );
 
     return {
@@ -1040,18 +1107,6 @@
     if (canvas.notifyChange) canvas.notifyChange();
   }
 
-  // Direct (x, y) mutation on a card — same pattern attachDpToOrphanCluster
-  // uses to drop a new card at a precise position. We also need to update
-  // the card.el's transform so the visual matches the model immediately;
-  // refreshClusters reads the model values, but render() pulls Y from
-  // card.y so the table sort lands correctly.
-  function moveCardTo(card, x, y) {
-    if (!card) return;
-    card.x = x;
-    card.y = y;
-    if (card.el) card.el.style.transform = `translate(${x}px, ${y}px)`;
-  }
-
   // ---- Drag-and-reorder ----
   //
   // The "block" being dragged is the natural unit of the row:
@@ -1093,16 +1148,6 @@
       if (c && c.y < min) min = c.y;
     }
     return Number.isFinite(min) ? min : 0;
-  }
-
-  function shiftBlockY(cardIds, deltaY) {
-    const canvas = __cb.canvas;
-    if (!canvas?.getCardById) return;
-    for (const id of cardIds) {
-      const c = canvas.getCardById(id);
-      if (!c) continue;
-      moveCardTo(c, c.x, c.y + deltaY);
-    }
   }
 
   function startBlockDrag(blockKind, blockKey, evt) {
@@ -1281,11 +1326,20 @@
     if (dropIndicatorEl) dropIndicatorEl.style.display = "none";
   }
 
-  // Re-stack approach: gather every block in the affected section, sort
-  // by current minY, splice the dragged block to its new index, then
-  // assign sequential Y values starting from the section's current top.
-  // This avoids overlap on the canvas AND keeps the table sort visible
-  // because sort-by-Y + sequential Y == sort-by-position.
+  // tableOrder approach (v3.22+): drag-to-reorder writes to a
+  // dedicated `card.tableOrder` field instead of mutating card.x/y.
+  // The canvas geometry is left exactly as the user last arranged it,
+  // and the two views can show the same data in different orders
+  // without one bleeding into the other.
+  //
+  // Why we don't reflow card.y any more: under the legacy approach
+  // (`shiftBlockY` + sequential zero-gap restacking) the new geometry
+  // could land previously independent clusters snap-adjacent. The
+  // follow-up `refreshClusters` would then promote them into a single
+  // cluster id ("swap two orphan DPs → they get linked"). Even with
+  // promotion now scoped to user drags in canvas/index.js's
+  // `syncClusterModelFromSnap`, keeping table-view reorders geometry-
+  // free guarantees the canvas stays bit-for-bit unchanged.
   function performDrop(hoverRowId, dropPosition) {
     const canvas = __cb.canvas;
     if (!canvas) return;
@@ -1312,26 +1366,41 @@
     if (dropPosition === "below") targetIdx += 1;
     sectionBlocks.splice(targetIdx, 0, moved);
 
-    // Re-stack from the section's current minY (preserves the section's
-    // vertical position on the canvas). Sequential gap = 0 keeps clusters
-    // tight; the cards' own heights provide the visual spacing.
-    const baseY = Math.min(...sectionBlocks.map((b) => b.minY));
-    let cursorY = baseY;
+    // Sequentially reassign tableOrder over EVERY block in the section,
+    // not just the dragged one. This "captures" any newly added /
+    // unordered blocks at their effective sort position, so future
+    // drops see a fully ordered section. Every card in a block gets
+    // the same tableOrder so clusters stay grouped in the table view
+    // (matches the canvas's "linked cards share Y" invariant).
+    let order = 0;
     for (const block of sectionBlocks) {
-      const deltaY = cursorY - block.minY;
-      if (deltaY !== 0) shiftBlockY(block.cardIds, deltaY);
-      cursorY += block.height;
+      for (const id of block.cardIds) {
+        const c = canvas.getCardById?.(id);
+        if (c) c.tableOrder = order;
+      }
+      order += 1;
     }
-    // Reorder shifts whole cluster blocks together so internal
-    // adjacency is preserved per block. Empty dragCardIds keeps
-    // cross-block cluster membership durable.
-    if (canvas.refreshClusters) canvas.refreshClusters({ dragCardIds: new Set() });
+    // No geometry change → no refreshClusters needed (snap-derive has
+    // nothing new to discover). Just persist + re-render.
     if (canvas.notifyChange) canvas.notifyChange();
   }
 
-  // Build the list of {key, cardIds, minY, height} blocks for whatever
-  // section the dragged row belongs to. Same-section restriction is
-  // already enforced upstream, so we only need to enumerate one section.
+  // Build the list of {key, cardIds, minY, tableOrder} blocks for
+  // whatever section the dragged row belongs to. Same-section
+  // restriction is already enforced upstream, so we only need to
+  // enumerate one section.
+  //
+  // Block sort precedence matches the rest of the table view: by
+  // tableOrder when set, falling back to canvas y. `height` was
+  // tracked under the legacy y-reflow approach; no longer needed.
+  function makeBlock(key, cardIds) {
+    return {
+      key,
+      cardIds,
+      minY: getBlockMinY(cardIds),
+      tableOrder: tableOrderForCardIds(cardIds),
+    };
+  }
   function collectSectionBlocks(hoverRowId) {
     const canvas = __cb.canvas;
     if (!canvas) return [];
@@ -1342,14 +1411,7 @@
       for (const g of canvas.getGroups?.() || []) {
         const cardIds = g.cardIds.slice();
         if (cardIds.length === 0) continue;
-        const minY = getBlockMinY(cardIds);
-        const height = blockHeight(cardIds);
-        blocks.push({
-          key: `group:${g.id}`,
-          cardIds,
-          minY,
-          height,
-        });
+        blocks.push(makeBlock(`group:${g.id}`, cardIds));
       }
     } else if (section === "orphan") {
       // Orphan section: each ER (or ER-only cluster) is its own block.
@@ -1366,12 +1428,7 @@
         });
         if (hasDp) continue;
         for (const id of cluster) seen.add(id);
-        blocks.push({
-          key: `row:${c.id}`,
-          cardIds: cluster,
-          minY: getBlockMinY(cluster),
-          height: blockHeight(cluster),
-        });
+        blocks.push(makeBlock(`row:${c.id}`, cluster));
       }
     } else if (section === "flat") {
       // Flat DP rows (no group, no comment-card cluster) — one block per
@@ -1384,12 +1441,7 @@
         if (seen.has(c.id)) continue;
         const cluster = getClusterForCard(c.id);
         for (const id of cluster) seen.add(id);
-        blocks.push({
-          key: `row:${c.id}`,
-          cardIds: cluster,
-          minY: getBlockMinY(cluster),
-          height: blockHeight(cluster),
-        });
+        blocks.push(makeBlock(`row:${c.id}`, cluster));
       }
     } else if (section.startsWith("section:")) {
       // Inside a group (real cb-group OR legacy comment-card section) —
@@ -1408,35 +1460,13 @@
         if (seen.has(c.id)) continue;
         const cluster = getClusterForCard(c.id);
         for (const id of cluster) seen.add(id);
-        blocks.push({
-          key: `row:${c.id}`,
-          cardIds: cluster,
-          minY: getBlockMinY(cluster),
-          height: blockHeight(cluster),
-        });
+        blocks.push(makeBlock(`row:${c.id}`, cluster));
       }
     }
-    blocks.sort((a, b) => a.minY - b.minY);
+    blocks.sort((a, b) =>
+      compareByTableOrderThenY(a.tableOrder, a.minY, b.tableOrder, b.minY),
+    );
     return blocks;
-  }
-
-  // Vertical span of a block — max(card.y + card.h) - min(card.y). Used
-  // to size the post-drop sequential layout so blocks don't overlap.
-  function blockHeight(cardIds) {
-    const canvas = __cb.canvas;
-    if (!canvas?.getCardById) return 0;
-    let minY = Infinity;
-    let maxBottom = -Infinity;
-    for (const id of cardIds) {
-      const c = canvas.getCardById(id);
-      if (!c) continue;
-      const h = c.el?.offsetHeight || (__cb.proMode ? 96 : 70);
-      if (c.y < minY) minY = c.y;
-      const bottom = c.y + h;
-      if (bottom > maxBottom) maxBottom = bottom;
-    }
-    if (!Number.isFinite(minY) || !Number.isFinite(maxBottom)) return 0;
-    return maxBottom - minY;
   }
 
   // ---- Context menu ----
@@ -1698,7 +1728,9 @@
         childSectionsByParent.get(parentKey).push(s);
       }
       for (const children of childSectionsByParent.values()) {
-        children.sort((a, b) => a.minY - b.minY);
+        children.sort((a, b) =>
+          compareByTableOrderThenY(a.minTableOrder, a.minY, b.minTableOrder, b.minY),
+        );
       }
 
       function emitSectionRows(section, sectionTag) {
