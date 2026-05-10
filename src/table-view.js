@@ -977,6 +977,17 @@
       return;
     }
     const { hoverRowId, dropPosition } = dragState;
+    // Lower the dragInProgress gate BEFORE performDrop runs. performDrop
+    // mutates card.y values and calls canvas.notifyChange, which fires
+    // onCanvasStateChange → tableView.refresh synchronously. The refresh
+    // short-circuits when `dragInProgress` is true (so the dragged row's
+    // DOM doesn't get torn down mid-gesture). If we don't release the
+    // gate here, the post-drop refresh is suppressed and the table view
+    // keeps showing the pre-drop row order even though the underlying
+    // card.y values reflect the new arrangement. cleanupDrag below
+    // re-sets it to false (idempotent) and clears the rest of the
+    // transient drag state.
+    dragInProgress = false;
     if (hoverRowId && dropPosition) {
       performDrop(hoverRowId, dropPosition);
     }
