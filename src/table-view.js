@@ -1045,7 +1045,14 @@
 
   function showDropIndicator(rowEl, above) {
     if (!hostEl) return;
-    if (!dropIndicatorEl) {
+    // Re-create the indicator if it's missing OR if it's been orphaned
+    // by a render() that wiped hostEl.innerHTML (eg. table refresh after
+    // notifyChange — typical on the first drag of a fresh page open and
+    // on every drag after the first since render() runs in performDrop's
+    // tail). Without the isConnected check, only the very first drag
+    // produced a visible indicator; subsequent drags applied styles to
+    // the orphaned node and the user saw no drop hint at all.
+    if (!dropIndicatorEl || !dropIndicatorEl.isConnected) {
       dropIndicatorEl = document.createElement("div");
       dropIndicatorEl.className = "cb-table-view-drop-indicator";
       hostEl.appendChild(dropIndicatorEl);
