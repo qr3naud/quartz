@@ -457,6 +457,79 @@
     return targetId;
   }
 
+  // Find clusters whose members aren't all geometrically connected via
+  // snap-adjacency and re-run layoutCardsAsCluster on them so the
+  // canvas representation matches the relational model again. Used by
+  // overlay.js when switching from the table view back to the canvas:
+  // table-side mutations (delete a bridge ER, merge orphan clusters,
+  // etc.) can leave the model intact while geometry shows the cluster
+  // as scattered cards. This is a "tidy on entry" pass — cards that
+  // form a single connected component already are left alone, so the
+  // user's hand-arranged canvas layouts survive untouched.
+  //
+  // Returns true if any cluster was re-laid out (caller should
+  // notifyChange + persist), false otherwise.
+  function tightenBrokenClusters() {
+    const clusters = getClusters();
+    if (clusters.length === 0) return false;
+    const adjacencyPairs = getSnapHelpers().getAdjacentPairs();
+
+    let mutated = false;
+    for (const cluster of clusters) {
+      if (cluster.cardIds.length < 2) continue;
+
+      // Build adjacency restricted to this cluster's members.
+      const memberSet = new Set(cluster.cardIds);
+      const adj = new Map();
+      for (const id of cluster.cardIds) adj.set(id, []);
+      for (const pair of adjacencyPairs) {
+        if (memberSet.has(pair.id1) && memberSet.has(pair.id2)) {
+          adj.get(pair.id1).push(pair.id2);
+          adj.get(pair.id2).push(pair.id1);
+        }
+      }
+
+      // BFS from the first member; if the visited set covers every
+      // cluster member, the cluster is geometrically intact.
+      const visited = new Set();
+      const queue = [cluster.cardIds[0]];
+      while (queue.length > 0) {
+        const cur = queue.shift();
+        if (visited.has(cur)) continue;
+        visited.add(cur);
+        for (const neighbor of adj.get(cur) || []) {
+          if (!visited.has(neighbor)) queue.push(neighbor);
+        }
+      }
+      if (visited.size === cluster.cardIds.length) continue;
+
+      // Multiple components — re-layout the whole cluster anchored on
+      // the topmost-leftmost member so the broken pieces snap back
+      // together using the standard bucketing (comments above, inputs
+      // LEFT, DPs grid, ERs RIGHT).
+      const memberCards = cluster.cardIds
+        .map((id) => getCardById(id))
+        .filter(Boolean);
+      if (memberCards.length === 0) continue;
+      const anchor = memberCards.slice().sort((a, b) => a.y - b.y || a.x - b.x)[0];
+      layoutCardsAsCluster(cluster.cardIds, {
+        anchorX: anchor.x,
+        anchorY: anchor.y,
+      });
+      // Stream the moved positions to peers so the cluster re-tighten
+      // shows up live for collaborators viewing the canvas. Mirrors the
+      // applyClusterReflow broadcast loop.
+      if (__cb.realtime?.broadcastCardMove) {
+        for (const c of memberCards) {
+          __cb.realtime.broadcastCardMove(c.id, c.x, c.y);
+        }
+      }
+      mutated = true;
+    }
+
+    return mutated;
+  }
+
   function screenToCanvas(sx, sy) {
     const rect = canvasArea.getBoundingClientRect();
     return { x: (sx - rect.left - panX) / scale, y: (sy - rect.top - panY) / scale };
@@ -1626,6 +1699,13 @@
     assignToCluster,
     layoutCardsAsCluster,
     linkCardsByIds,
+    // Find clusters whose members aren't all snap-adjacent and re-run
+    // layoutCardsAsCluster to bring them back together. Called by
+    // overlay.js on table → canvas view switch so a session of
+    // table-side editing doesn't leave the canvas with scattered
+    // cluster members. Returns true if any cluster moved (caller is
+    // responsible for notifyChange + a follow-up refreshClusters).
+    tightenBrokenClusters,
     // Mint a fresh cluster id without assigning anyone to it. Used by
     // adjacency-driven adders (picker, attach-DP-to-orphan) that need
     // the new card to be in a cluster from the moment addCard's

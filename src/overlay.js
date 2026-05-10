@@ -161,6 +161,29 @@
         if (host && __cb.tableView?.mount) __cb.tableView.mount(host);
       } else {
         if (__cb.tableView?.unmount) __cb.tableView.unmount();
+        // Coming back from the table view: clusters that the table-side
+        // mutated (deleted a bridge ER, merged orphan clusters, etc.)
+        // may be relationally intact but geometrically scattered. Pull
+        // any "broken" cluster's members back together into a snap-
+        // adjacent layout so the canvas matches the model. Skipped on
+        // initial open (prev === undefined) so first-time canvas entry
+        // doesn't reorganize a user's hand-arranged layout.
+        if (
+          prev === "table" &&
+          __cb.canvas?.tightenBrokenClusters
+        ) {
+          const moved = __cb.canvas.tightenBrokenClusters();
+          if (moved) {
+            // Refresh visuals so snap classes line up with the new
+            // adjacencies, then push the moved positions through the
+            // canonical save path.
+            if (__cb.canvas.refreshClusters) {
+              __cb.canvas.refreshClusters({ dragCardIds: new Set() });
+            }
+            if (__cb.canvas.updateGroupBounds) __cb.canvas.updateGroupBounds();
+            if (__cb.canvas.notifyChange) __cb.canvas.notifyChange();
+          }
+        }
       }
       renderViewToggle();
       if (prev !== next && __cb.debouncedSave) __cb.debouncedSave();

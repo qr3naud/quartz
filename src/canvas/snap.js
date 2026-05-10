@@ -203,18 +203,27 @@
         );
       }
 
-      const clusters = getSnapClusters();
       const allCards = cardsRef();
-      const snappedIds = new Set();
 
-      for (const cluster of clusters) {
-        if (cluster.length < 2) continue;
-        for (const id of cluster) snappedIds.add(id);
+      // The "this card belongs to a cluster" halo (`cb-card-snapped`)
+      // is now derived from the relational model — `card.clusterId` —
+      // rather than snap-adjacency. This keeps the halo on cards
+      // whose cluster-mates exist but aren't currently touching them
+      // geometrically (eg. a DP that lost its bridge ER via the table
+      // view). Side classes below still come from geometry because
+      // they style the BORDERS that physically touch.
+      //
+      // Mirrors the size>=2 filter in canvas.getClusters: a singleton
+      // (the only card carrying its clusterId) gets no halo.
+      const clusterCounts = new Map();
+      for (const c of allCards) {
+        if (c.clusterId == null) continue;
+        clusterCounts.set(c.clusterId, (clusterCounts.get(c.clusterId) || 0) + 1);
       }
-
-      for (const id of snappedIds) {
-        const c = allCards.find((cc) => cc.id === id);
-        if (c) c.el.classList.add("cb-card-snapped");
+      for (const c of allCards) {
+        if (c.clusterId == null) continue;
+        if ((clusterCounts.get(c.clusterId) || 0) < 2) continue;
+        c.el.classList.add("cb-card-snapped");
       }
 
       const pairs = getAdjacentPairs();
