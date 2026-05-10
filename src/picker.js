@@ -1000,7 +1000,15 @@
       __cb.canvas.addCard(newCards[i], { x, y, clusterId: targetClusterId });
     }
 
-    if (__cb.canvas.refreshClusters) __cb.canvas.refreshClusters();
+    // Picker placement is not a user drag — the new ER cards already
+    // carry the resolved cluster id from addCard's opts above, so the
+    // refreshClusters call here is purely confirmatory + visual. Empty
+    // dragCardIds keeps any existing card whose snap-adjacency happens
+    // to overlap with the new placement from getting accidentally
+    // demoted.
+    if (__cb.canvas.refreshClusters) {
+      __cb.canvas.refreshClusters({ dragCardIds: new Set() });
+    }
   }
 
   // Convert a picked enrichment's card data into a provider entry suitable

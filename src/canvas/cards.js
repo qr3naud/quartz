@@ -960,7 +960,13 @@
         updateGroupBounds();
       }
 
-      refreshClusters();
+      // Removing a card geometrically isolates anyone that was bridged
+      // through it (DP — ER1 — ER2 — ER3, remove ER1 → DP looks alone
+      // to snap-derive). Empty dragCardIds tells syncClusterModelFromSnap
+      // to skip demotion: surviving cluster members keep their saved
+      // clusterId so the table view's "delete one chip" doesn't orphan
+      // the rest of the row's enrichments.
+      refreshClusters({ dragCardIds: new Set() });
       notifySelection();
       notifyCreditTotal();
       notifyChange();

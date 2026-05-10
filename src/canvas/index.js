@@ -274,7 +274,20 @@
   // Existing cluster ids are preserved whenever possible: if any member
   // of a snap-cluster already has a clusterId, that id wins (smallest if
   // multiple). Only fully-new snap-clusters allocate a new id.
-  function syncClusterModelFromSnap() {
+  //
+  // `opts.dragCardIds` (Set<cardId> | null) scopes DEMOTION to a known
+  // set of cards. Without this guard, deleting a "bridge" card from a
+  // chain-shaped cluster (DP — ER1 — ER2 — ER3) demotes the now-isolated
+  // DP as collateral damage on the snap-reconcile that follows the
+  // remove. Drag handlers pass the cards the user actually moved; every
+  // other caller (removeCard, picker placement, importers, link,
+  // waterfall, align, reflow) passes an empty Set so existing
+  // membership stays durable across geometric side effects. A null
+  // `dragCardIds` preserves the legacy "demote everything not adjacent"
+  // behavior — we still pass it through internal callers (eg. legacy
+  // backfill) where the model is being seeded from scratch.
+  function syncClusterModelFromSnap(opts) {
+    const dragCardIds = opts?.dragCardIds ?? null;
     const snapClusters = getSnapHelpers().getSnapClusters();
     const inAnyCluster = new Set();
 
@@ -298,12 +311,14 @@
       }
     }
 
-    // Cards no longer in any snap-cluster are detached from the model.
-    // Mirrors today's behavior where dragging a card out of a cluster
-    // immediately stops cost-sharing — kept stable in the table view too
-    // because both readers go through getClusters() now.
+    // Demote cards that snap-derive no longer sees in any cluster.
+    // Scoped: only cards in `dragCardIds` are eligible — anything else
+    // keeps its saved `clusterId` so the table view's mutations don't
+    // accidentally bleed into the model.
     for (const c of cards) {
-      if (!inAnyCluster.has(c.id)) c.clusterId = null;
+      if (inAnyCluster.has(c.id)) continue;
+      if (dragCardIds && !dragCardIds.has(c.id)) continue;
+      c.clusterId = null;
     }
   }
 
@@ -323,8 +338,8 @@
     updateGroupCredits();
   }
 
-  function refreshClusters() {
-    syncClusterModelFromSnap();
+  function refreshClusters(opts) {
+    syncClusterModelFromSnap(opts);
     refreshClusterVisuals();
   }
 
@@ -823,7 +838,10 @@
         c.el.style.transform = `translate(${c.x}px, ${c.y}px)`;
       }
       updateGroupBounds();
-      refreshClusters();
+      // Align is a deliberate cosmetic reflow within the existing
+      // selection — cards keep their cluster membership regardless of
+      // whether the new positions stay snap-adjacent.
+      refreshClusters({ dragCardIds: new Set() });
       notifyChange();
     });
     menu.appendChild(alignBtn);
@@ -850,7 +868,7 @@
         c.el.style.transform = `translate(${c.x}px, ${c.y}px)`;
       }
       updateGroupBounds();
-      refreshClusters();
+      refreshClusters({ dragCardIds: new Set() });
       notifyChange();
     });
     menu.appendChild(alignBottomBtn);
@@ -1012,7 +1030,12 @@
     const targetClusterId = linkCardsByIds(ids);
     if (targetClusterId == null) return;
     updateGroupBounds();
-    refreshClusters();
+    // Membership was just set explicitly via linkCardsByIds; the
+    // refreshClusters call here is purely confirmatory + cosmetic
+    // (renderClusterOutlines, updateDpCosts). Skip demotion so any
+    // unrelated card that happens to have lost snap-adjacency for
+    // unrelated reasons doesn't get clobbered.
+    refreshClusters({ dragCardIds: new Set() });
     notifyChange();
   }
 
@@ -1105,7 +1128,10 @@
     }
 
     clearSelection();
-    refreshClusters();
+    // The waterfall card replaces the consumed source cards; survivors
+    // that didn't take part in the collapse keep their cluster
+    // membership. Empty dragCardIds prevents accidental demotion.
+    refreshClusters({ dragCardIds: new Set() });
     notifyChange();
     if (window.__cb.saveTabs) window.__cb.saveTabs();
   }
@@ -1137,7 +1163,10 @@
         }
       }
     }
-    refreshClusters();
+    // Pro Mode reflow re-pitches Y values within each existing cluster
+    // so members stay snap-adjacent across the height change. No
+    // membership changes are intended here, so skip demotion.
+    refreshClusters({ dragCardIds: new Set() });
     notifyChange();
   }
 
@@ -1272,7 +1301,12 @@
       const pendingDrag = dragState;
       dragState = null;
       if (pendingDrag.hasMoved) {
-        refreshClusters();
+        // Card drag-end is THE explicit "I moved these" signal that
+        // earns demotion: a card the user dragged out of a cluster
+        // legitimately leaves it. Pass the dragged ids so unrelated
+        // cards keep their saved clusterId regardless of geometry.
+        const dragCardIds = new Set(pendingDrag.startPositions.keys());
+        refreshClusters({ dragCardIds });
         notifyChange();
       }
       return;
@@ -1280,9 +1314,13 @@
     if (groupDragState) {
       const gid = groupDragState.groupId;
       const wasMoved = groupDragState.hasMoved;
+      const dragCardIds = new Set(groupDragState.startPositions.keys());
       groupDragState = null;
       if (wasMoved) {
-        refreshClusters();
+        // Same scoping as card drag — every card that moved with the
+        // group is eligible for demotion / re-bucketing; everyone else
+        // keeps their cluster.
+        refreshClusters({ dragCardIds });
         notifyChange();
       } else {
         selectGroup(gid);

@@ -44,8 +44,12 @@
     // follows the card as it moves. Safe to call frequently.
     canvas.updateGroupBounds?.();
     // Snap clusters (connections/waterfall groupings) depend on card rects
-    // too. refreshClusters recomputes them + redraws connections.
-    canvas.refreshClusters?.();
+    // too. refreshClusters recomputes them + redraws connections. Pass
+    // the moved card as `dragCardIds` so a peer dragging a card OUT of
+    // a cluster reflects locally as a real demotion (mirrors how local
+    // drag-end scopes demotion to dragged ids); other cards' membership
+    // stays durable.
+    canvas.refreshClusters?.({ dragCardIds: new Set([cardId]) });
   }
 
   function applyRemoteCardText(userId, cardId, text) {

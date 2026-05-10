@@ -382,7 +382,10 @@
       totalGroupsAdded += 1;
     }
 
-    if (canvas.refreshClusters) canvas.refreshClusters();
+    // POC import drops fresh DP + comment cards in a grid and lets snap-
+    // derive cluster them by adjacency. Empty dragCardIds keeps any
+    // pre-existing cards on the canvas from being re-bucketed.
+    if (canvas.refreshClusters) canvas.refreshClusters({ dragCardIds: new Set() });
     if (canvas.notifyChange) canvas.notifyChange();
     if (canvas.refreshCreditTotal) canvas.refreshCreditTotal();
 

@@ -212,7 +212,11 @@
         addDataPointCard(texts[i], { x, y });
       }
 
-      if (refreshClusters) refreshClusters();
+      // Bulk-DP-near-target placement is a fresh-add flow: snap-derive
+      // picks up the new DPs' adjacency to the target and assigns a
+      // cluster id additively. Empty dragCardIds keeps unrelated cards
+      // on the canvas from being re-bucketed.
+      if (refreshClusters) refreshClusters({ dragCardIds: new Set() });
     }
 
     function showBulkInput(canvasX, canvasY, options) {

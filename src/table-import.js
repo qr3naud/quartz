@@ -1535,7 +1535,11 @@
     }
 
     if (importedAny && __cb.canvas.refreshClusters) {
-      __cb.canvas.refreshClusters();
+      // Importer drops new cards adjacent to each other; snap-derive
+      // assigns them cluster ids on this pass. Empty dragCardIds keeps
+      // pre-existing cards on the canvas from being re-bucketed when
+      // the import runs against an already-populated tab.
+      __cb.canvas.refreshClusters({ dragCardIds: new Set() });
     }
 
     // Decide the view mode AFTER cards are placed (so we can read

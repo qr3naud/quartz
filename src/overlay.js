@@ -1141,8 +1141,10 @@
       // attribute matches the saved layout. For legacy state this is
       // where the cluster model first gets populated from geometry;
       // for state with explicit clusterIds the snap-derivation
-      // matches and IDs are preserved.
-      __cb.canvas.refreshClusters();
+      // matches and IDs are preserved. Empty dragCardIds keeps any
+      // saved cluster id that geometry happens to disagree with —
+      // initial restore should be additive only.
+      __cb.canvas.refreshClusters({ dragCardIds: new Set() });
     }
 
     __cb.setViewMode(__cb.tabStore.viewMode || "projected");

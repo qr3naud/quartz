@@ -827,7 +827,11 @@
     if (cardIds.length < 2) return;
 
     canvas.linkCardsByIds(cardIds);
-    if (canvas.refreshClusters) canvas.refreshClusters();
+    // Membership was just set explicitly; refreshClusters here is
+    // confirmatory + cosmetic. Empty dragCardIds keeps the model
+    // durable against any unrelated geometry that snap-derive happens
+    // to read on this pass.
+    if (canvas.refreshClusters) canvas.refreshClusters({ dragCardIds: new Set() });
     if (canvas.notifyChange) canvas.notifyChange();
   }
 
@@ -1095,7 +1099,10 @@
       if (deltaY !== 0) shiftBlockY(block.cardIds, deltaY);
       cursorY += block.height;
     }
-    if (canvas.refreshClusters) canvas.refreshClusters();
+    // Reorder shifts whole cluster blocks together so internal
+    // adjacency is preserved per block. Empty dragCardIds keeps
+    // cross-block cluster membership durable.
+    if (canvas.refreshClusters) canvas.refreshClusters({ dragCardIds: new Set() });
     if (canvas.notifyChange) canvas.notifyChange();
   }
 
@@ -1872,7 +1879,10 @@
       });
     }
 
-    if (canvas.refreshClusters) canvas.refreshClusters();
+    // Membership was set explicitly above; this refreshClusters is
+    // confirmatory + cosmetic. Empty dragCardIds keeps unrelated cards
+    // from being demoted on this pass.
+    if (canvas.refreshClusters) canvas.refreshClusters({ dragCardIds: new Set() });
     // No explicit notifyChange — addDataPointCard already fired one
     // with the cluster set, so the table view's render saw the link
     // on the first pass.
