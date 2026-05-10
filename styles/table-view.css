@@ -245,6 +245,23 @@
   color: #1f2937;
 }
 
+/* Suppress the browser's native text-selection range when the user
+   shift+clicks across rows to multi-select. Without this, the rep sees
+   our row-highlight overlaid by the browser's text-selection blue
+   stripes — confusing and visually noisy. The override below keeps
+   real inputs (DP name / fill rate / group label) text-selectable so
+   click-to-edit still works as expected. */
+.cb-table-view-table tbody {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.cb-table-view-table tbody input,
+.cb-table-view-table tbody [contenteditable="true"] {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
 /* Drag handle — six-dot gripper, only visible on row hover. Cursor flips
    to grab so the affordance is unmissable when you mouse over a row. */
 .cb-table-view-drag-handle {
@@ -343,9 +360,33 @@
   transition: background 0.1s, color 0.1s;
 }
 
-.cb-table-view-context-menu-option:hover {
+.cb-table-view-context-menu-option:hover:not(.cb-table-view-context-menu-option-disabled) {
   background: #eef2ff;
   color: #4338ca;
+}
+
+/* Disabled option: shown so the user sees what's available, with a
+   secondary hint line explaining how to enable it. Cursor stays as
+   default to signal non-interactive. */
+.cb-table-view-context-menu-option-disabled {
+  cursor: not-allowed;
+  color: #9ca3af;
+}
+
+.cb-table-view-context-menu-option-disabled:hover {
+  background: transparent;
+}
+
+.cb-table-view-context-menu-option-label {
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.cb-table-view-context-menu-option-hint {
+  margin-top: 2px;
+  font-size: 11.5px;
+  color: #9ca3af;
+  font-weight: 400;
 }
 
 /* ============================================================================
@@ -387,10 +428,36 @@
  * Editable group label (real cb-groups only — POC import / canvas Shift+Enter)
  * ========================================================================= */
 
-.cb-table-view-group-row-label-input {
+/* Mirror-pattern wrap: the inner mirror span (visibility:hidden) drives
+   the wrap's intrinsic width, the input fills the wrap absolutely. This
+   makes the input auto-size to its content so long use-case names render
+   in full instead of truncating at the old 480px cap. */
+.cb-table-view-group-row-label-wrap {
+  position: relative;
+  display: inline-flex;
   flex: 0 1 auto;
-  min-width: 80px;
-  max-width: 480px;
+  min-width: 120px;
+  max-width: 100%;
+  vertical-align: middle;
+}
+
+.cb-table-view-group-row-label-mirror {
+  visibility: hidden;
+  white-space: pre;
+  padding: 4px 9px;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  /* Reserve space for the input's right padding + a small overflow
+     buffer so the input never clips the cursor at the trailing edge. */
+  padding-right: 14px;
+  pointer-events: none;
+}
+
+.cb-table-view-group-row-label-input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
   padding: 4px 8px;
   background: transparent;
   border: 1px solid transparent;
@@ -711,6 +778,44 @@
   background: #fef3c7;
   border-color: #fde68a;
   color: #b45309;
+}
+
+/* Neutral gray palette for the virtual "Other" header — distinct from
+   the indigo Use Case header (real cb-group) and the yellow
+   Unattached enrichments header so reps see at a glance that this
+   section isn't a real group. */
+.cb-table-view-other-group-row td {
+  background: #f9fafb;
+  border-top-color: #e5e7eb;
+  border-bottom-color: #e5e7eb;
+}
+
+.cb-table-view-other-group-row:hover td {
+  background: #f3f4f6 !important;
+}
+
+.cb-table-view-other-group-row:focus-visible td {
+  background: #f3f4f6 !important;
+  box-shadow: inset 0 0 0 2px #9ca3af;
+}
+
+.cb-table-view-other-group-row.cb-table-view-group-row-collapsed td {
+  border-bottom-color: #f3f4f6;
+}
+
+.cb-table-view-other-group-row .cb-table-view-group-row-chevron,
+.cb-table-view-other-group-row .cb-table-view-group-row-icon {
+  color: #6b7280;
+}
+
+.cb-table-view-other-group-row .cb-table-view-group-row-label {
+  color: #4b5563;
+}
+
+.cb-table-view-other-group-row .cb-table-view-group-row-count {
+  background: #f3f4f6;
+  border-color: #e5e7eb;
+  color: #6b7280;
 }
 
 /* ---- Add data point footer row ---- */
