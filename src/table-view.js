@@ -775,6 +775,26 @@
     for (const section of groupSectionsMap.values()) {
       section.rows.sort((a, b) => a.y - b.y);
     }
+
+    // Aggregated subtree count for super-group sections so the header
+    // badge reflects every row underneath, not just direct attachments.
+    // The bucketing in resolveSectionForCard routes most DPs into the
+    // claiming inner group, leaving the super's own rows almost always
+    // empty — without this aggregation, GHY would read "0 data points"
+    // even with 4 DPs spread across DEF + ABC. Standalone groups (no
+    // children) leave totalRowCount undefined and the header falls back
+    // to section.rows.length unchanged.
+    for (const section of groupSectionsMap.values()) {
+      if (section.level !== 1) continue;
+      let total = section.rows.length;
+      for (const child of groupSectionsMap.values()) {
+        if (child.parentId === section.canvasGroupId) {
+          total += child.rows.length;
+        }
+      }
+      section.totalRowCount = total;
+    }
+
     const groupSections = Array.from(groupSectionsMap.values()).sort(
       (a, b) => a.minY - b.minY,
     );
@@ -2388,7 +2408,11 @@
 
     const count = document.createElement("span");
     count.className = "cb-table-view-group-row-count";
-    const dpCount = section.rows.length;
+    // Super-group sections get a buildRows-stamped totalRowCount that
+    // sums every row in their inner sub-sections; falling back to
+    // section.rows.length keeps standalone (non-super) sections behaving
+    // exactly as before.
+    const dpCount = section.totalRowCount ?? section.rows.length;
     count.textContent = `${dpCount} data point${dpCount === 1 ? "" : "s"}`;
 
     wrap.appendChild(dragHandle);
