@@ -1809,12 +1809,18 @@
   }
 
   // Promote an orphan ER row by attaching a freshly-named DP card to
-  // its cluster. Drives the relational model directly: we resolve (or
-  // allocate) the orphan ERs' cluster id, stamp it on the new DP at
-  // creation time, then call linkCardsByIds so the canvas runs its
-  // shared layout helper to position every cluster member into a
-  // snap-adjacent arrangement (DP on the left, ERs on the right).
-  // refreshClusters' snap-reconcile then confirms the membership.
+  // its cluster. Drives the relational model directly:
+  //   1. Resolve the cluster id BEFORE addDataPointCard fires — reuse
+  //      the orphan ERs' existing cluster id when present, otherwise
+  //      allocate a fresh one and stamp it on every orphan ER.
+  //   2. addDataPointCard with the resolved clusterId so the new DP
+  //      joins the cluster from the moment its internal notifyChange
+  //      propagates to the table view (no intermediate "DP shows up
+  //      as orphan" frame, no second notifyChange that would push a
+  //      bogus undo entry).
+  //   3. Lay the cluster out into a snap-adjacent arrangement (DP on
+  //      the left, ERs on the right) so canvas-mode geometry agrees.
+  //   4. refreshClusters confirms the membership via snap-reconcile.
   function attachDpToOrphanCluster(erCardIds, text) {
     const canvas = __cb.canvas;
     if (!canvas?.getCardById || !canvas.addDataPointCard) return;
@@ -1823,27 +1829,53 @@
     if (ers.length === 0) return;
 
     // Anchor on the topmost-leftmost ER so the new cluster lands near
-    // where the user was looking on the canvas. Place the new DP just
-    // to the LEFT of the anchor as a starting position; linkCardsByIds
-    // re-lays out the cluster so the exact starting (x, y) is mostly a
-    // hint for how `anchorX`/`anchorY` resolve inside layoutCardsAsCluster.
+    // where the user was looking on the canvas.
     const anchor = ers.slice().sort((a, b) => a.y - b.y || a.x - b.x)[0];
+
+    // Resolve cluster id pre-add. The orphan ERs may already share a
+    // cluster (multi-ER orphan via Link in the table view) or be
+    // singletons. Reuse the smallest existing id so persisted state
+    // stays stable; otherwise allocate fresh + stamp every ER so the
+    // new DP isn't the lone first member.
+    const existingIds = ers
+      .map((c) => c.clusterId)
+      .filter((id) => id != null);
+    let clusterId = null;
+    if (existingIds.length > 0) {
+      clusterId = Math.min(...existingIds);
+      // Defensive: if the inputs straddled multiple cluster ids,
+      // unify them before adding the DP so the post-add cluster is
+      // a single coherent unit.
+      if (canvas.assignToCluster) canvas.assignToCluster(erCardIds, clusterId);
+    } else if (canvas.allocateClusterId && canvas.assignToCluster) {
+      clusterId = canvas.allocateClusterId();
+      canvas.assignToCluster(erCardIds, clusterId);
+    }
+
     const DP_W = 220;
     const newDp = canvas.addDataPointCard(text, {
       x: anchor.x - DP_W,
       y: anchor.y,
+      clusterId,
     });
     if (!newDp) return;
 
-    // Pull the new DP and every existing cluster-mate of the orphan
-    // ERs into one cluster via the relational API. linkCardsByIds
-    // reuses an existing cluster id when present (so persisted state
-    // stays stable), allocates a new one otherwise.
-    const memberIds = [newDp.id, ...erCardIds];
-    if (canvas.linkCardsByIds) canvas.linkCardsByIds(memberIds);
+    // Lay out the cluster so canvas-mode geometry matches the new
+    // membership (DP on the LEFT of the ER column). Same bucketing
+    // primitive linkCardsByIds uses; we don't call linkCardsByIds
+    // itself because that would re-derive a cluster id from member
+    // state and we already own the assignment above.
+    if (clusterId != null && canvas.layoutCardsAsCluster) {
+      canvas.layoutCardsAsCluster([newDp.id, ...erCardIds], {
+        anchorX: anchor.x,
+        anchorY: anchor.y,
+      });
+    }
 
     if (canvas.refreshClusters) canvas.refreshClusters();
-    if (canvas.notifyChange) canvas.notifyChange();
+    // No explicit notifyChange — addDataPointCard already fired one
+    // with the cluster set, so the table view's render saw the link
+    // on the first pass.
   }
 
   function buildDpRow(row, sectionId) {

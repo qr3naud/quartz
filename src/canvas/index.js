@@ -1588,6 +1588,17 @@
     assignToCluster,
     layoutCardsAsCluster,
     linkCardsByIds,
+    // Mint a fresh cluster id without assigning anyone to it. Used by
+    // adjacency-driven adders (picker, attach-DP-to-orphan) that need
+    // the new card to be in a cluster from the moment addCard's
+    // internal notifyChange propagates to the table view — without
+    // this, refreshClusters' snap-reconcile only assigns membership
+    // AFTER addCard's notifyChange has already triggered a table-view
+    // render, leaving the new card visibly unlinked until the next
+    // refresh. Callers should follow up with assignToCluster on the
+    // existing target so the new card joins a real (size >= 2)
+    // cluster from the first render.
+    allocateClusterId,
     applyClusterReflow,
     // Live snapshot of the cards array. External read-only consumers (e.g. the
     // export-as-table modal) need this to enumerate every card. Mutating the

@@ -975,16 +975,25 @@
       }
     }
 
-    // Inherit the target card's cluster id at creation time so the new
-    // ER joins the cluster relationally even before snap-reconcile
-    // confirms the adjacency. Matters for table-view-initiated adds:
-    // there the table doesn't observe the canvas geometry and would
-    // otherwise have to wait for refreshClusters to reflect the
-    // membership in the next render. addCard's `clusterId` opt is a
-    // no-op when the target has no cluster (target.clusterId === null);
-    // refreshClusters' snap-reconcile then assigns or extends a cluster
-    // based on the new adjacency.
-    const targetClusterId = target.clusterId ?? null;
+    // Resolve the cluster id BEFORE any addCard call. If the target
+    // card isn't in any cluster yet (the common case from the table
+    // view's "Add enrichment" path on a still-orphan DP), allocate a
+    // fresh id and stamp the target with it so the very first addCard
+    // below produces a >=2-card cluster from the moment its internal
+    // notifyChange fires. Without this priming, addCard's notifyChange
+    // would propagate to the table view's render BEFORE refreshClusters'
+    // snap-reconcile assigns a cluster id, and the new ER would show up
+    // in the orphan section until the next manual refresh.
+    let targetClusterId = target.clusterId ?? null;
+    if (
+      targetClusterId == null &&
+      typeof __cb.canvas.allocateClusterId === "function" &&
+      typeof __cb.canvas.assignToCluster === "function"
+    ) {
+      targetClusterId = __cb.canvas.allocateClusterId();
+      __cb.canvas.assignToCluster([targetCardId], targetClusterId);
+    }
+
     for (let i = 0; i < newCards.length; i++) {
       const x = target.x + bestSide.dx + i * bestSide.stackDx;
       const y = target.y + bestSide.dy + i * bestSide.stackDy;
