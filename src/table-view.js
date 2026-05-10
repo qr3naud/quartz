@@ -371,8 +371,60 @@
     // the just-created group entirely.
     const realGroups = typeof canvas.getGroups === "function" ? canvas.getGroups() : [];
     const groupNameById = new Map();
+    const groupById = new Map();
     for (const g of realGroups) {
       groupNameById.set(g.id, (g.label || "").trim());
+      groupById.set(g.id, g);
+    }
+
+    // Super-group / inner-group hierarchy.
+    //
+    // The canvas tracks group nesting via a binary `level` flag (0 =
+    // regular / inner, 1 = super-group) — see canvas/groups.js
+    // groupSelectedCards. There's no explicit parentGroupId; the
+    // relationship is derived from the fact that a super-group's
+    // cardIds is the UNION of every touched inner group's cards
+    // (inner.cardIds stays untouched), so inner.cardIds ⊆ super.cardIds
+    // for every inner under a super.
+    //
+    // We mirror that hierarchy into the table view: super-groups become
+    // depth-0 headers, inner groups become depth-1 sub-headers under
+    // their parent. Because card.groupId is RE-STAMPED to the super-
+    // group when a super is created, every DP whose group is a super
+    // also has at most one inner group whose cardIds include it; we
+    // route the DP to that inner section so each DP appears in its
+    // most-specific bucket.
+    const supers = realGroups.filter((g) => g.level === 1);
+    const inners = realGroups.filter((g) => g.level !== 1);
+    const innerToSuperId = new Map();
+    const childrenBySuperId = new Map();
+    for (const inner of inners) {
+      let parentId = null;
+      for (const sup of supers) {
+        const supSet = new Set(sup.cardIds);
+        let allIn = true;
+        for (const cid of inner.cardIds) {
+          if (!supSet.has(cid)) { allIn = false; break; }
+        }
+        if (allIn && inner.cardIds.length > 0) {
+          parentId = sup.id;
+          break;
+        }
+      }
+      innerToSuperId.set(inner.id, parentId);
+      if (parentId != null) {
+        if (!childrenBySuperId.has(parentId)) childrenBySuperId.set(parentId, []);
+        childrenBySuperId.get(parentId).push(inner.id);
+      }
+    }
+    // Indexed inner-group-cards-by-card-id so the DP-bucketing loop
+    // below can do an O(1) "which inner group claims this DP?" lookup
+    // per DP, instead of an inner-loop over every group.
+    const innerByCardId = new Map();
+    for (const inner of inners) {
+      for (const cid of inner.cardIds) {
+        if (!innerByCardId.has(cid)) innerByCardId.set(cid, inner.id);
+      }
     }
 
     // Legacy comment-card-cluster fallback — pre-v3.18.3 POC imports +
@@ -433,51 +485,136 @@
 
     const groupSectionsMap = new Map();
     const flatDpRows = [];
+
+    // Resolve the deepest section a card belongs to. Precedence:
+    //   1. Card's groupId is a SUPER-group AND some inner group claims
+    //      the card → bucket under the inner group (deepest nesting).
+    //   2. Card's groupId references a regular cb-group → bucket under
+    //      that group (level=0, no parent).
+    //   3. Legacy comment-card cluster (data.groupCluster + matching
+    //      titled comment) → bucket under the comment text.
+    //   4. Otherwise → flat dpRows.
+    //
+    // Returns `{ key, name, level, parentId, canvasGroupId, editable }`
+    // where `level === 1` is a super-group header and `level === 0` is
+    // either a standalone group or an inner group nested under a super
+    // (parentId differentiates the two).
+    function resolveSectionForCard(card) {
+      if (card.groupId != null && groupById.has(card.groupId)) {
+        const direct = groupById.get(card.groupId);
+        if (direct.level === 1) {
+          // Super-group: prefer the inner group that claims this card,
+          // so the DP renders under the most specific sub-header.
+          const innerId = innerByCardId.get(card.id);
+          if (innerId != null && innerToSuperId.get(innerId) === direct.id) {
+            return {
+              key: `g-${innerId}`,
+              name: groupNameById.get(innerId) || "",
+              level: 0,
+              parentId: direct.id,
+              canvasGroupId: innerId,
+              editable: true,
+            };
+          }
+          // Direct member of a super-group with no inner claim — rare
+          // but possible if an outside DP gets stamped with a super's
+          // groupId via direct mutation. Render under the super header.
+          return {
+            key: `g-${direct.id}`,
+            name: groupNameById.get(direct.id) || "",
+            level: 1,
+            parentId: null,
+            canvasGroupId: direct.id,
+            editable: true,
+          };
+        }
+        // Standalone (non-super) cb-group.
+        return {
+          key: `g-${direct.id}`,
+          name: groupNameById.get(direct.id) || "",
+          level: 0,
+          parentId: null,
+          canvasGroupId: direct.id,
+          editable: true,
+        };
+      }
+      const cluster = card.data.groupCluster;
+      if (cluster && commentByCluster.has(cluster)) {
+        return {
+          key: `c-${cluster}`,
+          name: commentByCluster.get(cluster),
+          level: 0,
+          parentId: null,
+          canvasGroupId: null,
+          editable: false,
+        };
+      }
+      return null;
+    }
+
+    function ensureSection(sectionInfo) {
+      if (groupSectionsMap.has(sectionInfo.key)) {
+        return groupSectionsMap.get(sectionInfo.key);
+      }
+      const section = {
+        groupId: sectionInfo.key,
+        groupName: sectionInfo.name,
+        // Real cb-groups carry an editable label that writes back to
+        // the canvas's .cb-group-label input; legacy comment-card
+        // sections do not (the canvas has no input element to write
+        // through to). buildGroupHeaderRow flips between editable
+        // input and read-only span based on this flag.
+        editable: sectionInfo.editable,
+        // Numeric canvas group id, used by commitGroupLabel to find
+        // the live .cb-group-label DOM element via [data-group-id].
+        // Null for legacy comment-card sections.
+        canvasGroupId: sectionInfo.canvasGroupId,
+        // Hierarchy: level === 1 means super-group header, level === 0
+        // is either a standalone group OR an inner group nested under
+        // a super (parentId differentiates the two — null means
+        // top-level, non-null means nested under that super's section).
+        level: sectionInfo.level,
+        parentId: sectionInfo.parentId,
+        rows: [],
+        // Tracked for Y sorting at render time — sections sit above
+        // the flat DP rows in topological order, but within that
+        // category we order by the topmost member's Y so reorder
+        // results are visible after refresh.
+        minY: Infinity,
+      };
+      groupSectionsMap.set(sectionInfo.key, section);
+      return section;
+    }
+
     for (const card of allCards) {
       if (card.data.type !== "dp") continue;
       const row = buildDpRowFromCard(card);
-
-      let sectionKey = null;
-      let sectionName = null;
-      if (card.groupId != null && groupNameById.has(card.groupId)) {
-        sectionKey = `g-${card.groupId}`;
-        sectionName = groupNameById.get(card.groupId);
-      } else {
-        const cluster = card.data.groupCluster;
-        if (cluster && commentByCluster.has(cluster)) {
-          sectionKey = `c-${cluster}`;
-          sectionName = commentByCluster.get(cluster);
-        }
-      }
-
-      if (sectionKey) {
-        if (!groupSectionsMap.has(sectionKey)) {
-          groupSectionsMap.set(sectionKey, {
-            groupId: sectionKey,
-            groupName: sectionName,
-            // Real cb-groups carry an editable label that writes back to
-            // the canvas's .cb-group-label input; legacy comment-card
-            // sections do not (the canvas has no input element to write
-            // through to). buildGroupHeaderRow flips between editable
-            // input and read-only span based on this flag.
-            editable: sectionKey.startsWith("g-"),
-            // Numeric canvas group id, used by commitGroupLabel to find
-            // the live .cb-group-label DOM element via [data-group-id].
-            // Null for legacy comment-card sections.
-            canvasGroupId: sectionKey.startsWith("g-")
-              ? Number(sectionKey.slice(2))
-              : null,
-            rows: [],
-            // Tracked for Y sorting at render time — sections sit above
-            // the flat DP rows in topological order, but within that
-            // category we order by the topmost member's Y so reorder
-            // results are visible after refresh.
-            minY: Infinity,
-          });
-        }
-        const section = groupSectionsMap.get(sectionKey);
+      const sectionInfo = resolveSectionForCard(card);
+      if (sectionInfo) {
+        const section = ensureSection(sectionInfo);
         section.rows.push(row);
         if (card.y < section.minY) section.minY = card.y;
+        // Also materialize the parent super-group header so the
+        // hierarchy renders even when the super itself has no DPs
+        // directly attached (the common case — every DP lives in some
+        // inner group).
+        if (sectionInfo.parentId != null) {
+          const parentGroup = groupById.get(sectionInfo.parentId);
+          if (parentGroup) {
+            const parentSection = ensureSection({
+              key: `g-${parentGroup.id}`,
+              name: groupNameById.get(parentGroup.id) || "",
+              level: 1,
+              parentId: null,
+              canvasGroupId: parentGroup.id,
+              editable: true,
+            });
+            // Track the super's minY off its children so render can
+            // sort top-level sections by topmost-member Y consistently
+            // whether the super has direct DPs or only inner groups.
+            if (card.y < parentSection.minY) parentSection.minY = card.y;
+          }
+        }
       } else {
         flatDpRows.push(row);
       }
@@ -559,24 +696,72 @@
 
     // Fold the grouped ER rows into the matching group section. If a
     // group has no DPs at all (Group action ran on orphan ERs only),
-    // synthesize the section here so it renders.
+    // synthesize the section here so it renders. Routes super-group
+    // ERs the same way DPs route — into an inner sub-section when one
+    // claims the cluster's primary card.
     for (const [groupId, clusterMap] of ersByGroupId) {
-      const sectionKey = `g-${groupId}`;
-      let section = groupSectionsMap.get(sectionKey);
-      if (!section) {
-        section = {
-          groupId: sectionKey,
-          groupName: groupNameById.get(groupId) || "",
-          editable: true,
+      const ownerGroup = groupById.get(groupId);
+      let sectionInfo;
+      if (ownerGroup?.level === 1) {
+        // Super-group: try to nest under the inner group that claims
+        // the cluster's primary ER. Each clusterMap entry represents
+        // ONE adjacency cluster; we pick the inner group based on the
+        // primary card. In practice all members share an inner group
+        // when grouped together.
+        const firstRow = clusterMap.values().next().value;
+        const primaryCardId = firstRow?.cardId ?? null;
+        const innerId = primaryCardId != null ? innerByCardId.get(primaryCardId) : null;
+        if (innerId != null && innerToSuperId.get(innerId) === ownerGroup.id) {
+          sectionInfo = {
+            key: `g-${innerId}`,
+            name: groupNameById.get(innerId) || "",
+            level: 0,
+            parentId: ownerGroup.id,
+            canvasGroupId: innerId,
+            editable: true,
+          };
+        } else {
+          sectionInfo = {
+            key: `g-${ownerGroup.id}`,
+            name: groupNameById.get(ownerGroup.id) || "",
+            level: 1,
+            parentId: null,
+            canvasGroupId: ownerGroup.id,
+            editable: true,
+          };
+        }
+      } else {
+        sectionInfo = {
+          key: `g-${groupId}`,
+          name: groupNameById.get(groupId) || "",
+          level: 0,
+          parentId: null,
           canvasGroupId: groupId,
-          rows: [],
-          minY: Infinity,
+          editable: true,
         };
-        groupSectionsMap.set(sectionKey, section);
       }
+      const section = ensureSection(sectionInfo);
       for (const row of clusterMap.values()) {
         section.rows.push(row);
         if (row.y < section.minY) section.minY = row.y;
+      }
+      // Materialize parent super if we landed in a nested inner so the
+      // hierarchy renders even when no DP routed it in already.
+      if (sectionInfo.parentId != null) {
+        const parentGroup = groupById.get(sectionInfo.parentId);
+        if (parentGroup) {
+          const parentSection = ensureSection({
+            key: `g-${parentGroup.id}`,
+            name: groupNameById.get(parentGroup.id) || "",
+            level: 1,
+            parentId: null,
+            canvasGroupId: parentGroup.id,
+            editable: true,
+          });
+          for (const row of clusterMap.values()) {
+            if (row.y < parentSection.minY) parentSection.minY = row.y;
+          }
+        }
       }
     }
 
@@ -1474,25 +1659,62 @@
       // multi-DP cluster that organically forms on the canvas. ER-only
       // groups (Group action on orphan ERs) render their orphan rows
       // here too, dispatched by row.kind.
-      for (const section of groupSections) {
-        const isCollapsed = collapsedGroups.has(section.groupId);
-        tbody.appendChild(buildGroupHeaderRow(section, headers.length, isCollapsed));
-        visibleRowOrder.push(section.groupId);
-        if (!isCollapsed) {
-          // mergeMode annotation only applies to DP rows. ER rows pass
-          // through with mergeMode = "single" so the rowspan logic
-          // doesn't touch them.
-          annotateMergeRuns(section.rows.filter((r) => r.kind === "dp"));
-          for (const row of section.rows) {
-            if (row.kind === "orphan-er") {
-              tbody.appendChild(
-                buildOrphanDpStyleRow(row, `section:${section.groupId}`),
-              );
-            } else {
-              tbody.appendChild(buildDpRow(row, `section:${section.groupId}`));
-            }
-            visibleRowOrder.push(String(row.cardId));
+      //
+      // Hierarchy: super-group sections (level=1) render at depth 0 and
+      // each owns a sublist of inner sections (level=0 with
+      // parentId=this.canvasGroupId) emitted at depth 1, indented by
+      // CSS via [data-depth]. Standalone (non-super) groups render at
+      // depth 0 with no children. Collapsing a super hides every
+      // inner-section AND every DP beneath it; collapsing only an
+      // inner hides just its own DPs.
+      const topLevelSections = groupSections.filter((s) => !s.parentId);
+      const childSectionsByParent = new Map();
+      for (const s of groupSections) {
+        if (s.parentId == null) continue;
+        const parentKey = `g-${s.parentId}`;
+        if (!childSectionsByParent.has(parentKey)) {
+          childSectionsByParent.set(parentKey, []);
+        }
+        childSectionsByParent.get(parentKey).push(s);
+      }
+      for (const children of childSectionsByParent.values()) {
+        children.sort((a, b) => a.minY - b.minY);
+      }
+
+      function emitSectionRows(section, sectionTag) {
+        annotateMergeRuns(section.rows.filter((r) => r.kind === "dp"));
+        for (const row of section.rows) {
+          if (row.kind === "orphan-er") {
+            tbody.appendChild(buildOrphanDpStyleRow(row, sectionTag));
+          } else {
+            tbody.appendChild(buildDpRow(row, sectionTag));
           }
+          visibleRowOrder.push(String(row.cardId));
+        }
+      }
+
+      for (const section of topLevelSections) {
+        const isCollapsed = collapsedGroups.has(section.groupId);
+        tbody.appendChild(
+          buildGroupHeaderRow(section, headers.length, isCollapsed, 0),
+        );
+        visibleRowOrder.push(section.groupId);
+        if (isCollapsed) continue;
+        // Direct rows on the top-level header (DPs whose groupId is
+        // this section's id but no inner claimed them, plus standalone
+        // group rows).
+        emitSectionRows(section, `section:${section.groupId}`);
+        // Then nested inner sections (only present when this is a
+        // super-group with at least one claimed inner).
+        const children = childSectionsByParent.get(section.groupId) || [];
+        for (const child of children) {
+          const childCollapsed = collapsedGroups.has(child.groupId);
+          tbody.appendChild(
+            buildGroupHeaderRow(child, headers.length, childCollapsed, 1),
+          );
+          visibleRowOrder.push(child.groupId);
+          if (childCollapsed) continue;
+          emitSectionRows(child, `section:${child.groupId}`);
         }
       }
       // "Other" wrapper around the flat DP rows. Only shown when there's
@@ -2061,14 +2283,25 @@
   // input to write through to). Clicking the chevron / icon / count
   // toggles collapse; clicking the label focuses the input. Drag handle
   // on the leftmost column reorders groups.
-  function buildGroupHeaderRow(section, colSpan, isCollapsed) {
+  function buildGroupHeaderRow(section, colSpan, isCollapsed, depth = 0) {
     const tr = document.createElement("tr");
     tr.className =
       "cb-table-view-group-row" +
       (isCollapsed ? " cb-table-view-group-row-collapsed" : "");
     tr.setAttribute("data-group-id", String(section.groupId));
     tr.setAttribute("data-row-id", String(section.groupId));
-    tr.setAttribute("data-row-section", "groups");
+    // Sub-headers live inside their parent super-group's section so
+    // drag-to-reorder is scoped per super-group rather than across
+    // top-level groups. Top-level headers stay in the broader "groups"
+    // section so they reorder against each other.
+    tr.setAttribute(
+      "data-row-section",
+      depth === 0 ? "groups" : `subgroups:g-${section.parentId}`,
+    );
+    tr.setAttribute("data-depth", String(depth));
+    // `data-group-level` lets CSS pick up the canvas's super-group
+    // (level=1) palette without re-encoding the binary in classes.
+    tr.setAttribute("data-group-level", String(section.level || 0));
     tr.setAttribute("role", "button");
     tr.setAttribute("aria-expanded", isCollapsed ? "false" : "true");
     tr.tabIndex = 0;

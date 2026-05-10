@@ -729,6 +729,42 @@
   letter-spacing: 0.005em;
 }
 
+/* Nested-group depth: inner-group sub-headers (depth=1) sit under
+   their super-group parent and indent so the table mirrors the
+   canvas's super → inner hierarchy. The indent is on the inner flex
+   container (not the <td>) so the row's full background still spans
+   the table width. */
+.cb-table-view-group-row[data-depth="1"] .cb-table-view-group-row-inner {
+  margin-left: 28px;
+}
+
+/* Super-group (level=1) palette mirrors the canvas's .cb-group-super
+   green theme so the visual cue matches both views. Inner groups and
+   standalone groups keep the default indigo treatment defined above.
+   We scope by `data-depth="0"` so an inner group that happens to
+   carry level=1 (won't normally happen, but defensive) doesn't paint
+   nested rows green. */
+.cb-table-view-group-row[data-depth="0"][data-group-level="1"] td {
+  background: #ecfdf5;
+  border-top-color: #a7f3d0;
+  border-bottom-color: #a7f3d0;
+}
+.cb-table-view-group-row[data-depth="0"][data-group-level="1"]:hover td {
+  background: #d1fae5 !important;
+}
+.cb-table-view-group-row[data-depth="0"][data-group-level="1"] .cb-table-view-group-row-icon,
+.cb-table-view-group-row[data-depth="0"][data-group-level="1"] .cb-table-view-group-row-chevron {
+  color: #047857;
+}
+.cb-table-view-group-row[data-depth="0"][data-group-level="1"] .cb-table-view-group-row-label {
+  color: #064e3b;
+}
+.cb-table-view-group-row[data-depth="0"][data-group-level="1"] .cb-table-view-group-row-count {
+  background: #d1fae5;
+  border-color: #a7f3d0;
+  color: #064e3b;
+}
+
 .cb-table-view-group-row-count {
   display: inline-flex;
   align-items: center;
