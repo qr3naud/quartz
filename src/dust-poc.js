@@ -425,20 +425,26 @@
       }
 
       if (response.status === 403) {
-        // 403 = the key is valid but lacks access. Most common causes:
-        //   - Key was created in a different Dust workspace
-        //   - Key role is too restrictive (need a Builder/Admin key)
-        //   - The hardcoded agent isn't shared with this key's user
-        // Keep the cached key (so the rep can retry after fixing it) and
-        // surface what Dust actually said. Full response is dumped to the
-        // SW console for deeper inspection.
+        // 403 from Dust splits into two flavors:
+        //   - Empty body → Dust's CORS gateway rejected the Origin header.
+        //     This used to happen for every POST from the extension; the
+        //     DNR rule in dust-rules.json strips Origin on requests to
+        //     dust.tt/api/* so the gateway no longer sees a
+        //     chrome-extension://… origin. If you see this in the wild
+        //     again, the rule isn't loading — check chrome://extensions
+        //     "Errors" or the DNR debugger.
+        //   - JSON body → real "wrong workspace / insufficient role"
+        //     answer from the app. Keep the cached key so the rep can
+        //     fix it and retry.
         const detail = extractErrorDetail(response);
         console.warn("[Clay Scoping] Dust forbidden (403):", response);
+        if (!detail) {
+          throw new Error(
+            `Dust 403 with empty body at ${response.endpoint || "?"}. This is the CORS-gateway rejection — the declarativeNetRequest Origin-strip rule isn't loading. Check chrome://extensions for ruleset errors.`,
+          );
+        }
         throw new Error(
-          `Dust 403 at ${response.endpoint || "?"}: ${
-            detail ||
-            `(empty body — see service worker console for full response). Most likely a wrong-workspace or insufficient-role key for workspace ${DUST_WORKSPACE_ID}.`
-          }`,
+          `Dust 403 at ${response.endpoint || "?"}: ${detail}`,
         );
       }
 

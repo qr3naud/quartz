@@ -21,6 +21,7 @@ module.exports = {
     "src/dust-poc.js",           // Generate POC button (Dust integration)
     "src/dust-bg.js",            // background service worker for Dust CORS proxy
     "styles/dust-poc.css",       // popover styling for Generate POC
+    "dust-rules.json",           // DNR rule that strips Origin on Dust API calls
     "docs",                       // internal-only architecture + business context
     "AGENTS.md",                  // maintainer-only build instructions
     "build.js",                   // build tooling stays in the source repo
@@ -48,9 +49,19 @@ module.exports = {
   // Top-level keys removed from manifest.json entirely. Used to drop the
   // `background` field when its service-worker file isn't in the public
   // build — leaving it in place would make Chrome reject the manifest
-  // because the referenced file is missing.
+  // because the referenced file is missing. Same goes for the DNR rule
+  // resources block whose ruleset file is excluded above.
   excludeManifestKeys: [
     "background",
+    "declarative_net_request",
+  ],
+
+  // Values removed from the manifest.json `permissions` array. Used to
+  // drop API permissions that exist only to support stripped features
+  // (e.g. declarativeNetRequestWithHostAccess is only needed for the
+  // Dust Origin-strip rule).
+  excludeFromManifestPermissions: [
+    "declarativeNetRequestWithHostAccess",
   ],
 
   // Ordered string substitutions applied to every text file (.js, .css, .html,

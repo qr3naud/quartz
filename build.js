@@ -111,6 +111,7 @@ function transformManifest(jsonStr) {
   const m = JSON.parse(jsonStr);
   const excludedJs = new Set(config.excludeFromManifestScripts || []);
   const excludedCss = new Set(config.excludeFromManifestStyles || []);
+  const excludedPerms = new Set(config.excludeFromManifestPermissions || []);
   if (Array.isArray(m.content_scripts)) {
     for (const cs of m.content_scripts) {
       if (Array.isArray(cs.js)) {
@@ -120,6 +121,9 @@ function transformManifest(jsonStr) {
         cs.css = cs.css.filter((p) => !excludedCss.has(p));
       }
     }
+  }
+  if (Array.isArray(m.permissions) && excludedPerms.size > 0) {
+    m.permissions = m.permissions.filter((p) => !excludedPerms.has(p));
   }
   for (const key of config.excludeManifestKeys || []) {
     delete m[key];
