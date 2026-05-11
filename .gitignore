@@ -6,3 +6,8 @@ docs/
 # qr3naud/self-scoping — but if anyone redirects the build into a local dist/
 # we don't want it tracked alongside the internal source.
 dist/
+
+# Chrome auto-generates this binary DNR ruleset cache when the unpacked
+# extension is loaded. Per-machine, per-install — never check it in. The
+# public build also excludes it via build.config.js exclude list.
+_metadata/
