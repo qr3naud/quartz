@@ -10,6 +10,7 @@
   flex-shrink: 0;
 }
 
+/* __CB_INTERNAL_ONLY_BEGIN: pricingComparison */
 /* Old vs New Pricing button — same shape as Import (gap + icon align).
    Icon inherits the button's text color (black/neutral) so it matches
    the rest of the toolbar's icon treatment. */
@@ -20,6 +21,7 @@
 .cb-toolbar-pricing svg {
   flex-shrink: 0;
 }
+/* __CB_INTERNAL_ONLY_END */
 
 /* ==========================================================================
    TABLE PICKER DROPDOWN

@@ -1,2 +1,8 @@
 # Internal-only docs (architecture, business context) — kept on disk, never pushed to GitHub
 docs/
+
+# Build output for the public spin-off (see build.js / release.sh). The actual
+# output lives wherever BUILD_OUT points at — typically a sibling clone of
+# qr3naud/self-scoping — but if anyone redirects the build into a local dist/
+# we don't want it tracked alongside the internal source.
+dist/

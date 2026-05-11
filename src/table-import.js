@@ -119,13 +119,12 @@
 
   __cb.extractInputFieldRefs = extractInputFieldRefs;
 
-  // Exposed so src/pricing-comparison.js can reuse the same model
-  // resolution path the import uses for AI cards (read the user-
-  // selected model off field.typeSettings.inputsBinding, then match
-  // against the catalog with quote-stripping + longest-includes
-  // fallback). Function declarations below are hoisted within this
-  // IIFE so the assignment is safe even though the definitions
-  // appear further down in the file.
+  // Exposed so other modules can reuse the same model resolution path the
+  // import uses for AI cards (read the user-selected model off
+  // field.typeSettings.inputsBinding, then match against the catalog with
+  // quote-stripping + longest-includes fallback). Function declarations
+  // below are hoisted within this IIFE so the assignment is safe even
+  // though the definitions appear further down in the file.
   __cb.readInputBindingValue = readInputBindingValue;
   __cb.matchKnownModel = matchKnownModel;
 
@@ -1586,12 +1585,11 @@
   // ---------------------------------------------------------------------------
   // Table picker dropdown
   //
-  // Promoted to a shared helper under __cb.tablePicker so the Old vs New
-  // Pricing flow (src/pricing-comparison.js) can reuse the exact same UX
-  // — table list with view sub-rows + "Full table" — without duplicating
-  // ~70 lines of DOM construction. Each click invokes the supplied
-  // `onPick(table, viewId)` callback with the Import flow's three-state
-  // viewId convention preserved:
+  // Promoted to a shared helper under __cb.tablePicker so other flows can
+  // reuse the exact same UX — table list with view sub-rows + "Full table"
+  // — without duplicating ~70 lines of DOM construction. Each click invokes
+  // the supplied `onPick(table, viewId)` callback with the Import flow's
+  // three-state viewId convention preserved:
   //   - undefined  → use the table's default view
   //   - <view.id>  → that specific view's visibility map
   //   - null       → "Full table" (skip view filtering entirely)
@@ -1757,9 +1755,8 @@
     }
   }
 
-  // Shared picker namespace. Both __cb.startImport (below) and
-  // __cb.startPricingComparison (src/pricing-comparison.js) drive the
-  // same DOM via these three entry points.
+  // Shared picker namespace. Any caller that wants to prompt the user for a
+  // workbook table drives the same DOM via these three entry points.
   __cb.tablePicker = {
     show: showTablePicker,
     showLoading: showLoadingPicker,

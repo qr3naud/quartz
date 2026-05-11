@@ -25,14 +25,14 @@
       //     separate actionExecution dimension)
       // The default `credits / actionExecutions / privateKeyCredits`
       // exposed below mean "modern" so the canvas / cost math keeps the
-      // pre-existing behavior. The `legacy*` siblings are read by the
-      // Old vs New Pricing modal (src/pricing-comparison.js) to render
-      // the legacy column without requiring a second /actions fetch.
-      // Falls back to the root pricing block when an action hasn't been
-      // migrated to the split shape yet (matches the server-side logic in
-      // libs/shared/src/credits/credit-cost-utils.ts getActionPricing).
+      // pre-existing behavior. Falls back to the root pricing block when
+      // an action hasn't been migrated to the split shape yet (matches
+      // the server-side logic in libs/shared/src/credits/credit-cost-utils.ts
+      // getActionPricing).
       const post = action.pricing?.postPricingChange2026;
+      // __CB_INTERNAL_ONLY_BEGIN: legacyPricing
       const pre = action.pricing?.prePricingChange2026;
+      // __CB_INTERNAL_ONLY_END
       const fallback = action.pricing;
       const entry = {
         key: action.key,
@@ -57,6 +57,7 @@
           post?.usesPrivateKeyCredits?.basic ??
           fallback?.usesPrivateKeyCredits?.basic ??
           0,
+        // __CB_INTERNAL_ONLY_BEGIN: legacyPricing
         // Legacy (pre-2026) pricing siblings. Same fallback chain as
         // above so actions that only carry the root `pricing.credits`
         // block (un-migrated) report the same number on both sides.
@@ -67,6 +68,7 @@
           pre?.usesPrivateKeyCredits?.basic ??
           fallback?.usesPrivateKeyCredits?.basic ??
           0,
+        // __CB_INTERNAL_ONLY_END
       };
       __cb.enrichmentLookup[action.displayName.toLowerCase()] = entry;
       // Clay's canonical action-id format is `${packageId}/${actionKey}`
@@ -99,6 +101,7 @@
     }
   };
 
+  // __CB_INTERNAL_ONLY_BEGIN: pricingComparison
   // Fetches the workspace's currently-active billing plan + price tier and
   // derives a CPC ($/credit) from the contract numbers. Used by the Old vs
   // New comparison modal to auto-fill the matching side's editable rate
@@ -250,6 +253,7 @@
       __cb.actionTiersCatalog = [];
     }
   };
+  // __CB_INTERNAL_ONLY_END
 
   // Fetches Clay's built-in waterfall attributes (the WaterfallRow rows in
   // the picker). For each attribute we keep:
@@ -502,6 +506,7 @@
     }
   };
 
+  // __CB_INTERNAL_ONLY_BEGIN: pricingComparison
   // App accounts (auth accounts) for the workspace. Used to differentiate
   // "Clay-managed shared key" (bills credits) from "user-pasted private key"
   // (BYOK, free) on AI fields where the user picked a non-default
@@ -533,6 +538,7 @@
       return null;
     }
   };
+  // __CB_INTERNAL_ONLY_END
 
   // Per-column actual spend over the last N days. Backed by Redshift via
   // Kinesis ingestion (~minutes of lag). Note: realtime credit usage is only

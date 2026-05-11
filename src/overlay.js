@@ -46,10 +46,9 @@
     rightGroup.className = "cb-topbar-right";
 
     // Export button replaces the old "+ Add More" entry point. Click opens a
-    // 4-option dropdown (Export to GTME Calculator / DealOps / Table / JSON);
-    // only "Export as Table" is wired up at this stage. The chevron is part
-    // of the button so it visually communicates "menu opens here" the same
-    // way the model chip and frequency trigger do elsewhere.
+    // dropdown of export options the rep can run on the current scope. The
+    // chevron is part of the button so it visually communicates "menu opens
+    // here" the same way the model chip and frequency trigger do elsewhere.
     const exportBtn = document.createElement("button");
     exportBtn.className = "cb-toolbar-btn cb-toolbar-btn-primary cb-toolbar-export";
     exportBtn.type = "button";
@@ -67,6 +66,7 @@
     closeBtn.textContent = "Close";
     closeBtn.addEventListener("click", __cb.closeCanvas);
 
+    // __CB_INTERNAL_ONLY_BEGIN: pricingComparison
     // Old vs New Pricing — sits to the left of Import from Table. Reuses
     // the same shared __cb.tablePicker dropdown the Import button drives,
     // then opens a side-by-side legacy vs modern catalog cost comparison
@@ -80,6 +80,7 @@
       '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M12 3v18"/><path d="M5 8h14"/><path d="M5 8l-3 7a4 4 0 0 0 6 0L5 8z"/><path d="M19 8l-3 7a4 4 0 0 0 6 0L19 8z"/></svg>' +
       " Old vs New Pricing";
     pricingBtn.addEventListener("click", () => __cb.startPricingComparison(pricingBtn));
+    // __CB_INTERNAL_ONLY_END
 
     const importBtn = document.createElement("button");
     importBtn.className = "cb-toolbar-btn cb-toolbar-import";
@@ -290,7 +291,9 @@
 
     rightGroup.appendChild(viewModeWrap);
     rightGroup.appendChild(proBtn);
+    // __CB_INTERNAL_ONLY_BEGIN: pricingComparison
     rightGroup.appendChild(pricingBtn);
+    // __CB_INTERNAL_ONLY_END
     rightGroup.appendChild(importBtn);
     rightGroup.appendChild(viewToggleBtn);
     rightGroup.appendChild(exportBtn);

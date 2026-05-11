@@ -390,6 +390,7 @@
   border-color: #9ca3af;
 }
 
+/* __CB_INTERNAL_ONLY_BEGIN: gtmeExport */
 /* ==========================================================================
    GTME EXPORT MODAL — narrower than the table modal because there's no grid.
    ========================================================================== */
@@ -560,22 +561,18 @@
   margin-top: 2px;
 }
 
-.cb-gtme-error {
-  padding: 10px 12px;
-  border: 1px solid #fecaca;
-  background: #fef2f2;
-  color: #b91c1c;
-  border-radius: 6px;
-  font-size: 13px;
-}
+/* __CB_INTERNAL_ONLY_END */
 
-.cb-gtme-footer-actions {
+/* Shared export-modal submit and footer-actions styles, reused by every
+   export modal that has a primary submit button (currently the JSON export
+   modal, and additional modals in the internal build). */
+.cb-export-footer-actions {
   display: flex;
   align-items: center;
   gap: 8px;
 }
 
-.cb-gtme-submit {
+.cb-export-submit {
   display: inline-flex;
   align-items: center;
   height: 32px;
@@ -591,16 +588,27 @@
   transition: background 0.15s, border-color 0.15s;
 }
 
-.cb-gtme-submit:hover:not(:disabled) {
+.cb-export-submit:hover:not(:disabled) {
   background: #4f46e5;
   border-color: #4f46e5;
 }
 
-.cb-gtme-submit:disabled {
+.cb-export-submit:disabled {
   background: #c7d2fe;
   border-color: #c7d2fe;
   cursor: not-allowed;
 }
+
+/* __CB_INTERNAL_ONLY_BEGIN: gtmeExport */
+.cb-gtme-error {
+  padding: 10px 12px;
+  border: 1px solid #fecaca;
+  background: #fef2f2;
+  color: #b91c1c;
+  border-radius: 6px;
+  font-size: 13px;
+}
+/* __CB_INTERNAL_ONLY_END */
 
 /* ==========================================================================
    EXPORT AS JSON MODAL
@@ -940,7 +948,7 @@
   outline: 1px solid #b45309;
 }
 
-/* Disabled state for the download button — reuses cb-gtme-submit base. */
+/* Disabled state for the download button. */
 .cb-export-json-download-disabled,
 .cb-export-json-download-disabled:hover {
   background: #c7d2fe;
@@ -948,6 +956,7 @@
   cursor: not-allowed;
 }
 
+/* __CB_INTERNAL_ONLY_BEGIN: pricingComparison */
 /* ==========================================================================
    OLD vs NEW PRICING MODAL
    Reuses the cb-export-modal primitives (backdrop, header, footer) defined
@@ -2024,3 +2033,4 @@
 .cb-pricing-download svg {
   flex-shrink: 0;
 }
+/* __CB_INTERNAL_ONLY_END */

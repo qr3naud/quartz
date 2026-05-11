@@ -368,18 +368,32 @@
       return;
     }
 
+    // The home page URL always carries a workspace id (this tab is only
+    // injected on /workspaces/:id/home), so we use it as a hard filter on
+    // the canvases query. This is the partition that keeps the home tab
+    // scoped to the workspace the user is actually viewing — matches the
+    // same UX boundary applied in popup.js fetchCanvases.
+    const workspaceId = __cb.parseIdsFromUrl()?.workspaceId ?? null;
+
     try {
+      const rowsQuery = {
+        user_id: `eq.${userId}`,
+        // !inner forces PostgREST to drop contributor rows whose embedded
+        // canvas doesn't match the workspace filter below; without it the
+        // workspace filter would silently return canvases:null rows.
+        // workbook_name is populated by tabs.js on every save (see
+        // pushToSupabase). Falls back to the opaque workbook_id if the row
+        // was written by an older extension build.
+        select:
+          "workbook_id,last_accessed_at,canvases!inner(workspace_id,workbook_name,updated_at)",
+        order: "last_accessed_at.desc",
+        limit: "50",
+      };
+      if (workspaceId) {
+        rowsQuery["canvases.workspace_id"] = `eq.${workspaceId}`;
+      }
       const rows = await supa.supabaseFetch("canvas_contributors", "GET", {
-        query: {
-          user_id: `eq.${userId}`,
-          // workbook_name is populated by tabs.js on every save (see
-          // pushToSupabase). Falls back to the opaque workbook_id if the row
-          // was written by an older extension build.
-          select:
-            "workbook_id,last_accessed_at,canvases(workspace_id,workbook_name,updated_at)",
-          order: "last_accessed_at.desc",
-          limit: "50",
-        },
+        query: rowsQuery,
       });
 
       if (!rows || rows.length === 0) {

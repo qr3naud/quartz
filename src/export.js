@@ -8,12 +8,16 @@
   let modalEl = null;
   let modalBackdrop = null;
 
-  // The four export options. Only "table" is wired up at this stage —
-  // the other three are placeholder slots so the menu communicates the
-  // intended scope, and so adding their handlers later is a one-liner.
+  // Export options the menu surfaces. Each row has a handler in
+  // openExportMenu's click switch below; new options drop in as a single
+  // line here plus a branch there.
   const EXPORT_OPTIONS = [
+    // __CB_INTERNAL_ONLY_BEGIN: gtmeExport
     { id: "gtme",   label: "Export to GTME Calculator", enabled: true  },
+    // __CB_INTERNAL_ONLY_END
+    // __CB_INTERNAL_ONLY_BEGIN: dealopsExport
     { id: "dealops", label: "Export to DealOps",         enabled: false },
+    // __CB_INTERNAL_ONLY_END
     { id: "table",  label: "Export as Table",            enabled: true  },
     { id: "json",   label: "Export as JSON",             enabled: true  },
   ];
@@ -62,7 +66,9 @@
           evt.stopPropagation();
           closeExportMenu();
           if (opt.id === "table") __cb.openExportTableModal();
+          // __CB_INTERNAL_ONLY_BEGIN: gtmeExport
           else if (opt.id === "gtme") __cb.openGtmeExportModal();
+          // __CB_INTERNAL_ONLY_END
           else if (opt.id === "json") __cb.openExportJsonModal();
         });
       }
@@ -513,6 +519,7 @@
     if (__cb.saveTabs) __cb.saveTabs();
   }
 
+  // __CB_INTERNAL_ONLY_BEGIN: gtmeExport
   // ==========================================================================
   // EXPORT TO GTME CALCULATOR
   //
@@ -855,7 +862,7 @@
 
     const submitBtn = document.createElement("button");
     submitBtn.type = "button";
-    submitBtn.className = "cb-gtme-submit";
+    submitBtn.className = "cb-export-submit";
     submitBtn.textContent = "Export";
     submitBtn.addEventListener("click", () => {
       if (submitting) return;
@@ -939,7 +946,7 @@
     });
 
     const footerActions = document.createElement("div");
-    footerActions.className = "cb-gtme-footer-actions";
+    footerActions.className = "cb-export-footer-actions";
     footerActions.appendChild(cancelBtn);
     footerActions.appendChild(submitBtn);
 
@@ -965,6 +972,7 @@
     updateSubmitState();
     requestAnimationFrame(() => nameInput.focus());
   };
+  // __CB_INTERNAL_ONLY_END
 
   // ==========================================================================
   // EXPORT AS JSON
@@ -1819,7 +1827,7 @@
 
     const downloadBtn = document.createElement("button");
     downloadBtn.type = "button";
-    downloadBtn.className = "cb-gtme-submit cb-export-json-download";
+    downloadBtn.className = "cb-export-submit cb-export-json-download";
     downloadBtn.textContent = "Download JSON";
     downloadBtn.addEventListener("click", () => {
       const def = JSON_ENDPOINT_DEFS.find((d) => d.id === selectedEndpoint);
@@ -1848,7 +1856,7 @@
     cancelBtn.addEventListener("click", closeExportJsonModal);
 
     const footerActions = document.createElement("div");
-    footerActions.className = "cb-gtme-footer-actions";
+    footerActions.className = "cb-export-footer-actions";
     footerActions.appendChild(cancelBtn);
     footerActions.appendChild(downloadBtn);
 

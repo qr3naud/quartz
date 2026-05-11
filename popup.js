@@ -85,23 +85,35 @@
   }
 
   /** Returns contributor rows with embedded canvas metadata AND user info
-   *  for the last editor. Sorted by most-recently accessed first. */
-  async function fetchCanvases(userId) {
+   *  for the last editor. Sorted by most-recently accessed first.
+   *
+   *  When `workspaceId` is supplied (the active Chrome tab is on a Clay
+   *  workspace URL), results are filtered to that workspace via an inner
+   *  join on `canvases.workspace_id`. This is the UX boundary that keeps
+   *  a customer in workspace X from seeing canvases owned by workspace Y
+   *  in the popup list — see the workspace-partition note in the build
+   *  spec for why this is currently client-side only.
+   */
+  async function fetchCanvases(userId, workspaceId) {
     // PostgREST resource embedding:
-    // - canvases(...) pulls workspace_id and workbook_name from the fk
-    // - updatedByUser:users!... resolves canvases.updated_by to a users row.
-    //   The ! syntax names the foreign-key hint to PostgREST; we need it here
-    //   because canvases.updated_by isn't a declared foreign key (users.id is
-    //   text and updated_by may contain "unknown"). So we request the name
-    //   separately below via a second query.
-    return supa.supabaseFetch("canvas_contributors", "GET", {
-      query: {
-        user_id: `eq.${userId}`,
-        select: "workbook_id,last_accessed_at,canvases(workspace_id,workbook_name,updated_at,updated_by)",
-        order: "last_accessed_at.desc",
-        limit: "50",
-      },
-    });
+    // - canvases!inner(...) pulls workspace_id + workbook_name AND lets us
+    //   filter on `canvases.workspace_id=eq.<id>`. The !inner hint forces
+    //   PostgREST to drop contributor rows whose embedded canvas falls
+    //   outside the workspace filter (without it, rows with a non-matching
+    //   canvas would come back with `canvases: null` and we'd have to
+    //   filter client-side).
+    // - editor names/avatars are resolved in a second query
+    //   (fetchUsersByIds) because canvases.updated_by isn't a formal FK.
+    const query = {
+      user_id: `eq.${userId}`,
+      select: "workbook_id,last_accessed_at,canvases!inner(workspace_id,workbook_name,updated_at,updated_by)",
+      order: "last_accessed_at.desc",
+      limit: "50",
+    };
+    if (workspaceId) {
+      query["canvases.workspace_id"] = `eq.${workspaceId}`;
+    }
+    return supa.supabaseFetch("canvas_contributors", "GET", { query });
   }
 
   /**
@@ -166,7 +178,13 @@
     listEl.innerHTML = "";
 
     if (!rows || rows.length === 0) {
-      showStatus("No saved canvases yet. Open the GTME View on a workbook to start.");
+      if (!currentIds) {
+        // No active Clay tab. Without a workspace we deliberately skip the
+        // fetch (see init below) and tell the user how to populate the list.
+        showStatus("Open a Clay workbook to see your canvases here.");
+      } else {
+        showStatus("No saved canvases yet. Open the GTME View on a workbook to start.");
+      }
       return;
     }
 
@@ -257,8 +275,19 @@
       userNameEl.textContent = user.name || "Clay user";
       renderAvatar(userAvatarEl, user.profilePicture, user.name);
 
+      // The popup runs in the extension's own context, so the "current
+      // workspace" comes from the active Chrome tab (parseClayUrl above).
+      // When the user opens the popup on a non-Clay page, we have no
+      // workspace context — skip the fetch and let renderList show the
+      // "Open a Clay workbook" empty state. This is the partition that
+      // keeps customers from seeing cross-workspace canvases in the list.
+      if (!currentIds) {
+        renderList([], null, new Map(), user.id);
+        return;
+      }
+
       try {
-        const rows = await fetchCanvases(user.id);
+        const rows = await fetchCanvases(user.id, currentIds.workspaceId);
         // Collect the set of user ids we'll need avatars/names for, then
         // fetch them in one round-trip.
         const editorIds = (rows || [])
