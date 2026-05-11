@@ -22,6 +22,7 @@ module.exports = {
     "src/dust-bg.js",            // background service worker for Dust CORS proxy
     "styles/dust-poc.css",       // popover styling for Generate POC
     "dust-rules.json",           // DNR rule that strips Origin on Dust API calls
+    "_metadata",                  // Chrome-generated DNR ruleset cache (auto-created on load)
     "docs",                       // internal-only architecture + business context
     "AGENTS.md",                  // maintainer-only build instructions
     "build.js",                   // build tooling stays in the source repo
@@ -62,6 +63,15 @@ module.exports = {
   // Dust Origin-strip rule).
   excludeFromManifestPermissions: [
     "declarativeNetRequestWithHostAccess",
+  ],
+
+  // Values removed from the manifest.json `host_permissions` array. The
+  // host stays in the source manifest so the internal build can talk to
+  // dust.tt, but the public build has no code that needs it — leaving it
+  // in would telegraph the integration and ask users to grant a
+  // permission the public extension never uses.
+  excludeFromManifestHostPermissions: [
+    "https://dust.tt/*",
   ],
 
   // Ordered string substitutions applied to every text file (.js, .css, .html,

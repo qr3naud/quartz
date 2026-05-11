@@ -125,6 +125,10 @@ function transformManifest(jsonStr) {
   if (Array.isArray(m.permissions) && excludedPerms.size > 0) {
     m.permissions = m.permissions.filter((p) => !excludedPerms.has(p));
   }
+  const excludedHosts = new Set(config.excludeFromManifestHostPermissions || []);
+  if (Array.isArray(m.host_permissions) && excludedHosts.size > 0) {
+    m.host_permissions = m.host_permissions.filter((h) => !excludedHosts.has(h));
+  }
   for (const key of config.excludeManifestKeys || []) {
     delete m[key];
   }
