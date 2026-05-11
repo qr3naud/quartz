@@ -1,13 +1,14 @@
 {
   "manifest_version": 3,
   "name": "Clay Scoping Tool",
-  "version": "3.24.0",
+  "version": "3.25.3",
   "description": "Visual scoping canvas for Clay enrichment workflows",
   "permissions": ["activeTab"],
   "host_permissions": [
     "https://api.clay.com/*",
     "https://*.supabase.co/*",
     "https://docs.google.com/*",
+    "https://dust.tt/*",
     "http://localhost/*",
     "http://localhost:*/*",
     "http://127.0.0.1/*",
@@ -28,6 +29,9 @@
       "48": "icons/icon-48.png",
       "128": "icons/icon-128.png"
     }
+  },
+  "background": {
+    "service_worker": "src/dust-bg.js"
   },
   "content_scripts": [
     {
@@ -61,6 +65,7 @@
         "src/pricing-comparison.js",
         "src/export.js",
         "src/poc-import.js",
+        "src/dust-poc.js",
         "src/table-view.js",
         "src/overlay.js",
         "src/home.js",
@@ -79,6 +84,7 @@
         "styles/cursors.css",
         "styles/export.css",
         "styles/poc-import.css",
+        "styles/dust-poc.css",
         "styles/table-view.css"
       ]
     }

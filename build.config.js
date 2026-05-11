@@ -18,6 +18,9 @@ module.exports = {
   // to this directory. Directory entries also exclude all descendants.
   exclude: [
     "src/pricing-comparison.js", // entire Old vs New Pricing modal
+    "src/dust-poc.js",           // Generate POC button (Dust integration)
+    "src/dust-bg.js",            // background service worker for Dust CORS proxy
+    "styles/dust-poc.css",       // popover styling for Generate POC
     "docs",                       // internal-only architecture + business context
     "AGENTS.md",                  // maintainer-only build instructions
     "build.js",                   // build tooling stays in the source repo
@@ -33,6 +36,21 @@ module.exports = {
   // exactly the values that appear in manifest.json.
   excludeFromManifestScripts: [
     "src/pricing-comparison.js",
+    "src/dust-poc.js",
+  ],
+
+  // Stylesheets removed from manifest.json content_scripts[].css arrays. Must
+  // match exactly the values that appear in manifest.json.
+  excludeFromManifestStyles: [
+    "styles/dust-poc.css",
+  ],
+
+  // Top-level keys removed from manifest.json entirely. Used to drop the
+  // `background` field when its service-worker file isn't in the public
+  // build — leaving it in place would make Chrome reject the manifest
+  // because the referenced file is missing.
+  excludeManifestKeys: [
+    "background",
   ],
 
   // Ordered string substitutions applied to every text file (.js, .css, .html,

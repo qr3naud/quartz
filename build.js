@@ -17,7 +17,10 @@
 //            /* __CB_INTERNAL_ONLY_BEGIN ... */ ... /* __CB_INTERNAL_ONLY_END */).
 //        b. Runs the ordered branding substitutions from config.branding.
 //   3. For manifest.json: parses it, drops content_scripts[].js entries that
-//      are in config.excludeFromManifestScripts, re-stringifies pretty-printed.
+//      are in config.excludeFromManifestScripts and content_scripts[].css
+//      entries in config.excludeFromManifestStyles, deletes any top-level
+//      keys listed in config.excludeManifestKeys, re-stringifies
+//      pretty-printed.
 //   4. Wipes the output directory (preserving .git) and writes everything fresh.
 //   5. Writes a public .gitignore from config.publicGitignore.
 //
@@ -106,13 +109,20 @@ function applyBranding(content) {
 
 function transformManifest(jsonStr) {
   const m = JSON.parse(jsonStr);
-  const excluded = new Set(config.excludeFromManifestScripts || []);
+  const excludedJs = new Set(config.excludeFromManifestScripts || []);
+  const excludedCss = new Set(config.excludeFromManifestStyles || []);
   if (Array.isArray(m.content_scripts)) {
     for (const cs of m.content_scripts) {
       if (Array.isArray(cs.js)) {
-        cs.js = cs.js.filter((p) => !excluded.has(p));
+        cs.js = cs.js.filter((p) => !excludedJs.has(p));
+      }
+      if (Array.isArray(cs.css)) {
+        cs.css = cs.css.filter((p) => !excludedCss.has(p));
       }
     }
+  }
+  for (const key of config.excludeManifestKeys || []) {
+    delete m[key];
   }
   return JSON.stringify(m, null, 2) + "\n";
 }

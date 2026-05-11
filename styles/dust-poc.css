@@ -1,0 +1,168 @@
+/* ============================================================================
+ * Generate POC popover (Dust integration)
+ *
+ * Small popover anchored under the "Generate POC" topbar button. Two states:
+ * an API-key prompt the first time, then a customer-name form. Visual idiom
+ * mirrors .cb-table-picker / .cb-poc-import-* so the popover feels native to
+ * the rest of the extension.
+ * ========================================================================= */
+
+.cb-dust-poc-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 9999998;
+}
+
+.cb-dust-poc-popover {
+  position: fixed;
+  z-index: 9999999;
+  width: 300px;
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.15);
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+}
+
+.cb-dust-poc-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #111827;
+}
+
+.cb-dust-poc-sub {
+  font-size: 12px;
+  line-height: 1.4;
+  color: #6b7280;
+}
+
+.cb-dust-poc-input {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  background: #ffffff;
+  font-family: inherit;
+  font-size: 13px;
+  color: #111827;
+  transition: border-color 0.12s, box-shadow 0.12s;
+  box-sizing: border-box;
+}
+
+.cb-dust-poc-input:focus {
+  outline: none;
+  border-color: #6366f1;
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.18);
+}
+
+.cb-dust-poc-status {
+  min-height: 16px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: transparent;
+  word-break: break-word;
+}
+
+.cb-dust-poc-status-info {
+  color: #4338ca;
+}
+
+.cb-dust-poc-status-success {
+  color: #047857;
+}
+
+.cb-dust-poc-status-error {
+  color: #b91c1c;
+}
+
+.cb-dust-poc-link {
+  color: #4338ca;
+  text-decoration: underline;
+  font-weight: 500;
+}
+
+.cb-dust-poc-link:hover {
+  color: #3730a3;
+}
+
+.cb-dust-poc-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  margin-top: 2px;
+}
+
+.cb-dust-poc-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 7px 14px;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  font-family: inherit;
+  font-size: 12.5px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
+}
+
+.cb-dust-poc-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.7;
+}
+
+.cb-dust-poc-btn-primary {
+  background: #6366f1;
+  border-color: #6366f1;
+  color: #ffffff;
+  margin-left: auto;
+}
+
+.cb-dust-poc-btn-primary:hover:not(:disabled) {
+  background: #4f46e5;
+  border-color: #4f46e5;
+}
+
+.cb-dust-poc-btn-loading {
+  position: relative;
+  color: transparent !important;
+}
+
+.cb-dust-poc-btn-loading::after {
+  content: "";
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  border: 2px solid rgba(255, 255, 255, 0.45);
+  border-top-color: #ffffff;
+  border-radius: 50%;
+  animation: cb-dust-poc-spin 0.7s linear infinite;
+}
+
+@keyframes cb-dust-poc-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.cb-dust-poc-link-btn {
+  background: transparent;
+  border: none;
+  padding: 0;
+  font-family: inherit;
+  font-size: 11.5px;
+  color: #9ca3af;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.cb-dust-poc-link-btn:hover {
+  color: #6b7280;
+}

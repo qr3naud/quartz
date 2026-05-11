@@ -82,6 +82,23 @@
     pricingBtn.addEventListener("click", () => __cb.startPricingComparison(pricingBtn));
     // __CB_INTERNAL_ONLY_END
 
+    // __CB_INTERNAL_ONLY_BEGIN: dustPoc
+    // Generate POC — opens a small popover with a customer-name input and
+    // POSTs to Dust to create a new conversation mentioning the POC agent.
+    // Stripped from the public build; key + workspace are Clay-internal.
+    const dustBtn = document.createElement("button");
+    dustBtn.className = "cb-toolbar-btn cb-toolbar-dust-poc";
+    dustBtn.type = "button";
+    dustBtn.title = "Generate a POC scope in Dust for a customer";
+    dustBtn.innerHTML =
+      '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 4.6L18.5 9l-4.6 1.9L12 15l-1.9-4.1L5.5 9l4.6-1.4L12 3z"/><path d="M19 15l.8 1.9L21.5 17.5l-1.7.6L19 20l-.8-1.9L16.5 17.5l1.7-.6L19 15z"/><path d="M5 14l.6 1.4L7 16l-1.4.6L5 18l-.6-1.4L3 16l1.4-.6L5 14z"/></svg>' +
+      " Generate POC";
+    dustBtn.addEventListener("click", (evt) => {
+      evt.stopPropagation();
+      if (__cb.startDustPoc) __cb.startDustPoc(dustBtn);
+    });
+    // __CB_INTERNAL_ONLY_END
+
     const importBtn = document.createElement("button");
     importBtn.className = "cb-toolbar-btn cb-toolbar-import";
     importBtn.innerHTML =
@@ -293,6 +310,9 @@
     rightGroup.appendChild(proBtn);
     // __CB_INTERNAL_ONLY_BEGIN: pricingComparison
     rightGroup.appendChild(pricingBtn);
+    // __CB_INTERNAL_ONLY_END
+    // __CB_INTERNAL_ONLY_BEGIN: dustPoc
+    rightGroup.appendChild(dustBtn);
     // __CB_INTERNAL_ONLY_END
     rightGroup.appendChild(importBtn);
     rightGroup.appendChild(viewToggleBtn);
