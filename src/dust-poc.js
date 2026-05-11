@@ -201,6 +201,12 @@
       renderCurrentState();
     });
 
+    const testLink = document.createElement("button");
+    testLink.type = "button";
+    testLink.className = "cb-dust-poc-link-btn";
+    testLink.textContent = "Test key";
+    testLink.addEventListener("click", () => doTestKey(status, testLink));
+
     const sendBtn = document.createElement("button");
     sendBtn.type = "button";
     sendBtn.className = "cb-dust-poc-btn cb-dust-poc-btn-primary";
@@ -217,6 +223,7 @@
     });
 
     footer.appendChild(resetLink);
+    footer.appendChild(testLink);
     footer.appendChild(sendBtn);
 
     popoverEl.appendChild(title);
@@ -319,6 +326,62 @@
       .replace(/'/g, "&#39;");
   }
 
+  // Read-only probe — hits GET /assistant/agent_configurations. Tells the
+  // rep whether the cached key can even read the workspace, separating
+  // auth problems from payload problems in the create-conversation POST.
+  async function doTestKey(statusEl, testBtn) {
+    const apiKey = readApiKey();
+    if (!apiKey) {
+      renderCurrentState();
+      return;
+    }
+    testBtn.disabled = true;
+    setStatus(statusEl, "info", "Probing Dust\u2026");
+    try {
+      const response = await new Promise((resolve, reject) => {
+        chrome.runtime.sendMessage(
+          {
+            type: "cb:dust:probeKey",
+            apiKey,
+            workspaceId: DUST_WORKSPACE_ID,
+          },
+          (r) => {
+            const e = chrome.runtime.lastError;
+            if (e) reject(new Error(e.message || "Messaging failed."));
+            else if (!r) reject(new Error("No response from background."));
+            else resolve(r);
+          },
+        );
+      });
+      console.log("[Clay Scoping] Dust probe response:", response);
+      if (response.ok) {
+        const count = Array.isArray(response.data?.agentConfigurations)
+          ? response.data.agentConfigurations.length
+          : "?";
+        setStatus(
+          statusEl,
+          "success",
+          `Key works. Read ${escapeHtml(String(count))} agents in workspace ${escapeHtml(DUST_WORKSPACE_ID)}.`,
+        );
+      } else {
+        const detail = extractErrorDetail(response);
+        setStatus(
+          statusEl,
+          "error",
+          `Probe failed (${escapeHtml(String(response.status || "?"))}): ${escapeHtml(detail || "see service worker console")}`,
+        );
+      }
+    } catch (err) {
+      setStatus(
+        statusEl,
+        "error",
+        escapeHtml(err?.message || "Probe failed."),
+      );
+    } finally {
+      testBtn.disabled = false;
+    }
+  }
+
   async function doSend(inputEl, statusEl, sendBtn) {
     const customerName = inputEl.value.trim();
     if (!customerName) {
@@ -367,20 +430,22 @@
         //   - Key role is too restrictive (need a Builder/Admin key)
         //   - The hardcoded agent isn't shared with this key's user
         // Keep the cached key (so the rep can retry after fixing it) and
-        // surface what Dust actually said.
+        // surface what Dust actually said. Full response is dumped to the
+        // SW console for deeper inspection.
         const detail = extractErrorDetail(response);
-        console.warn("[Clay Scoping] Dust forbidden (403):", detail);
+        console.warn("[Clay Scoping] Dust forbidden (403):", response);
         throw new Error(
-          `Dust returned 403: ${
+          `Dust 403 at ${response.endpoint || "?"}: ${
             detail ||
-            `the API key is valid but lacks access. Check that the key belongs to workspace ${DUST_WORKSPACE_ID} and has builder permissions.`
+            `(empty body — see service worker console for full response). Most likely a wrong-workspace or insufficient-role key for workspace ${DUST_WORKSPACE_ID}.`
           }`,
         );
       }
 
       if (!response.ok) {
+        console.warn("[Clay Scoping] Dust non-OK response:", response);
         throw new Error(
-          `Dust returned ${response.status || "error"}${response.statusText ? ` ${response.statusText}` : ""}: ${extractErrorDetail(response) || "no response body"}`,
+          `Dust returned ${response.status || "error"}${response.statusText ? ` ${response.statusText}` : ""} at ${response.endpoint || "?"}: ${extractErrorDetail(response) || "(empty body — see service worker console)"}`,
         );
       }
 

@@ -30,8 +30,64 @@ function sanitizeApiKey(raw) {
     .trim();
 }
 
+// Lightweight "does my key work?" probe — GETs the agent configurations
+// list for the configured workspace. A 200 confirms the key can read this
+// workspace; anything else surfaces a precise error from Dust without the
+// payload-shape unknowns of POST /conversations.
+async function probeKey(apiKey, workspaceId) {
+  const cleanKey = sanitizeApiKey(apiKey);
+  const endpoint = `${DUST_BASE_URL}/api/v1/w/${workspaceId}/assistant/agent_configurations`;
+  try {
+    const res = await fetch(endpoint, {
+      method: "GET",
+      headers: { Authorization: `Bearer ${cleanKey}` },
+      credentials: "omit",
+    });
+    const text = await res.text();
+    let data = null;
+    try { data = text ? JSON.parse(text) : null; } catch {}
+    const headers = {};
+    try { res.headers.forEach((v, k) => { headers[k] = v; }); } catch {}
+    if (!res.ok) {
+      console.warn("[Clay Scoping] Dust probe non-OK", {
+        endpoint,
+        status: res.status,
+        statusText: res.statusText,
+        headers,
+        bodyPreview: text ? text.slice(0, 1000) : "(empty body)",
+      });
+    } else {
+      const count = Array.isArray(data?.agentConfigurations)
+        ? data.agentConfigurations.length
+        : "?";
+      console.log(`[Clay Scoping] Dust probe OK — ${count} agents readable`);
+    }
+    return {
+      ok: res.ok,
+      status: res.status,
+      statusText: res.statusText,
+      data,
+      rawText: text || undefined,
+      headers,
+      endpoint,
+    };
+  } catch (err) {
+    return { ok: false, error: err?.message || String(err), endpoint };
+  }
+}
+
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
-  if (!msg || msg.type !== "cb:dust:createConversation") return;
+  if (!msg) return;
+
+  if (msg.type === "cb:dust:probeKey") {
+    (async () => {
+      const result = await probeKey(msg.apiKey, msg.workspaceId);
+      sendResponse(result);
+    })();
+    return true;
+  }
+
+  if (msg.type !== "cb:dust:createConversation") return;
 
   // sendResponse must be invoked asynchronously, so we return `true` to keep
   // the message channel open. Errors are surfaced through the response
@@ -62,6 +118,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         `len=${cleanKey.length}`,
       );
 
+      const requestBody = JSON.stringify(body);
       const res = await fetch(endpoint, {
         method: "POST",
         headers: {
@@ -73,7 +130,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         // in another tab. A cookie session can resolve auth to a different
         // user than the Bearer token and silently produce a 403.
         credentials: "omit",
-        body: JSON.stringify(body),
+        body: requestBody,
       });
 
       const text = await res.text();
@@ -85,6 +142,36 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         // can surface it in the error message.
       }
 
+      // Collect response headers into a plain object so they can be logged
+      // and forwarded back to the content script. Useful for spotting
+      // Cloudflare / WAF interception (Server, CF-Ray, X-Forwarded-By).
+      const respHeaders = {};
+      try {
+        res.headers.forEach((v, k) => {
+          respHeaders[k] = v;
+        });
+      } catch {
+        // res.headers.forEach is supported everywhere modern Chrome runs,
+        // but be defensive in case something is mocked.
+      }
+
+      // On non-2xx, dump everything we have to the service worker console
+      // so a rep inspecting the SW DevTools can immediately see what Dust
+      // is complaining about. Truncate body text in case of HTML-error
+      // pages.
+      if (!res.ok) {
+        console.warn("[Clay Scoping] Dust non-OK response", {
+          endpoint,
+          status: res.status,
+          statusText: res.statusText,
+          headers: respHeaders,
+          bodyPreview: text ? text.slice(0, 1000) : "(empty body)",
+          requestBodyPreview: requestBody.slice(0, 500),
+        });
+      } else {
+        console.log("[Clay Scoping] Dust OK", res.status);
+      }
+
       sendResponse({
         ok: res.ok,
         status: res.status,
@@ -94,6 +181,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         // SOMETHING when the response body isn't JSON (or is the literal
         // `null`).
         rawText: text || undefined,
+        headers: respHeaders,
         endpoint,
       });
     } catch (err) {
