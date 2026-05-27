@@ -199,6 +199,38 @@
   };
 
   /**
+   * Public: drops the cached JWT and re-mints from scratch. Use when the
+   * caller has reason to believe the cached identity is stale — e.g. the
+   * user just switched workspaces, toggled impersonation in Clay, or the
+   * SFDC picker is about to open and we want the freshest possible
+   * workspace-membership snapshot.
+   *
+   * Returns the new JWT on success, or null if the mint failed.
+   */
+  __cb.refreshSupabaseJwt = async function refreshSupabaseJwt() {
+    // Drop the in-memory + localStorage cache so a concurrent caller
+    // doesn't read the stale token. Doesn't fire notifyJwtChange(null)
+    // because we'd immediately fire notifyJwtChange(<new>) right after,
+    // and a transient null would cause realtime to re-auth twice.
+    __cb.supabaseJwt = null;
+    __cb.supabaseJwtExpiresAt = 0;
+    writeStored(null);
+    if (refreshTimer) {
+      clearTimeout(refreshTimer);
+      refreshTimer = null;
+    }
+    try {
+      return await refresh();
+    } catch (err) {
+      // refresh() throws on failure; surface null so callers can branch
+      // on "got fresh JWT" vs "couldn't mint, fall back to whatever they
+      // had". The error is already logged inside refresh()'s fetchFreshJwt.
+      console.warn("[Clay Scoping] refreshSupabaseJwt failed:", err?.message || err);
+      return null;
+    }
+  };
+
+  /**
    * Public: subscribe to JWT changes (mint, refresh, clear). The handler
    * is invoked synchronously after the cache is updated. Returns an
    * unsubscribe function. Used by realtime.js to re-auth the WebSocket

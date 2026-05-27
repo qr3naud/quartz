@@ -272,6 +272,12 @@
    * Opens the typeahead picker. Reuses the cb-dust-poc-* class names for
    * the popover frame so we don't ship duplicate styles for what's
    * essentially the same affordance.
+   *
+   * Always re-mints the JWT before showing search results, so a stale
+   * cache from a previous Clay impersonation switch (or workspace
+   * change) doesn't silently scope the picker to the wrong workspaces.
+   * The cost is one round trip on open (~500ms); subsequent searches
+   * reuse the fresh cache.
    */
   function showPicker(anchorEl, onPick) {
     closePopover();
@@ -296,7 +302,9 @@
     const input = document.createElement("input");
     input.type = "text";
     input.className = "cb-dust-poc-input cb-sfdc-picker-input";
-    input.placeholder = "Type at least 2 characters\u2026";
+    // The input is disabled until the identity re-check below resolves.
+    input.disabled = true;
+    input.placeholder = "Checking your Clay identity\u2026";
     input.autocomplete = "off";
     input.spellcheck = false;
 
@@ -315,8 +323,40 @@
     document.body.appendChild(backdropEl);
     document.body.appendChild(popoverEl);
     document.addEventListener("keydown", onKeydown);
-    setTimeout(() => input.focus(), 0);
     positionPopover();
+
+    // Force a JWT refresh before the user starts typing. Catches the
+    // "I just stopped impersonating someone" case where the cached JWT
+    // belongs to the wrong Clay user.
+    (async () => {
+      let refreshed = null;
+      try {
+        if (__cb.refreshSupabaseJwt) {
+          refreshed = await __cb.refreshSupabaseJwt();
+        }
+      } catch (err) {
+        // refreshSupabaseJwt swallows its own errors and returns null,
+        // but defensively guard so a thrown error doesn't leave the
+        // popover stuck in the disabled state.
+        console.warn("[Clay Scoping] SFDC picker JWT refresh threw:", err);
+      }
+      // If the popover was closed while we were refreshing, bail out.
+      if (popoverEl !== anchorRef?.ownerDocument?.querySelector(".cb-sfdc-picker-popover")) {
+        if (!popoverEl) return;
+      }
+      if (!refreshed) {
+        // Mint failed (no Clay session, or clay-auth-mint returned an
+        // error). Tell the user; leave the input disabled.
+        input.placeholder = "Couldn't verify your Clay session";
+        status.className = "cb-dust-poc-status cb-dust-poc-status-error";
+        status.textContent = "Reload the Clay tab and try again. If that doesn't help, sign out + back in to app.clay.com.";
+        return;
+      }
+      // JWT is fresh. Enable the input so the user can type.
+      input.disabled = false;
+      input.placeholder = "Type at least 2 characters\u2026";
+      input.focus();
+    })();
 
     // Debounce typing. Each keystroke schedules a search 250ms later;
     // if another keystroke arrives first, the timer resets. Bursts of
@@ -389,7 +429,24 @@
       } catch (err) {
         if (reqId !== lastReqId) return;
         console.warn("[Clay Scoping] SFDC search failed:", err);
-        setStatus("error", escapeHtml(err?.message || "Search failed."));
+        // 403 specifically means "your Clay workspaces don't include an
+        // internal one" — surface a more helpful message than the raw
+        // server text, since reps may be confused why their access was
+        // denied. We forced a JWT refresh on picker open so this is the
+        // authoritative answer, not stale-cache noise.
+        if (err?.status === 403) {
+          setStatus(
+            "error",
+            "You're not signed in to a Clay workspace that's allowed to use the SFDC integration. If you were impersonating someone, stop impersonating in app.clay.com and reopen this picker.",
+          );
+        } else if (err?.status === 401) {
+          setStatus(
+            "error",
+            "Your Clay session expired. Reload the Clay tab and try again.",
+          );
+        } else {
+          setStatus("error", escapeHtml(err?.message || "Search failed."));
+        }
       }
     }
 
