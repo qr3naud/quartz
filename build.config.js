@@ -19,17 +19,20 @@ module.exports = {
   exclude: [
     "src/pricing-comparison.js", // entire Old vs New Pricing modal
     "src/dust-poc.js",           // Generate POC button (Dust integration)
-    "src/dust-bg.js",            // background service worker for Dust CORS proxy
+    "src/sfdc.js",               // Salesforce opportunity picker
+    "src/internal-bg.js",        // background service worker (auth-mint + SFDC + Dust proxy)
     "styles/dust-poc.css",       // popover styling for Generate POC
-    "dust-rules.json",           // DNR rule that strips Origin on Dust API calls
-    "_metadata",                  // Chrome-generated DNR ruleset cache (auto-created on load)
-    "docs",                       // internal-only architecture + business context
-    "AGENTS.md",                  // maintainer-only build instructions
-    "build.js",                   // build tooling stays in the source repo
+    "styles/sfdc.css",           // styling for the SFDC opportunity picker / pill
+    "supabase",                  // Edge Function source + SQL migrations (deployed separately, not shipped to Chrome)
+    "scripts",                   // SFDC connection tester + per-env dotenv files
+    "_metadata",                 // Chrome-generated DNR ruleset cache (auto-created on load)
+    "docs",                      // internal-only architecture + business context
+    "AGENTS.md",                 // maintainer-only build instructions
+    "build.js",                  // build tooling stays in the source repo
     "build.config.js",
     "release.sh",
-    ".git",                       // public repo has its own .git
-    ".gitignore",                 // public repo gets its own .gitignore (written below)
+    ".git",                      // public repo has its own .git
+    ".gitignore",                // public repo gets its own .gitignore (written below)
     "node_modules",
     "dist",
   ],
@@ -39,39 +42,22 @@ module.exports = {
   excludeFromManifestScripts: [
     "src/pricing-comparison.js",
     "src/dust-poc.js",
+    "src/sfdc.js",
   ],
 
   // Stylesheets removed from manifest.json content_scripts[].css arrays. Must
   // match exactly the values that appear in manifest.json.
   excludeFromManifestStyles: [
     "styles/dust-poc.css",
+    "styles/sfdc.css",
   ],
 
-  // Top-level keys removed from manifest.json entirely. Used to drop the
-  // `background` field when its service-worker file isn't in the public
-  // build — leaving it in place would make Chrome reject the manifest
-  // because the referenced file is missing. Same goes for the DNR rule
-  // resources block whose ruleset file is excluded above.
+  // Top-level keys removed from manifest.json entirely. The `background`
+  // service worker proxies internal-only features (auth mint, SFDC, Dust),
+  // none of which the public extension ships. Removing the field means the
+  // public manifest doesn't reference a missing src/internal-bg.js.
   excludeManifestKeys: [
     "background",
-    "declarative_net_request",
-  ],
-
-  // Values removed from the manifest.json `permissions` array. Used to
-  // drop API permissions that exist only to support stripped features
-  // (e.g. declarativeNetRequestWithHostAccess is only needed for the
-  // Dust Origin-strip rule).
-  excludeFromManifestPermissions: [
-    "declarativeNetRequestWithHostAccess",
-  ],
-
-  // Values removed from the manifest.json `host_permissions` array. The
-  // host stays in the source manifest so the internal build can talk to
-  // dust.tt, but the public build has no code that needs it — leaving it
-  // in would telegraph the integration and ask users to grant a
-  // permission the public extension never uses.
-  excludeFromManifestHostPermissions: [
-    "https://dust.tt/*",
   ],
 
   // Ordered string substitutions applied to every text file (.js, .css, .html,

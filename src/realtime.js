@@ -91,6 +91,27 @@
       // below the 200/s realtime-js default.
       realtime: { params: { eventsPerSecond: 120 } },
     });
+    // Auth the realtime socket with the per-Clay-user JWT so RLS-gated
+    // postgres_changes + private broadcast topics deliver. setAuth() is
+    // idempotent; calling it again on refresh re-authenticates the existing
+    // socket without dropping the connection.
+    const applyAuth = (jwt) => {
+      try {
+        client.realtime.setAuth(jwt || null);
+      } catch (err) {
+        console.warn("[Clay Scoping] realtime.setAuth failed:", err);
+      }
+    };
+    if (__cb.peekSupabaseJwt) {
+      const cached = __cb.peekSupabaseJwt();
+      if (cached) applyAuth(cached);
+    }
+    if (__cb.getSupabaseJwt) {
+      __cb.getSupabaseJwt().then(applyAuth).catch(() => {/* logged elsewhere */});
+    }
+    if (__cb.onSupabaseJwtChange) {
+      __cb.onSupabaseJwtChange(applyAuth);
+    }
     return client;
   }
 

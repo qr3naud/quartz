@@ -1,14 +1,13 @@
 {
   "manifest_version": 3,
   "name": "Clay Scoping Tool",
-  "version": "3.25.6",
+  "version": "3.27",
   "description": "Visual scoping canvas for Clay enrichment workflows",
-  "permissions": ["activeTab", "declarativeNetRequestWithHostAccess"],
+  "permissions": ["activeTab", "cookies"],
   "host_permissions": [
     "https://api.clay.com/*",
     "https://*.supabase.co/*",
     "https://docs.google.com/*",
-    "https://dust.tt/*",
     "http://localhost/*",
     "http://localhost:*/*",
     "http://127.0.0.1/*",
@@ -31,16 +30,7 @@
     }
   },
   "background": {
-    "service_worker": "src/dust-bg.js"
-  },
-  "declarative_net_request": {
-    "rule_resources": [
-      {
-        "id": "dust_origin_strip",
-        "enabled": true,
-        "path": "dust-rules.json"
-      }
-    ]
+    "service_worker": "src/internal-bg.js"
   },
   "content_scripts": [
     {
@@ -49,6 +39,7 @@
         "vendor/supabase-realtime.js",
         "src/supabase.js",
         "src/config.js",
+        "src/auth.js",
         "src/user.js",
         "src/workbook-info.js",
         "src/realtime.js",
@@ -75,6 +66,7 @@
         "src/export.js",
         "src/poc-import.js",
         "src/dust-poc.js",
+        "src/sfdc.js",
         "src/table-view.js",
         "src/overlay.js",
         "src/home.js",
@@ -94,6 +86,7 @@
         "styles/export.css",
         "styles/poc-import.css",
         "styles/dust-poc.css",
+        "styles/sfdc.css",
         "styles/table-view.css"
       ]
     }

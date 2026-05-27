@@ -314,6 +314,24 @@
     // __CB_INTERNAL_ONLY_BEGIN: dustPoc
     rightGroup.appendChild(dustBtn);
     // __CB_INTERNAL_ONLY_END
+    // __CB_INTERNAL_ONLY_BEGIN: sfdc
+    // Salesforce opportunity link — sits between Generate POC and Import.
+    // The element internally swaps between a "Link opportunity" button and
+    // a linked-opp pill ("Acme Inc — Q3 Expansion") based on the canvases
+    // row's sfdc_opportunity_* columns. See src/sfdc.js for the picker.
+    if (__cb.sfdc?.buildToolbarElement) {
+      const sfdcEl = __cb.sfdc.buildToolbarElement();
+      rightGroup.appendChild(sfdcEl);
+      // Hydrate from Supabase on canvas open. Fire-and-forget — the
+      // toolbar element re-renders on its own when the linked-opp state
+      // changes via __cb.sfdc.onLinkedOppChange.
+      if (__cb.currentWorkbookId && __cb.sfdc.hydrateLinkedOpportunity) {
+        __cb.sfdc.hydrateLinkedOpportunity(__cb.currentWorkbookId).catch((err) => {
+          console.warn("[Clay Scoping] SFDC hydrate failed:", err);
+        });
+      }
+    }
+    // __CB_INTERNAL_ONLY_END
     rightGroup.appendChild(importBtn);
     rightGroup.appendChild(viewToggleBtn);
     rightGroup.appendChild(exportBtn);
