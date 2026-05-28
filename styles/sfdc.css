@@ -122,7 +122,9 @@
   background: #eef2ff;
   border-radius: 5px;
   color: #3730a3;
-  font-size: 12px;
+  /* 13px to match .cb-toolbar-btn (Generate POC, Link opportunity) so the
+     linked-opp state reads as a sibling of the other toolbar buttons. */
+  font-size: 13px;
   font-weight: 500;
   cursor: default;
   max-width: 280px;

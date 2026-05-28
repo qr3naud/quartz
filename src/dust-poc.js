@@ -64,6 +64,10 @@
   let popoverEl = null;
   let backdropEl = null;
   let anchorRef = null;
+  // Reference to the generating-state "Follow in Dust" button so we can fill
+  // in its href silently once the conversation is created (rather than
+  // re-rendering the popover and flickering).
+  let generatingFollowBtn = null;
 
   // Live POC state for the current canvas. Mirrors the dust_* columns on the
   // canvases row so the popover can render without a round-trip. `status` is
@@ -95,6 +99,7 @@
       backdropEl = null;
     }
     anchorRef = null;
+    generatingFollowBtn = null;
     document.removeEventListener("keydown", onKeydown);
   }
 
@@ -155,6 +160,9 @@
   function renderPopover() {
     if (!popoverEl) return;
     popoverEl.innerHTML = "";
+    // Stale on every render; renderGenerating reassigns it when it builds the
+    // follow button.
+    generatingFollowBtn = null;
 
     if (pocState.status === "generating") {
       renderGenerating();
@@ -183,9 +191,24 @@
     return `<a class="cb-dust-poc-link" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(label)}</a>`;
   }
 
-  // Idle / initial form — the informative copy + customer-name input.
+  // Current linked SFDC opportunity (or null). Published only when the `sfdc`
+  // feature is on, so guard the call.
+  function getLinkedOpp() {
+    try {
+      return __cb.sfdc?.getLinkedOpportunity?.() || null;
+    } catch {
+      return null;
+    }
+  }
+
+  // Idle / initial form — the informative copy + name input. When an SFDC
+  // opportunity is linked the field is labelled "Opportunity name" and
+  // prefilled with the opp name so the rep can generate in one click.
   function renderForm() {
     appendTitle("Generate POC");
+
+    const linkedOpp = getLinkedOpp();
+    const isOpp = !!(linkedOpp && linkedOpp.name);
 
     const sub = document.createElement("div");
     sub.className = "cb-dust-poc-sub";
@@ -197,7 +220,7 @@
 
     const label = document.createElement("div");
     label.className = "cb-dust-poc-field-label";
-    label.textContent = "Customer name";
+    label.textContent = isOpp ? "Opportunity name" : "Customer name";
     popoverEl.appendChild(label);
 
     const input = document.createElement("input");
@@ -205,24 +228,34 @@
     input.className = "cb-dust-poc-input";
     input.placeholder = "e.g. Acme Inc";
     input.autocomplete = "off";
-    if (pocState.customerName) input.value = pocState.customerName;
+    // Prefer a name the rep already typed (e.g. after "Generate again"),
+    // otherwise prefill from the linked opportunity.
+    input.value = pocState.customerName || (isOpp ? linkedOpp.name : "");
     popoverEl.appendChild(input);
 
+    // Validation status is appended lazily (only on error) so the Generate
+    // button sits directly below the input instead of leaving a reserved gap.
     const status = document.createElement("div");
     status.className = "cb-dust-poc-status";
-    popoverEl.appendChild(status);
 
     const footer = document.createElement("div");
     footer.className = "cb-dust-poc-footer";
 
     const sendBtn = document.createElement("button");
     sendBtn.type = "button";
-    sendBtn.className = "cb-dust-poc-btn cb-dust-poc-btn-primary";
+    sendBtn.className = "cb-dust-poc-btn cb-dust-poc-btn-primary cb-dust-poc-btn-block";
     sendBtn.textContent = "Generate";
     sendBtn.addEventListener("click", () => {
       const customerName = input.value.trim();
       if (!customerName) {
-        setStatus(status, "error", "Enter a customer name to continue.");
+        if (!status.isConnected) popoverEl.insertBefore(status, footer);
+        setStatus(
+          status,
+          "error",
+          isOpp
+            ? "Enter an opportunity name to continue."
+            : "Enter a customer name to continue.",
+        );
         input.focus();
         return;
       }
@@ -243,67 +276,170 @@
     setTimeout(() => input.focus(), 0);
   }
 
-  // Generating — spinner + reassurance + a link into the Dust conversation.
+  // Generating — reassurance copy + the linked opportunity (linked to its
+  // SFDC record) + a primary "Follow in Dust" button. No popover spinner;
+  // the toolbar button already spins to signal work in progress.
   function renderGenerating() {
     appendTitle("Generating POC\u2026");
 
     const body = document.createElement("div");
-    body.className = "cb-dust-poc-progress";
+    body.className = "cb-dust-poc-sub";
     body.innerHTML =
-      '<span class="cb-dust-poc-progress-spinner" aria-hidden="true"></span>' +
-      "<span>Pulling Gong calls, emails, and context to draft the scoping " +
-      "doc. This usually takes <strong>5\u201310 minutes</strong> \u2014 " +
-      "leave this open or check back later.</span>";
+      "Pulling Gong calls, emails, and context to draft the scoping doc. " +
+      "This usually takes <strong>5\u201310 minutes</strong> \u2014 leave this " +
+      "open or check back later.";
     popoverEl.appendChild(body);
 
-    if (pocState.customerName) {
+    const linkedOpp = getLinkedOpp();
+    if (linkedOpp && linkedOpp.name) {
+      const who = document.createElement("div");
+      who.className = "cb-dust-poc-sub";
+      who.innerHTML =
+        "Opportunity: " +
+        (linkedOpp.url
+          ? `<a class="cb-dust-poc-link" href="${escapeHtml(linkedOpp.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(linkedOpp.name)}</a>`
+          : `<strong>${escapeHtml(linkedOpp.name)}</strong>`);
+      popoverEl.appendChild(who);
+    } else if (pocState.customerName) {
       const who = document.createElement("div");
       who.className = "cb-dust-poc-sub";
       who.innerHTML = `Customer: <strong>${escapeHtml(pocState.customerName)}</strong>`;
       popoverEl.appendChild(who);
     }
 
-    const link = dustLinkHtml("Follow along in Dust");
-    if (link) {
-      const linkRow = document.createElement("div");
-      linkRow.className = "cb-dust-poc-status cb-dust-poc-status-info";
-      linkRow.innerHTML = link;
-      popoverEl.appendChild(linkRow);
+    // Footer: secondary "Generate again" (abort + back to form) so the rep
+    // can bail out, and primary "Follow in Dust". The follow button is shown
+    // immediately — even before the conversation URL is back — in a pending
+    // state; updateFollowButtonLink fills its href silently once the create
+    // response lands, so the button doesn't pop in late. The two buttons are
+    // equal width and fill the row (cb-dust-poc-footer-split).
+    const footer = document.createElement("div");
+    footer.className = "cb-dust-poc-footer cb-dust-poc-footer-split";
+
+    const againBtn = document.createElement("button");
+    againBtn.type = "button";
+    againBtn.className = "cb-dust-poc-btn cb-dust-poc-btn-secondary";
+    againBtn.textContent = "Generate again";
+    againBtn.title = "Stop tracking this run and start over";
+    againBtn.addEventListener("click", abortGeneration);
+    footer.appendChild(againBtn);
+
+    const followBtn = document.createElement("a");
+    followBtn.className = "cb-dust-poc-btn cb-dust-poc-btn-primary";
+    followBtn.target = "_blank";
+    followBtn.rel = "noopener noreferrer";
+    followBtn.textContent = "Follow in Dust";
+    if (pocState.conversationUrl) {
+      followBtn.href = pocState.conversationUrl;
+    } else {
+      // Pending — visible but inert until the conversation exists.
+      followBtn.classList.add("cb-dust-poc-btn-pending");
+    }
+    footer.appendChild(followBtn);
+    generatingFollowBtn = followBtn;
+
+    popoverEl.appendChild(footer);
+  }
+
+  // Silently activates the generating-state "Follow in Dust" button once the
+  // conversation URL is available, without a full re-render.
+  function updateFollowButtonLink() {
+    if (generatingFollowBtn && pocState.conversationUrl) {
+      generatingFollowBtn.href = pocState.conversationUrl;
+      generatingFollowBtn.classList.remove("cb-dust-poc-btn-pending");
     }
   }
 
-  // Done — prominent Google Doc link (falls back to the Dust conversation if
-  // we couldn't pull a doc URL out of the reply).
+  // Done — prominent Google Doc link (falls back to a note if we couldn't
+  // pull a doc URL out of the reply). The Dust conversation moves into the
+  // footer as the primary action.
   function renderDone() {
     appendTitle("POC ready");
 
     if (pocState.docUrl) {
       const docRow = document.createElement("div");
       docRow.className = "cb-dust-poc-doc";
-      docRow.innerHTML =
-        '<svg class="cb-dust-poc-doc-icon" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="15" y2="17"/></svg>' +
-        `<a class="cb-dust-poc-doc-link" href="${escapeHtml(pocState.docUrl)}" target="_blank" rel="noopener noreferrer">Open POC scoping doc</a>`;
+
+      const icon = document.createElement("span");
+      icon.className = "cb-dust-poc-doc-icon";
+      icon.innerHTML =
+        '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="15" y2="17"/></svg>';
+      docRow.appendChild(icon);
+
+      const docLink = document.createElement("a");
+      docLink.className = "cb-dust-poc-doc-link";
+      docLink.href = pocState.docUrl;
+      docLink.target = "_blank";
+      docLink.rel = "noopener noreferrer";
+      docLink.textContent = "Open POC scoping doc";
+      docRow.appendChild(docLink);
+
+      // Refresh control — the rep may have continued the conversation in Dust
+      // and produced a newer doc. Re-fetches the same conversation and pulls
+      // the latest link in place. Only meaningful when we have a conversation
+      // id to poll.
+      if (pocState.conversationId) {
+        const refreshBtn = document.createElement("button");
+        refreshBtn.type = "button";
+        refreshBtn.className = "cb-dust-poc-doc-refresh";
+        refreshBtn.title = "Fetch the latest doc link from Dust";
+        refreshBtn.setAttribute("aria-label", "Refresh doc link");
+        refreshBtn.innerHTML =
+          '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M3 21v-5h5"/></svg>';
+        refreshBtn.addEventListener("click", () => refreshDocLink(refreshBtn));
+        docRow.appendChild(refreshBtn);
+      }
+
       popoverEl.appendChild(docRow);
     } else {
       const note = document.createElement("div");
       note.className = "cb-dust-poc-sub";
-      note.innerHTML =
+      note.textContent =
         "The agent finished but didn\u2019t return a Google Doc link. " +
-        (dustLinkHtml("Open the conversation in Dust") || "Open it in Dust to review.");
+        "Open it in Dust to review.";
       popoverEl.appendChild(note);
     }
 
-    if (pocState.docUrl) {
-      const dustRow = document.createElement("div");
-      dustRow.className = "cb-dust-poc-status cb-dust-poc-status-info";
-      dustRow.innerHTML = dustLinkHtml("View the Dust conversation");
-      if (dustRow.innerHTML) popoverEl.appendChild(dustRow);
-    }
-
-    appendRegenerateFooter();
+    appendDoneFooter();
   }
 
-  // Error — message + a retry button + the Dust link for manual inspection.
+  // Done-state footer: primary "View in Dust" (opens the conversation) +
+  // secondary "Generate again". When there's no conversation URL to open,
+  // Generate again is promoted to the primary slot.
+  function appendDoneFooter() {
+    const footer = document.createElement("div");
+    footer.className = "cb-dust-poc-footer cb-dust-poc-footer-split";
+
+    const hasConversation = !!pocState.conversationUrl;
+
+    const againBtn = document.createElement("button");
+    againBtn.type = "button";
+    againBtn.className =
+      "cb-dust-poc-btn " +
+      (hasConversation ? "cb-dust-poc-btn-secondary" : "cb-dust-poc-btn-primary");
+    againBtn.textContent = "Generate again";
+    againBtn.addEventListener("click", resetToForm);
+    footer.appendChild(againBtn);
+
+    if (hasConversation) {
+      // Anchor styled as a button so it can navigate to Dust directly. The
+      // short "View in Dust" label keeps both footer buttons within the
+      // 300px popover width.
+      const viewBtn = document.createElement("a");
+      viewBtn.className = "cb-dust-poc-btn cb-dust-poc-btn-primary";
+      viewBtn.href = pocState.conversationUrl;
+      viewBtn.target = "_blank";
+      viewBtn.rel = "noopener noreferrer";
+      viewBtn.textContent = "View in Dust";
+      footer.appendChild(viewBtn);
+    }
+
+    popoverEl.appendChild(footer);
+  }
+
+  // Error — message + the Dust link + two actions: re-check the existing
+  // conversation (the agent may have recovered, or the rep continued it in
+  // Dust and the doc link is now present) or start a fresh run.
   function renderError() {
     appendTitle("POC generation failed");
 
@@ -311,6 +447,18 @@
     msg.className = "cb-dust-poc-status cb-dust-poc-status-error";
     msg.textContent = pocState.error || "Something went wrong while generating the POC.";
     popoverEl.appendChild(msg);
+
+    // When we still have the conversation, nudge the rep toward re-checking
+    // it rather than regenerating from scratch — the agent often finishes
+    // (or can be continued manually in Dust) after a transient error.
+    if (pocState.conversationId) {
+      const hint = document.createElement("div");
+      hint.className = "cb-dust-poc-sub";
+      hint.textContent =
+        "If the agent has since finished — or you continued the conversation " +
+        "in Dust — re-check it to pull the doc link.";
+      popoverEl.appendChild(hint);
+    }
 
     const link = dustLinkHtml("Open the conversation in Dust");
     if (link) {
@@ -320,34 +468,59 @@
       popoverEl.appendChild(linkRow);
     }
 
-    appendRegenerateFooter();
+    appendErrorFooter();
   }
 
-  // Shared footer for the done/error states: a button that drops back to the
-  // input form so the rep can regenerate (e.g. after fixing the customer
-  // name or if the first run failed).
-  function appendRegenerateFooter() {
+  // Resets POC state back to the initial form, keeping the customer name as a
+  // convenience, and drops the toolbar button back to its default look.
+  function resetToForm() {
+    pocState = {
+      status: null,
+      conversationId: null,
+      conversationUrl: null,
+      docUrl: null,
+      customerName: pocState.customerName || "",
+      error: null,
+    };
+    setButtonState("idle");
+    renderPopover();
+  }
+
+  // Escape hatch from the generating state. Stops the poller and detaches
+  // from the in-flight conversation (clears the persisted status so a reload
+  // won't resume it — the Dust job keeps running server-side, we just stop
+  // tracking it), then returns to the form. The post-await guard in pollOnce
+  // means any in-flight fetch resolves into a no-op once status is cleared.
+  function abortGeneration() {
+    stopPolling();
+    persistPocState({ dust_poc_status: null });
+    resetToForm();
+  }
+
+  // Error-state footer: primary "Check Dust again" (re-fetch the existing
+  // conversation) + secondary "Generate again". The re-check is only offered
+  // when we actually have a conversation id to poll; a creation failure that
+  // never produced a conversation falls back to regenerate-only.
+  function appendErrorFooter() {
     const footer = document.createElement("div");
-    footer.className = "cb-dust-poc-footer";
+    footer.className = "cb-dust-poc-footer cb-dust-poc-footer-split";
 
     const againBtn = document.createElement("button");
     againBtn.type = "button";
-    againBtn.className = "cb-dust-poc-btn cb-dust-poc-btn-primary";
+    againBtn.className = "cb-dust-poc-btn cb-dust-poc-btn-secondary";
     againBtn.textContent = "Generate again";
-    againBtn.addEventListener("click", () => {
-      // Reset to the form but keep the customer name as a convenience.
-      pocState = {
-        status: null,
-        conversationId: null,
-        conversationUrl: null,
-        docUrl: null,
-        customerName: pocState.customerName || "",
-        error: null,
-      };
-      renderPopover();
-    });
-
+    againBtn.addEventListener("click", resetToForm);
     footer.appendChild(againBtn);
+
+    if (pocState.conversationId) {
+      const recheckBtn = document.createElement("button");
+      recheckBtn.type = "button";
+      recheckBtn.className = "cb-dust-poc-btn cb-dust-poc-btn-primary";
+      recheckBtn.textContent = "Check Dust again";
+      recheckBtn.addEventListener("click", recheckConversation);
+      footer.appendChild(recheckBtn);
+    }
+
     popoverEl.appendChild(footer);
   }
 
@@ -517,7 +690,7 @@
       customerName: name,
       error: null,
     };
-    setButtonLoading(true);
+    setButtonState("loading");
     if (popoverEl) renderPopover();
 
     let response;
@@ -570,7 +743,9 @@
 
     pocState.conversationId = sId;
     pocState.conversationUrl = url;
-    if (popoverEl) renderPopover();
+    // Silently activate the already-visible "Follow in Dust" button rather
+    // than re-rendering the generating view (avoids a flicker).
+    updateFollowButtonLink();
 
     await persistPocState({
       dust_conversation_id: sId,
@@ -673,7 +848,7 @@
     pocState.status = "done";
     pocState.docUrl = docUrl || null;
     pocState.error = null;
-    setButtonLoading(false);
+    setButtonState("done");
     if (popoverEl) renderPopover();
     persistPocState({
       dust_poc_status: "done",
@@ -688,14 +863,91 @@
     stopPolling();
     pocState.status = "error";
     pocState.error = message;
-    setButtonLoading(false);
+    setButtonState("idle");
     if (popoverEl) renderPopover();
     persistPocState({ dust_poc_status: "error" });
   }
 
-  // Toolbar spinner toggle — overlay.js owns the button and exposes this.
-  function setButtonLoading(on) {
-    if (__cb.setDustPocButtonLoading) __cb.setDustPocButtonLoading(on);
+  // In-place refresh from the done state. The rep may have continued the
+  // conversation in Dust and produced a newer doc; this re-fetches the same
+  // conversation and updates the link without leaving the done view. Spins
+  // only the refresh icon. If the latest turn is still running, it escalates
+  // to the full generating/polling flow so the new result gets picked up.
+  async function refreshDocLink(refreshBtn) {
+    if (!pocState.conversationId) return;
+    refreshBtn.classList.add("cb-dust-poc-doc-refresh-spinning");
+    refreshBtn.disabled = true;
+
+    const conversationId = pocState.conversationId;
+    let response;
+    try {
+      response = await sendViaBackground("cb:dust:getConversation", { conversationId });
+    } catch (err) {
+      console.warn("[Clay Scoping] doc-link refresh failed:", err);
+      refreshBtn.classList.remove("cb-dust-poc-doc-refresh-spinning");
+      refreshBtn.disabled = false;
+      return;
+    }
+
+    // State may have changed while awaiting (popover closed, regenerate, a
+    // different conversation took over) — bail without clobbering it.
+    if (pocState.status !== "done" || pocState.conversationId !== conversationId) {
+      return;
+    }
+
+    if (!response.ok) {
+      console.warn("[Clay Scoping] doc-link refresh non-OK:", response.status);
+      refreshBtn.classList.remove("cb-dust-poc-doc-refresh-spinning");
+      refreshBtn.disabled = false;
+      return;
+    }
+
+    const agent = latestAgentMessage(collectMessages(response.data?.conversation));
+
+    // A new turn is still generating — hand off to the polling view so its
+    // result lands when ready.
+    if (agent && agent.status !== "succeeded" && agent.status !== "failed" && agent.status !== "cancelled") {
+      recheckConversation();
+      return;
+    }
+
+    if (agent && agent.status === "succeeded") {
+      const docUrl = extractDocUrl(agent.content);
+      if (docUrl) {
+        pocState.docUrl = docUrl;
+        persistPocState({ dust_poc_status: "done", dust_poc_doc_url: docUrl });
+      }
+    }
+
+    // Re-render the done view: the icon stops spinning and the link reflects
+    // the latest fetch (unchanged if no newer link was found).
+    renderPopover();
+  }
+
+  // Manual re-check from the error state. The Dust agent often recovers after
+  // a transient error, or the rep continues the conversation by hand and a
+  // doc link lands afterward — neither shows up because we'd already stopped
+  // polling. This flips back into the generating/polling flow and does an
+  // immediate poll (rather than waiting a full interval) so the result lands
+  // right away; if the agent is still working, normal polling resumes.
+  function recheckConversation() {
+    if (!pocState.conversationId) return;
+    pocState.status = "generating";
+    pocState.error = null;
+    setButtonState("loading");
+    if (popoverEl) renderPopover();
+    persistPocState({ dust_poc_status: "generating" });
+    stopPolling();
+    pollDeadline = Date.now() + POLL_MAX_MS;
+    pollOnce();
+  }
+
+  // Toolbar button state — overlay.js owns the button and exposes this.
+  // States: "idle" | "loading" | "done". Drives the icon (sparkles /
+  // spinner / check) and, in the done state, the linked-opportunity color
+  // treatment.
+  function setButtonState(state) {
+    if (__cb.setDustPocButtonState) __cb.setDustPocButtonState(state);
   }
 
   // ---- Hydration ------------------------------------------------------------
@@ -732,7 +984,7 @@
         // Resume polling from where the previous session left off. Anchor the
         // deadline to the original start time so a long-dead job times out
         // promptly rather than getting a fresh 20-minute lease.
-        setButtonLoading(true);
+        setButtonState("loading");
         const startedMs = row.dust_poc_started_at
           ? Date.parse(row.dust_poc_started_at)
           : Date.now();
@@ -746,6 +998,11 @@
           pollDeadline = (Number.isFinite(startedMs) ? startedMs : Date.now()) + POLL_MAX_MS;
           pollTimer = setTimeout(pollOnce, POLL_INTERVAL_MS);
         }
+      } else if (row.dust_poc_status === "done") {
+        // A finished POC: show the check + linked-opp color treatment so the
+        // rep can tell at a glance the doc is ready, and clicking opens the
+        // popover straight to the saved Google Doc link.
+        setButtonState("done");
       }
     } catch (err) {
       console.warn("[Clay Scoping] failed to hydrate POC state:", err);

@@ -236,27 +236,33 @@
       dustBtn.className = "cb-toolbar-btn cb-toolbar-dust-poc";
       dustBtn.type = "button";
       dustBtn.title = "Generate a POC scope in Dust for a customer";
-      // Label wrapped in <span> (rather than a leading-space text node)
-      // so the button's `gap` rule has two real flex children to space
-      // out — matches the Export / Cards-Tables button construction.
+      // Two icons live in the button: the sparkles glyph (default) and a
+      // check (shown in the "done" state). CSS shows exactly one based on
+      // the state class; the loading state hides both and draws a spinner
+      // via ::before. Label is wrapped in <span> so the button's `gap` rule
+      // has real flex children to space out (matches Export / Import).
       dustBtn.innerHTML =
-        '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 4.6L18.5 9l-4.6 1.9L12 15l-1.9-4.1L5.5 9l4.6-1.4L12 3z"/><path d="M19 15l.8 1.9L21.5 17.5l-1.7.6L19 20l-.8-1.9L16.5 17.5l1.7-.6L19 15z"/><path d="M5 14l.6 1.4L7 16l-1.4.6L5 18l-.6-1.4L3 16l1.4-.6L5 14z"/></svg>' +
+        '<svg class="cb-toolbar-dust-poc-spark" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 4.6L18.5 9l-4.6 1.9L12 15l-1.9-4.1L5.5 9l4.6-1.4L12 3z"/><path d="M19 15l.8 1.9L21.5 17.5l-1.7.6L19 20l-.8-1.9L16.5 17.5l1.7-.6L19 15z"/><path d="M5 14l.6 1.4L7 16l-1.4.6L5 18l-.6-1.4L3 16l1.4-.6L5 14z"/></svg>' +
+        '<svg class="cb-toolbar-dust-poc-check" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>' +
         "<span>Generate POC</span>";
       dustBtn.addEventListener("click", (evt) => {
         evt.stopPropagation();
         if (__cb.startDustPoc) __cb.startDustPoc(dustBtn);
       });
 
-      // Lets src/dust-poc.js swap the sparkles icon for a spinner while a POC
-      // is generating (incl. when auto-fired from an SFDC opportunity link).
-      // CSS keys off the `cb-toolbar-dust-poc-loading` class; we also disable
-      // the button so a second click can't stack a duplicate request — the
-      // popover (opened by clicking) still renders the live status because
-      // setDustPocButtonLoading only toggles the spinner, not the click
-      // handler. We keep it clickable by NOT setting `disabled` so the rep
-      // can open the popover to watch progress.
-      __cb.setDustPocButtonLoading = function (on) {
-        dustBtn.classList.toggle("cb-toolbar-dust-poc-loading", !!on);
+      // Lets src/dust-poc.js drive the button's visual state as a POC moves
+      // through its lifecycle (incl. when auto-fired from an SFDC opportunity
+      // link). CSS keys off the state classes:
+      //   "loading" → spinner replaces the icon (cb-toolbar-dust-poc-loading)
+      //   "done"    → check icon + linked-opportunity color treatment
+      //               (cb-toolbar-dust-poc-done)
+      //   "idle"    → default sparkles, neutral toolbar styling
+      // The button stays clickable in every state (we never set `disabled`)
+      // so the rep can always open the popover to watch progress or grab the
+      // finished doc link.
+      __cb.setDustPocButtonState = function (state) {
+        dustBtn.classList.toggle("cb-toolbar-dust-poc-loading", state === "loading");
+        dustBtn.classList.toggle("cb-toolbar-dust-poc-done", state === "done");
       };
     }
 
@@ -1411,7 +1417,7 @@
     __cb.closeFrequencyPicker();
     closeMoreMenu();
     // Stop any POC poller and clear its state so the next canvas doesn't
-    // inherit this one's spinner / in-flight conversation. setDustPocButtonLoading
+    // inherit this one's spinner / in-flight conversation. setDustPocButtonState
     // is recreated per-open (it closes over the button), so we don't null it
     // here — resetPocState just clears the timer + in-memory state.
     if (__cb.resetPocState) __cb.resetPocState();
