@@ -206,6 +206,24 @@
       name: opp.name || "",
       url: opp.url || "",
     });
+
+    // Auto-fire POC generation on link. The Dust POC agent drafts a scoping
+    // doc from the customer's Gong calls/emails (a 5-10 min job) — kicking it
+    // off the moment the opportunity is linked saves the rep a step. Runs in
+    // the background with a spinner on the Generate POC toolbar button; it
+    // does NOT pop a dialog so it won't interrupt the linking flow.
+    // __cb.startDustPocForOpportunity is only published when the `dust`
+    // feature flag is on (see src/dust-poc.js publishApi), so the optional
+    // call no-ops for users without it. startPocGeneration internally guards
+    // against launching a duplicate when one is already generating, so
+    // re-linking the same opp won't stack jobs.
+    if (__cb.startDustPocForOpportunity && opp.name) {
+      try {
+        __cb.startDustPocForOpportunity(opp.name);
+      } catch (err) {
+        console.warn("[Clay Scoping] auto POC generation failed to start:", err);
+      }
+    }
   }
 
   /** Clears the linked opportunity from the canvases row. */
@@ -598,9 +616,14 @@
         btn.type = "button";
         btn.className = "cb-toolbar-btn cb-toolbar-sfdc-link";
         btn.title = "Link this canvas to a Salesforce opportunity";
+        // Label wrapped in <span> (rather than a leading-space text
+        // node) so the .cb-toolbar-sfdc-link `gap` rule has two real
+        // flex children to space out — matches the Export / Cards
+        // button construction. Without this, the cloud glyph renders
+        // tight against the text the same way Import used to.
         btn.innerHTML =
           '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.5 19a4.5 4.5 0 1 0-1.4-8.8 6 6 0 0 0-11.6 1.6A4 4 0 0 0 6 19h11.5z"/></svg>' +
-          " Link opportunity";
+          "<span>Link opportunity</span>";
         btn.addEventListener("click", (evt) => {
           evt.stopPropagation();
           showPicker(btn, async (opp) => {

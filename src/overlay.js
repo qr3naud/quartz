@@ -5,6 +5,153 @@
 
   __cb.updateGroupButtonVisibility = function () {};
 
+  // Pie-slice icon — visually communicates "fraction of the whole filled".
+  // Hoisted to module scope so the overflow menu (__cb.openMoreMenu) can
+  // reuse the same glyph that used to ride on the standalone Pro Mode
+  // toolbar button.
+  const PRO_ICON_SVG =
+    '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 256 256" fill="currentColor">' +
+    '<path d="M128 24a104 104 0 1 0 104 104A104 104 0 0 0 128 24Zm0 16a88 88 0 0 1 86.5 72H128Z"/>' +
+    '</svg>';
+
+  // Balance-scale icon — "weighing two sides", matches the Old vs New
+  // Pricing comparison modal's intent. Same shape that used to live on
+  // the standalone pricing toolbar button.
+  const PRICING_ICON_SVG =
+    '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="none" stroke="currentColor" ' +
+    'stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24">' +
+    '<path d="M12 3v18"/><path d="M5 8h14"/>' +
+    '<path d="M5 8l-3 7a4 4 0 0 0 6 0L5 8z"/>' +
+    '<path d="M19 8l-3 7a4 4 0 0 0 6 0L19 8z"/></svg>';
+
+  // Kebab/overflow icon for the topbar "more" button. Three vertical dots
+  // is the conventional affordance for "secondary options live here".
+  const MORE_ICON_SVG =
+    '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" ' +
+    'fill="currentColor" aria-hidden="true">' +
+    '<circle cx="12" cy="5"  r="1.6"/>' +
+    '<circle cx="12" cy="12" r="1.6"/>' +
+    '<circle cx="12" cy="19" r="1.6"/></svg>';
+
+  // Arrow-right-left swap glyph for the Canvas / Tables view row. Reads
+  // as "swap between views" in both directions so the same icon works
+  // regardless of which view is currently active.
+  const SWAP_VIEW_ICON_SVG =
+    '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" ' +
+    'fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" ' +
+    'stroke-linejoin="round" aria-hidden="true">' +
+    '<path d="m16 3 4 4-4 4"/>' +
+    '<path d="M20 7H4"/>' +
+    '<path d="m8 21-4-4 4-4"/>' +
+    '<path d="M4 17h16"/>' +
+    '</svg>';
+
+  let moreMenuEl = null;
+  let moreMenuBackdrop = null;
+
+  function closeMoreMenu() {
+    if (moreMenuEl) { moreMenuEl.remove(); moreMenuEl = null; }
+    if (moreMenuBackdrop) { moreMenuBackdrop.remove(); moreMenuBackdrop = null; }
+  }
+
+  __cb.closeMoreMenu = closeMoreMenu;
+
+  // Overflow menu that collapses Pro Mode + Old vs New Pricing under a
+  // single kebab button. Mirrors the backdrop + right-aligned anchor
+  // pattern openExportMenu in src/export.js uses, so the two topbar
+  // dropdowns feel identical to operate.
+  __cb.openMoreMenu = function openMoreMenu(anchorEl) {
+    closeMoreMenu();
+
+    moreMenuBackdrop = document.createElement("div");
+    moreMenuBackdrop.style.cssText = "position:fixed;inset:0;z-index:9999998;";
+    moreMenuBackdrop.addEventListener("mousedown", (evt) => {
+      evt.stopPropagation();
+      closeMoreMenu();
+    });
+
+    moreMenuEl = document.createElement("div");
+    moreMenuEl.className = "cb-export-menu cb-more-menu";
+    moreMenuEl.addEventListener("mousedown", (evt) => evt.stopPropagation());
+
+    // View (Canvas / Tables) — leads the menu since "what am I looking at"
+    // is the most fundamental choice. State pill shows the current view
+    // name; clicking flips to the other and closes the menu, mirroring
+    // the Pro Mode row's UX one level down.
+    const inTable = __cb.brainstormView === "table";
+    const currentViewLabel = inTable ? "Tables" : "Canvas";
+    const otherViewLabel = inTable ? "Canvas" : "Tables";
+    const viewItem = document.createElement("button");
+    viewItem.type = "button";
+    viewItem.className = "cb-export-menu-option cb-more-menu-option";
+    viewItem.title = `Switch to the ${otherViewLabel.toLowerCase()} view`;
+    viewItem.innerHTML =
+      `<span class="cb-more-menu-icon">${SWAP_VIEW_ICON_SVG}</span>` +
+      `<span class="cb-more-menu-label">View</span>` +
+      `<span class="cb-more-menu-state">${currentViewLabel}</span>`;
+    viewItem.addEventListener("click", (evt) => {
+      evt.stopPropagation();
+      closeMoreMenu();
+      if (__cb.setBrainstormView) {
+        __cb.setBrainstormView(inTable ? "canvas" : "table");
+      }
+    });
+    moreMenuEl.appendChild(viewItem);
+
+    // Pro Mode — always available. Renders as a toggle row: clicking
+    // closes the menu and flips __cb.setProMode, which already handles
+    // the cluster reflow + visual updates downstream.
+    const proActive = !!__cb.proMode;
+    const proItem = document.createElement("button");
+    proItem.type = "button";
+    proItem.className =
+      "cb-export-menu-option cb-more-menu-option" +
+      (proActive ? " cb-more-menu-option-active" : "");
+    proItem.title = "Show fill rates on data point cards";
+    proItem.innerHTML =
+      `<span class="cb-more-menu-icon">${PRO_ICON_SVG}</span>` +
+      `<span class="cb-more-menu-label">Pro Mode</span>` +
+      `<span class="cb-more-menu-state">${proActive ? "On" : "Off"}</span>`;
+    proItem.addEventListener("click", (evt) => {
+      evt.stopPropagation();
+      closeMoreMenu();
+      if (__cb.setProMode) __cb.setProMode(!__cb.proMode);
+    });
+    moreMenuEl.appendChild(proItem);
+
+    // Old vs New Pricing — gated by the pricing_comparison feature flag,
+    // same gate the standalone toolbar button used to carry. When the
+    // flag is off the menu shrinks to a single Pro Mode row (still
+    // useful — non-internal users get Pro Mode too).
+    if (__cb.hasFeature?.("pricing_comparison") && __cb.startPricingComparison) {
+      const pricingItem = document.createElement("button");
+      pricingItem.type = "button";
+      pricingItem.className = "cb-export-menu-option cb-more-menu-option";
+      pricingItem.title = "Compare per-row credit cost on the legacy vs modern Clay pricing plans";
+      pricingItem.innerHTML =
+        `<span class="cb-more-menu-icon">${PRICING_ICON_SVG}</span>` +
+        `<span class="cb-more-menu-label">Old vs New Pricing</span>`;
+      pricingItem.addEventListener("click", (evt) => {
+        evt.stopPropagation();
+        closeMoreMenu();
+        __cb.startPricingComparison(anchorEl);
+      });
+      moreMenuEl.appendChild(pricingItem);
+    }
+
+    document.body.appendChild(moreMenuBackdrop);
+    document.body.appendChild(moreMenuEl);
+
+    // Same anchor math openExportMenu uses — fix the menu's right edge
+    // to the trigger's right edge so dropdowns near the toolbar's right
+    // side don't push off-screen.
+    const rect = anchorEl.getBoundingClientRect();
+    moreMenuEl.style.position = "fixed";
+    moreMenuEl.style.top = (rect.bottom + 6) + "px";
+    moreMenuEl.style.right = Math.max(8, window.innerWidth - rect.right) + "px";
+    moreMenuEl.style.zIndex = "9999999";
+  };
+
   __cb.openCanvas = async function (initialCards) {
     if (__cb.overlayEl) return;
 
@@ -75,28 +222,13 @@
     closeBtn.textContent = "Close";
     closeBtn.addEventListener("click", __cb.closeCanvas);
 
-    // Old vs New Pricing + Generate POC are constructed below inside their
-    // respective feature-flag blocks so non-internal users don't allocate
-    // unused DOM nodes. They're declared here as null and reassigned only
-    // when their feature is enabled — see the append section further down.
-    let pricingBtn = null;
+    // Generate POC is constructed below inside its feature-flag block so
+    // non-internal users don't allocate an unused DOM node. Declared
+    // here as null and reassigned only when the feature is enabled.
+    // Pro Mode + Old vs New Pricing used to live in this stretch as
+    // standalone buttons; both now live inside the overflow menu the
+    // kebab "more" button surfaces — see __cb.openMoreMenu above.
     let dustBtn = null;
-    if (__cb.hasFeature?.("pricing_comparison")) {
-      // Old vs New Pricing — sits to the left of Import from Table. Reuses
-      // the same shared __cb.tablePicker dropdown the Import button drives,
-      // then opens a side-by-side legacy vs modern catalog cost comparison
-      // modal (see src/pricing-comparison.js). Scale icon = "weighing two
-      // sides", which matches the modal's intent.
-      pricingBtn = document.createElement("button");
-      pricingBtn.className = "cb-toolbar-btn cb-toolbar-pricing";
-      pricingBtn.type = "button";
-      pricingBtn.title = "Compare per-row credit cost on the legacy vs modern Clay pricing plans";
-      pricingBtn.innerHTML =
-        '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M12 3v18"/><path d="M5 8h14"/><path d="M5 8l-3 7a4 4 0 0 0 6 0L5 8z"/><path d="M19 8l-3 7a4 4 0 0 0 6 0L19 8z"/></svg>' +
-        " Old vs New Pricing";
-      pricingBtn.addEventListener("click", () => __cb.startPricingComparison(pricingBtn));
-    }
-
     if (__cb.hasFeature?.("dust")) {
       // Generate POC — opens a small popover with a customer-name input and
       // POSTs to Dust to create a new conversation mentioning the POC agent.
@@ -104,13 +236,28 @@
       dustBtn.className = "cb-toolbar-btn cb-toolbar-dust-poc";
       dustBtn.type = "button";
       dustBtn.title = "Generate a POC scope in Dust for a customer";
+      // Label wrapped in <span> (rather than a leading-space text node)
+      // so the button's `gap` rule has two real flex children to space
+      // out — matches the Export / Cards-Tables button construction.
       dustBtn.innerHTML =
         '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 4.6L18.5 9l-4.6 1.9L12 15l-1.9-4.1L5.5 9l4.6-1.4L12 3z"/><path d="M19 15l.8 1.9L21.5 17.5l-1.7.6L19 20l-.8-1.9L16.5 17.5l1.7-.6L19 15z"/><path d="M5 14l.6 1.4L7 16l-1.4.6L5 18l-.6-1.4L3 16l1.4-.6L5 14z"/></svg>' +
-        " Generate POC";
+        "<span>Generate POC</span>";
       dustBtn.addEventListener("click", (evt) => {
         evt.stopPropagation();
         if (__cb.startDustPoc) __cb.startDustPoc(dustBtn);
       });
+
+      // Lets src/dust-poc.js swap the sparkles icon for a spinner while a POC
+      // is generating (incl. when auto-fired from an SFDC opportunity link).
+      // CSS keys off the `cb-toolbar-dust-poc-loading` class; we also disable
+      // the button so a second click can't stack a duplicate request — the
+      // popover (opened by clicking) still renders the live status because
+      // setDustPocButtonLoading only toggles the spinner, not the click
+      // handler. We keep it clickable by NOT setting `disabled` so the rep
+      // can open the popover to watch progress.
+      __cb.setDustPocButtonLoading = function (on) {
+        dustBtn.classList.toggle("cb-toolbar-dust-poc-loading", !!on);
+      };
     }
 
     const importBtn = document.createElement("button");
@@ -120,64 +267,26 @@
       " Import from Table";
     importBtn.addEventListener("click", () => __cb.startImport(importBtn));
 
-    // Pie-slice icon — visually communicates "fraction of the whole filled".
-    const PRO_ICON_SVG =
-      '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 256 256" fill="currentColor">' +
-      '<path d="M128 24a104 104 0 1 0 104 104A104 104 0 0 0 128 24Zm0 16a88 88 0 0 1 86.5 72H128Z"/>' +
-      '</svg>';
-
-    const proBtn = document.createElement("button");
-    proBtn.className = "cb-toolbar-btn cb-toolbar-btn-pro";
-    proBtn.type = "button";
-    proBtn.title = "Show fill rates on data point cards";
-    proBtn.innerHTML = PRO_ICON_SVG + " Pro Mode";
-    proBtn.addEventListener("click", () => __cb.setProMode(!__cb.proMode));
-
-    // Cards / Tables view toggle. Label flips dynamically: when the canvas
-    // is showing it reads "Tables" (the action), and vice versa. Clicking
-    // calls __cb.setBrainstormView, which mounts/unmounts the spreadsheet
-    // and persists the choice per-tab via debouncedSave. Single
-    // arrow-right-left icon reads as "swap views" in both directions, so
-    // we don't have to swap glyphs along with the label.
-    const SWAP_VIEW_ICON_SVG =
-      '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" ' +
-      'fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" ' +
-      'stroke-linejoin="round" aria-hidden="true">' +
-      '<path d="m16 3 4 4-4 4"/>' +
-      '<path d="M20 7H4"/>' +
-      '<path d="m8 21-4-4 4-4"/>' +
-      '<path d="M4 17h16"/>' +
-      '</svg>';
-
-    const viewToggleBtn = document.createElement("button");
-    viewToggleBtn.className = "cb-toolbar-btn cb-toolbar-view-toggle";
-    viewToggleBtn.type = "button";
-    viewToggleBtn.addEventListener("click", () => {
-      const next = __cb.brainstormView === "table" ? "canvas" : "table";
-      __cb.setBrainstormView(next);
+    // Overflow ("more") trigger — sits to the right of Export. Surfaces
+    // the secondary toggles (Pro Mode + Old vs New Pricing) that used to
+    // each occupy a topbar slot of their own. See __cb.openMoreMenu at
+    // the top of this file for the menu contents and the feature gates.
+    const moreBtn = document.createElement("button");
+    moreBtn.className = "cb-toolbar-btn cb-toolbar-more";
+    moreBtn.type = "button";
+    moreBtn.title = "More options";
+    moreBtn.setAttribute("aria-label", "More options");
+    moreBtn.innerHTML = MORE_ICON_SVG;
+    moreBtn.addEventListener("click", (evt) => {
+      evt.stopPropagation();
+      if (__cb.openMoreMenu) __cb.openMoreMenu(moreBtn);
     });
 
-    function renderViewToggle() {
-      const inTable = __cb.brainstormView === "table";
-      // Both labels are rendered inside the button as a grid-stack; CSS
-      // hides whichever isn't active. The button therefore always reserves
-      // width for the longer label ("Tables"), so toggling never shifts
-      // the button's neighbours. data-state is read by the CSS to decide
-      // which copy to hide.
-      const state = inTable ? "cards" : "tables";
-      viewToggleBtn.setAttribute("data-state", state);
-      viewToggleBtn.innerHTML =
-        SWAP_VIEW_ICON_SVG +
-        '<span class="cb-toolbar-view-toggle-label">' +
-          '<span data-label="tables">Tables</span>' +
-          '<span data-label="cards">Cards</span>' +
-        "</span>";
-      viewToggleBtn.title = inTable
-        ? "Switch back to the canvas view"
-        : "Switch to a spreadsheet view of your data points and enrichments";
-      viewToggleBtn.classList.toggle("cb-toolbar-btn-view-toggle-active", inTable);
-    }
-
+    // Canvas / Tables view switching lives inside the overflow ("more")
+    // menu — see the View row in __cb.openMoreMenu above. The toolbar
+    // doesn't carry a dedicated toggle button anymore; users open the
+    // menu, pick the view they want, and the menu re-reads
+    // __cb.brainstormView on each open so the state pill stays current.
     __cb.setBrainstormView = function (value) {
       const next = value === "table" ? "table" : "canvas";
       const prev = __cb.brainstormView;
@@ -217,7 +326,6 @@
           }
         }
       }
-      renderViewToggle();
       if (prev !== next && __cb.debouncedSave) __cb.debouncedSave();
     };
 
@@ -252,7 +360,12 @@
         if (next) __cb.overlayEl.setAttribute("data-cb-pro-mode", "");
         else __cb.overlayEl.removeAttribute("data-cb-pro-mode");
       }
-      proBtn.classList.toggle("cb-toolbar-btn-pro-active", next);
+      // Visual feedback for "Pro is on" now comes from (a) the
+      // Projected / Actual segmented control becoming visible (CSS
+      // gated on [data-cb-pro-mode]) and (b) the menu item itself
+      // rendering with cb-more-menu-option-active the next time the
+      // overflow menu is opened. The standalone Pro Mode toolbar
+      // button that used to carry this state was retired in v3.30.
       // Source of truth for "did the user pick Pro recently?" lives in
       // localStorage (per-workbook, 1h TTL). Every toggle resets the
       // window when enabling and clears the key when disabling.
@@ -321,15 +434,14 @@
     };
 
     rightGroup.appendChild(viewModeWrap);
-    rightGroup.appendChild(proBtn);
-    if (pricingBtn) rightGroup.appendChild(pricingBtn);
-    if (dustBtn) rightGroup.appendChild(dustBtn);
-    // Salesforce opportunity link — sits between Generate POC and Import.
-    // The element internally swaps between a "Link opportunity" button and
-    // a linked-opp pill ("Acme Inc — Q3 Expansion") based on the canvases
-    // row's sfdc_opportunity_* columns. See src/sfdc.js for the picker.
-    // The src/sfdc.js IIFE only assigns to __cb.sfdc when the `sfdc`
-    // feature flag is on, so this `?.` check is the runtime gate.
+    // Salesforce opportunity link — leads the action-button cluster
+    // (Link opp → Generate POC → Import → Export). The element
+    // internally swaps between a "Link opportunity" button and a
+    // linked-opp pill ("Acme Inc — Q3 Expansion") based on the
+    // canvases row's sfdc_opportunity_* columns. See src/sfdc.js for
+    // the picker. The src/sfdc.js IIFE only assigns to __cb.sfdc when
+    // the `sfdc` feature flag is on, so this `?.` check is the runtime
+    // gate.
     if (__cb.sfdc?.buildToolbarElement) {
       const sfdcEl = __cb.sfdc.buildToolbarElement();
       rightGroup.appendChild(sfdcEl);
@@ -342,12 +454,23 @@
         });
       }
     }
+    if (dustBtn) rightGroup.appendChild(dustBtn);
     rightGroup.appendChild(importBtn);
-    rightGroup.appendChild(viewToggleBtn);
     rightGroup.appendChild(exportBtn);
+    rightGroup.appendChild(moreBtn);
     rightGroup.appendChild(closeBtn);
     topBar.appendChild(leftGroup);
     topBar.appendChild(rightGroup);
+
+    // Resume any in-flight (or finished) POC generation for this canvas.
+    // Fire-and-forget — hydratePocState flips the dust button into its
+    // spinner and restarts the poller if a previous session left a POC
+    // mid-flight; if one finished, the saved doc link is cached so opening
+    // the popover shows it immediately. Only published when the `dust`
+    // feature is on, hence the optional call.
+    if (__cb.currentWorkbookId && __cb.hydratePocState) {
+      __cb.hydratePocState(__cb.currentWorkbookId);
+    }
 
     // ---- Summary bar ----
 
@@ -922,7 +1045,7 @@
     helpContent.className = "cb-help-content";
 
     const brandedButtonName =
-      __cb.hasFeature && __cb.hasFeature("internal_branding") ? "GTME View" : "Scoping";
+      __cb.hasFeature && __cb.hasFeature("internal_branding") ? "Quartz" : "Scoping";
     const instructionsHtml =
       '<div class="cb-help-section">' +
         '<div class="cb-help-section-title">Getting started</div>' +
@@ -1185,7 +1308,6 @@
     if (savedProMode) __cb.overlayEl.setAttribute("data-cb-pro-mode", "");
     else __cb.overlayEl.removeAttribute("data-cb-pro-mode");
     __cb.proMode = savedProMode;
-    proBtn.classList.toggle("cb-toolbar-btn-pro-active", savedProMode);
 
     if (savedProMode !== targetProMode) {
       const oldH = savedProMode ? 96 : 70;
@@ -1197,7 +1319,6 @@
       __cb.proMode = targetProMode;
       if (targetProMode) __cb.overlayEl.setAttribute("data-cb-pro-mode", "");
       else __cb.overlayEl.removeAttribute("data-cb-pro-mode");
-      proBtn.classList.toggle("cb-toolbar-btn-pro-active", targetProMode);
 
       if (clustersBefore && __cb.canvas?.applyClusterReflow) {
         // applyClusterReflow ends in a full refreshClusters at the new
@@ -1225,12 +1346,13 @@
 
     __cb.setViewMode(__cb.tabStore.viewMode || "projected");
 
-    // Restore the per-tab Cards/Tables choice. Defaults to "canvas" — tabs
-    // saved before this feature shipped won't carry the field, and we want
-    // them to land in the familiar canvas view on first open.
-    const savedBrainstormView = restoredTab?.state?.brainstormView === "table"
-      ? "table"
-      : "canvas";
+    // Restore the per-tab Cards/Tables choice. Defaults to "table" — tabs
+    // saved before this feature shipped won't carry the field, and the
+    // spreadsheet is now the canonical entry point for scoping. Explicit
+    // "canvas" choices the user made via the toggle are still respected.
+    const savedBrainstormView = restoredTab?.state?.brainstormView === "canvas"
+      ? "canvas"
+      : "table";
     __cb.setBrainstormView(savedBrainstormView);
 
     window.addEventListener("beforeunload", __cb.saveTabs);
@@ -1287,6 +1409,12 @@
     __cb.viewMode = "projected";
     __cb.currentFrequencyId = __cb.DEFAULT_FREQUENCY_ID;
     __cb.closeFrequencyPicker();
+    closeMoreMenu();
+    // Stop any POC poller and clear its state so the next canvas doesn't
+    // inherit this one's spinner / in-flight conversation. setDustPocButtonLoading
+    // is recreated per-open (it closes over the button), so we don't null it
+    // here — resetPocState just clears the timer + in-memory state.
+    if (__cb.resetPocState) __cb.resetPocState();
     __cb.enrichmentClickPos = null;
     window.removeEventListener("beforeunload", __cb.saveTabs);
     document.removeEventListener("keydown", handleEscape);

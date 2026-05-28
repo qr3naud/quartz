@@ -39,46 +39,11 @@
   overflow: auto;
 }
 
-/* Explicit flex gap between the swap icon and the "Cards" / "Tables" label.
-   The base .cb-toolbar-btn rule doesn't define a gap, so the other toolbar
-   buttons (Pricing, Import) rely on a literal " " text node — which renders
-   tight, especially next to the dense arrow-swap glyph. Matches the Pro Mode
-   button's `gap: 6px` for visual parity. */
-.cb-toolbar-view-toggle {
-  gap: 6px;
-}
-
-/* Pin the button's width so toggling between "Cards" and "Tables" doesn't
-   reflow the toolbar. Both labels are rendered into a 1×1 grid; whichever
-   isn't active is hidden via `visibility: hidden` (so it still reserves
-   space). The grid track therefore always sizes to the wider of the two
-   labels — currently "Tables" — without us hardcoding a pixel min-width. */
-.cb-toolbar-view-toggle-label {
-  display: inline-grid;
-  justify-items: center;
-}
-
-.cb-toolbar-view-toggle-label > span {
-  grid-area: 1 / 1;
-}
-
-.cb-toolbar-view-toggle[data-state="cards"] .cb-toolbar-view-toggle-label > [data-label="tables"],
-.cb-toolbar-view-toggle[data-state="tables"] .cb-toolbar-view-toggle-label > [data-label="cards"] {
-  visibility: hidden;
-}
-
-/* Active-state highlight for the toggle button itself. Same visual idiom as
-   the Pro Mode active state — slightly elevated indigo background. */
-.cb-toolbar-btn-view-toggle-active {
-  background: #eef2ff;
-  border-color: #c7d2fe;
-  color: #4338ca;
-}
-
-.cb-toolbar-btn-view-toggle-active:hover {
-  background: #e0e7ff;
-  border-color: #a5b4fc;
-}
+/* The Canvas / Tables switcher used to live as a dedicated toolbar
+   button (.cb-toolbar-view-toggle). It now sits inside the overflow
+   ("more") menu the kebab button surfaces — see __cb.openMoreMenu in
+   src/overlay.js. Menu-row styling comes from .cb-more-menu-* in
+   styles/overlay.css, so no toolbar-button rules are needed here. */
 
 /* ============================================================================
  * Table content

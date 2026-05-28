@@ -20,7 +20,12 @@
 //                                    API key no longer lives on the
 //                                    client; the proxy holds it.
 //
-//   5. cb:dust:probeKey            — proxied to dust-proxy/agents for the
+//   5. cb:dust:getConversation     — poll an in-flight POC conversation via
+//                                    dust-proxy GET /conversations?id= so the
+//                                    client can detect completion and read
+//                                    the generated Google Doc link.
+//
+//   6. cb:dust:probeKey            — proxied to dust-proxy/agents for the
 //                                    health-check button in the Dust
 //                                    popover (kept for parity with the
 //                                    old UI; the popover may stop using
@@ -227,6 +232,36 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         let data = null;
         try { data = text ? JSON.parse(text) : null; } catch {}
         sendResponse({ ok: res.ok, status: res.status, statusText: res.statusText, data, rawText: text || undefined });
+      } catch (err) {
+        sendResponse({ ok: false, error: err?.message || String(err) });
+      }
+    })();
+    return true;
+  }
+
+  // cb:dust:getConversation — { conversationId }. Read-only poll of an
+  // existing Dust conversation so the POC popover can detect when the
+  // agent has finished and read the generated doc link.
+  if (msg.type === "cb:dust:getConversation") {
+    (async () => {
+      try {
+        const conversationId = msg.conversationId;
+        if (!conversationId || typeof conversationId !== "string") {
+          sendResponse({ ok: false, error: "missing conversationId" });
+          return;
+        }
+        const res = await callProxy("dust-proxy/conversations", {
+          method: "GET",
+          query: { id: conversationId },
+        });
+        const text = await res.text();
+        let envelope = null;
+        try { envelope = text ? JSON.parse(text) : null; } catch {}
+        if (envelope && typeof envelope === "object" && "ok" in envelope) {
+          sendResponse(envelope);
+        } else {
+          sendResponse({ ok: res.ok, status: res.status, data: envelope, rawText: text || undefined });
+        }
       } catch (err) {
         sendResponse({ ok: false, error: err?.message || String(err) });
       }

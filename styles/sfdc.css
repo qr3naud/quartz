@@ -9,6 +9,19 @@
  * publishApi). For users without the flag, no SFDC DOM ever renders so
  * these rules match nothing. */
 
+/* Topbar "Link opportunity" button — same icon-to-label spacing as
+   Export and the Cards / Tables toggle. .cb-toolbar-btn doesn't define
+   a gap, so without this rule the cloud glyph renders flush against the
+   label (the leading-space text node Chrome collapses against the
+   adjacent SVG). 6px keeps it visually identical to .cb-toolbar-export. */
+.cb-toolbar-sfdc-link {
+  gap: 6px;
+}
+
+.cb-toolbar-sfdc-link svg {
+  flex-shrink: 0;
+}
+
 .cb-sfdc-picker-popover {
   /* Wider than the Dust POC popover so opportunity meta-rows breathe. */
   min-width: 380px;
@@ -99,11 +112,15 @@
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  height: 28px;
+  /* Height + radius match .cb-toolbar-btn so the linked-opp state reads
+     as a sibling of the other toolbar buttons rather than a shorter pill.
+     Right padding stays tight (4px) to give the inner chevron-button room
+     to render its own hover background without doubling the trailing gap. */
+  height: 32px;
   padding: 0 4px 0 8px;
   border: 1px solid #c7d2fe;
   background: #eef2ff;
-  border-radius: 14px;
+  border-radius: 5px;
   color: #3730a3;
   font-size: 12px;
   font-weight: 500;
@@ -148,7 +165,7 @@
   border: none;
   background: transparent;
   color: #6366f1;
-  border-radius: 10px;
+  border-radius: 4px;
   cursor: pointer;
 }
 

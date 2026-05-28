@@ -382,39 +382,87 @@
   color: #111827;
 }
 
-/* Pro Mode toggle. Reads as a neutral pill when off, switches to an amber
-   "active" treatment when on so the user always sees whether it's enabled. */
-.cb-toolbar-btn-pro {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
+/* Overflow ("more") trigger — icon-only square button living to the right
+   of Export. Inherits .cb-toolbar-btn for height/border/hover so it lines
+   up with the other topbar buttons; the narrower padding + square aspect
+   read as "secondary action" without competing visually with the labeled
+   Export button to its left. A small indigo dot is painted via ::after
+   whenever a toggle inside the menu (currently just Pro Mode) is on, so
+   reps get a quick "something's enabled in here" hint without having to
+   open the menu. */
+.cb-toolbar-more {
+  position: relative;
+  width: 32px;
+  padding: 0;
+  justify-content: center;
   color: #6b7280;
 }
 
-.cb-toolbar-btn-pro svg {
+.cb-toolbar-more svg {
   flex-shrink: 0;
-  color: #9ca3af;
+  color: #6b7280;
   transition: color 0.15s;
 }
 
-.cb-toolbar-btn-pro:hover svg {
+.cb-toolbar-more:hover svg {
+  color: #1f2937;
+}
+
+.cb-overlay[data-cb-pro-mode] .cb-toolbar-more::after {
+  content: "";
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #6366f1;
+  box-shadow: 0 0 0 1.5px #ffffff;
+}
+
+/* ---- Overflow menu rows ----
+   Mirrors .cb-export-menu structure (also applied as the base class on
+   the menu root in src/overlay.js) but lays each row out as
+   icon + label + optional state pill so the Pro Mode toggle can surface
+   its on/off state without a second click. */
+
+.cb-more-menu-option {
+  gap: 10px;
+}
+
+.cb-more-menu-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  color: #6b7280;
+  flex-shrink: 0;
+}
+
+.cb-more-menu-option-active .cb-more-menu-icon {
+  color: #d97706;
+}
+
+.cb-more-menu-label {
+  flex: 1 1 auto;
+  text-align: left;
+}
+
+.cb-more-menu-state {
+  flex-shrink: 0;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 2px 7px;
+  border-radius: 4px;
+  background: #f3f4f6;
   color: #6b7280;
 }
 
-.cb-toolbar-btn-pro-active {
-  background: #fffbeb;
-  border-color: #fbbf24;
-  color: #92400e;
-}
-
-.cb-toolbar-btn-pro-active:hover {
+.cb-more-menu-option-active .cb-more-menu-state {
   background: #fef3c7;
-  border-color: #f59e0b;
-}
-
-.cb-toolbar-btn-pro-active svg,
-.cb-toolbar-btn-pro-active:hover svg {
-  color: #d97706;
+  color: #92400e;
 }
 
 /* Projected / Actual segmented control. Two pill buttons share a rounded

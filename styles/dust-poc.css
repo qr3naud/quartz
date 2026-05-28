@@ -7,6 +7,38 @@
  * the rest of the extension.
  * ========================================================================= */
 
+/* Topbar "Generate POC" button — same icon-to-label spacing as Export
+   and the Cards / Tables toggle. .cb-toolbar-btn doesn't define a gap,
+   so without this rule the sparkles glyph renders flush against the
+   label (the leading-space text node Chrome collapses against the
+   adjacent SVG). 6px keeps it visually identical to .cb-toolbar-export. */
+.cb-toolbar-dust-poc {
+  gap: 6px;
+}
+
+.cb-toolbar-dust-poc svg {
+  flex-shrink: 0;
+}
+
+/* Loading state — a POC is generating (manual or auto-fired from an SFDC
+   opportunity link). The sparkles glyph is swapped for a spinner; the
+   "Generate POC" label stays so the button keeps its width and meaning.
+   Spinner uses currentColor so it matches the neutral toolbar text. */
+.cb-toolbar-dust-poc-loading > svg {
+  display: none;
+}
+
+.cb-toolbar-dust-poc-loading::before {
+  content: "";
+  width: 13px;
+  height: 13px;
+  flex-shrink: 0;
+  border: 2px solid rgba(99, 102, 241, 0.3);
+  border-top-color: #6366f1;
+  border-radius: 50%;
+  animation: cb-dust-poc-spin 0.7s linear infinite;
+}
+
 .cb-dust-poc-backdrop {
   position: fixed;
   inset: 0;
@@ -39,6 +71,65 @@
   font-size: 12px;
   line-height: 1.4;
   color: #6b7280;
+}
+
+/* Field label above the customer-name input on the initial form. */
+.cb-dust-poc-field-label {
+  font-size: 12px;
+  font-weight: 500;
+  color: #374151;
+  margin-top: 2px;
+}
+
+/* "Generating…" body: spinner + reassurance copy on one row. */
+.cb-dust-poc-progress {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: #4b5563;
+}
+
+.cb-dust-poc-progress-spinner {
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+  margin-top: 1px;
+  border: 2px solid rgba(99, 102, 241, 0.3);
+  border-top-color: #6366f1;
+  border-radius: 50%;
+  animation: cb-dust-poc-spin 0.7s linear infinite;
+}
+
+/* Finished-state Google Doc link — a prominent, tappable row so the rep
+   spots the deliverable immediately when the POC is ready. */
+.cb-dust-poc-doc {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid #c7d2fe;
+  border-radius: 8px;
+  background: #eef2ff;
+}
+
+.cb-dust-poc-doc-icon {
+  flex-shrink: 0;
+  color: #4f46e5;
+}
+
+.cb-dust-poc-doc-link {
+  font-size: 13px;
+  font-weight: 600;
+  color: #4338ca;
+  text-decoration: none;
+  word-break: break-word;
+}
+
+.cb-dust-poc-doc-link:hover {
+  text-decoration: underline;
+  color: #3730a3;
 }
 
 .cb-dust-poc-input {
