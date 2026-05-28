@@ -31,7 +31,7 @@
   const REFRESH_WINDOW_MS = 5 * 60 * 1000;
 
   /**
-   * @typedef {{ jwt: string, expiresAt: number, userId: string, email: string | null, workspaces: string[] }} StoredJwt
+   * @typedef {{ jwt: string, expiresAt: number, userId: string, email: string | null, workspaces: string[], features: string[] }} StoredJwt
    */
 
   let inflightRefresh = null;
@@ -77,6 +77,24 @@
     __cb.userId = stored?.userId ?? __cb.userId ?? null;
     __cb.userEmail = stored?.email ?? __cb.userEmail ?? null;
     __cb.userWorkspaces = stored?.workspaces ?? [];
+    __cb.userFeatures = stored?.features ?? [];
+    // Reflect the feature set onto document.body as a space-separated
+    // attribute so CSS can scope rules with `body[data-cb-features~="dust"]
+    // .cb-foo`. document.body may not exist yet at content-script start;
+    // guard and retry on DOMContentLoaded if so.
+    syncFeaturesToBody(__cb.userFeatures);
+  }
+
+  function syncFeaturesToBody(features) {
+    const apply = () => {
+      if (!document.body) return;
+      document.body.dataset.cbFeatures = (features ?? []).join(" ");
+    };
+    if (document.body) {
+      apply();
+    } else if (typeof document !== "undefined") {
+      document.addEventListener("DOMContentLoaded", apply, { once: true });
+    }
   }
 
   /**
@@ -124,6 +142,7 @@
           userId: String(payload.userId ?? ""),
           email: payload.email ?? null,
           workspaces: Array.isArray(payload.workspaces) ? payload.workspaces.map(String) : [],
+          features: Array.isArray(payload.features) ? payload.features.map(String) : [],
         };
         writeStored(stored);
         adoptStored(stored);
@@ -182,6 +201,30 @@
    */
   __cb.getSupabaseWorkspaces = function getSupabaseWorkspaces() {
     return __cb.userWorkspaces ?? [];
+  };
+
+  /**
+   * Public: returns the feature flag list embedded in the current JWT.
+   * Internal Clay workspace members get the full INTERNAL_FEATURES set
+   * (`["sfdc","dust","pricing_comparison","gtme_export","internal_branding"]`);
+   * everyone else gets `[]`. Empty array until the first mint resolves.
+   *
+   * The features claim is purely a UX filter — the Edge Function proxies
+   * re-check INTERNAL_WORKSPACES server-side via requireClayAuth, so a
+   * user who tampers with __cb.userFeatures still can't reach SFDC/Dust.
+   */
+  __cb.getFeatures = function getFeatures() {
+    return __cb.userFeatures ?? [];
+  };
+
+  /**
+   * Public: returns true iff `name` is in the current JWT's features
+   * claim. Synchronous; safe to call before the JWT is ready (returns
+   * false until the first mint). Code that must run after the feature
+   * list is populated should await `__cb.supabaseJwtReady` first.
+   */
+  __cb.hasFeature = function hasFeature(name) {
+    return (__cb.userFeatures ?? []).includes(name);
   };
 
   /**

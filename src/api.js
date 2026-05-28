@@ -30,9 +30,12 @@
       // the server-side logic in libs/shared/src/credits/credit-cost-utils.ts
       // getActionPricing).
       const post = action.pricing?.postPricingChange2026;
-      // __CB_INTERNAL_ONLY_BEGIN: legacyPricing
+      // `pre` powers the legacy side of the Old vs New Pricing comparison
+      // modal (gated by the `pricing_comparison` feature flag in the UI
+      // layer). Computing it unconditionally is cheap (one optional chain)
+      // and avoids having to await __cb.supabaseJwtReady inside this hot
+      // loop just to skip three field assignments below.
       const pre = action.pricing?.prePricingChange2026;
-      // __CB_INTERNAL_ONLY_END
       const fallback = action.pricing;
       const entry = {
         key: action.key,
@@ -57,10 +60,11 @@
           post?.usesPrivateKeyCredits?.basic ??
           fallback?.usesPrivateKeyCredits?.basic ??
           0,
-        // __CB_INTERNAL_ONLY_BEGIN: legacyPricing
         // Legacy (pre-2026) pricing siblings. Same fallback chain as
         // above so actions that only carry the root `pricing.credits`
         // block (un-migrated) report the same number on both sides.
+        // Populated for everyone; the pricing comparison UI that reads
+        // them is gated by the `pricing_comparison` feature flag.
         legacyCredits: pre?.credits?.basic ?? fallback?.credits?.basic ?? null,
         legacyActionExecutions:
           pre?.credits?.actionExecution ?? fallback?.credits?.actionExecution ?? null,
@@ -68,7 +72,6 @@
           pre?.usesPrivateKeyCredits?.basic ??
           fallback?.usesPrivateKeyCredits?.basic ??
           0,
-        // __CB_INTERNAL_ONLY_END
       };
       __cb.enrichmentLookup[action.displayName.toLowerCase()] = entry;
       // Clay's canonical action-id format is `${packageId}/${actionKey}`
@@ -101,14 +104,14 @@
     }
   };
 
-  // __CB_INTERNAL_ONLY_BEGIN: pricingComparison
   // Fetches the workspace's currently-active billing plan + price tier and
   // derives a CPC ($/credit) from the contract numbers. Used by the Old vs
-  // New comparison modal to auto-fill the matching side's editable rate
-  // input (legacy plan -> legacy rate, modern plan -> modern rate). The
-  // other side stays at its FIXED list-price default so the comparison
-  // still shows a meaningful "what would you pay on the other catalog"
-  // contrast even when one side is anchored to the customer's contract.
+  // New comparison modal (gated by the `pricing_comparison` feature flag)
+  // to auto-fill the matching side's editable rate input (legacy plan ->
+  // legacy rate, modern plan -> modern rate). The other side stays at its
+  // FIXED list-price default so the comparison still shows a meaningful
+  // "what would you pay on the other catalog" contrast even when one side
+  // is anchored to the customer's contract.
   //
   // Source: GET /v3/billingplans/:workspaceId?source=frontend, the same
   // endpoint useBillingPlans drives in apps/frontend (see
@@ -253,7 +256,6 @@
       __cb.actionTiersCatalog = [];
     }
   };
-  // __CB_INTERNAL_ONLY_END
 
   // Fetches Clay's built-in waterfall attributes (the WaterfallRow rows in
   // the picker). For each attribute we keep:
@@ -506,11 +508,11 @@
     }
   };
 
-  // __CB_INTERNAL_ONLY_BEGIN: pricingComparison
-  // App accounts (auth accounts) for the workspace. Used to differentiate
-  // "Clay-managed shared key" (bills credits) from "user-pasted private key"
-  // (BYOK, free) on AI fields where the user picked a non-default
-  // authAccountId. Mirrors the server-side rule in
+  // App accounts (auth accounts) for the workspace. Used by the Old vs New
+  // Pricing comparison modal (gated by the `pricing_comparison` feature
+  // flag) to differentiate "Clay-managed shared key" (bills credits) from
+  // "user-pasted private key" (BYOK, free) on AI fields where the user
+  // picked a non-default authAccountId. Mirrors the server-side rule in
   // libs/shared/src/credits/credit-cost-utils.ts:
   //   isPublicKey = appAccount.isSharedPublicKey
   //   isPrivateKey = Boolean(authAccountId) && !isPublicKey
@@ -538,7 +540,6 @@
       return null;
     }
   };
-  // __CB_INTERNAL_ONLY_END
 
   // Per-column actual spend over the last N days. Backed by Redshift via
   // Kinesis ingestion (~minutes of lag). Note: realtime credit usage is only

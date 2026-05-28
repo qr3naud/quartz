@@ -101,23 +101,22 @@
 
     INJECTED_ATTR: "data-clay-brainstorm-injected",
 
-    // __CB_INTERNAL_ONLY_BEGIN: gtmeExport
     // Base URL for the GTME pricing calculator. The "Export to GTME Calculator"
-    // flow opens `${GTME_CALCULATOR_BASE_URL}/import?payload=<base64url>` in a
-    // new tab. No fetch happens from the extension, so host_permissions isn't
-    // strictly required for the flow itself — window.open is plain navigation.
-    // For local calculator dev, swap to: "http://localhost:5173"
+    // flow (gated by the `gtme_export` feature flag) opens
+    // `${GTME_CALCULATOR_BASE_URL}/import?payload=<base64url>` in a new tab.
+    // No fetch happens from the extension, so host_permissions isn't strictly
+    // required for the flow itself — window.open is plain navigation. For
+    // local calculator dev, swap to: "http://localhost:5173"
     GTME_CALCULATOR_BASE_URL: "https://mono-calculator-production.up.railway.app",
     // GTME_CALCULATOR_BASE_URL: "http://localhost:5173",
-    // __CB_INTERNAL_ONLY_END
 
     enrichmentLookup: {},
     actionByIdLookup: {},
     livePricingByModel: {},
-    // __CB_INTERNAL_ONLY_BEGIN: pricingComparison
     // Active plan + derived CPC for the current workspace, populated by
     // fetchCurrentPlanPricing in api.js. Drives the auto-fill behavior in
-    // the Old vs New comparison modal — null until the prefetch resolves
+    // the Old vs New Pricing comparison modal (gated by the
+    // `pricing_comparison` feature flag) — null until the prefetch resolves
     // (or if the workspace is on a free / trial / Enterprise placeholder
     // plan that has no usable contract CPC).
     currentPlanPricing: null,
@@ -126,7 +125,6 @@
     // Joined with currentPlanPricing in applyCurrentPlanAutoFill to derive
     // the workspace's specific CPA. null until the prefetch resolves.
     actionTiersCatalog: null,
-    // __CB_INTERNAL_ONLY_END
     waterfallExecByName: {},
     // Built-in Clay waterfall attributes (the WaterfallRow rows in the
     // picker). Indexed by lowercased displayName. See fetchWaterfallExecCosts

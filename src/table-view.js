@@ -878,11 +878,24 @@
     const providerChain = isWaterfall
       ? (er.data.providers || []).map((p) => p.displayName || "Provider").join(" \u2192 ")
       : null;
+    // Effective frequency mirrors the canvas freqBadge logic (cards.js
+    // ~line 830): a per-ER override wins, otherwise fall back to the
+    // tab's global default. Read via __cb so we stay in sync with
+    // whatever the summary bar most recently set.
+    const cb = window.__cb;
+    const frequencyId = er.data.frequencyCustom
+      ? er.data.frequency
+      : (er.data.frequency || cb?.getCurrentFrequencyId?.() || cb?.DEFAULT_FREQUENCY_ID);
+    const multiplier = cb?.getFrequencyMultiplier?.(frequencyId) ?? 1;
+    const frequencyLabel = cb?.getFrequencyLabel?.(frequencyId) || "Annually";
     return {
       id: er.id,
       name: er.data.displayName || er.data.text || (isWaterfall ? "Waterfall" : "Untitled enrichment"),
       isWaterfall,
       providerChain,
+      frequencyId,
+      frequencyLabel,
+      multiplier,
     };
   }
 
@@ -934,6 +947,24 @@
     const labelEl = card.el?.querySelector(".cb-dp-fill-label");
     if (labelEl) labelEl.textContent = `${pct}%`;
 
+    if (canvas.notifyChange) canvas.notifyChange();
+    if (__cb.saveTabs) __cb.saveTabs();
+  }
+
+  // Per-ER frequency commit. Mirrors the canvas freqBadge callback
+  // (cards.js ~line 837): we route through applyClusterFrequency so
+  // every ER in the origin card's snap-cluster picks up the same
+  // value (and gets marked `frequencyCustom` so the global default
+  // stops auto-overwriting them). The credit-total + group-credit
+  // refreshes keep the summary bar and any visible group cards in
+  // sync; notifyChange propagates to onCanvasStateChange so the
+  // table view (and collaborators) re-render with the new ×N badges.
+  function commitFrequency(cardId, freqId) {
+    const canvas = __cb.canvas;
+    if (!canvas?.applyClusterFrequency) return;
+    canvas.applyClusterFrequency(cardId, freqId);
+    if (canvas.refreshCreditTotal) canvas.refreshCreditTotal();
+    if (canvas.updateGroupCredits) canvas.updateGroupCredits();
     if (canvas.notifyChange) canvas.notifyChange();
     if (__cb.saveTabs) __cb.saveTabs();
   }
@@ -2313,6 +2344,29 @@
     label.className = "cb-table-view-er-chip-label";
     label.textContent = er.name;
     chip.appendChild(label);
+
+    // Per-ER frequency badge — same "×N" affordance as the canvas
+    // freqBadge (cards.js ~line 822). Clicking opens the shared
+    // frequency picker; the pick routes through commitFrequency →
+    // applyClusterFrequency so the rest of the cluster's ERs stay in
+    // sync, mirroring canvas behavior. mousedown stopPropagation
+    // keeps the click from triggering row selection / row drag.
+    const freqBtn = document.createElement("button");
+    freqBtn.type = "button";
+    freqBtn.className = "cb-table-view-er-chip-freq";
+    freqBtn.title = `Runs ${er.frequencyLabel || "annually"} \u2014 click to change`;
+    freqBtn.textContent = "\u00d7" + (er.multiplier ?? 1);
+    freqBtn.addEventListener("mousedown", (evt) => evt.stopPropagation());
+    freqBtn.addEventListener("click", (evt) => {
+      evt.stopPropagation();
+      const cb = window.__cb;
+      if (!cb?.showFrequencyPicker) return;
+      cb.showFrequencyPicker(freqBtn, er.frequencyId, (picked) => {
+        commitFrequency(er.id, picked);
+      });
+    });
+    chip.appendChild(freqBtn);
+
     if (removable) {
       const x = document.createElement("button");
       x.type = "button";

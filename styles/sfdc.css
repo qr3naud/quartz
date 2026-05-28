@@ -1,10 +1,13 @@
-/* __CB_INTERNAL_ONLY_BEGIN: sfdc */
 /* Salesforce integration: opportunity picker popover + linked-opp pill.
  *
  * The popover reuses .cb-dust-poc-popover / .cb-dust-poc-input / etc. so
  * we don't duplicate frame styling. This file only adds the SFDC-specific
  * pieces: result list rows inside the popover, and the topbar pill +
- * "..." menu that show when a canvas is linked. */
+ * "..." menu that show when a canvas is linked.
+ *
+ * Gated by the `sfdc` feature flag at the JS layer (see src/sfdc.js
+ * publishApi). For users without the flag, no SFDC DOM ever renders so
+ * these rules match nothing. */
 
 .cb-sfdc-picker-popover {
   /* Wider than the Dust POC popover so opportunity meta-rows breathe. */
@@ -190,4 +193,3 @@
 .cb-sfdc-pill-menu-item-danger:hover {
   background: #fee2e2;
 }
-/* __CB_INTERNAL_ONLY_END */

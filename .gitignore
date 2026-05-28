@@ -11,3 +11,8 @@ dist/
 # extension is loaded. Per-machine, per-install — never check it in. The
 # public build also excludes it via build.config.js exclude list.
 _metadata/
+
+# Supabase CLI runtime cache — created by `supabase functions deploy` etc.
+# Per-machine; never check it in. supabase/config.toml and supabase/functions/
+# + supabase/migrations/ are the only things from supabase/ that belong in git.
+supabase/.temp/

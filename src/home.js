@@ -397,8 +397,10 @@
       });
 
       if (!rows || rows.length === 0) {
+        const brandedButtonName =
+          __cb.hasFeature && __cb.hasFeature("internal_branding") ? "GTME View" : "Scoping";
         statusEl.textContent =
-          "No saved canvases yet. Open the GTME View on a workbook to start.";
+          `No saved canvases yet. Open the ${brandedButtonName} button on a workbook to start.`;
         tableWrap.innerHTML = "";
         return;
       }

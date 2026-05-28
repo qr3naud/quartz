@@ -1,11 +1,29 @@
 "use strict";
 
 // Configuration for the public-spinoff build. Run via `node build.js` from this
-// directory; the script reads this file, walks the source tree, applies the
-// rules below, and writes the rebranded/stripped extension into `out`.
+// directory; the script reads this file, walks the source tree, and writes the
+// trimmed extension into `out`.
 //
 // The internal extension == the source tree as-is. There is no internal build.
 // Everything below describes what changes for the public build only.
+//
+// Post-Phase-3 the public build is almost identical to the source. Internal-
+// only features (SFDC, Dust POC, pricing comparison, GTME export, "GTME View"
+// branding) are runtime-gated by the `features` claim on the Phase-1 JWT
+// minted by clay-auth-mint. Public users get an empty features list, so the
+// matching buttons/menus never render and the matching code paths are never
+// reached. The Edge Function proxies independently enforce
+// INTERNAL_WORKSPACES, so even a user who tampers with __cb.userFeatures in
+// DevTools can't reach SFDC/Dust.
+//
+// What stays excluded from the public build, then, is:
+//   - genuine secrets (docs/, AGENTS.md)
+//   - server-side artifacts deployed separately (supabase/, scripts/)
+//   - per-machine / build tooling (.git, .gitignore, _metadata, build.*,
+//     release.sh, dist, node_modules)
+//
+// Nothing in `src/` or `styles/` is stripped anymore — every JS/CSS file
+// ships to both internal and public installs.
 
 module.exports = {
   // Where the public build is written. Override via $BUILD_OUT or `--out <path>`.
@@ -17,12 +35,6 @@ module.exports = {
   // Files / directories never copied into the public build. Paths are relative
   // to this directory. Directory entries also exclude all descendants.
   exclude: [
-    "src/pricing-comparison.js", // entire Old vs New Pricing modal
-    "src/dust-poc.js",           // Generate POC button (Dust integration)
-    "src/sfdc.js",               // Salesforce opportunity picker
-    "src/internal-bg.js",        // background service worker (auth-mint + SFDC + Dust proxy)
-    "styles/dust-poc.css",       // popover styling for Generate POC
-    "styles/sfdc.css",           // styling for the SFDC opportunity picker / pill
     "supabase",                  // Edge Function source + SQL migrations (deployed separately, not shipped to Chrome)
     "scripts",                   // SFDC connection tester + per-env dotenv files
     "_metadata",                 // Chrome-generated DNR ruleset cache (auto-created on load)
@@ -35,53 +47,6 @@ module.exports = {
     ".gitignore",                // public repo gets its own .gitignore (written below)
     "node_modules",
     "dist",
-  ],
-
-  // Scripts removed from manifest.json content_scripts[].js arrays. Must match
-  // exactly the values that appear in manifest.json.
-  excludeFromManifestScripts: [
-    "src/pricing-comparison.js",
-    "src/dust-poc.js",
-    "src/sfdc.js",
-  ],
-
-  // Stylesheets removed from manifest.json content_scripts[].css arrays. Must
-  // match exactly the values that appear in manifest.json.
-  excludeFromManifestStyles: [
-    "styles/dust-poc.css",
-    "styles/sfdc.css",
-  ],
-
-  // Top-level keys removed from manifest.json entirely. The `background`
-  // service worker proxies internal-only features (auth mint, SFDC, Dust),
-  // none of which the public extension ships. Removing the field means the
-  // public manifest doesn't reference a missing src/internal-bg.js.
-  excludeManifestKeys: [
-    "background",
-  ],
-
-  // Ordered string substitutions applied to every text file (.js, .css, .html,
-  // .md, .json). Order matters — longer / more-specific patterns first so they
-  // win against the shorter ones below. Each pattern runs once per file.
-  //
-  // The internal extension uses "GTME View" and points at qr3naud/scoping. The
-  // public build rebrands the toolbar label to "Scoping" and the repo URLs to
-  // qr3naud/self-scoping. Manifest name ("Clay Scoping Tool") and console log
-  // prefix ("[Clay Scoping]") are intentionally NOT rebranded.
-  branding: [
-    // Longer phrases first so the trailing "GTME View" -> "Scoping" rule below
-    // produces grammatical results.
-    ["Open the GTME View on a workbook", "Open the Scoping button on a workbook"],
-
-    // The toolbar button label + every reference to it.
-    ["GTME View", "Scoping"],
-
-    // GitHub repo path. Substring is unique enough that it won't collide with
-    // surrounding text. Self-replacement is safe because "self-scoping" does
-    // not contain "scoping" as a separable substring after replacement runs
-    // once.
-    ["qr3naud/scoping", "qr3naud/self-scoping"],
-    ["clay-scoping-extension", "clay-self-scoping-extension"],
   ],
 
   // Written to <out>/.gitignore. The public repo doesn't need to ignore docs/

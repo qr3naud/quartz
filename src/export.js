@@ -11,15 +11,15 @@
   // Export options the menu surfaces. Each row has a handler in
   // openExportMenu's click switch below; new options drop in as a single
   // line here plus a branch there.
+  //
+  // `feature` (optional): name of the feature flag that must be present in
+  // the JWT for the row to render. Options without a `feature` field show
+  // for everyone. The runtime filter sits at the top of openExportMenu.
   const EXPORT_OPTIONS = [
-    // __CB_INTERNAL_ONLY_BEGIN: gtmeExport
-    { id: "gtme",   label: "Export to GTME Calculator", enabled: true  },
-    // __CB_INTERNAL_ONLY_END
-    // __CB_INTERNAL_ONLY_BEGIN: dealopsExport
-    { id: "dealops", label: "Export to DealOps",         enabled: false },
-    // __CB_INTERNAL_ONLY_END
-    { id: "table",  label: "Export as Table",            enabled: true  },
-    { id: "json",   label: "Export as JSON",             enabled: true  },
+    { id: "gtme",    label: "Export to GTME Calculator", enabled: true,  feature: "gtme_export" },
+    { id: "dealops", label: "Export to DealOps",         enabled: false, feature: "gtme_export" },
+    { id: "table",   label: "Export as Table",           enabled: true  },
+    { id: "json",    label: "Export as JSON",            enabled: true  },
   ];
 
   // ---- Menu ----
@@ -48,7 +48,15 @@
     menuEl.className = "cb-export-menu";
     menuEl.addEventListener("mousedown", (evt) => evt.stopPropagation());
 
-    for (const opt of EXPORT_OPTIONS) {
+    // Filter options the JWT doesn't entitle this user to see. Internal
+    // GTMEs get every row; public/self-scoping users get just `table` +
+    // `json`. The handler switch below doesn't need its own feature checks
+    // because gated branches are unreachable when the row isn't rendered.
+    const visibleOptions = EXPORT_OPTIONS.filter(
+      (opt) => !opt.feature || (__cb.hasFeature && __cb.hasFeature(opt.feature)),
+    );
+
+    for (const opt of visibleOptions) {
       const item = document.createElement("button");
       item.type = "button";
       item.className =
@@ -66,9 +74,7 @@
           evt.stopPropagation();
           closeExportMenu();
           if (opt.id === "table") __cb.openExportTableModal();
-          // __CB_INTERNAL_ONLY_BEGIN: gtmeExport
           else if (opt.id === "gtme") __cb.openGtmeExportModal();
-          // __CB_INTERNAL_ONLY_END
           else if (opt.id === "json") __cb.openExportJsonModal();
         });
       }
@@ -519,9 +525,13 @@
     if (__cb.saveTabs) __cb.saveTabs();
   }
 
-  // __CB_INTERNAL_ONLY_BEGIN: gtmeExport
   // ==========================================================================
   // EXPORT TO GTME CALCULATOR
+  //
+  // Gated by the `gtme_export` feature flag — the menu row that triggers
+  // this modal is filtered out for non-internal users in openExportMenu
+  // above, so the function below is defined for everyone but only ever
+  // invoked by Clay-internal users.
   //
   // Flow:
   //   1. saveTabs() — flushes the live canvas into __cb.tabStore.tabs[i].state
@@ -972,7 +982,6 @@
     updateSubmitState();
     requestAnimationFrame(() => nameInput.focus());
   };
-  // __CB_INTERNAL_ONLY_END
 
   // ==========================================================================
   // EXPORT AS JSON

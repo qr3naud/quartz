@@ -11,18 +11,17 @@
 //
 // What this does:
 //   1. Walks the source tree skipping anything in config.exclude.
-//   2. For text files (.js/.css/.html/.md/.json/.txt/.sh):
-//        a. Excises sentinel-wrapped blocks
-//           (// __CB_INTERNAL_ONLY_BEGIN ... // __CB_INTERNAL_ONLY_END or
-//            /* __CB_INTERNAL_ONLY_BEGIN ... */ ... /* __CB_INTERNAL_ONLY_END */).
-//        b. Runs the ordered branding substitutions from config.branding.
-//   3. For manifest.json: parses it, drops content_scripts[].js entries that
-//      are in config.excludeFromManifestScripts and content_scripts[].css
-//      entries in config.excludeFromManifestStyles, deletes any top-level
-//      keys listed in config.excludeManifestKeys, re-stringifies
-//      pretty-printed.
-//   4. Wipes the output directory (preserving .git) and writes everything fresh.
-//   5. Writes a public .gitignore from config.publicGitignore.
+//   2. Copies every file (text or binary) verbatim — no source transforms.
+//   3. Wipes the output directory (preserving .git) before copying.
+//   4. Writes a public .gitignore from config.publicGitignore.
+//
+// Why no transforms anymore: Phase 3 moved feature gating from build-time
+// (sentinel-wrapped blocks + branding string substitution) to runtime
+// (`__cb.hasFeature(...)` driven by the `features` claim on the JWT). The
+// public extension now ships identical code to the internal one; the
+// internal-only features (SFDC, Dust POC, pricing comparison, GTME export,
+// "GTME View" branding) simply don't render for users whose JWT carries
+// an empty features list. See AGENTS.md for the full model.
 //
 // The script has zero npm dependencies on purpose — it should run with any
 // modern Node without `yarn install`.
@@ -64,16 +63,6 @@ if ((SOURCE_DIR + path.sep).startsWith(OUT_DIR + path.sep)) {
 
 // --- file classification ---------------------------------------------------
 
-const TEXT_EXTENSIONS = new Set([
-  ".js",
-  ".css",
-  ".html",
-  ".md",
-  ".json",
-  ".txt",
-  ".sh",
-]);
-
 function relPosix(absPath) {
   return path.relative(SOURCE_DIR, absPath).split(path.sep).join("/");
 }
@@ -84,55 +73,6 @@ function shouldExclude(relPath) {
     if (relPath.startsWith(ex + "/")) return true;
   }
   return false;
-}
-
-// --- transforms ------------------------------------------------------------
-
-// Sentinel block: a line containing __CB_INTERNAL_ONLY_BEGIN (with `//` or
-// `/*` lead) through the matching __CB_INTERNAL_ONLY_END line. Multiline mode
-// so `^` matches start of each line; non-greedy `[\s\S]*?` so adjacent blocks
-// don't collapse into one big match.
-const SENTINEL_RE =
-  /^[ \t]*(?:\/\/|\/\*)[^\n]*__CB_INTERNAL_ONLY_BEGIN[^\n]*\n[\s\S]*?^[ \t]*(?:\/\/|\/\*)[^\n]*__CB_INTERNAL_ONLY_END[^\n]*\n?/gm;
-
-function stripSentinels(content) {
-  return content.replace(SENTINEL_RE, "");
-}
-
-function applyBranding(content) {
-  let out = content;
-  for (const [from, to] of config.branding) {
-    out = out.split(from).join(to);
-  }
-  return out;
-}
-
-function transformManifest(jsonStr) {
-  const m = JSON.parse(jsonStr);
-  const excludedJs = new Set(config.excludeFromManifestScripts || []);
-  const excludedCss = new Set(config.excludeFromManifestStyles || []);
-  const excludedPerms = new Set(config.excludeFromManifestPermissions || []);
-  if (Array.isArray(m.content_scripts)) {
-    for (const cs of m.content_scripts) {
-      if (Array.isArray(cs.js)) {
-        cs.js = cs.js.filter((p) => !excludedJs.has(p));
-      }
-      if (Array.isArray(cs.css)) {
-        cs.css = cs.css.filter((p) => !excludedCss.has(p));
-      }
-    }
-  }
-  if (Array.isArray(m.permissions) && excludedPerms.size > 0) {
-    m.permissions = m.permissions.filter((p) => !excludedPerms.has(p));
-  }
-  const excludedHosts = new Set(config.excludeFromManifestHostPermissions || []);
-  if (Array.isArray(m.host_permissions) && excludedHosts.size > 0) {
-    m.host_permissions = m.host_permissions.filter((h) => !excludedHosts.has(h));
-  }
-  for (const key of config.excludeManifestKeys || []) {
-    delete m[key];
-  }
-  return JSON.stringify(m, null, 2) + "\n";
 }
 
 // --- I/O -------------------------------------------------------------------
@@ -152,7 +92,7 @@ function cleanOutDir() {
   }
 }
 
-function copyAndTransform(srcDir, dstDir) {
+function copyTree(srcDir, dstDir) {
   for (const entry of fs.readdirSync(srcDir, { withFileTypes: true })) {
     const srcPath = path.join(srcDir, entry.name);
     const rel = relPosix(srcPath);
@@ -162,26 +102,12 @@ function copyAndTransform(srcDir, dstDir) {
 
     if (entry.isDirectory()) {
       ensureDir(dstPath);
-      copyAndTransform(srcPath, dstPath);
+      copyTree(srcPath, dstPath);
       continue;
     }
     if (!entry.isFile()) continue; // skip symlinks etc.
 
-    const ext = path.extname(entry.name).toLowerCase();
-    if (TEXT_EXTENSIONS.has(ext)) {
-      let content = fs.readFileSync(srcPath, "utf8");
-      content = stripSentinels(content);
-      if (entry.name === "manifest.json") {
-        // Sentinels in JSON would be malformed anyway; the stripSentinels pass
-        // above is a no-op on a clean manifest. Re-serialize to drop excluded
-        // scripts from content_scripts[].js.
-        content = transformManifest(content);
-      }
-      content = applyBranding(content);
-      fs.writeFileSync(dstPath, content);
-    } else {
-      fs.copyFileSync(srcPath, dstPath);
-    }
+    fs.copyFileSync(srcPath, dstPath);
   }
 }
 
@@ -196,7 +122,7 @@ function main() {
   console.log(`Output: ${OUT_DIR}`);
   ensureDir(OUT_DIR);
   cleanOutDir();
-  copyAndTransform(SOURCE_DIR, OUT_DIR);
+  copyTree(SOURCE_DIR, OUT_DIR);
   writePublicGitignore();
   console.log("Build complete.");
 }

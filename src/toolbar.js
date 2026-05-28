@@ -3,6 +3,17 @@
 
   const __cb = window.__cb;
 
+  // Toolbar button label is part of the `internal_branding` feature flag —
+  // internal GTMEs see "GTME View", public/self-scoping users see
+  // "Scoping". hasFeature may return false synchronously on first install
+  // (no cached JWT yet); we re-evaluate when the JWT lands via
+  // onSupabaseJwtChange below.
+  function currentLabel() {
+    return __cb.hasFeature && __cb.hasFeature("internal_branding")
+      ? "GTME View"
+      : "Scoping";
+  }
+
   function buildButton() {
     const wrapper = document.createElement("div");
     wrapper.className = "cb-btn-wrapper";
@@ -19,7 +30,18 @@
     }
 
     const label = document.createElement("span");
-    label.textContent = "GTME View";
+    label.textContent = currentLabel();
+
+    // Update the label when the JWT lands or rotates so first-install users
+    // (no cached JWT at build time) see "GTME View" once the mint resolves
+    // and the `internal_branding` feature lights up, instead of "Scoping"
+    // until the next page load.
+    if (__cb.onSupabaseJwtChange) {
+      __cb.onSupabaseJwtChange(() => {
+        const next = currentLabel();
+        if (label.textContent !== next) label.textContent = next;
+      });
+    }
 
     btn.appendChild(icon);
     btn.appendChild(label);

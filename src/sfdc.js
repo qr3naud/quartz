@@ -1,4 +1,3 @@
-// __CB_INTERNAL_ONLY_BEGIN: sfdc
 (function () {
   "use strict";
 
@@ -22,8 +21,13 @@
   //   - searchOpportunities is uncached on the client; the Edge Function
   //     has a 30s LRU.
   //
-  // The whole file is internal-only — build.js strips it from the public
-  // spin-off (see build.config.js → exclude).
+  // Gating: ships to every install (internal + public). The public surface
+  // `__cb.sfdc.*` is only registered for users whose JWT carries the `sfdc`
+  // feature flag — see publishApi at the bottom. Consumer code uses
+  // `__cb.sfdc?.buildToolbarElement` which short-circuits to no-op when
+  // the API isn't exposed. The sfdc-* Edge Functions independently enforce
+  // INTERNAL_WORKSPACES server-side, so even a user who tampers with
+  // __cb.userFeatures can't reach SFDC.
   // ---------------------------------------------------------------------------
 
   // --- Caching ---------------------------------------------------------------
@@ -618,17 +622,31 @@
 
   // --- Public surface --------------------------------------------------------
 
-  __cb.sfdc = {
-    searchOpportunities,
-    getOpportunity,
-    hydrateLinkedOpportunity,
-    linkCanvasToOpportunity,
-    unlinkCanvasFromOpportunity,
-    getLinkedOpportunity,
-    setLinkedOpportunityLocal,
-    onLinkedOppChange,
-    showPicker,
-    buildToolbarElement,
-  };
+  // Only exposed for users whose JWT carries the `sfdc` feature flag. On
+  // a cold load (no cached JWT), hasFeature returns false synchronously,
+  // so we also re-check after __cb.supabaseJwtReady resolves. The toolbar
+  // injection in src/overlay.js uses `__cb.sfdc?.buildToolbarElement`,
+  // which natively short-circuits when this assignment hasn't happened.
+  function publishApi() {
+    __cb.sfdc = {
+      searchOpportunities,
+      getOpportunity,
+      hydrateLinkedOpportunity,
+      linkCanvasToOpportunity,
+      unlinkCanvasFromOpportunity,
+      getLinkedOpportunity,
+      setLinkedOpportunityLocal,
+      onLinkedOppChange,
+      showPicker,
+      buildToolbarElement,
+    };
+  }
+
+  if (__cb.hasFeature && __cb.hasFeature("sfdc")) {
+    publishApi();
+  } else if (__cb.supabaseJwtReady) {
+    __cb.supabaseJwtReady.then(() => {
+      if (__cb.hasFeature && __cb.hasFeature("sfdc")) publishApi();
+    }).catch(() => { /* mint failed; leave the API unexposed */ });
+  }
 })();
-// __CB_INTERNAL_ONLY_END

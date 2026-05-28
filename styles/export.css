@@ -390,9 +390,11 @@
   border-color: #9ca3af;
 }
 
-/* __CB_INTERNAL_ONLY_BEGIN: gtmeExport */
 /* ==========================================================================
    GTME EXPORT MODAL — narrower than the table modal because there's no grid.
+   Only opened from the menu row that's filtered out for non-internal users
+   via the `gtme_export` feature flag (see src/export.js openExportMenu),
+   so these rules match nothing for public/self-scoping users.
    ========================================================================== */
 
 .cb-gtme-modal {
@@ -561,11 +563,9 @@
   margin-top: 2px;
 }
 
-/* __CB_INTERNAL_ONLY_END */
-
 /* Shared export-modal submit and footer-actions styles, reused by every
    export modal that has a primary submit button (currently the JSON export
-   modal, and additional modals in the internal build). */
+   modal, plus the GTME and pricing modals on internal). */
 .cb-export-footer-actions {
   display: flex;
   align-items: center;
@@ -599,7 +599,6 @@
   cursor: not-allowed;
 }
 
-/* __CB_INTERNAL_ONLY_BEGIN: gtmeExport */
 .cb-gtme-error {
   padding: 10px 12px;
   border: 1px solid #fecaca;
@@ -608,7 +607,6 @@
   border-radius: 6px;
   font-size: 13px;
 }
-/* __CB_INTERNAL_ONLY_END */
 
 /* ==========================================================================
    EXPORT AS JSON MODAL
@@ -956,7 +954,6 @@
   cursor: not-allowed;
 }
 
-/* __CB_INTERNAL_ONLY_BEGIN: pricingComparison */
 /* ==========================================================================
    OLD vs NEW PRICING MODAL
    Reuses the cb-export-modal primitives (backdrop, header, footer) defined
@@ -970,6 +967,10 @@
    display:none on every cell unless the modal carries the
    `.cb-pricing-on` class — flipping that class on the modal root is
    the entirety of the toggle's visual change.
+
+   The modal itself is only opened from a button injected behind the
+   `pricing_comparison` feature flag (see src/overlay.js), so for
+   non-internal users these rules match nothing.
    ========================================================================== */
 
 /* Modal width is set explicitly per state (OFF default below, ON
@@ -2033,4 +2034,3 @@
 .cb-pricing-download svg {
   flex-shrink: 0;
 }
-/* __CB_INTERNAL_ONLY_END */

@@ -183,7 +183,11 @@
         // fetch (see init below) and tell the user how to populate the list.
         showStatus("Open a Clay workbook to see your canvases here.");
       } else {
-        showStatus("No saved canvases yet. Open the GTME View on a workbook to start.");
+        // Neutral wording: the popup runs in extension context with no access
+        // to the content script's __cb namespace, so we can't ask
+        // hasFeature("internal_branding") whether the toolbar button reads
+        // "GTME View" or "Scoping". "Canvas button" is correct for both.
+        showStatus("No saved canvases yet. Open the canvas button on a workbook to start.");
       }
       return;
     }

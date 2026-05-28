@@ -5,8 +5,17 @@
 
   __cb.updateGroupButtonVisibility = function () {};
 
-  __cb.openCanvas = function (initialCards) {
+  __cb.openCanvas = async function (initialCards) {
     if (__cb.overlayEl) return;
+
+    // Wait for the Supabase JWT to land so __cb.userFeatures is populated
+    // before we build the toolbar — otherwise the first canvas open on a
+    // fresh install (no cached JWT) would skip every internal-only button.
+    // On warm loads this is synchronous (cached JWT adopted at script
+    // load). Callers fire-and-forget, so making this async is safe.
+    if (__cb.supabaseJwtReady) {
+      try { await __cb.supabaseJwtReady; } catch {}
+    }
 
     if (!__cb.tabStore) {
       const tabId = __cb.generateTabId();
@@ -66,38 +75,43 @@
     closeBtn.textContent = "Close";
     closeBtn.addEventListener("click", __cb.closeCanvas);
 
-    // __CB_INTERNAL_ONLY_BEGIN: pricingComparison
-    // Old vs New Pricing — sits to the left of Import from Table. Reuses
-    // the same shared __cb.tablePicker dropdown the Import button drives,
-    // then opens a side-by-side legacy vs modern catalog cost comparison
-    // modal (see src/pricing-comparison.js). Scale icon = "weighing two
-    // sides", which matches the modal's intent.
-    const pricingBtn = document.createElement("button");
-    pricingBtn.className = "cb-toolbar-btn cb-toolbar-pricing";
-    pricingBtn.type = "button";
-    pricingBtn.title = "Compare per-row credit cost on the legacy vs modern Clay pricing plans";
-    pricingBtn.innerHTML =
-      '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M12 3v18"/><path d="M5 8h14"/><path d="M5 8l-3 7a4 4 0 0 0 6 0L5 8z"/><path d="M19 8l-3 7a4 4 0 0 0 6 0L19 8z"/></svg>' +
-      " Old vs New Pricing";
-    pricingBtn.addEventListener("click", () => __cb.startPricingComparison(pricingBtn));
-    // __CB_INTERNAL_ONLY_END
+    // Old vs New Pricing + Generate POC are constructed below inside their
+    // respective feature-flag blocks so non-internal users don't allocate
+    // unused DOM nodes. They're declared here as null and reassigned only
+    // when their feature is enabled — see the append section further down.
+    let pricingBtn = null;
+    let dustBtn = null;
+    if (__cb.hasFeature?.("pricing_comparison")) {
+      // Old vs New Pricing — sits to the left of Import from Table. Reuses
+      // the same shared __cb.tablePicker dropdown the Import button drives,
+      // then opens a side-by-side legacy vs modern catalog cost comparison
+      // modal (see src/pricing-comparison.js). Scale icon = "weighing two
+      // sides", which matches the modal's intent.
+      pricingBtn = document.createElement("button");
+      pricingBtn.className = "cb-toolbar-btn cb-toolbar-pricing";
+      pricingBtn.type = "button";
+      pricingBtn.title = "Compare per-row credit cost on the legacy vs modern Clay pricing plans";
+      pricingBtn.innerHTML =
+        '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M12 3v18"/><path d="M5 8h14"/><path d="M5 8l-3 7a4 4 0 0 0 6 0L5 8z"/><path d="M19 8l-3 7a4 4 0 0 0 6 0L19 8z"/></svg>' +
+        " Old vs New Pricing";
+      pricingBtn.addEventListener("click", () => __cb.startPricingComparison(pricingBtn));
+    }
 
-    // __CB_INTERNAL_ONLY_BEGIN: dustPoc
-    // Generate POC — opens a small popover with a customer-name input and
-    // POSTs to Dust to create a new conversation mentioning the POC agent.
-    // Stripped from the public build; key + workspace are Clay-internal.
-    const dustBtn = document.createElement("button");
-    dustBtn.className = "cb-toolbar-btn cb-toolbar-dust-poc";
-    dustBtn.type = "button";
-    dustBtn.title = "Generate a POC scope in Dust for a customer";
-    dustBtn.innerHTML =
-      '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 4.6L18.5 9l-4.6 1.9L12 15l-1.9-4.1L5.5 9l4.6-1.4L12 3z"/><path d="M19 15l.8 1.9L21.5 17.5l-1.7.6L19 20l-.8-1.9L16.5 17.5l1.7-.6L19 15z"/><path d="M5 14l.6 1.4L7 16l-1.4.6L5 18l-.6-1.4L3 16l1.4-.6L5 14z"/></svg>' +
-      " Generate POC";
-    dustBtn.addEventListener("click", (evt) => {
-      evt.stopPropagation();
-      if (__cb.startDustPoc) __cb.startDustPoc(dustBtn);
-    });
-    // __CB_INTERNAL_ONLY_END
+    if (__cb.hasFeature?.("dust")) {
+      // Generate POC — opens a small popover with a customer-name input and
+      // POSTs to Dust to create a new conversation mentioning the POC agent.
+      dustBtn = document.createElement("button");
+      dustBtn.className = "cb-toolbar-btn cb-toolbar-dust-poc";
+      dustBtn.type = "button";
+      dustBtn.title = "Generate a POC scope in Dust for a customer";
+      dustBtn.innerHTML =
+        '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 4.6L18.5 9l-4.6 1.9L12 15l-1.9-4.1L5.5 9l4.6-1.4L12 3z"/><path d="M19 15l.8 1.9L21.5 17.5l-1.7.6L19 20l-.8-1.9L16.5 17.5l1.7-.6L19 15z"/><path d="M5 14l.6 1.4L7 16l-1.4.6L5 18l-.6-1.4L3 16l1.4-.6L5 14z"/></svg>' +
+        " Generate POC";
+      dustBtn.addEventListener("click", (evt) => {
+        evt.stopPropagation();
+        if (__cb.startDustPoc) __cb.startDustPoc(dustBtn);
+      });
+    }
 
     const importBtn = document.createElement("button");
     importBtn.className = "cb-toolbar-btn cb-toolbar-import";
@@ -308,17 +322,14 @@
 
     rightGroup.appendChild(viewModeWrap);
     rightGroup.appendChild(proBtn);
-    // __CB_INTERNAL_ONLY_BEGIN: pricingComparison
-    rightGroup.appendChild(pricingBtn);
-    // __CB_INTERNAL_ONLY_END
-    // __CB_INTERNAL_ONLY_BEGIN: dustPoc
-    rightGroup.appendChild(dustBtn);
-    // __CB_INTERNAL_ONLY_END
-    // __CB_INTERNAL_ONLY_BEGIN: sfdc
+    if (pricingBtn) rightGroup.appendChild(pricingBtn);
+    if (dustBtn) rightGroup.appendChild(dustBtn);
     // Salesforce opportunity link — sits between Generate POC and Import.
     // The element internally swaps between a "Link opportunity" button and
     // a linked-opp pill ("Acme Inc — Q3 Expansion") based on the canvases
     // row's sfdc_opportunity_* columns. See src/sfdc.js for the picker.
+    // The src/sfdc.js IIFE only assigns to __cb.sfdc when the `sfdc`
+    // feature flag is on, so this `?.` check is the runtime gate.
     if (__cb.sfdc?.buildToolbarElement) {
       const sfdcEl = __cb.sfdc.buildToolbarElement();
       rightGroup.appendChild(sfdcEl);
@@ -331,7 +342,6 @@
         });
       }
     }
-    // __CB_INTERNAL_ONLY_END
     rightGroup.appendChild(importBtn);
     rightGroup.appendChild(viewToggleBtn);
     rightGroup.appendChild(exportBtn);
@@ -911,10 +921,12 @@
     const helpContent = document.createElement("div");
     helpContent.className = "cb-help-content";
 
+    const brandedButtonName =
+      __cb.hasFeature && __cb.hasFeature("internal_branding") ? "GTME View" : "Scoping";
     const instructionsHtml =
       '<div class="cb-help-section">' +
         '<div class="cb-help-section-title">Getting started</div>' +
-        '<p>Open the canvas from the <strong>GTME View</strong> button on any Clay table. Use the <strong>Enrichments tool</strong> in the toolbar to pick enrichments from the catalog, or <strong>Import from Table</strong> to pull in enrichments from an existing table.</p>' +
+        `<p>Open the canvas from the <strong>${brandedButtonName}</strong> button on any Clay table. Use the <strong>Enrichments tool</strong> in the toolbar to pick enrichments from the catalog, or <strong>Import from Table</strong> to pull in enrichments from an existing table.</p>` +
       '</div>' +
       '<div class="cb-help-section">' +
         '<div class="cb-help-section-title">Tools</div>' +

@@ -1,4 +1,3 @@
-// __CB_INTERNAL_ONLY_BEGIN: dustPoc
 (function () {
   "use strict";
 
@@ -18,8 +17,11 @@
   // Phase-1 Clay JWT + internal-workspace whitelist), so the popover skips
   // straight to the customer-name form.
   //
-  // The whole file is internal-only — stripped from the public build via
-  // build.config.js's `exclude` list.
+  // Gating: ships to every install (internal + public). The public entry
+  // point `__cb.startDustPoc` is only registered for users whose JWT carries
+  // the `dust` feature flag — see publishApi at the bottom. The toolbar
+  // button that invokes it is also feature-gated in src/overlay.js, so this
+  // is belt-and-suspenders.
   // ---------------------------------------------------------------------------
 
   const DUST_WORKSPACE_ID = "5b990f8923";
@@ -312,8 +314,22 @@
 
   // ---- Public API -----------------------------------------------------------
 
-  __cb.startDustPoc = function (anchorEl) {
-    openPopover(anchorEl);
-  };
+  // Only exposed for users whose JWT carries the `dust` feature flag. On
+  // a cold load (no cached JWT), hasFeature returns false synchronously,
+  // so we also re-check after __cb.supabaseJwtReady resolves. The toolbar
+  // button in src/overlay.js performs the same check before injecting the
+  // entry that invokes startDustPoc.
+  function publishApi() {
+    __cb.startDustPoc = function (anchorEl) {
+      openPopover(anchorEl);
+    };
+  }
+
+  if (__cb.hasFeature && __cb.hasFeature("dust")) {
+    publishApi();
+  } else if (__cb.supabaseJwtReady) {
+    __cb.supabaseJwtReady.then(() => {
+      if (__cb.hasFeature && __cb.hasFeature("dust")) publishApi();
+    }).catch(() => { /* mint failed; leave the API unexposed */ });
+  }
 })();
-// __CB_INTERNAL_ONLY_END
