@@ -443,6 +443,25 @@
   color: #d97706;
 }
 
+/* Disabled row (e.g. the Canvas/Tables "View" toggle when the user isn't
+   allow-listed for canvas). Greyed out, non-interactive, and no hover
+   highlight so it reads as "locked" rather than clickable. */
+.cb-more-menu-option-disabled,
+.cb-more-menu-option-disabled:hover {
+  color: #9ca3af;
+  cursor: not-allowed;
+  background: transparent;
+}
+
+.cb-more-menu-option-disabled .cb-more-menu-icon {
+  color: #9ca3af;
+}
+
+.cb-more-menu-option-disabled .cb-more-menu-state {
+  background: #f3f4f6;
+  color: #9ca3af;
+}
+
 .cb-more-menu-label {
   flex: 1 1 auto;
   text-align: left;

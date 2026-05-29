@@ -6,7 +6,7 @@
   // Toolbar button label is part of the `internal_branding` feature flag —
   // internal GTMEs see "Quartz" (the new product name; the flag name itself
   // stays `internal_branding` until the rename lands in the JWT mint), and
-  // public/self-scoping users see "Scoping". hasFeature may return false
+  // non-internal users see "Scoping". hasFeature may return false
   // synchronously on first install (no cached JWT yet); we re-evaluate when
   // the JWT lands via onSupabaseJwtChange below.
   function currentLabel() {

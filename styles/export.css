@@ -394,7 +394,7 @@
    GTME EXPORT MODAL — narrower than the table modal because there's no grid.
    Only opened from the menu row that's filtered out for non-internal users
    via the `gtme_export` feature flag (see src/export.js openExportMenu),
-   so these rules match nothing for public/self-scoping users.
+   so these rules match nothing for non-internal users.
    ========================================================================== */
 
 .cb-gtme-modal {

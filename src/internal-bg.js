@@ -35,8 +35,9 @@
 // secret in the bundle anymore). The Phase-1 lockdown means anything we
 // proxy is gated by Clay workspace membership at the Edge Function layer.
 //
-// This file is internal-only; build.js strips it (and the SFDC/Dust client
-// code) from the public spin-off. See build.config.js → exclude.
+// This is the extension's service worker (MV3 background). It bridges the
+// content script to the Supabase Edge Function proxies (SFDC/Dust) and mints
+// the per-user JWT — see src/auth.js for the content-script side.
 
 "use strict";
 

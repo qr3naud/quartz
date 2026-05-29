@@ -178,6 +178,21 @@
     setBrainstormView: null,
     tableView: null,
 
+    // Canvas view is being de-prioritized in favor of the table view, which
+    // is now the primary surface. The Cards/Tables toggle (overlay.js
+    // openMoreMenu) is greyed out and the view is locked to "table" for
+    // everyone except the allow-listed emails below — they keep full canvas
+    // access so the mode can keep being iterated on. The persisted data
+    // structure (coordinates, clusters, connections) is left intact and
+    // dormant so canvas can be re-introduced later with zero migration.
+    // This is a UX gate, not a security boundary: the email comes from the
+    // JWT `email` claim (set on __cb.userEmail in src/auth.js).
+    CANVAS_VIEW_ALLOWED_EMAILS: ["quentin.renaud@clay.com"],
+    canUseCanvasView() {
+      const email = (window.__cb.userEmail || "").trim().toLowerCase();
+      return window.__cb.CANVAS_VIEW_ALLOWED_EMAILS.includes(email);
+    },
+
     // "projected" (default — catalog credits × records) vs "actual" (real
     // spend pulled from Clay's realtime credit usage warehouse, attached to
     // ER cards via data.stats.spend at import time). Toggled by the

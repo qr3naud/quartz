@@ -49,9 +49,9 @@
     menuEl.addEventListener("mousedown", (evt) => evt.stopPropagation());
 
     // Filter options the JWT doesn't entitle this user to see. Internal
-    // GTMEs get every row; public/self-scoping users get just `table` +
-    // `json`. The handler switch below doesn't need its own feature checks
-    // because gated branches are unreachable when the row isn't rendered.
+    // GTMEs get every row; non-internal users get just `table` + `json`.
+    // The handler switch below doesn't need its own feature checks because
+    // gated branches are unreachable when the row isn't rendered.
     const visibleOptions = EXPORT_OPTIONS.filter(
       (opt) => !opt.feature || (__cb.hasFeature && __cb.hasFeature(opt.feature)),
     );

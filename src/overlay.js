@@ -78,24 +78,41 @@
     // is the most fundamental choice. State pill shows the current view
     // name; clicking flips to the other and closes the menu, mirroring
     // the Pro Mode row's UX one level down.
+    //
+    // Canvas is being de-prioritized in favor of the table view, so for
+    // everyone except the allow-listed emails (see __cb.canUseCanvasView)
+    // the row renders greyed out and locked — the view is forced to
+    // "table" elsewhere, so the pill always reads "Tables" here.
+    const canUseCanvas = __cb.canUseCanvasView?.() ?? false;
     const inTable = __cb.brainstormView === "table";
     const currentViewLabel = inTable ? "Tables" : "Canvas";
     const otherViewLabel = inTable ? "Canvas" : "Tables";
     const viewItem = document.createElement("button");
     viewItem.type = "button";
-    viewItem.className = "cb-export-menu-option cb-more-menu-option";
-    viewItem.title = `Switch to the ${otherViewLabel.toLowerCase()} view`;
-    viewItem.innerHTML =
-      `<span class="cb-more-menu-icon">${SWAP_VIEW_ICON_SVG}</span>` +
-      `<span class="cb-more-menu-label">View</span>` +
-      `<span class="cb-more-menu-state">${currentViewLabel}</span>`;
-    viewItem.addEventListener("click", (evt) => {
-      evt.stopPropagation();
-      closeMoreMenu();
-      if (__cb.setBrainstormView) {
-        __cb.setBrainstormView(inTable ? "canvas" : "table");
-      }
-    });
+    if (canUseCanvas) {
+      viewItem.className = "cb-export-menu-option cb-more-menu-option";
+      viewItem.title = `Switch to the ${otherViewLabel.toLowerCase()} view`;
+      viewItem.innerHTML =
+        `<span class="cb-more-menu-icon">${SWAP_VIEW_ICON_SVG}</span>` +
+        `<span class="cb-more-menu-label">View</span>` +
+        `<span class="cb-more-menu-state">${currentViewLabel}</span>`;
+      viewItem.addEventListener("click", (evt) => {
+        evt.stopPropagation();
+        closeMoreMenu();
+        if (__cb.setBrainstormView) {
+          __cb.setBrainstormView(inTable ? "canvas" : "table");
+        }
+      });
+    } else {
+      viewItem.className =
+        "cb-export-menu-option cb-more-menu-option cb-more-menu-option-disabled";
+      viewItem.disabled = true;
+      viewItem.title = "Canvas view is being rebuilt — table view only";
+      viewItem.innerHTML =
+        `<span class="cb-more-menu-icon">${SWAP_VIEW_ICON_SVG}</span>` +
+        `<span class="cb-more-menu-label">View</span>` +
+        `<span class="cb-more-menu-state">Tables</span>`;
+    }
     moreMenuEl.appendChild(viewItem);
 
     // Pro Mode — always available. Renders as a toggle row: clicking
@@ -294,7 +311,14 @@
     // menu, pick the view they want, and the menu re-reads
     // __cb.brainstormView on each open so the state pill stays current.
     __cb.setBrainstormView = function (value) {
-      const next = value === "table" ? "table" : "canvas";
+      let next = value === "table" ? "table" : "canvas";
+      // Defense in depth: canvas is allow-listed (see __cb.canUseCanvasView).
+      // Coerce any "canvas" request to "table" for everyone else so no entry
+      // point — including the tabs.js tab-switch path, which still defaults
+      // legacy tabs to "canvas" — can surface the canvas to a locked user.
+      if (next === "canvas" && !__cb.canUseCanvasView?.()) {
+        next = "table";
+      }
       const prev = __cb.brainstormView;
       __cb.brainstormView = next;
       if (__cb.overlayEl) {
@@ -1535,9 +1559,15 @@
     // saved before this feature shipped won't carry the field, and the
     // spreadsheet is now the canonical entry point for scoping. Explicit
     // "canvas" choices the user made via the toggle are still respected.
-    const savedBrainstormView = restoredTab?.state?.brainstormView === "canvas"
+    let savedBrainstormView = restoredTab?.state?.brainstormView === "canvas"
       ? "canvas"
       : "table";
+    // Canvas is allow-listed (see __cb.canUseCanvasView). Everyone else is
+    // locked to the table view regardless of what the tab saved, so a tab
+    // last left in "canvas" still opens as a table for them.
+    if (savedBrainstormView === "canvas" && !__cb.canUseCanvasView?.()) {
+      savedBrainstormView = "table";
+    }
     __cb.setBrainstormView(savedBrainstormView);
 
     window.addEventListener("beforeunload", __cb.saveTabs);
