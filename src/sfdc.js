@@ -496,7 +496,21 @@
     });
   }
 
-  // --- "..." menu for the linked-opp pill ------------------------------------
+  // --- Linked-opp details popover --------------------------------------------
+  //
+  // Mirrors the gtme-calculator's linked-opportunity card (see
+  // monorepo/apps/mono-calculator ConfigTabs.tsx): a header caption + opp
+  // name + a detail grid (Account / Stage / Amount / Close / Owner) fetched
+  // lazily via getOpportunity, then the action rows. Replaces the old
+  // chevron-dropdown + label-link affordance — the whole pill is now a
+  // button that opens this popover.
+
+  const DETAILS_EXTERNAL_SVG =
+    '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></svg>';
+  const DETAILS_PENCIL_SVG =
+    '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>';
+  const DETAILS_UNLINK_SVG =
+    '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m18.84 12.25 1.72-1.71a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="m5.17 11.75-1.71 1.71a5 5 0 0 0 7.07 7.07l1.71-1.71"/><line x1="8" y1="2" x2="8" y2="5"/><line x1="2" y1="8" x2="5" y2="8"/><line x1="16" y1="19" x2="16" y2="22"/><line x1="19" y1="16" x2="22" y2="16"/></svg>';
 
   let menuEl = null;
   let menuBackdropEl = null;
@@ -505,23 +519,82 @@
     if (menuBackdropEl) { menuBackdropEl.remove(); menuBackdropEl = null; }
   }
 
-  function showLinkedOppMenu(anchorEl) {
+  // Fills `wrap` with the opportunity detail rows. Only present fields are
+  // rendered (matches the calculator); empty when nothing's available.
+  function renderDetailRows(wrap, d) {
+    wrap.innerHTML = "";
+    if (!d) return;
+    const rows = [];
+    if (d.accountName) rows.push(["Account", d.accountName]);
+    if (d.stageName) rows.push(["Stage", d.stageName]);
+    const amt = formatAmount(d.amount);
+    if (amt) rows.push(["Amount", amt]);
+    if (d.closeDate) rows.push(["Close", d.closeDate]);
+    if (d.ownerEmail) rows.push(["Owner", d.ownerEmail]);
+    if (rows.length === 0) return;
+    const dl = document.createElement("dl");
+    dl.className = "cb-sfdc-details-dl";
+    for (const [k, v] of rows) {
+      const dt = document.createElement("dt");
+      dt.textContent = k;
+      const dd = document.createElement("dd");
+      dd.textContent = v;
+      dd.title = v;
+      dl.appendChild(dt);
+      dl.appendChild(dd);
+    }
+    wrap.appendChild(dl);
+  }
+
+  function showLinkedOppDetails(anchorEl) {
     closeMenu();
     menuBackdropEl = document.createElement("div");
     menuBackdropEl.style.cssText = "position:fixed;inset:0;z-index:9999998;";
     menuBackdropEl.addEventListener("click", closeMenu);
 
     menuEl = document.createElement("div");
-    menuEl.className = "cb-sfdc-pill-menu";
+    menuEl.className = "cb-sfdc-details";
     menuEl.addEventListener("click", (evt) => evt.stopPropagation());
 
-    const change = document.createElement("button");
-    change.type = "button";
-    change.className = "cb-sfdc-pill-menu-item";
-    change.textContent = "Change opportunity";
-    change.addEventListener("click", () => {
+    // Header: caption + name + detail grid.
+    const head = document.createElement("div");
+    head.className = "cb-sfdc-details-head";
+
+    const caption = document.createElement("div");
+    caption.className = "cb-sfdc-details-caption";
+    caption.textContent = "Linked Salesforce opportunity";
+    head.appendChild(caption);
+
+    const name = document.createElement("div");
+    name.className = "cb-sfdc-details-name";
+    name.textContent = linkedOpp?.name || linkedOpp?.id || "";
+    name.title = name.textContent;
+    head.appendChild(name);
+
+    const body = document.createElement("div");
+    body.className = "cb-sfdc-details-body";
+    body.innerHTML =
+      '<div class="cb-sfdc-details-loading"><span class="cb-sfdc-details-spinner" aria-hidden="true"></span>Loading details\u2026</div>';
+    head.appendChild(body);
+
+    menuEl.appendChild(head);
+
+    // Actions.
+    const openBtn = document.createElement("button");
+    openBtn.type = "button";
+    openBtn.className = "cb-sfdc-details-action";
+    openBtn.innerHTML = DETAILS_EXTERNAL_SVG + "<span>Open in Salesforce</span>";
+    openBtn.addEventListener("click", () => {
       closeMenu();
-      // Open the picker anchored to the pill itself.
+      if (linkedOpp?.url) window.open(linkedOpp.url, "_blank", "noopener,noreferrer");
+    });
+
+    const changeBtn = document.createElement("button");
+    changeBtn.type = "button";
+    changeBtn.className = "cb-sfdc-details-action";
+    changeBtn.innerHTML = DETAILS_PENCIL_SVG + "<span>Change opportunity</span>";
+    changeBtn.addEventListener("click", () => {
+      closeMenu();
       showPicker(anchorEl, async (opp) => {
         try {
           await linkCanvasToOpportunity(__cb.currentWorkbookId, opp);
@@ -532,11 +605,11 @@
       });
     });
 
-    const unlink = document.createElement("button");
-    unlink.type = "button";
-    unlink.className = "cb-sfdc-pill-menu-item cb-sfdc-pill-menu-item-danger";
-    unlink.textContent = "Unlink";
-    unlink.addEventListener("click", async () => {
+    const unlinkBtn = document.createElement("button");
+    unlinkBtn.type = "button";
+    unlinkBtn.className = "cb-sfdc-details-action cb-sfdc-details-action-danger";
+    unlinkBtn.innerHTML = DETAILS_UNLINK_SVG + "<span>Unlink</span>";
+    unlinkBtn.addEventListener("click", async () => {
       closeMenu();
       try {
         await unlinkCanvasFromOpportunity(__cb.currentWorkbookId);
@@ -546,18 +619,41 @@
       }
     });
 
-    menuEl.appendChild(change);
-    menuEl.appendChild(unlink);
+    menuEl.appendChild(openBtn);
+    menuEl.appendChild(changeBtn);
+    menuEl.appendChild(unlinkBtn);
 
     document.body.appendChild(menuBackdropEl);
     document.body.appendChild(menuEl);
 
+    // Right-aligned under the pill. Grows downward as details load, so the
+    // top/left anchor stays put.
     const rect = anchorEl.getBoundingClientRect();
     menuEl.style.position = "fixed";
     menuEl.style.zIndex = "9999999";
     menuEl.style.top = rect.bottom + 4 + "px";
-    const width = menuEl.offsetWidth || 180;
+    const width = menuEl.offsetWidth || 300;
     menuEl.style.left = Math.max(8, rect.right - width) + "px";
+
+    // Lazily fetch the full record for the detail grid (5min in-memory
+    // cache, so reopening is instant). Guard against the popover closing
+    // mid-flight.
+    const oppId = linkedOpp?.id;
+    if (oppId) {
+      getOpportunity(oppId)
+        .then((d) => {
+          if (menuEl) renderDetailRows(body, d);
+        })
+        .catch((err) => {
+          console.warn("[Clay Scoping] getOpportunity failed:", err);
+          if (menuEl) {
+            body.innerHTML =
+              '<div class="cb-sfdc-details-loading">Couldn\u2019t load details.</div>';
+          }
+        });
+    } else {
+      body.innerHTML = "";
+    }
   }
 
   // --- Topbar element factory ------------------------------------------------
@@ -577,10 +673,12 @@
     function render() {
       wrap.innerHTML = "";
       if (linkedOpp) {
-        // Linked pill: name + chevron menu.
-        const pill = document.createElement("div");
+        // Linked state: a single button (no inline link, no chevron) that
+        // opens the linked-opp details popover. Matches the gtme-calculator.
+        const pill = document.createElement("button");
+        pill.type = "button";
         pill.className = "cb-sfdc-pill";
-        pill.title = "Click to open in Salesforce";
+        pill.title = "View linked opportunity";
 
         const cloud = document.createElement("span");
         cloud.className = "cb-sfdc-pill-icon";
@@ -588,26 +686,15 @@
           '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.5 19a4.5 4.5 0 1 0-1.4-8.8 6 6 0 0 0-11.6 1.6A4 4 0 0 0 6 19h11.5z"/></svg>';
         pill.appendChild(cloud);
 
-        const label = document.createElement("a");
+        const label = document.createElement("span");
         label.className = "cb-sfdc-pill-label";
-        label.href = linkedOpp.url || "#";
-        label.target = "_blank";
-        label.rel = "noopener noreferrer";
         label.textContent = linkedOpp.name || linkedOpp.id;
         pill.appendChild(label);
 
-        const menuBtn = document.createElement("button");
-        menuBtn.type = "button";
-        menuBtn.className = "cb-sfdc-pill-chev";
-        menuBtn.title = "Change or unlink";
-        menuBtn.innerHTML =
-          '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>';
-        menuBtn.addEventListener("click", (evt) => {
-          evt.preventDefault();
+        pill.addEventListener("click", (evt) => {
           evt.stopPropagation();
-          showLinkedOppMenu(pill);
+          showLinkedOppDetails(pill);
         });
-        pill.appendChild(menuBtn);
 
         wrap.appendChild(pill);
       } else {

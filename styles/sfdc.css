@@ -111,23 +111,25 @@
 .cb-sfdc-pill {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
   /* Height + radius match .cb-toolbar-btn so the linked-opp state reads
-     as a sibling of the other toolbar buttons rather than a shorter pill.
-     Right padding stays tight (4px) to give the inner chevron-button room
-     to render its own hover background without doubling the trailing gap. */
+     as a sibling of the other toolbar buttons. It's a real <button> now
+     (opens the details popover), so it carries symmetric padding and a
+     pointer cursor instead of the old chevron-specific layout. */
   height: 32px;
-  padding: 0 4px 0 8px;
+  padding: 0 10px;
   border: 1px solid #c7d2fe;
   background: #eef2ff;
   border-radius: 5px;
   color: #3730a3;
+  font-family: inherit;
   /* 13px to match .cb-toolbar-btn (Generate POC, Link opportunity) so the
      linked-opp state reads as a sibling of the other toolbar buttons. */
   font-size: 13px;
   font-weight: 500;
-  cursor: default;
+  cursor: pointer;
   max-width: 280px;
+  transition: background 0.15s, border-color 0.15s;
 }
 
 .cb-sfdc-pill:hover {
@@ -138,6 +140,7 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  flex-shrink: 0;
   color: #4f46e5;
 }
 
@@ -149,66 +152,129 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   color: inherit;
-  text-decoration: none;
-  cursor: pointer;
 }
 
-.cb-sfdc-pill-label:hover {
-  text-decoration: underline;
-}
+/* --- Linked-opp details popover (mirrors the gtme-calculator card) --- */
 
-.cb-sfdc-pill-chev {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 20px;
-  height: 20px;
-  padding: 0;
-  border: none;
-  background: transparent;
-  color: #6366f1;
-  border-radius: 4px;
-  cursor: pointer;
-}
-
-.cb-sfdc-pill-chev:hover {
-  background: rgba(99, 102, 241, 0.12);
-}
-
-/* --- "..." menu surfaced by the chevron --- */
-
-.cb-sfdc-pill-menu {
+.cb-sfdc-details {
   display: flex;
   flex-direction: column;
-  min-width: 180px;
-  padding: 4px;
-  background: white;
+  min-width: 300px;
+  max-width: 360px;
+  background: #ffffff;
   border: 1px solid #e5e7eb;
   border-radius: 8px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+  overflow: hidden;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
 }
 
-.cb-sfdc-pill-menu-item {
-  display: block;
+.cb-sfdc-details-head {
+  padding: 10px 12px;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.cb-sfdc-details-caption {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #9ca3af;
+}
+
+.cb-sfdc-details-name {
+  margin-top: 2px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #111827;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cb-sfdc-details-body {
+  margin-top: 6px;
+}
+
+.cb-sfdc-details-dl {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 2px 8px;
+  margin: 0;
+  font-size: 12px;
+}
+
+.cb-sfdc-details-dl dt {
+  color: #9ca3af;
+}
+
+.cb-sfdc-details-dl dd {
+  margin: 0;
+  color: #374151;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cb-sfdc-details-loading {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #9ca3af;
+}
+
+.cb-sfdc-details-spinner {
+  width: 12px;
+  height: 12px;
+  flex-shrink: 0;
+  border: 1.5px solid #e5e7eb;
+  border-top-color: #6366f1;
+  border-radius: 50%;
+  /* Shares the keyframes defined in styles/dust-poc.css (all CSS loads
+     into the same document, so the animation name is global). */
+  animation: cb-dust-poc-spin 0.7s linear infinite;
+}
+
+.cb-sfdc-details-action {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   width: 100%;
-  padding: 8px 10px;
+  padding: 9px 12px;
   border: none;
   background: transparent;
-  border-radius: 6px;
-  text-align: left;
+  color: #374151;
+  font-family: inherit;
   font-size: 13px;
-  color: #111827;
+  font-weight: 500;
   cursor: pointer;
+  text-align: left;
 }
 
-.cb-sfdc-pill-menu-item:hover {
-  background: #f3f4f6;
+/* Divider only between consecutive actions; the header's border-bottom
+   already separates it from the first action. */
+.cb-sfdc-details-action + .cb-sfdc-details-action {
+  border-top: 1px solid #f1f5f9;
 }
 
-.cb-sfdc-pill-menu-item-danger {
+.cb-sfdc-details-action:hover {
+  background: #f9fafb;
+}
+
+.cb-sfdc-details-action svg {
+  flex-shrink: 0;
+  color: #9ca3af;
+}
+
+.cb-sfdc-details-action-danger {
   color: #b91c1c;
 }
 
-.cb-sfdc-pill-menu-item-danger:hover {
-  background: #fee2e2;
+.cb-sfdc-details-action-danger svg {
+  color: #ef4444;
+}
+
+.cb-sfdc-details-action-danger:hover {
+  background: #fef2f2;
 }
