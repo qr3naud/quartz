@@ -991,6 +991,13 @@
     __cb.startPickerMode();
   }
 
+  // "Scope Ads" / "Scope Audiences" intro shortcuts. Behavior is not wired up
+  // yet — this is a no-op placeholder so the buttons render without side
+  // effects until we decide what each should do.
+  function startScope(kind) {
+    console.log(`[Clay Scoping] Scope ${kind} clicked (not wired up yet).`);
+  }
+
   function removeCardById(cardId) {
     const canvas = __cb.canvas;
     if (!canvas?.getCardById) return;
@@ -1652,6 +1659,24 @@
       }
     });
     introActions.appendChild(uploadPocBtn);
+
+    // "Scope Ads" / "Scope Audiences" sit between the POC import and the
+    // granular "Add enrichment" action as scoping quick-starts.
+    const scopeAdsBtn = document.createElement("button");
+    scopeAdsBtn.type = "button";
+    scopeAdsBtn.className = "cb-table-view-add-er-btn";
+    scopeAdsBtn.title = "Scope an Ads use case";
+    scopeAdsBtn.innerHTML = targetSvg(12) + "<span>Scope Ads</span>";
+    scopeAdsBtn.addEventListener("click", () => startScope("ads"));
+    introActions.appendChild(scopeAdsBtn);
+
+    const scopeAudiencesBtn = document.createElement("button");
+    scopeAudiencesBtn.type = "button";
+    scopeAudiencesBtn.className = "cb-table-view-add-er-btn";
+    scopeAudiencesBtn.title = "Scope an Audiences use case";
+    scopeAudiencesBtn.innerHTML = targetSvg(12) + "<span>Scope Audiences</span>";
+    scopeAudiencesBtn.addEventListener("click", () => startScope("audiences"));
+    introActions.appendChild(scopeAudiencesBtn);
 
     const addOrphanErBtn = document.createElement("button");
     addOrphanErBtn.type = "button";
@@ -2617,6 +2642,18 @@
       'stroke-linejoin="round" aria-hidden="true">' +
       '<line x1="18" y1="6" x2="6" y2="18"/>' +
       '<line x1="6" y1="6" x2="18" y2="18"/>' +
+      '</svg>'
+    );
+  }
+
+  function targetSvg(size) {
+    const s = String(size);
+    return (
+      `<svg xmlns="http://www.w3.org/2000/svg" width="${s}" height="${s}" viewBox="0 0 24 24" ` +
+      'fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" ' +
+      'stroke-linejoin="round" aria-hidden="true">' +
+      '<circle cx="12" cy="12" r="9"/>' +
+      '<circle cx="12" cy="12" r="4"/>' +
       '</svg>'
     );
   }
