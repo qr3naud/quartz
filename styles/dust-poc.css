@@ -31,7 +31,7 @@
    opportunity link). Both icons are hidden and a spinner is drawn via
    ::before; the "Generate POC" label stays so the button keeps its width
    and meaning. */
-.cb-toolbar-dust-poc-loading > svg {
+.cb-toolbar-dust-poc-loading>svg {
   display: none;
 }
 
@@ -117,12 +117,20 @@
    spots the deliverable immediately when the POC is ready. */
 .cb-dust-poc-doc {
   display: flex;
-  align-items: center;
-  gap: 8px;
+  flex-direction: column;
+  gap: 10px;
   padding: 10px 12px;
   border: 1px solid #c7d2fe;
   border-radius: 8px;
   background: #eef2ff;
+}
+
+/* Top row of the doc card: icon + link + refresh, laid out horizontally.
+   The import button stacks beneath this row inside the same card. */
+.cb-dust-poc-doc-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .cb-dust-poc-doc-icon {
@@ -244,7 +252,7 @@
   gap: 6px;
 }
 
-.cb-dust-poc-footer-split > .cb-dust-poc-btn {
+.cb-dust-poc-footer-split>.cb-dust-poc-btn {
   flex: 1 1 0;
   margin-left: 0;
 }

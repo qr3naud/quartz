@@ -357,8 +357,12 @@
     appendTitle("POC ready");
 
     if (pocState.docUrl) {
+      const docCard = document.createElement("div");
+      docCard.className = "cb-dust-poc-doc";
+
+      // Top row of the card: doc icon + link + (optional) refresh control.
       const docRow = document.createElement("div");
-      docRow.className = "cb-dust-poc-doc";
+      docRow.className = "cb-dust-poc-doc-row";
 
       const icon = document.createElement("span");
       icon.className = "cb-dust-poc-doc-icon";
@@ -390,22 +394,24 @@
         docRow.appendChild(refreshBtn);
       }
 
-      popoverEl.appendChild(docRow);
+      docCard.appendChild(docRow);
 
       // One-click import — the doc link is already known, so pull its
       // "Required data points:" lists straight onto the canvas (reuses the
-      // Upload POC pipeline in src/poc-import.js). Full-width primary,
-      // directly under the doc card, so it reads as the main next step.
+      // Upload POC pipeline in src/poc-import.js). Lives inside the doc card,
+      // stacked under the link, as a full-width white/secondary button.
       const importBtn = document.createElement("button");
       importBtn.type = "button";
       importBtn.className =
-        "cb-dust-poc-btn cb-dust-poc-btn-primary cb-dust-poc-btn-block";
+        "cb-dust-poc-btn cb-dust-poc-btn-secondary cb-dust-poc-btn-block";
       importBtn.textContent = "Import data points";
       importBtn.title = "Import the doc's data points onto the canvas";
       const importStatus = document.createElement("div");
       importStatus.className = "cb-dust-poc-status";
       importBtn.addEventListener("click", () => importDocDataPoints(importBtn, importStatus));
-      popoverEl.appendChild(importBtn);
+      docCard.appendChild(importBtn);
+
+      popoverEl.appendChild(docCard);
 
       // How-to-iterate hint: changes are made in Dust, then the doc link is
       // refreshed (the icon in the doc card), not regenerated from scratch.
@@ -436,14 +442,16 @@
   // closes briefly after so the rep sees the stamped cards behind it.
   async function importDocDataPoints(btn, statusEl) {
     if (!pocState.docUrl) return;
+    // Status sits just below the doc card (the button now lives inside it).
+    const statusAnchor = btn.closest(".cb-dust-poc-doc") || btn;
     if (!__cb.importPocFromDocUrl) {
-      if (!statusEl.isConnected) btn.insertAdjacentElement("afterend", statusEl);
+      if (!statusEl.isConnected) statusAnchor.insertAdjacentElement("afterend", statusEl);
       setStatus(statusEl, "error", "Importer unavailable — reload the page and try again.");
       return;
     }
     btn.disabled = true;
     btn.classList.add("cb-dust-poc-btn-loading");
-    if (!statusEl.isConnected) btn.insertAdjacentElement("afterend", statusEl);
+    if (!statusEl.isConnected) statusAnchor.insertAdjacentElement("afterend", statusEl);
     setStatus(statusEl, "info", "Importing data points\u2026");
     try {
       const result = await __cb.importPocFromDocUrl(pocState.docUrl);
