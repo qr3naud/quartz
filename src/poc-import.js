@@ -568,6 +568,22 @@
     showModal();
   };
 
+  // Headless one-click import: fetch + parse + stamp a Google Doc straight
+  // onto the canvas, skipping the modal. Used by the Generate POC "Import
+  // data points" action (src/dust-poc.js) where we already have the doc URL.
+  // Throws on a non-doc URL, a non-public doc, or a doc with no
+  // "Required data points:" bullets — callers surface the message. Returns
+  // { groups, dataPoints }.
+  __cb.importPocFromDocUrl = async function (url) {
+    const docId = extractGoogleDocId(url);
+    if (!docId) {
+      throw new Error("That doesn't look like a Google Doc link.");
+    }
+    const text = await fetchGoogleDoc(docId);
+    const parsed = parsePocDoc(text);
+    return applyImport(parsed);
+  };
+
   // Exposed for test/inspection — not used elsewhere in production.
   __cb.parsePocDoc = parsePocDoc;
   __cb.extractGoogleDocId = extractGoogleDocId;

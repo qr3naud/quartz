@@ -391,6 +391,32 @@
       }
 
       popoverEl.appendChild(docRow);
+
+      // One-click import — the doc link is already known, so pull its
+      // "Required data points:" lists straight onto the canvas (reuses the
+      // Upload POC pipeline in src/poc-import.js). Full-width primary,
+      // directly under the doc card, so it reads as the main next step.
+      const importBtn = document.createElement("button");
+      importBtn.type = "button";
+      importBtn.className =
+        "cb-dust-poc-btn cb-dust-poc-btn-primary cb-dust-poc-btn-block";
+      importBtn.textContent = "Import data points";
+      importBtn.title = "Import the doc's data points onto the canvas";
+      const importStatus = document.createElement("div");
+      importStatus.className = "cb-dust-poc-status";
+      importBtn.addEventListener("click", () => importDocDataPoints(importBtn, importStatus));
+      popoverEl.appendChild(importBtn);
+
+      // How-to-iterate hint: changes are made in Dust, then the doc link is
+      // refreshed (the icon in the doc card), not regenerated from scratch.
+      const help = document.createElement("div");
+      help.className = "cb-dust-poc-sub";
+      const openConvo = pocState.conversationUrl
+        ? `<a class="cb-dust-poc-link" href="${escapeHtml(pocState.conversationUrl)}" target="_blank" rel="noopener noreferrer">open the conversation in Dust</a>`
+        : "open the conversation in Dust";
+      help.innerHTML =
+        `Need changes? ${openConvo}, prompt the edits, then refresh the link above.`;
+      popoverEl.appendChild(help);
     } else {
       const note = document.createElement("div");
       note.className = "cb-dust-poc-sub";
@@ -400,23 +426,64 @@
       popoverEl.appendChild(note);
     }
 
-    appendDoneFooter();
+    // When the doc link is present, Import is the primary CTA above, so the
+    // footer actions step back to secondary.
+    appendDoneFooter({ demote: !!pocState.docUrl });
+  }
+
+  // One-click import of the POC doc's data points onto the canvas. Reuses the
+  // headless pipeline exposed by src/poc-import.js. On success the popover
+  // closes briefly after so the rep sees the stamped cards behind it.
+  async function importDocDataPoints(btn, statusEl) {
+    if (!pocState.docUrl) return;
+    if (!__cb.importPocFromDocUrl) {
+      if (!statusEl.isConnected) btn.insertAdjacentElement("afterend", statusEl);
+      setStatus(statusEl, "error", "Importer unavailable — reload the page and try again.");
+      return;
+    }
+    btn.disabled = true;
+    btn.classList.add("cb-dust-poc-btn-loading");
+    if (!statusEl.isConnected) btn.insertAdjacentElement("afterend", statusEl);
+    setStatus(statusEl, "info", "Importing data points\u2026");
+    try {
+      const result = await __cb.importPocFromDocUrl(pocState.docUrl);
+      const dps = result.dataPoints;
+      const groups = result.groups;
+      setStatus(
+        statusEl,
+        "success",
+        `Imported ${dps} data point${dps === 1 ? "" : "s"}` +
+          (groups ? ` across ${groups} group${groups === 1 ? "" : "s"}` : "") +
+          ".",
+      );
+      // Reveal the canvas so the rep sees the freshly-stamped cards.
+      setTimeout(() => { if (popoverEl) closePopover(); }, 1000);
+    } catch (err) {
+      console.error("[Clay Scoping] POC data-point import failed:", err);
+      setStatus(statusEl, "error", err?.message || "Import failed. Try the Upload POC flow.");
+    } finally {
+      btn.disabled = false;
+      btn.classList.remove("cb-dust-poc-btn-loading");
+    }
   }
 
   // Done-state footer: primary "View in Dust" (opens the conversation) +
   // secondary "Generate again". When there's no conversation URL to open,
   // Generate again is promoted to the primary slot.
-  function appendDoneFooter() {
+  function appendDoneFooter({ demote = false } = {}) {
     const footer = document.createElement("div");
     footer.className = "cb-dust-poc-footer cb-dust-poc-footer-split";
 
     const hasConversation = !!pocState.conversationUrl;
 
+    // When `demote` is set, the Import button above is the primary CTA, so
+    // both footer actions are secondary. Otherwise the footer keeps its own
+    // primary (View in Dust, or Generate again when there's no conversation).
     const againBtn = document.createElement("button");
     againBtn.type = "button";
     againBtn.className =
       "cb-dust-poc-btn " +
-      (hasConversation ? "cb-dust-poc-btn-secondary" : "cb-dust-poc-btn-primary");
+      (hasConversation || demote ? "cb-dust-poc-btn-secondary" : "cb-dust-poc-btn-primary");
     againBtn.textContent = "Generate again";
     againBtn.addEventListener("click", resetToForm);
     footer.appendChild(againBtn);
@@ -426,7 +493,9 @@
       // short "View in Dust" label keeps both footer buttons within the
       // 300px popover width.
       const viewBtn = document.createElement("a");
-      viewBtn.className = "cb-dust-poc-btn cb-dust-poc-btn-primary";
+      viewBtn.className =
+        "cb-dust-poc-btn " +
+        (demote ? "cb-dust-poc-btn-secondary" : "cb-dust-poc-btn-primary");
       viewBtn.href = pocState.conversationUrl;
       viewBtn.target = "_blank";
       viewBtn.rel = "noopener noreferrer";
@@ -445,7 +514,7 @@
 
     const msg = document.createElement("div");
     msg.className = "cb-dust-poc-status cb-dust-poc-status-error";
-    msg.textContent = pocState.error || "Something went wrong while generating the POC.";
+    msg.textContent = "Something went wrong in Dust.";
     popoverEl.appendChild(msg);
 
     // When we still have the conversation, nudge the rep toward re-checking
@@ -468,7 +537,65 @@
       popoverEl.appendChild(linkRow);
     }
 
+    // Manual link entry — if the rep grabbed the doc link from Dust by hand,
+    // they can paste it here to jump straight to the done state instead of
+    // re-running. Collapsed behind a text toggle so it doesn't clutter.
+    const manualToggle = document.createElement("button");
+    manualToggle.type = "button";
+    manualToggle.className = "cb-dust-poc-link-btn";
+    manualToggle.textContent = "Add the doc link manually";
+
+    const manualForm = document.createElement("div");
+    manualForm.className = "cb-dust-poc-manual";
+    manualForm.style.display = "none";
+
+    const manualInput = document.createElement("input");
+    manualInput.type = "url";
+    manualInput.className = "cb-dust-poc-input";
+    manualInput.placeholder = "Paste Google Doc link";
+    manualInput.autocomplete = "off";
+
+    const manualSave = document.createElement("button");
+    manualSave.type = "button";
+    manualSave.className = "cb-dust-poc-btn cb-dust-poc-btn-primary";
+    manualSave.textContent = "Save";
+    manualSave.addEventListener("click", () => saveManualDocLink(manualInput.value));
+
+    manualInput.addEventListener("keydown", (evt) => {
+      if (evt.key === "Enter") {
+        evt.preventDefault();
+        saveManualDocLink(manualInput.value);
+      }
+    });
+
+    manualForm.appendChild(manualInput);
+    manualForm.appendChild(manualSave);
+
+    manualToggle.addEventListener("click", () => {
+      manualToggle.style.display = "none";
+      manualForm.style.display = "flex";
+      manualInput.focus();
+    });
+
+    popoverEl.appendChild(manualToggle);
+    popoverEl.appendChild(manualForm);
+
     appendErrorFooter();
+  }
+
+  // Accepts a hand-pasted doc link from the error state and jumps straight to
+  // the done state. Persisted like a polled result so it survives reloads and
+  // shows for collaborators.
+  function saveManualDocLink(rawUrl) {
+    const url = (rawUrl || "").trim();
+    if (!url) return;
+    stopPolling();
+    pocState.status = "done";
+    pocState.docUrl = url;
+    pocState.error = null;
+    setButtonState("done");
+    persistPocState({ dust_poc_status: "done", dust_poc_doc_url: url });
+    renderPopover();
   }
 
   // Resets POC state back to the initial form, keeping the customer name as a
@@ -516,7 +643,7 @@
       const recheckBtn = document.createElement("button");
       recheckBtn.type = "button";
       recheckBtn.className = "cb-dust-poc-btn cb-dust-poc-btn-primary";
-      recheckBtn.textContent = "Check Dust again";
+      recheckBtn.textContent = "Refresh Dust";
       recheckBtn.addEventListener("click", recheckConversation);
       footer.appendChild(recheckBtn);
     }

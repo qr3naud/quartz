@@ -336,6 +336,7 @@
 }
 
 .cb-dust-poc-link-btn {
+  align-self: flex-start;
   background: transparent;
   border: none;
   padding: 0;
@@ -348,4 +349,22 @@
 
 .cb-dust-poc-link-btn:hover {
   color: #6b7280;
+}
+
+/* Manual doc-link entry (error state): an input that grows + a compact Save
+   button. Revealed by the "Add the doc link manually" toggle above it. */
+.cb-dust-poc-manual {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.cb-dust-poc-manual .cb-dust-poc-input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.cb-dust-poc-manual .cb-dust-poc-btn {
+  flex-shrink: 0;
+  margin-left: 0;
 }
