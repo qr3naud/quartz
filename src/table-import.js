@@ -581,7 +581,7 @@
 
   function mapFieldToCardData(field, statsByFieldId, tableId, viewId) {
     const ts = field.typeSettings ?? {};
-    return buildErCardData({
+    const cardData = buildErCardData({
       field,
       actionKey: ts.actionKey,
       packageId: ts.actionPackageId ?? "clay",
@@ -591,6 +591,11 @@
       tableId,
       viewId,
     });
+    // ER cards (standalone + basic-group) carry the same source-table tags as
+    // DP/input cards so the table view can bucket every card by tableId.
+    cardData.tableName = currentImportTags.tableName;
+    cardData.importColor = currentImportTags.importColor;
+    return cardData;
   }
 
   function getExistingCardKeys() {
@@ -637,6 +642,35 @@
   // the other silently breaks magneting between cards in a cluster.
   const CARD_H = 96;
 
+  // Per-table presentation color cycle for the table view. These ids match
+  // the canvas GROUP_COLOR_OPTIONS palette (src/canvas/groups.js); the actual
+  // colors are applied by table-view CSS keyed on data-group-color.
+  const IMPORT_COLOR_CYCLE = ["violet", "teal", "blue", "amber", "rose"];
+
+  // Picks the import color for `tableId`. Reuses the color already on this
+  // table's cards (so a re-import — or the merge-field DP placed after the
+  // first card — keeps the same color, and it survives a reload because we
+  // read from the live cards), otherwise assigns the next color in the cycle
+  // by the count of distinct already-imported tables.
+  function pickImportColorForTable(tableId) {
+    if (!__cb.canvas || !tableId) return IMPORT_COLOR_CYCLE[0];
+    const colorByTable = new Map();
+    for (const c of __cb.canvas.getCards()) {
+      const tid = c.data?.tableId;
+      const col = c.data?.importColor;
+      if (tid && col && !colorByTable.has(tid)) colorByTable.set(tid, col);
+    }
+    if (colorByTable.has(tableId)) return colorByTable.get(tableId);
+    return IMPORT_COLOR_CYCLE[colorByTable.size % IMPORT_COLOR_CYCLE.length];
+  }
+
+  // Source-table presentation tags for the current import. Set at the top of
+  // importTableToCanvas so the card-add helpers below can stamp tableName +
+  // importColor without threading two more params through every signature.
+  // importTableToCanvas runs awaited-sequentially per table, so there's no
+  // interleaving concern across a multi-table import.
+  let currentImportTags = { tableName: null, importColor: null };
+
   function addDpCard(field, x, y, stats, groupCluster, tableId, viewId) {
     return __cb.canvas.addDataPointCard(field.name, {
       x,
@@ -646,6 +680,8 @@
       fieldId: field.id,
       tableId: tableId ?? null,
       viewId: viewId ?? null,
+      tableName: currentImportTags.tableName,
+      importColor: currentImportTags.importColor,
     });
   }
 
@@ -656,6 +692,8 @@
       fieldId: field.id,
       tableId: tableId ?? null,
       viewId: viewId ?? null,
+      tableName: currentImportTags.tableName,
+      importColor: currentImportTags.importColor,
     });
   }
 
@@ -1034,6 +1072,16 @@
     const workspaceId = ids?.workspaceId;
     const tableId = table.id;
 
+    // Source-table presentation tags for this import. Computed once here so
+    // every card-add helper below stamps a consistent tableName + cycling
+    // importColor (read off currentImportTags). pickImportColorForTable reads
+    // the live canvas, so a re-import reuses the table's existing color and a
+    // multi-table import advances the cycle as each table's cards land.
+    currentImportTags = {
+      tableName: table.name || "Untitled",
+      importColor: pickImportColorForTable(tableId),
+    };
+
     // fieldById is used by the rendering loops below to resolve waterfall
     // step / merge-field IDs back to full field objects (the decision set
     // helper trims its public field summaries). Keep it local to the
@@ -1365,6 +1413,11 @@
         tableId,
         viewId,
       });
+      // Source-table tags so the waterfall card buckets with the rest of its
+      // table in the table view (buildWaterfallCardData doesn't take these,
+      // so stamp them on the returned data before addCard stores it raw).
+      wfData.tableName = currentImportTags.tableName;
+      wfData.importColor = currentImportTags.importColor;
       // Aggregate stats across the steps for the always-visible per-card
       // pills (Pro Mode coverage / fill rate). Average the numerators and
       // denominators across providers that reported data; this is a rough
@@ -1468,6 +1521,9 @@
         x: groupX,
         y: groupY - COMMENT_OFFSET,
         groupCluster: bg.groupId,
+        tableId,
+        tableName: currentImportTags.tableName,
+        importColor: currentImportTags.importColor,
       });
 
       for (let i = 0; i < dpFields.length; i++) {
@@ -1759,10 +1815,152 @@
     }
   }
 
+  // Pulls the record count out of the /views/:id/count response. The
+  // endpoint returns `{ viewTotalRecordsCount }`; we accept a couple of
+  // alternate key names defensively in case the shape ever drifts.
+  function extractViewCount(res) {
+    if (res == null) return null;
+    if (typeof res === "number") return res;
+    const n =
+      res.viewTotalRecordsCount ??
+      res.totalRecordsCount ??
+      res.recordCount ??
+      res.count ??
+      null;
+    return typeof n === "number" && Number.isFinite(n) ? n : null;
+  }
+
+  function columnsLabel(table) {
+    const n = Array.isArray(table?.fields) ? table.fields.length : 0;
+    return `${n} ${n === 1 ? "column" : "columns"}`;
+  }
+
+  // Multi-select import modal. Lists every workbook table with a checkbox,
+  // its column count (free off the list response) and its row count (fetched
+  // lazily per row via the view-count API — the table-list response carries
+  // no record count). The footer imports every checked table.
+  function showMultiTablePicker(tables, anchorEl, onImport) {
+    closeTablePicker();
+
+    tablePickerBackdrop = document.createElement("div");
+    tablePickerBackdrop.className = "cb-table-picker-backdrop";
+    tablePickerBackdrop.addEventListener("click", closeTablePicker);
+
+    tablePickerEl = document.createElement("div");
+    tablePickerEl.className = "cb-table-picker cb-table-picker-multi";
+
+    const heading = document.createElement("div");
+    heading.className = "cb-table-picker-title";
+    heading.textContent = "Select tables to import";
+    tablePickerEl.appendChild(heading);
+
+    const list = document.createElement("div");
+    list.className = "cb-table-picker-list";
+    tablePickerEl.appendChild(list);
+
+    const sorted = [...tables].sort((a, b) =>
+      (a.name || "").localeCompare(b.name || "", undefined, { sensitivity: "base" })
+    );
+
+    const selected = new Set();
+
+    const footer = document.createElement("div");
+    footer.className = "cb-table-picker-footer";
+
+    const cancelBtn = document.createElement("button");
+    cancelBtn.type = "button";
+    cancelBtn.className = "cb-table-picker-btn cb-table-picker-btn-secondary";
+    cancelBtn.textContent = "Cancel";
+    cancelBtn.addEventListener("click", closeTablePicker);
+
+    const importBtn = document.createElement("button");
+    importBtn.type = "button";
+    importBtn.className = "cb-table-picker-btn cb-table-picker-btn-primary";
+    importBtn.textContent = "Import";
+    importBtn.disabled = true;
+
+    function updateFooter() {
+      const n = selected.size;
+      importBtn.disabled = n === 0;
+      importBtn.textContent = n > 0 ? `Import ${n}` : "Import";
+    }
+
+    for (const table of sorted) {
+      const row = document.createElement("label");
+      row.className = "cb-table-picker-checkrow";
+
+      const cb = document.createElement("input");
+      cb.type = "checkbox";
+      cb.className = "cb-table-picker-checkbox";
+      cb.addEventListener("change", () => {
+        if (cb.checked) selected.add(table);
+        else selected.delete(table);
+        row.classList.toggle("cb-table-picker-checkrow-checked", cb.checked);
+        updateFooter();
+      });
+
+      const main = document.createElement("div");
+      main.className = "cb-table-picker-checkrow-main";
+
+      const nameEl = document.createElement("div");
+      nameEl.className = "cb-table-picker-checkrow-name";
+      nameEl.textContent = table.name || "Untitled";
+
+      const meta = document.createElement("div");
+      meta.className = "cb-table-picker-checkrow-meta";
+      const cols = columnsLabel(table);
+      meta.textContent = `${cols} \u00b7 \u2026 rows`;
+
+      main.appendChild(nameEl);
+      main.appendChild(meta);
+      row.appendChild(cb);
+      row.appendChild(main);
+      list.appendChild(row);
+
+      // Lazy per-table row count. On failure / no view, drop to columns-only.
+      const viewId = table.firstViewId;
+      if (viewId && __cb.fetchViewCount) {
+        __cb.fetchViewCount(table.id, viewId)
+          .then((res) => {
+            const count = extractViewCount(res);
+            meta.textContent =
+              count == null
+                ? cols
+                : `${cols} \u00b7 ${count.toLocaleString()} ${count === 1 ? "row" : "rows"}`;
+          })
+          .catch(() => { meta.textContent = cols; });
+      } else {
+        meta.textContent = cols;
+      }
+    }
+
+    importBtn.addEventListener("click", () => {
+      if (selected.size === 0) return;
+      // Preserve the sorted display order for a predictable color cycle.
+      const chosen = sorted.filter((t) => selected.has(t));
+      closeTablePicker();
+      onImport(chosen);
+    });
+
+    footer.appendChild(cancelBtn);
+    footer.appendChild(importBtn);
+    tablePickerEl.appendChild(footer);
+
+    document.body.appendChild(tablePickerBackdrop);
+    document.body.appendChild(tablePickerEl);
+
+    if (anchorEl) {
+      const rect = anchorEl.getBoundingClientRect();
+      tablePickerEl.style.top = (rect.bottom + 4) + "px";
+      tablePickerEl.style.left = rect.left + "px";
+    }
+  }
+
   // Shared picker namespace. Any caller that wants to prompt the user for a
-  // workbook table drives the same DOM via these three entry points.
+  // workbook table drives the same DOM via these entry points.
   __cb.tablePicker = {
     show: showTablePicker,
+    showMulti: showMultiTablePicker,
     showLoading: showLoadingPicker,
     close: closeTablePicker,
   };
@@ -1800,18 +1998,28 @@
         return;
       }
 
-      const onPick = (table, viewId) => {
-        importTableToCanvas(table, viewId, anchorEl).catch((err) => {
-          console.error("[Clay Scoping] Import failed:", err);
-          closeImportStatus();
-        });
+      // Sequentially import each selected table at its default view. Awaiting
+      // one before the next keeps card placement deterministic (each import
+      // appends below the previous) and lets the per-table color cycle read a
+      // stable "already imported" set as it advances.
+      const importSelected = async (chosen) => {
+        for (const table of chosen) {
+          try {
+            await importTableToCanvas(table, undefined, anchorEl);
+          } catch (err) {
+            console.error(`[Clay Scoping] Import failed for ${table?.name}:`, err);
+            closeImportStatus();
+          }
+        }
       };
 
       if (tables.length === 1) {
         closeTablePicker();
-        onPick(tables[0], undefined);
+        importSelected([tables[0]]);
       } else {
-        showTablePicker(tables, anchorEl, onPick);
+        showMultiTablePicker(tables, anchorEl, (chosen) => {
+          importSelected(chosen);
+        });
       }
     } catch (err) {
       console.error("[Clay Scoping] Failed to fetch tables:", err);

@@ -139,6 +139,140 @@
 }
 
 /* ==========================================================================
+   MULTI-SELECT IMPORT MODAL
+   The "Import Clay Table" picker, extended into a checkbox list with a
+   sticky footer (Cancel + Import N). Reuses .cb-table-picker for the frame.
+   ========================================================================== */
+
+.cb-table-picker-multi {
+  /* Wider than the single-select dropdown so the "N columns - M rows" meta
+     line fits on one line, and taller so several tables are visible without
+     scrolling. The internal list scrolls; the footer stays pinned. */
+  min-width: 320px;
+  max-width: 380px;
+  max-height: 420px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.cb-table-picker-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  margin: 2px 0;
+}
+
+.cb-table-picker-checkrow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.1s, border-color 0.1s;
+}
+
+.cb-table-picker-checkrow:hover {
+  background: #f9fafb;
+}
+
+.cb-table-picker-checkrow-checked {
+  background: #eef2ff;
+  border-color: #c7d2fe;
+}
+
+.cb-table-picker-checkrow-checked:hover {
+  background: #e0e7ff;
+}
+
+.cb-table-picker-checkbox {
+  flex-shrink: 0;
+  accent-color: #6366f1;
+  cursor: pointer;
+  width: 15px;
+  height: 15px;
+}
+
+.cb-table-picker-checkrow-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.cb-table-picker-checkrow-name {
+  font-size: 13px;
+  font-weight: 500;
+  color: #111827;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cb-table-picker-checkrow-meta {
+  font-size: 11px;
+  color: #6b7280;
+  font-variant-numeric: tabular-nums;
+}
+
+.cb-table-picker-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 8px 6px 4px;
+  border-top: 1px solid #f1f5f9;
+  flex-shrink: 0;
+}
+
+.cb-table-picker-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 32px;
+  padding: 0 14px;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
+}
+
+.cb-table-picker-btn-secondary {
+  background: #ffffff;
+  border-color: #d1d5db;
+  color: #374151;
+}
+
+.cb-table-picker-btn-secondary:hover {
+  background: #f9fafb;
+  border-color: #9ca3af;
+}
+
+.cb-table-picker-btn-primary {
+  background: #6366f1;
+  border-color: #6366f1;
+  color: #ffffff;
+}
+
+.cb-table-picker-btn-primary:hover:not(:disabled) {
+  background: #4f46e5;
+  border-color: #4f46e5;
+}
+
+.cb-table-picker-btn-primary:disabled {
+  background: #c7d2fe;
+  border-color: #c7d2fe;
+  cursor: not-allowed;
+}
+
+/* ==========================================================================
    MODEL CHIP (on AI cards)
    ========================================================================== */
 

@@ -866,10 +866,127 @@
       (a, b) => compareByTableOrderThenY(a.minTableOrder, a.minY, b.minTableOrder, b.minY),
     );
 
+    // -------------------------------------------------------------------------
+    // Source-table grouping (Import Clay Table).
+    //
+    // Cards imported via "Import Clay Table" carry data.tableId / tableName /
+    // importColor (set in src/table-import.js). We present each distinct
+    // imported table as its own top-level colored block: the table's
+    // basic-group sections nest under it (depth 1), and its loose DP rows
+    // (inputs, merge fields) + orphan ER rows (waterfalls, standalone
+    // enrichments) render directly beneath the table header. Manually-created
+    // cards (no tableId) keep the existing flat / group / orphan layout.
+    //
+    // Imports never create real cb-groups (super/inner), so the canvas
+    // super-group machinery above is orthogonal here — a table's sections are
+    // always comment-cluster or standalone, which is why we can re-home them
+    // without touching the parentId-based super/inner nesting.
+    // -------------------------------------------------------------------------
+    function tableTagForCardId(cardId) {
+      const c = cardById.get(cardId);
+      const d = c?.data;
+      if (!d || !d.tableId || !d.tableName) return null;
+      return { tableId: d.tableId, tableName: d.tableName, importColor: d.importColor || null };
+    }
+    function rowTableTag(row) {
+      return tableTagForCardId(row.cardId);
+    }
+    function sectionTableTag(section) {
+      for (const r of section.rows) {
+        const tag = tableTagForCardId(r.cardId);
+        if (tag) return tag;
+      }
+      return null;
+    }
+
+    const tableGroupsMap = new Map();
+    function ensureTableGroup(tag) {
+      let tg = tableGroupsMap.get(tag.tableId);
+      if (!tg) {
+        tg = {
+          // Synthetic section key — distinct from canvas-group `g-` and
+          // comment-cluster `c-` keys so collapse state doesn't collide.
+          key: `t-${tag.tableId}`,
+          tableId: tag.tableId,
+          tableName: tag.tableName,
+          importColor: tag.importColor,
+          sections: [],
+          rows: [],
+          minY: Infinity,
+          minTableOrder: null,
+        };
+        tableGroupsMap.set(tag.tableId, tg);
+      }
+      return tg;
+    }
+    function trackTableGroupMin(tg, y, order) {
+      if (y < tg.minY) tg.minY = y;
+      if (order != null && (tg.minTableOrder == null || order < tg.minTableOrder)) {
+        tg.minTableOrder = order;
+      }
+    }
+
+    // Partition top-level group sections: tabled ones move under their table
+    // group as depth-1 sub-sections; the rest stay top-level. Nested inner
+    // sections (parentId != null) are never re-homed — they belong to a real
+    // canvas super-group, which imports don't produce.
+    const remainingGroupSections = [];
+    for (const section of groupSections) {
+      const tag = section.parentId == null ? sectionTableTag(section) : null;
+      if (tag) {
+        const tg = ensureTableGroup(tag);
+        tg.sections.push(section);
+        trackTableGroupMin(tg, section.minY, section.minTableOrder);
+      } else {
+        remainingGroupSections.push(section);
+      }
+    }
+
+    // Partition flat DP rows + orphan ER rows.
+    const remainingDpRows = [];
+    for (const row of flatDpRows) {
+      const tag = rowTableTag(row);
+      if (tag) {
+        const tg = ensureTableGroup(tag);
+        tg.rows.push(row);
+        trackTableGroupMin(tg, row.y, tableOrderForCardId(row.cardId));
+      } else {
+        remainingDpRows.push(row);
+      }
+    }
+    const remainingOrphanRows = [];
+    for (const row of orphanErRows) {
+      const tag = rowTableTag(row);
+      if (tag) {
+        const tg = ensureTableGroup(tag);
+        tg.rows.push(row);
+        trackTableGroupMin(tg, row.y, tableOrderForCardId(row.cardId));
+      } else {
+        remainingOrphanRows.push(row);
+      }
+    }
+
+    // Sort each table group's direct rows + sub-sections, and compute the
+    // header's aggregate row count (direct rows + every sub-section's rows).
+    for (const tg of tableGroupsMap.values()) {
+      sortRowsByOrder(tg.rows);
+      tg.sections.sort((a, b) =>
+        compareByTableOrderThenY(a.minTableOrder, a.minY, b.minTableOrder, b.minY),
+      );
+      let total = tg.rows.length;
+      for (const s of tg.sections) total += s.rows.length;
+      tg.totalRowCount = total;
+    }
+
+    const tableGroups = Array.from(tableGroupsMap.values()).sort(
+      (a, b) => compareByTableOrderThenY(a.minTableOrder, a.minY, b.minTableOrder, b.minY),
+    );
+
     return {
-      orphanErRows,
-      groupSections,
-      dpRows: flatDpRows,
+      orphanErRows: remainingOrphanRows,
+      groupSections: remainingGroupSections,
+      dpRows: remainingDpRows,
+      tableGroups,
     };
   }
 
@@ -1692,7 +1809,7 @@
     const tableContainer = document.createElement("div");
     tableContainer.className = "cb-table-view-table-container";
 
-    const { orphanErRows, groupSections, dpRows } = buildRows();
+    const { orphanErRows, groupSections, dpRows, tableGroups } = buildRows();
 
     const table = document.createElement("table");
     table.className = "cb-table-view-table";
@@ -1722,9 +1839,15 @@
 
     const tbody = document.createElement("tbody");
 
+    const tableGroupRowCount = (tableGroups || []).reduce(
+      (sum, tg) =>
+        sum + tg.rows.length + tg.sections.reduce((s2, sec) => s2 + sec.rows.length, 0),
+      0,
+    );
     const totalDpCount =
       dpRows.length +
-      groupSections.reduce((sum, g) => sum + g.rows.length, 0);
+      groupSections.reduce((sum, g) => sum + g.rows.length, 0) +
+      tableGroupRowCount;
 
     // Reset the rendered-row-order list every render(). Built incrementally
     // as we append rows so shift+click range select uses the same order
@@ -1741,6 +1864,62 @@
       empty.appendChild(td);
       tbody.appendChild(empty);
     } else {
+      // ---- Imported tables (Import Clay Table) ----
+      // Each imported table renders as its own top-level colored block at the
+      // very top: a table header, the table's loose DP / orphan-ER rows, then
+      // its basic-group sub-sections (depth 1). Every row + sub-header carries
+      // the table's data-group-color so the block reads as one color.
+      for (const tg of (tableGroups || [])) {
+        const color = tg.importColor || null;
+        // Stamp the table color on a freshly-built row and append it.
+        const appendColored = (rowEl, rowId) => {
+          if (color) rowEl.setAttribute("data-group-color", color);
+          tbody.appendChild(rowEl);
+          if (rowId != null) visibleRowOrder.push(String(rowId));
+        };
+        const emitColoredRows = (rows, sectionTag) => {
+          annotateMergeRuns(rows.filter((r) => r.kind === "dp"));
+          for (const row of rows) {
+            const rowEl = row.kind === "orphan-er"
+              ? buildOrphanDpStyleRow(row, sectionTag)
+              : buildDpRow(row, sectionTag);
+            appendColored(rowEl, row.cardId);
+          }
+        };
+
+        const tableSection = {
+          groupId: tg.key,
+          groupName: tg.tableName,
+          editable: false,
+          canvasGroupId: null,
+          level: 1,
+          parentId: null,
+          rows: tg.rows,
+          totalRowCount: tg.totalRowCount,
+        };
+        const tableCollapsed = collapsedGroups.has(tg.key);
+        const header = buildGroupHeaderRow(tableSection, headers.length, tableCollapsed, 0, {
+          color,
+          isTable: true,
+        });
+        tbody.appendChild(header);
+        visibleRowOrder.push(tg.key);
+        if (tableCollapsed) continue;
+
+        // Direct rows (inputs, merge DPs, waterfalls, standalone ERs).
+        emitColoredRows(tg.rows, `table:${tg.key}`);
+
+        // Basic-group sub-sections, indented at depth 1, same color.
+        for (const sub of tg.sections) {
+          const subCollapsed = collapsedGroups.has(sub.groupId);
+          const subHeader = buildGroupHeaderRow(sub, headers.length, subCollapsed, 1, { color });
+          tbody.appendChild(subHeader);
+          visibleRowOrder.push(sub.groupId);
+          if (subCollapsed) continue;
+          emitColoredRows(sub.rows, `section:${sub.groupId}`);
+        }
+      }
+
       // Unattached enrichments live under their own yellow header section
       // at the top — visually parallel to the purple Use Case / group
       // sections below. Each row inside looks like a regular DP row, with
@@ -2414,13 +2593,18 @@
   // input to write through to). Clicking the chevron / icon / count
   // toggles collapse; clicking the label focuses the input. Drag handle
   // on the leftmost column reorders groups.
-  function buildGroupHeaderRow(section, colSpan, isCollapsed, depth = 0) {
+  function buildGroupHeaderRow(section, colSpan, isCollapsed, depth = 0, opts = {}) {
     const tr = document.createElement("tr");
     tr.className =
       "cb-table-view-group-row" +
-      (isCollapsed ? " cb-table-view-group-row-collapsed" : "");
+      (isCollapsed ? " cb-table-view-group-row-collapsed" : "") +
+      (opts.isTable ? " cb-table-view-table-row" : "");
     tr.setAttribute("data-group-id", String(section.groupId));
     tr.setAttribute("data-row-id", String(section.groupId));
+    // Per-table color (Import Clay Table). When set, CSS tints this header
+    // and — via the same attribute stamped on the body rows + sub-headers
+    // below — the whole table block reads as one color.
+    if (opts.color) tr.setAttribute("data-group-color", opts.color);
     // Sub-headers live inside their parent super-group's section so
     // drag-to-reorder is scoped per super-group rather than across
     // top-level groups. Top-level headers stay in the broader "groups"
@@ -2465,7 +2649,11 @@
 
     const icon = document.createElement("span");
     icon.className = "cb-table-view-group-row-icon";
-    icon.innerHTML = folderSvg(13);
+    // Table sections (Import Clay Table) get a grid/table glyph; everything
+    // else keeps the folder. tableSvg falls back to folder if unavailable.
+    icon.innerHTML = opts.isTable && typeof tableSvg === "function"
+      ? tableSvg(13)
+      : folderSvg(13);
 
     let labelEl;
     if (section.editable) {
@@ -2702,6 +2890,23 @@
       '<path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>' +
       '<line x1="12" y1="9" x2="12" y2="13"/>' +
       '<line x1="12" y1="17" x2="12.01" y2="17"/>' +
+      '</svg>'
+    );
+  }
+
+  // Grid / table glyph — marks the per-table section headers created by the
+  // Import Clay Table flow so they read as a whole source table, distinct
+  // from the folder icon used by use-case / basic-group sections.
+  function tableSvg(size) {
+    const s = String(size);
+    return (
+      `<svg xmlns="http://www.w3.org/2000/svg" width="${s}" height="${s}" viewBox="0 0 24 24" ` +
+      'fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" ' +
+      'stroke-linejoin="round" aria-hidden="true">' +
+      '<rect x="3" y="3" width="18" height="18" rx="2"/>' +
+      '<line x1="3" y1="9" x2="21" y2="9"/>' +
+      '<line x1="3" y1="15" x2="21" y2="15"/>' +
+      '<line x1="9" y1="3" x2="9" y2="21"/>' +
       '</svg>'
     );
   }

@@ -1032,6 +1032,12 @@
         fieldId: opts?.fieldId ?? null,
         tableId: opts?.tableId ?? null,
         viewId: opts?.viewId ?? null,
+        // Source-table presentation tags (set by the Import Clay Table flow).
+        // tableName labels the per-table section; importColor cycles per
+        // distinct imported table so the table view renders each as its own
+        // colored block. Null for cards created on the canvas directly.
+        tableName: opts?.tableName ?? null,
+        importColor: opts?.importColor ?? null,
         stats,
         groupCluster: opts?.groupCluster ?? null,
       };
@@ -1201,6 +1207,9 @@
         fieldId: opts?.fieldId ?? null,
         tableId: opts?.tableId ?? null,
         viewId: opts?.viewId ?? null,
+        // Source-table tags — see addDataPointCard for the rationale.
+        tableName: opts?.tableName ?? null,
+        importColor: opts?.importColor ?? null,
         groupCluster: opts?.groupCluster ?? null,
       };
       const card = {
@@ -1298,6 +1307,12 @@
         type: "comment",
         text: text || "",
         displayName: text || "",
+        // Source-table tags — see addDataPointCard for the rationale. A
+        // basic-group's comment card carries them so the table view can map
+        // the (legacy comment-cluster) group back to its source table.
+        tableId: opts?.tableId ?? null,
+        tableName: opts?.tableName ?? null,
+        importColor: opts?.importColor ?? null,
         groupCluster: opts?.groupCluster ?? null,
       };
       const card = {
