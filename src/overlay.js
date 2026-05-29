@@ -698,7 +698,7 @@
     const totalDollarValue = document.createElement("span");
     totalDollarValue.className = "cb-summary-value";
     totalDollarValue.id = "cb-total-dollar-value";
-    totalDollarValue.textContent = "$0.00";
+    totalDollarValue.textContent = "$0";
     const totalDollarEditIcon = document.createElement("span");
     totalDollarEditIcon.className = "cb-total-cost-edit-icon";
     totalDollarEditIcon.setAttribute("aria-hidden", "true");
@@ -803,6 +803,12 @@
       });
     }
 
+    // Total Cost is always shown as a whole-dollar figure (no cents) — at
+    // scoping volumes the cents are noise.
+    function formatDollarRounded(n) {
+      return "$" + Math.round(n).toLocaleString();
+    }
+
     function recalcTotal() {
       const records = parseRecordsValue();
       const isActual = __cb.viewMode === "actual";
@@ -823,7 +829,7 @@
       const actionDollars = totalActions * actionCost;
       creditDollarValue.textContent = formatDollar(creditDollars);
       actionDollarValue.textContent = formatDollar(actionDollars);
-      totalDollarValue.textContent = formatDollar(creditDollars + actionDollars);
+      totalDollarValue.textContent = formatDollarRounded(creditDollars + actionDollars);
     }
 
     function commitPricingInput(input, setter) {
