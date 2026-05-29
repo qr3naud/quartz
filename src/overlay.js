@@ -507,8 +507,20 @@
     recordsInput.className = "cb-summary-input";
     recordsInput.id = "cb-records-input";
     recordsInput.placeholder = "0";
+    // "Reset to POC" affordance: hidden until the rep overrides the imported
+    // (actual) count. Shown via the .cb-records-override class on recordsBox.
+    const recordsResetBtn = document.createElement("button");
+    recordsResetBtn.type = "button";
+    recordsResetBtn.className = "cb-records-reset";
+    recordsResetBtn.id = "cb-records-reset";
+    recordsResetBtn.innerHTML =
+      '<svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" ' +
+      'stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">' +
+      '<polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>' +
+      '<span>Reset to POC</span>';
     recordsBox.appendChild(recordsLabel);
     recordsBox.appendChild(recordsInput);
+    recordsBox.appendChild(recordsResetBtn);
 
     // Frequency box: displays the global default. Clicking the value opens
     // the same dropdown used on each ER card's ×N badge, so the UX is
@@ -721,6 +733,34 @@
       return parseInt(recordsInput.value.replace(/,/g, ""), 10) || 0;
     }
 
+    // Derive the records box's visual state from the live value vs. the
+    // imported "actual" (POC) count. No need to detect programmatic vs. user
+    // edits — we just compare on every change:
+    //   - no import yet (recordsActual null) → neutral, no reset button
+    //   - value === actual                   → indigo "actual / POC" outline
+    //   - value !== actual                   → amber "override" outline + reset
+    function applyRecordsState() {
+      const actual =
+        typeof __cb.recordsActual === "number" && __cb.recordsActual > 0
+          ? __cb.recordsActual
+          : null;
+      if (actual == null) {
+        recordsBox.classList.remove("cb-records-actual", "cb-records-override");
+        return;
+      }
+      const isOverride = parseRecordsValue() !== actual;
+      recordsBox.classList.toggle("cb-records-override", isOverride);
+      recordsBox.classList.toggle("cb-records-actual", !isOverride);
+    }
+    __cb.applyRecordsState = applyRecordsState;
+
+    recordsResetBtn.addEventListener("click", () => {
+      if (typeof __cb.recordsActual !== "number" || __cb.recordsActual <= 0) return;
+      recordsInput.value = __cb.recordsActual.toLocaleString();
+      recordsInput.dispatchEvent(new Event("input"));
+      if (__cb.debouncedSave) __cb.debouncedSave();
+    });
+
     __cb.getRecordsCount = () => parseRecordsValue();
     __cb.getCreditCost = () => creditCost;
     __cb.getActionCost = () => actionCost;
@@ -831,6 +871,7 @@
       if (__cb.canvas?.updateGroupCredits) {
         __cb.canvas.updateGroupCredits();
       }
+      applyRecordsState();
     });
 
     // ---- Canvas area + toolbox ----
@@ -1266,6 +1307,7 @@
     const activeTab = __cb.tabStore.tabs.find(t => t.id === __cb.tabStore.activeId);
     if (activeTab?.state && __cb.canvas) {
       __cb.canvas.restore(activeTab.state);
+      __cb.recordsActual = activeTab.state.recordsActual ?? null;
       if (activeTab.state.records) {
         recordsInput.value = activeTab.state.records;
         recordsInput.dispatchEvent(new Event("input"));
@@ -1287,6 +1329,7 @@
       // state we just loaded — the first user interaction will save.
       setGlobalFrequency(activeTab.state.frequency || __cb.DEFAULT_FREQUENCY_ID, { skipSave: true });
       recalcTotal();
+      applyRecordsState();
     }
 
     if (initialCards && initialCards.length > 0) {
@@ -1411,6 +1454,8 @@
     __cb.getRecordsCount = null;
     __cb.getCreditCost = null;
     __cb.getActionCost = null;
+    __cb.applyRecordsState = null;
+    __cb.recordsActual = null;
     __cb.proMode = false;
     __cb.viewMode = "projected";
     __cb.currentFrequencyId = __cb.DEFAULT_FREQUENCY_ID;

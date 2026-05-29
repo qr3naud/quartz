@@ -708,6 +708,10 @@
     if (total == null) return;
     const input = document.getElementById("cb-records-input");
     if (!input) return;
+    // Remember the imported count as the "actual" (POC) number. Set it BEFORE
+    // dispatching so overlay.js's input handler styles the box as indigo
+    // (value === actual) rather than as an override.
+    __cb.recordsActual = total;
     input.value = total.toLocaleString();
     input.dispatchEvent(new Event("input"));
   }

@@ -392,6 +392,9 @@
         const state = __cb.canvas.serialize();
         const recordsInput = document.getElementById("cb-records-input");
         if (recordsInput) state.records = recordsInput.value;
+        // The imported "actual" (POC) record count, so the indigo/override
+        // styling survives reloads and tab switches.
+        state.recordsActual = __cb.recordsActual ?? null;
         const creditCostInput = document.getElementById("cb-credit-cost-input");
         const actionCostInput = document.getElementById("cb-action-cost-input");
         const pricingGroup = document.querySelector(".cb-pricing-group");
@@ -545,11 +548,13 @@
       // already uses internally.
       const { view: _ignoredView, ...stateForRestore } = active.state;
       __cb.canvas.restore(stateForRestore);
+      __cb.recordsActual = active.state.recordsActual ?? null;
       const recordsInput = document.getElementById("cb-records-input");
       if (recordsInput && active.state.records != null) {
         recordsInput.value = active.state.records;
         recordsInput.dispatchEvent(new Event("input"));
       }
+      if (__cb.applyRecordsState) __cb.applyRecordsState();
     }
     // Re-render the tab bar so any new/renamed tabs from the peer appear.
     // Defined later in this IIFE as a local function; hoisted at call time.
@@ -671,11 +676,13 @@
       });
       const { view: _ignoredView, ...stateForRestore } = newTab.state;
       __cb.canvas.restore(stateForRestore);
+      __cb.recordsActual = stateForRestore.recordsActual ?? null;
       const recordsInput = document.getElementById("cb-records-input");
       if (recordsInput && stateForRestore.records != null) {
         recordsInput.value = stateForRestore.records;
         recordsInput.dispatchEvent(new Event("input"));
       }
+      if (__cb.applyRecordsState) __cb.applyRecordsState();
     } else {
       console.log("[Clay Scoping] applyRemoteTab applied (background)", {
         tabId: row.tab_id,
@@ -1241,6 +1248,7 @@
       __cb.canvas.restore(tab.state);
     }
 
+    __cb.recordsActual = tab?.state?.recordsActual ?? null;
     const recordsInput = document.getElementById("cb-records-input");
     if (recordsInput) {
       recordsInput.value = tab?.state?.records || "";

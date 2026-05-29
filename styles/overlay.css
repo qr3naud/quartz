@@ -627,6 +627,53 @@
   color: #166534;
 }
 
+/* Records box states. Indigo "actual / POC" outline once a table import has
+   set the imported row count and the rep hasn't changed it; amber "override"
+   outline (plus a Reset-to-POC affordance) once they type a different value.
+   Indigo matches the projected/accent indigo used elsewhere (#6366f1); amber
+   matches the group button (#f59e0b). */
+.cb-summary-box.cb-records-actual {
+  border-color: #6366f1;
+  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.15);
+}
+
+.cb-summary-box.cb-records-actual .cb-summary-input {
+  border-color: #6366f1;
+}
+
+.cb-summary-box.cb-records-override {
+  border-color: #f59e0b;
+  box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.15);
+}
+
+.cb-summary-box.cb-records-override .cb-summary-input {
+  border-color: #f59e0b;
+}
+
+.cb-records-reset {
+  display: none;
+  align-items: center;
+  gap: 4px;
+  margin-top: 4px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: #b45309;
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.cb-records-reset:hover {
+  color: #92400e;
+}
+
+.cb-summary-box.cb-records-override .cb-records-reset {
+  display: inline-flex;
+}
+
 /* ==========================================================================
    PRICING CARDS (collapsible)
    ========================================================================== */
@@ -868,8 +915,23 @@ body:has(.cb-overlay) [data-floating-ui-portal] {
 }
 
 @keyframes cb-focus-flash-pulse {
-  0%   { opacity: 0; box-shadow: 0 0 0 0 rgba(99, 102, 241, 0); }
-  8%   { opacity: 1; box-shadow: 0 0 12px 2px rgba(99, 102, 241, 0.5); }
-  80%  { opacity: 1; box-shadow: 0 0 0 0 rgba(99, 102, 241, 0); }
-  100% { opacity: 0; box-shadow: 0 0 0 0 rgba(99, 102, 241, 0); }
+  0% {
+    opacity: 0;
+    box-shadow: 0 0 0 0 rgba(99, 102, 241, 0);
+  }
+
+  8% {
+    opacity: 1;
+    box-shadow: 0 0 12px 2px rgba(99, 102, 241, 0.5);
+  }
+
+  80% {
+    opacity: 1;
+    box-shadow: 0 0 0 0 rgba(99, 102, 241, 0);
+  }
+
+  100% {
+    opacity: 0;
+    box-shadow: 0 0 0 0 rgba(99, 102, 241, 0);
+  }
 }
