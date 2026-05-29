@@ -656,6 +656,27 @@
     }
   }
 
+  // Caps the linked-opp pill's width at the "Generate POC" button's rendered
+  // width. Deferred to a frame so the measurement is reliable: when a canvas
+  // is re-opened with an already-linked opp, render() fires synchronously
+  // while the toolbar is still being constructed — the Generate POC button
+  // isn't in the DOM yet, so an inline measurement would read 0 and the pill
+  // would fall back to its wider CSS max-width. requestAnimationFrame runs
+  // after the topbar is laid out, so offsetWidth is always valid by then.
+  function sizePillToGenPoc(pillEl) {
+    const apply = () => {
+      if (!pillEl.isConnected) return;
+      const genPocBtn = document.querySelector(".cb-toolbar-dust-poc");
+      const w = genPocBtn ? genPocBtn.offsetWidth : 0;
+      if (w > 0) pillEl.style.maxWidth = w + "px";
+    };
+    if (typeof requestAnimationFrame === "function") {
+      requestAnimationFrame(apply);
+    } else {
+      apply();
+    }
+  }
+
   // --- Topbar element factory ------------------------------------------------
 
   /**
@@ -697,6 +718,12 @@
         });
 
         wrap.appendChild(pill);
+
+        // Cap the pill at the "Generate POC" button's rendered width so a
+        // long opportunity name truncates rather than letting the linked-opp
+        // state dominate the toolbar (falls back to the CSS max-width when
+        // that button isn't present, e.g. the `dust` feature is off).
+        sizePillToGenPoc(pill);
       } else {
         // Unlinked: a single button.
         const btn = document.createElement("button");
