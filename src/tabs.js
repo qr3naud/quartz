@@ -762,7 +762,7 @@
     const addBtn = document.createElement("button");
     addBtn.className = "cb-tab-add";
     addBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><line x1="7" y1="2" x2="7" y2="12"/><line x1="2" y1="7" x2="12" y2="7"/></svg>';
-    addBtn.title = "New canvas";
+    addBtn.title = "New tab";
     addBtn.addEventListener("click", addNewTab);
     tabBarEl.appendChild(addBtn);
 
@@ -1087,7 +1087,8 @@
       const visibleTabs = __cb.tabStore.tabs.filter(t => !t.hidden);
       if (visibleTabs.length === 0) {
         const newId = __cb.generateTabId();
-        __cb.tabStore.tabs.push({ id: newId, name: "Scoping", hidden: false, state: {} });
+        // Match addNewTab: a freshly created blank tab opens in the spreadsheet.
+        __cb.tabStore.tabs.push({ id: newId, name: "Scoping", hidden: false, state: { brainstormView: "table" } });
         saveTabRow(newId);
         __cb.switchTab(newId);
       } else {
@@ -1308,7 +1309,10 @@
     if (!__cb.tabStore) return;
     __cb.saveTabs();
     const tabId = __cb.generateTabId();
-    __cb.tabStore.tabs.push({ id: tabId, name: "Scoping", hidden: false, state: {} });
+    // Seed the per-tab Cards/Tables choice to "table" so new tabs open in the
+    // spreadsheet — the canonical entry point for scoping. switchTab reads
+    // state.brainstormView, so this guarantees the "+" lands on Tables.
+    __cb.tabStore.tabs.push({ id: tabId, name: "Scoping", hidden: false, state: { brainstormView: "table" } });
     // Persist the new tab row immediately so peers see it appear in their
     // tab bar even before the user does anything inside it.
     saveTabRow(tabId);
@@ -1343,7 +1347,8 @@
       const visibleTabs = __cb.tabStore.tabs.filter(t => !t.hidden);
       if (visibleTabs.length === 0) {
         const newId = __cb.generateTabId();
-        __cb.tabStore.tabs.push({ id: newId, name: "Scoping", hidden: false, state: {} });
+        // Match addNewTab: a freshly created blank tab opens in the spreadsheet.
+        __cb.tabStore.tabs.push({ id: newId, name: "Scoping", hidden: false, state: { brainstormView: "table" } });
         saveTabRow(newId);
         __cb.switchTab(newId);
       } else {
