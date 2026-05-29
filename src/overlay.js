@@ -682,8 +682,16 @@
     actionCostBox.appendChild(actionCostInput);
     actionCostBox.appendChild(actionDollarValue);
 
+    // "Total Cost" is editable, but deliberately harder to change than the
+    // Credit/Action cost inputs: the whole card is a click target that opens
+    // a small menu explaining that typing a target spend back-calculates the
+    // number of records needed. A hover state + pencil glyph signal it's
+    // interactive.
     const totalDollarBox = document.createElement("div");
-    totalDollarBox.className = "cb-summary-box cb-pricing-card cb-pricing-total";
+    totalDollarBox.className = "cb-summary-box cb-pricing-card cb-pricing-total cb-total-cost-editable";
+    totalDollarBox.setAttribute("role", "button");
+    totalDollarBox.tabIndex = 0;
+    totalDollarBox.title = "Set a target total cost to back-calculate the records needed";
     const totalDollarLabel = document.createElement("span");
     totalDollarLabel.className = "cb-summary-label";
     totalDollarLabel.textContent = "Total Cost";
@@ -691,8 +699,23 @@
     totalDollarValue.className = "cb-summary-value";
     totalDollarValue.id = "cb-total-dollar-value";
     totalDollarValue.textContent = "$0.00";
+    const totalDollarEditIcon = document.createElement("span");
+    totalDollarEditIcon.className = "cb-total-cost-edit-icon";
+    totalDollarEditIcon.setAttribute("aria-hidden", "true");
+    totalDollarEditIcon.innerHTML =
+      '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" ' +
+      'stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">' +
+      '<path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>';
     totalDollarBox.appendChild(totalDollarLabel);
     totalDollarBox.appendChild(totalDollarValue);
+    totalDollarBox.appendChild(totalDollarEditIcon);
+    totalDollarBox.addEventListener("click", () => openTotalCostEditor(totalDollarBox));
+    totalDollarBox.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        openTotalCostEditor(totalDollarBox);
+      }
+    });
 
     pricingGroup.appendChild(pricingToggleBox);
     pricingGroup.appendChild(creditCostBox);
@@ -827,6 +850,113 @@
 
     wirePricingInput(creditCostInput, (v) => { creditCost = v; });
     wirePricingInput(actionCostInput, (v) => { actionCost = v; });
+
+    // ---- Total Cost editor (back-calculates Records from a target spend) ----
+    //
+    // The dollar cost of one record at the current scope. recordsNeeded =
+    // targetTotal / perRowDollarCost(). Uses the frequency-weighted per-row
+    // numbers so the derivation matches what recalcTotal multiplies by.
+    function perRowDollarCost() {
+      return (
+        currentWeightedCreditsPerRow * creditCost +
+        currentWeightedActionsPerRow * actionCost
+      );
+    }
+
+    let totalCostEditorEl = null;
+    let totalCostEditorBackdrop = null;
+    function closeTotalCostEditor() {
+      if (totalCostEditorEl) { totalCostEditorEl.remove(); totalCostEditorEl = null; }
+      if (totalCostEditorBackdrop) { totalCostEditorBackdrop.remove(); totalCostEditorBackdrop = null; }
+    }
+    __cb.closeTotalCostEditor = closeTotalCostEditor;
+
+    function openTotalCostEditor(anchorEl) {
+      closeTotalCostEditor();
+
+      const backdrop = document.createElement("div");
+      backdrop.style.cssText = "position:fixed;inset:0;z-index:9999998;";
+      backdrop.addEventListener("mousedown", (evt) => {
+        evt.stopPropagation();
+        closeTotalCostEditor();
+      });
+
+      const menu = document.createElement("div");
+      menu.className = "cb-total-cost-editor";
+      menu.addEventListener("mousedown", (evt) => evt.stopPropagation());
+
+      const title = document.createElement("div");
+      title.className = "cb-total-cost-editor-title";
+      title.textContent = "Edit total cost";
+      const help = document.createElement("p");
+      help.className = "cb-total-cost-editor-help";
+      menu.appendChild(title);
+      menu.appendChild(help);
+
+      const perRow = perRowDollarCost();
+      const isActual = __cb.viewMode === "actual";
+      const canDerive = !isActual && perRow > 0;
+
+      if (canDerive) {
+        help.textContent =
+          "Type your target spend. We'll back-calculate the number of records " +
+          "needed at the current cost per row (" + formatDollar(perRow) +
+          "/record) and update the Records field.";
+
+        const row = document.createElement("div");
+        row.className = "cb-total-cost-editor-row";
+        const input = document.createElement("input");
+        input.type = "text";
+        input.inputMode = "decimal";
+        input.className = "cb-total-cost-editor-input";
+        input.value = totalDollarValue.textContent;
+        const applyBtn = document.createElement("button");
+        applyBtn.type = "button";
+        applyBtn.className = "cb-total-cost-editor-apply";
+        applyBtn.textContent = "Apply";
+        row.appendChild(input);
+        row.appendChild(applyBtn);
+        menu.appendChild(row);
+
+        const apply = () => {
+          const target = parseDollar(input.value);
+          const per = perRowDollarCost();
+          if (per > 0 && target > 0) {
+            const records = Math.max(1, Math.round(target / per));
+            recordsInput.value = records.toLocaleString();
+            recordsInput.dispatchEvent(new Event("input"));
+            if (__cb.debouncedSave) __cb.debouncedSave();
+          }
+          closeTotalCostEditor();
+        };
+        applyBtn.addEventListener("click", (e) => { e.stopPropagation(); apply(); });
+        input.addEventListener("keydown", (e) => {
+          if (e.key === "Enter") { e.preventDefault(); apply(); }
+          else if (e.key === "Escape") { e.preventDefault(); closeTotalCostEditor(); }
+        });
+        setTimeout(() => { input.focus(); input.select(); }, 0);
+      } else {
+        help.classList.add("cb-total-cost-editor-help-muted");
+        help.textContent = isActual
+          ? "Switch to Projected mode to set a target total cost \u2014 Actual totals come from real billed spend."
+          : "Add at least one enrichment with a non-zero cost per row before setting a target total cost.";
+      }
+
+      document.body.appendChild(backdrop);
+      document.body.appendChild(menu);
+
+      // Right-align under the card so the menu stays within the viewport
+      // (Total Cost is the right-most summary box).
+      const rect = anchorEl.getBoundingClientRect();
+      const width = 280;
+      menu.style.position = "fixed";
+      menu.style.zIndex = "9999999";
+      menu.style.top = (rect.bottom + 6) + "px";
+      menu.style.left = Math.max(8, rect.right - width) + "px";
+
+      totalCostEditorEl = menu;
+      totalCostEditorBackdrop = backdrop;
+    }
 
     pricingToggleBox.addEventListener("click", () => {
       const expanded = pricingGroup.classList.toggle("is-expanded");
@@ -1456,6 +1586,8 @@
     __cb.getActionCost = null;
     __cb.applyRecordsState = null;
     __cb.recordsActual = null;
+    if (__cb.closeTotalCostEditor) __cb.closeTotalCostEditor();
+    __cb.closeTotalCostEditor = null;
     __cb.proMode = false;
     __cb.viewMode = "projected";
     __cb.currentFrequencyId = __cb.DEFAULT_FREQUENCY_ID;

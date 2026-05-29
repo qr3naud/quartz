@@ -757,6 +757,118 @@
   color: #3730a3;
 }
 
+/* "Total Cost" is a click-to-edit card (opens the back-calculate-records
+   menu). Hover/focus telegraph that it's interactive; the pencil glyph fades
+   in on hover. */
+.cb-total-cost-editable {
+  position: relative;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, box-shadow 0.15s;
+}
+
+.cb-total-cost-editable:hover {
+  background: #e0e7ff;
+  border-color: #a5b4fc;
+  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.15);
+}
+
+.cb-total-cost-editable:focus-visible {
+  outline: none;
+  border-color: #818cf8;
+  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.2);
+}
+
+.cb-total-cost-edit-icon {
+  position: absolute;
+  top: 8px;
+  right: 10px;
+  display: inline-flex;
+  color: #4338ca;
+  opacity: 0;
+  transition: opacity 0.15s;
+  pointer-events: none;
+}
+
+.cb-total-cost-editable:hover .cb-total-cost-edit-icon,
+.cb-total-cost-editable:focus-visible .cb-total-cost-edit-icon {
+  opacity: 0.7;
+}
+
+/* Click-to-edit menu, mounted on document.body + fixed-positioned like the
+   frequency picker. */
+.cb-total-cost-editor {
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.14);
+  padding: 12px;
+  width: 280px;
+  box-sizing: border-box;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+
+.cb-total-cost-editor-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #111827;
+  margin-bottom: 4px;
+}
+
+.cb-total-cost-editor-help {
+  margin: 0 0 10px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: #6b7280;
+}
+
+.cb-total-cost-editor-help-muted {
+  margin-bottom: 0;
+}
+
+.cb-total-cost-editor-row {
+  display: flex;
+  gap: 8px;
+}
+
+.cb-total-cost-editor-input {
+  flex: 1 1 auto;
+  width: 100%;
+  height: 30px;
+  padding: 0 8px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #111827;
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.cb-total-cost-editor-input:focus {
+  outline: none;
+  border-color: #6366f1;
+  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.15);
+}
+
+.cb-total-cost-editor-apply {
+  flex: 0 0 auto;
+  height: 30px;
+  padding: 0 14px;
+  border: 1px solid #4338ca;
+  border-radius: 6px;
+  background: #4f46e5;
+  color: #ffffff;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.12s;
+}
+
+.cb-total-cost-editor-apply:hover {
+  background: #4338ca;
+}
+
 /* ==========================================================================
    FREQUENCY (summary-bar trigger + shared picker)
    ========================================================================== */
