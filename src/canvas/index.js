@@ -6,6 +6,13 @@
   let canvasArea, svgLayer, cardContainer;
   let panX = 0, panY = 0, scale = 1;
   let cards = [], groups = [];
+  // Per-imported-table metadata keyed by source tableId:
+  //   { name, importColor, recordCount, importedAt }
+  // Single source of truth for the table-view per-table headers (source row
+  // count + import time) and for repairing tableName/importColor on reload
+  // (the DP/input/comment restore path doesn't carry those on the card).
+  // Serialized + restored with the rest of the canvas state.
+  let importedTables = {};
   let nextCardId = 1, nextGroupId = 1;
   // Monotonic id counter for relational cluster membership (see
   // `getClusters` / `assignToCluster`). Survives across snap-reconcile
@@ -164,6 +171,10 @@
         groupsRef: () => groups,
         panRef: () => ({ panX, panY, scale }),
         nextIdsRef: () => ({ nextCardId, nextGroupId, nextClusterId }),
+        importedTablesRef: () => importedTables,
+        setImportedTables: (next) => {
+          importedTables = next && typeof next === "object" ? next : {};
+        },
         setPanScale: (next) => {
           panX = next.panX;
           panY = next.panY;
@@ -1769,6 +1780,15 @@
     // returned array directly would corrupt internal state — go through addCard
     // / removeCard / card.data setters instead.
     getCards: () => cards.slice(),
+    // Per-imported-table metadata (source row count + import time + name +
+    // color), keyed by source tableId. setImportedTable is called by the
+    // import flow once per table; getImportedTables feeds the table-view
+    // per-table headers and repairs tableName/importColor on reload.
+    getImportedTables: () => ({ ...importedTables }),
+    setImportedTable: (tableId, meta) => {
+      if (!tableId) return;
+      importedTables[tableId] = { ...(importedTables[tableId] || {}), ...(meta || {}) };
+    },
     // Exposed so external editors (e.g. the export-as-table modal) can mark
     // canvas-data edits — both for undo history and for kicking the
     // debounced save / collaborator refresh that onCanvasStateChange does.

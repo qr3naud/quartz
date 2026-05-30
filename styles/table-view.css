@@ -120,12 +120,22 @@
   background: #ffffff;
   border: 1px solid #e5e7eb;
   border-radius: 10px;
-  overflow: hidden;
+  /* The container is the scroll viewport for BOTH axes: vertical for long
+     tables and horizontal once the columns (Data point + Coverage + Fill +
+     Credits + Actions + Enrichments) exceed the available width. Keeping
+     both axes on this one element means the sticky thead (top: 0) keeps
+     working while horizontal scrolling. */
+  overflow: auto;
+  max-height: calc(100vh - 230px);
   box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
 }
 
 .cb-table-view-table {
   width: 100%;
+  /* Floor the table width so narrow viewports scroll horizontally instead of
+     crushing the columns. Sum of the fixed columns + a readable Data point /
+     Enrichments minimum. */
+  min-width: 920px;
   border-collapse: separate;
   border-spacing: 0;
   font-size: 13px;
@@ -166,6 +176,12 @@
 .cb-table-view-table .col-dp {
   width: 26%;
   min-width: 200px;
+}
+
+.cb-table-view-table .col-coverage {
+  width: 120px;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
 }
 
 .cb-table-view-table .col-fill {
@@ -841,6 +857,24 @@
   font-weight: 500;
   color: #6d28d9;
   letter-spacing: 0.02em;
+}
+
+/* Per-table header extras (source row count + "imported X ago"). Rendered as
+   quiet metadata after the data-point count, separated by a subtle dot. */
+.cb-table-view-group-row-meta {
+  display: inline-flex;
+  align-items: center;
+  font-size: 11px;
+  font-weight: 500;
+  color: #94a3b8;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+
+.cb-table-view-group-row-meta::before {
+  content: "\00b7";
+  margin: 0 8px;
+  color: #cbd5e1;
 }
 
 /* Yellow palette override for the "Unattached enrichments" header.

@@ -9,6 +9,11 @@
       groupsRef,
       panRef,
       nextIdsRef,
+      // Per-imported-table metadata map { [tableId]: { name, importColor,
+      // recordCount, importedAt } }. Optional for back-compat with older
+      // canvas modules that don't supply it.
+      importedTablesRef,
+      setImportedTables,
       setPanScale,
       setNextIds,
       applyTransform,
@@ -90,12 +95,22 @@
         nextCardId: nextIds.nextCardId,
         nextGroupId: nextIds.nextGroupId,
         nextClusterId: nextIds.nextClusterId,
+        // Per-imported-table metadata (source row count + import time + name +
+        // color). Keyed by source tableId. Survives reload + realtime sync.
+        importedTables: importedTablesRef ? importedTablesRef() : {},
       };
     }
 
     function restore(state) {
       if (!state) return;
       setRestoring(true);
+      // Per-imported-table metadata. Legacy state has none → reset to {} so a
+      // tab switch doesn't leak the previous tab's table headers.
+      if (setImportedTables) {
+        setImportedTables(state.importedTables && typeof state.importedTables === "object"
+          ? state.importedTables
+          : {});
+      }
       if (state.view) {
         setPanScale({
           panX: state.view.panX ?? 0,

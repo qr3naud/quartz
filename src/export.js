@@ -1011,373 +1011,268 @@
   // Per-endpoint metadata that drives the left-column explanation block.
   // Kept as a plain array so the renderer can iterate it once and so adding
   // a fourth option in the future is a one-row diff.
-  const JSON_ENDPOINT_DEFS = [
+  // The import flow's API calls, in execution order, grouped into the
+  // Projected phase (everything needed to show rows immediately) and the
+  // Actual phase (ground-truth spend, fetched in the background). The leading
+  // "breakdown" entry isn't a call — it's the readable "what's being imported"
+  // view the right pane shows by default. Field names (summary / whatYouGet /
+  // tradeoffs / whenToUse / calls) match what renderExplain consumes.
+  const IMPORT_FLOW_STEPS = [
     {
-      id: "sculptor",
-      label: "Sculptor in-table",
-      tag: "1 call · cheap",
+      id: "breakdown",
+      phase: "summary",
+      label: "What's being imported",
+      tag: "readable",
+      fetchable: false,
       summary:
-        "Single POST to /context with contextDetailLevel \"sculptor-in-table\". " +
-        "Authoritative schema — exactly what Clay's in-table sculptor LLM sees.",
+        "The decision set the import stamps onto the table view — per field: projected credits/row, coverage, fill rate, then real billed spend once the Actual leg lands.",
       whatYouGet: [
-        "Per-field schema (action input/output parameters, formulas, sources)",
-        "Field group info (waterfall steps, basic groups, sequence)",
-        "tableMetadata + viewInfo for the current view",
-        "dataProfile only on tables under ~1k rows (server's conditional profiling rule)",
+        "Resolved billing plan (legacy vs modern) used for projected credits",
+        "Counts: standalone enrichments, waterfalls, basic groups, inputs",
+        "Per-field projected credits/row, coverage (ran/total), fill rate",
+        "Actual spend per field once the background leg returns",
       ],
       tradeoffs: [
-        "No runtime status counts — can't tell success vs error breakdowns",
-        "No fill rate on tables ≥ 1k rows (profiling skipped to stay cheap)",
-        "No example values, no error examples, no credit costs",
+        "Projected uses the model-aware catalog cost; Actual is 30-day Redshift spend",
+        "Coverage/fill come from run-status counts (exact); basic-field fill is sampled",
       ],
-      whenToUse:
-        "You want the cheapest, most-faithful snapshot of the schema and don't need runtime stats.",
+      whenToUse: "Default view — see exactly what the table-view import produces.",
+      calls: ["(computed from the steps below — no call of its own)"],
+    },
+    {
+      id: "catalog",
+      phase: "projected",
+      label: "Action catalog",
+      tag: "cached · 24h",
+      fetchable: true,
+      summary:
+        "Enrichment catalog: base credits per action (both pricing tiers), AI detection, and action-execution flags. Cached in localStorage for 24h.",
+      whatYouGet: [
+        "Per-action base credits (modern + legacy tiers)",
+        "AI detection + model options",
+        "actionExecution + private-key credit flags",
+      ],
+      tradeoffs: ["Cached up to 24h — a brand-new action can be a day stale"],
+      whenToUse: "Inspect the catalog entry behind any imported enrichment.",
+      calls: ["GET /v3/actions?workspaceId=:ws"],
+    },
+    {
+      id: "modelpricing",
+      phase: "projected",
+      label: "AI model pricing",
+      tag: "cached · 24h",
+      fetchable: true,
+      summary:
+        "Per-model AI credit costs, workspace-scaled. Drives the projected cost of Use AI / Claygent columns. Cached 24h.",
+      whatYouGet: ["modelName → base credit cost for the workspace"],
+      tradeoffs: ["Cached up to 24h"],
+      whenToUse: "Check the per-row cost the canvas uses for a given AI model.",
+      calls: ["GET /v3/model-pricing/:ws/base-costs"],
+    },
+    {
+      id: "plan",
+      phase: "projected",
+      label: "Billing plan",
+      tag: "cached · 24h",
+      fetchable: true,
+      summary:
+        "The workspace's active billing plan, classified legacy (pre-2026) vs modern (post-2026). Determines which catalog pricing tier projected credits use.",
+      whatYouGet: ["planType", "isLegacy / isModern", "per-credit rate when available"],
+      tradeoffs: ["Cached up to 24h"],
+      whenToUse: "Confirm which pricing tier the projected credits are computed against.",
+      calls: ["GET /v3/billingplans/:ws?source=frontend"],
+    },
+    {
+      id: "tables",
+      phase: "projected",
+      label: "Table list",
+      tag: "1 call",
+      fetchable: true,
+      summary:
+        "The workbook's tables with fields, field groups, and views. Drives the import classification (inputs / waterfalls / basic groups / standalone) and cluster cost-sharing.",
+      whatYouGet: ["fields[]", "fieldGroupMap (waterfalls + basic groups)", "views[]"],
+      tradeoffs: ["Whole-workbook payload — but the import only reads the open table"],
+      whenToUse: "Inspect the raw field + group structure the classifier consumes.",
+      calls: ["GET /v3/workbooks/:wb/tables"],
+    },
+    {
+      id: "context",
+      phase: "projected",
+      label: "Field context (fast)",
+      tag: "1 call · small sample",
+      fetchable: true,
+      summary:
+        "The fast /context call: per-field credit cost + run-status coverage/fill, with a small sample size so it skips the all-rows value scan the old `full` preset did.",
+      whatYouGet: [
+        "Per-field creditCost (ActionCostMetadata)",
+        "Coverage + fill from run-status counts (exact, all rows)",
+        "Whole-table record count",
+      ],
+      tradeoffs: [
+        "Basic-field value fill is sampled (small sampleSize), not all rows",
+        "creditCost is computed legacy-side; modern plans get the catalog tier swapped in",
+      ],
+      whenToUse: "See the projected per-field cost + coverage the import reads.",
       calls: [
-        'POST /v3/workspaces/:workspaceId/tables/:tableId/context  body { contextDetailLevel: "sculptor-in-table" }',
+        "POST /v3/workspaces/:ws/tables/:id/context  customOptions { includeCreditCosts, includeStatusCounts, sampleSize: " +
+          (__cb.IMPORT_CONTEXT_SAMPLE_SIZE ?? 50) +
+          " }",
       ],
     },
     {
-      id: "full",
-      label: "Full preset",
-      tag: "1 call · rich · slow on big tables",
+      id: "spend",
+      phase: "actual",
+      label: "Realtime spend",
+      tag: "background · ground truth",
+      fetchable: true,
       summary:
-        "Single POST to /context with contextDetailLevel \"full\". Every server toggle on " +
-        "(DEFAULT_FIELD_CONFIG_OPTIONS): profiling at sampleSize=0, status counts, error " +
-        "analysis, example values, policy credit costs.",
-      whatYouGet: [
-        "Everything sculptor-in-table returns",
-        "dataProfile.* on every field at any table size (no 1k cap)",
-        "statusBreakdown / successCount / errorCount per field (server-side runstatus join)",
-        "exampleValues + errorExamples per field",
-        "Action / formula error analysis with descriptions",
-        "creditCost per action — list / policy values from the pricing config",
-      ],
+        "The Actual leg: real billed credits + action executions per column over the last 30 days. Fetched in the background after projected rows render, so toggling Actual is instant.",
+      whatYouGet: ["Per-field creditsSpent", "actionExecutionCreditsSpent", "cellCount"],
       tradeoffs: [
-        "Slowest single request on big tables — profiles every row (sampleSize: 0)",
-        "Returns tableRecordCount (whole table), not the view-filtered count",
-        "creditCost is policy / list pricing — NOT actual billed spend",
+        "Only complete since 2025-11-05; older tables under-count",
+        "Lags real time by a few minutes (Redshift via Kinesis)",
       ],
-      whenToUse:
-        "You need a single rich JSON file and don't care about view filters or actual spend.",
-      calls: [
-        'POST /v3/workspaces/:workspaceId/tables/:tableId/context  body { contextDetailLevel: "full" }',
-      ],
-    },
-    {
-      id: "import",
-      label: "Import (v3.9)",
-      tag: "3 calls · what import would stamp",
-      summary:
-        "Mirrors the v3.9 table-import flow exactly. Fetches the workbook's table list (for fieldGroupMap + view), /context at full detail, and 30-day Redshift spend; then runs the same buildImportDecisionSet helper that importTableToCanvas calls — so the JSON you preview here is byte-for-byte what the canvas would receive.",
-      whatYouGet: [
-        "context + spend: same as the Full + spend legs of the import flow",
-        "joined: per-fieldId { coverage, fillRate, source, spend } — the exact stats map stamped onto cards",
-        "inputs.{ allInputRefs, actionOutputIds, leafInputFieldIds, leafInputFields }: leaf-input classification (replaces the v3.8 red-color hint)",
-        "groupedFieldIds.{ waterfall, waterfallValidation, waterfallMerge, basicGroup, all }",
-        "waterfalls / basicGroups / standaloneFields: the pre-render decision set",
-        "view.{ viewId, viewName }: which view the classification was computed against",
-      ],
-      tradeoffs: [
-        "3 network calls (table list + context-full + spend) — slightly slower than Full alone",
-        "Whole-table denominators (no view filter) — same as the import flow",
-        "Only meaningful when a real Clay table is in scope on the page",
-      ],
-      whenToUse:
-        "You want to debug or audit what the import flow would stamp onto the canvas without actually triggering it.",
-      calls: [
-        "GET  /v3/workbooks/:workbookId/tables  (for fieldGroupMap + view + fields)",
-        'POST /v3/workspaces/:workspaceId/tables/:tableId/context  body { contextDetailLevel: "full" }',
-        "GET  /v3/realtime-credit-usage/:workspaceId/table/:tableId/column/recent?days=30",
-      ],
-    },
-    {
-      id: "combined",
-      label: "Combined join",
-      tag: "4 calls · legacy fan-out",
-      summary:
-        "Four parallel calls joined per fieldId — the exact same shape the brainstorm's " +
-        "table-import flow consumes. Adds view-filtered record count and last-30-day actual " +
-        "credit spend from Redshift on top of the sculptor context.",
-      whatYouGet: [
-        "viewCount: the view-filtered record count (still fetched so the timing chip can show its latency, but no longer fed into joined)",
-        "runStatus: per-field SUCCESS / ERROR / RUNNING counts (also fetched for latency visibility only — joined now reads status counts straight from full's dataProfile)",
-        "context: same sculptor-in-table response above",
-        "spend: per-column credits + actionExecutions + cellCount over the last 30 days (Redshift)",
-        "joined: the fieldId-keyed merge { coverage, fillRate, source, spend } — derived from context + spend only as of v3.9",
-      ],
-      tradeoffs: [
-        "Slowest wall-clock — bottlenecked by whichever leg is slowest (usually runstatus)",
-        "runStatus may still be \"_pending\" on big or recently-edited tables",
-        "Redshift spend is only complete since 2025-11-05",
-        "Only meaningful when a real Clay table is in scope on the page",
-        "Since v3.9 the joiner ignores viewCount + runStatus — they're only here for per-leg latency comparison against the import flow's 2-call fan-out",
-      ],
-      whenToUse:
-        "You want to compare per-leg latency of the legacy 4-call fan-out against the v3.9 import flow's 2-call (full + spend) approach. For real scoping, prefer Full unless you specifically need the view-filtered count or the live runstatus payload.",
-      calls: [
-        "GET  /v3/tables/:tableId/views/:viewId/count",
-        "GET  /v3/workspaces/:workspaceId/tables/:tableId/fields/runstatus",
-        'POST /v3/workspaces/:workspaceId/tables/:tableId/context  body { contextDetailLevel: "sculptor-in-table" }',
-        "GET  /v3/realtime-credit-usage/:workspaceId/table/:tableId/column/recent?days=30",
-      ],
+      whenToUse: "Compare projected estimates against what Clay actually billed.",
+      calls: ["GET /v3/realtime-credit-usage/:ws/table/:id/column/recent?days=30"],
     },
   ];
 
-  // Hand-written sample shapes. Stay in sync with:
-  //   apps/api/v3/clay-context/domain/table-context.ts   (TableContext, FieldConfiguration, DataProfileStats)
-  //   apps/clay-brainstorm-extension/src/api.js          (fetch wrappers)
-  //   apps/clay-brainstorm-extension/src/table-import.js (buildStatsByFieldId)
-  // These are illustrative — fields trimmed for readability. Live mode is
-  // the source of truth for the real shape on a given table.
-  const JSON_SCHEMA_SAMPLES = {
-    sculptor: `{
-  "fieldConfigurationsData": {
-    "fieldConfigs": [
+  // Static sample model shown when no Clay table is open, so the import flow
+  // stays explorable offline. Mirrors the live model shape buildInspectorModel
+  // returns: { plan, recordCount, counts, fieldRows }.
+  const SAMPLE_MODEL = {
+    sample: true,
+    plan: { planType: "growth", isModern: true, planIsModern: true },
+    recordCount: 12480,
+    counts: { standalone: 1, waterfalls: 1, basicGroups: 1, inputs: 2 },
+    fieldRows: [
+      { name: "Full Name", type: "—", group: "Input", projected: null, coverage: null, fill: null, spend: null },
+      { name: "Company Domain", type: "—", group: "Input", projected: null, coverage: null, fill: null, spend: null },
       {
-        "id": "<fieldId>",
-        "index": 0,
-        "name": "Company Domain",
-        "type": "basic",
-        "dataType": "text",
-        "dataProfile": {
-          "valueCount": 842,
-          "nullPercentage": 15.8,
-          "uniqueValueCount": 837,
-          "totalRecords": 1000,
-          "sampleSize": 1000,
-          "commonValues": [{ "value": "...", "percentage": 0 }]
-        }
+        name: "Score Lead (AI)", type: "Enrichment", group: "Standalone",
+        projected: 6.8,
+        coverage: { ran: 12480, total: 12480 },
+        fill: { success: 11900, ran: 12480 },
+        spend: { credits: 84864, actionExecutions: 12480, cellCount: 12480 },
       },
       {
-        "id": "<actionFieldId>",
-        "index": 1,
-        "name": "Find Work Email (Waterfall)",
-        "type": "action",
-        "actionInfo": {
-          "actionKey": "find_work_email_waterfall",
-          "actionPackageId": "clay",
-          "displayName": "Find Work Email",
-          "inputsBinding": { "personFullName": "/{Full Name}" },
-          "inputParameterSchema": [/* ... */],
-          "outputParameterSchema": [/* ... */]
-        },
-        "groupInfo": {
-          "groupId": "<groupId>",
-          "groupType": "waterfall",
-          "groupName": "Find Work Email",
-          "roleInGroup": "sequence_step",
-          "waterfallPosition": 0,
-          "waterfallAttribute": "Person_WorkEmail",
-          "totalWaterfallSteps": 4
-        },
-        "dataProfile": {
-          "valueCount": 0,
-          "nullPercentage": 0,
-          "uniqueValueCount": 0,
-          "totalRecords": 1000,
-          "sampleSize": 0,
-          "commonValues": []
-        }
-      }
-    ],
-    "configOptions": {
-      "includeDataProfiling": false,
-      "includeStatusCounts": false,
-      "includeFullSchemas": true,
-      "sampleSize": 1000
-      /* ... see SCULPTOR_IN_TABLE_FIELD_CONFIG_OPTIONS in table-context.ts */
-    }
-  },
-  "tableMetadata": {
-    "tableId": "<tableId>",
-    "tableName": "Outbound — Q2",
-    "workspaceName": "Acme",
-    "workbookId": "<workbookId>",
-    "viewInfo": {
-      "viewId": "<viewId>",
-      "viewName": "Default view",
-      "hasFilters": false
-    }
-  },
-  "sampleData": []
-}`,
-    full: `{
-  "fieldConfigurationsData": {
-    "fieldConfigs": [
+        name: "Find Work Email · find_email_apollo", type: "Enrichment", group: "Waterfall",
+        projected: 1,
+        coverage: { ran: 12480, total: 12480 },
+        fill: { success: 7201, ran: 12480 },
+        spend: { credits: 7843, actionExecutions: 7901, cellCount: 7931 },
+      },
       {
-        "id": "<fieldId>",
-        "name": "Find Work Email (Waterfall)",
-        "type": "action",
-        "actionInfo": { /* full input/output schemas */ },
-        "dataProfile": {
-          "valueCount": 842,
-          "nullPercentage": 15.8,
-          "uniqueValueCount": 837,
-          "totalRecords": 12480,
-          "sampleSize": 12480,
-          "successCount": 842,
-          "errorCount": 95,
-          "inProgressCount": 0,
-          "notRunCount": 63,
-          "exampleValues": ["jane@acme.com", "..."],
-          "statusBreakdown": [
-            { "status": "SUCCESS", "count": 842, "description": "..." },
-            { "status": "ERROR_PROVIDER_ERROR", "count": 21, "description": "..." }
-          ],
-          "commonValues": [/* ... */]
-        },
-        "creditCost": {
-          "creditsPerCall": 1,
-          "actionExecutionCreditsPerCall": 1
-          /* policy / list pricing — NOT actual spend */
-        }
-      }
+        name: "Find Job Title", type: "Enrichment", group: "Person Enrichment",
+        projected: 2,
+        coverage: { ran: 12480, total: 12480 },
+        fill: { success: 9800, ran: 12480 },
+        spend: { credits: 19600, actionExecutions: 9800, cellCount: 9800 },
+      },
     ],
-    "configOptions": {
-      "includeDataProfiling": true,
-      "includeStatusCounts": true,
-      "includeActionFieldAnalysis": true,
-      "includeFormulaFieldAnalysis": true,
-      "includeExampleValues": true,
-      "includeErrorExamples": true,
-      "includeCreditCosts": true,
-      "sampleSize": 0
-      /* ... see DEFAULT_FIELD_CONFIG_OPTIONS in table-context.ts */
-    }
-  },
-  "tableMetadata": { /* same as sculptor; tableRecordCount = whole table */ },
-  "sampleData": [/* up to getExampleRows rows */]
-}`,
-    combined: `{
-  /* viewCount and runStatus are still fetched in Combined mode so the
-     timing chip can show their per-leg latency, but as of v3.9 they are
-     NOT consumed by the joiner — coverage / fillRate now derive from
-     full's dataProfile.successCount + errorCount + inProgressCount. The
-     fields are kept on the payload for inspection. */
-  "viewCount": {
-    "viewTotalRecordsCount": 8240
-  },
-  "runStatus": {
-    "<actionFieldId>": [
-      { "status": "SUCCESS",              "count": 7180 },
-      { "status": "SUCCESS_NO_DATA",      "count": 730  },
-      { "status": "ERROR_PROVIDER_ERROR", "count": 21   }
-    ]
-  },
-  "context": {
-    /* Sculptor-in-table response — same shape as the "Sculptor in-table"
-       option above. Use that tab for the detailed schema. */
-  },
-  "spend": [
-    {
-      "fieldId": "<actionFieldId>",
-      "creditsSpent": 7843,
-      "actionExecutionCreditsSpent": 7901,
-      "cellCount": 7931
-    }
-  ],
-  "joined": {
-    /* Derived from context.fieldConfigurationsData.fieldConfigs[*].dataProfile
-       + spend. Combined mode still fetches sculptor (not full) context, so
-       action-field coverage falls back to valueCount/sampleSize instead of
-       successCount/errorCount. Use the Full option above for status-count-
-       backed coverage. */
-    "<fieldId>": {
-      "fetchedAt": 1714000000000,
-      "source": "dataProfile",
-      "fillRate": { "success": 842, "ran": 1000 },
-      "spend": { "credits": 7843, "actionExecutions": 7901, "cellCount": 7931 }
-    }
-  }
-}`,
-    import: `{
-  /* The full pre-render decision set the v3.9 import flow consumes.
-     Built by __cb.buildImportDecisionSet in src/table-import.js — same
-     helper importTableToCanvas calls, so this preview matches what the
-     canvas would receive byte-for-byte. */
-
-  "context": { /* /context (full preset) response — see Full tab above for the detailed shape */ },
-  "spend":   [ /* /realtime-credit-usage column spend rows — see Combined tab above */ ],
-
-  "view": {
-    "viewId":   "<viewId>",
-    "viewName": "Default view"
-  },
-
-  "visibleFieldIds": ["<fieldA>", "<fieldB>", "<actionFieldId>", "<mergeFieldId>"],
-
-  "inputs": {
-    /* Leaf-input rule: basic + visible + non-formula + referenced by some
-       action's inputsBinding + not itself an action output + not in any
-       group. Replaces the v3.8 red-color hint. */
-    "allInputRefs":      ["<fieldA>", "<fieldB>", "<intermediateFieldId>"],
-    "actionOutputIds":   ["<actionFieldId>", "<otherActionFieldId>"],
-    "leafInputFieldIds": ["<fieldA>", "<fieldB>"],
-    "leafInputFields": [
-      { "id": "<fieldA>", "name": "Full Name",      "type": "basic" },
-      { "id": "<fieldB>", "name": "Company Domain", "type": "basic" }
-    ]
-  },
-
-  "groupedFieldIds": {
-    "waterfall":           ["<step1FieldId>", "<step2FieldId>"],
-    "waterfallValidation": ["<validationFieldId>"],
-    "waterfallMerge":      ["<mergeFieldId>"],
-    "basicGroup":          ["<bg1Field1>", "<bg1Field2>"],
-    "all":                 ["<step1FieldId>", "<step2FieldId>", "<validationFieldId>", "<mergeFieldId>", "<bg1Field1>", "<bg1Field2>"]
-  },
-
-  "waterfalls": [
-    {
-      "groupId":       "<groupId>",
-      "name":          "Find Work Email",
-      "attributeEnum": "Person_WorkEmail",
-      "mergeFieldId":  "<mergeFieldId>",
-      "steps": [
-        {
-          "fieldId":         "<step1FieldId>",
-          "actionKey":       "find_email_apollo",
-          "actionPackageId": "clay",
-          "validation": {
-            "fieldId":         "<validationFieldId>",
-            "actionKey":       "validate_email_zerobounce",
-            "actionPackageId": "clay",
-            "authAccountId":   null
-          }
-        }
-      ]
-    }
-  ],
-
-  "basicGroups": [
-    {
-      "groupId":  "<bgGroupId>",
-      "name":     "Person Enrichment",
-      "dpFields": [{ "id": "<bg1Field1>", "name": "Job Title", "type": "basic" }],
-      "erFields": [{ "id": "<bg1Field2>", "name": "Find Job Title", "type": "action", "actionKey": "find_job_title", "actionPackageId": "clay" }]
-    }
-  ],
-
-  "standaloneFields": [
-    { "id": "<actionFieldId>", "name": "Score Lead (AI)", "type": "action", "actionKey": "use_ai", "actionPackageId": "clay" }
-  ],
-
-  "joined": {
-    "<actionFieldId>": {
-      "fetchedAt": 1714000000000,
-      "source":    "dataProfile-full",
-      "coverage":  { "ran": 7201, "total": 12480 },
-      "fillRate":  { "success": 7180, "ran": 7201 },
-      "spend":     { "credits": 7843, "actionExecutions": 7901, "cellCount": 7931 }
-    },
-    "<fieldA>": {
-      "fetchedAt": 1714000000000,
-      "source":    "dataProfile",
-      "fillRate":  { "success": 9800, "ran": 12480 }
-    }
-  }
-}`,
   };
+
+  // ---- Inspector model helpers (shared by live + sample rendering) ----
+
+  function inspectorCatalogInfo(field) {
+    if (!field?.actionKey) return null;
+    const pkg = field.actionPackageId || "clay";
+    return (
+      __cb.actionByIdLookup?.[`${pkg}-${field.actionKey}`] ||
+      __cb.actionByIdLookup?.[`${pkg}/${field.actionKey}`] ||
+      null
+    );
+  }
+
+  // Projected per-row credits for a field, mirroring the import's Layer A:
+  // plan-aware catalog base + the server's resolution flags (per-result /
+  // private-key / unlimited). Returns null for non-action fields.
+  function projectedCreditsForField(field, stats) {
+    if (field.type !== "action") return null;
+    const info = inspectorCatalogInfo(field);
+    const base = info
+      ? (__cb.planAwareBaseCredits ? __cb.planAwareBaseCredits(info) : (info.credits ?? null))
+      : null;
+    if (!stats?.cost) return base;
+    if (stats.cost.unlimited || stats.cost.isPrivateKey) return 0;
+    const override = __cb.importPlanIsModern && __cb.importPlanIsModern() ? base : null;
+    return __cb.resolveEffectiveCredits
+      ? __cb.resolveEffectiveCredits(stats.cost, base, override)
+      : base;
+  }
+
+  function inspectorCounts(decision) {
+    return {
+      standalone: (decision.standaloneFields || []).length,
+      waterfalls: (decision.waterfalls || []).length,
+      basicGroups: (decision.basicGroups || []).length,
+      inputs: (decision.inputs?.leafInputFields || []).length,
+    };
+  }
+
+  function contextRecordCount(context) {
+    const fromRunInfo = context?.tableRunInfo?.tableRowCount;
+    if (typeof fromRunInfo === "number" && fromRunInfo > 0) return fromRunInfo;
+    const fc = context?.fieldConfigurationsData?.fieldConfigs?.find(
+      (f) => f?.dataProfile?.totalRecords != null
+    );
+    return fc?.dataProfile?.totalRecords ?? null;
+  }
+
+  // Flattens the decision set into readable per-field rows: one row per field,
+  // grouped by its role (Input / Standalone / Waterfall / basic group name).
+  function buildInspectorFieldRows(decision) {
+    if (!decision) return [];
+    const joined = decision.joined || {};
+    const rows = [];
+    const push = (field, group) => {
+      const stats = joined[field.id] || null;
+      rows.push({
+        name: field.name || field.id,
+        type: field.type === "action" ? "Enrichment" : (field.type || "—"),
+        group,
+        projected: projectedCreditsForField(field, stats),
+        coverage: stats?.coverage || null,
+        fill: stats?.fillRate || null,
+        spend: stats?.spend || null,
+      });
+    };
+    for (const f of decision.inputs?.leafInputFields || []) push(f, "Input");
+    for (const f of decision.standaloneFields || []) push(f, "Standalone");
+    for (const wf of decision.waterfalls || []) {
+      for (const s of wf.steps || []) {
+        push(
+          {
+            id: s.fieldId,
+            name: `${wf.name || "Waterfall"} \u00b7 ${s.actionKey}`,
+            type: "action",
+            actionKey: s.actionKey,
+            actionPackageId: s.actionPackageId,
+          },
+          "Waterfall"
+        );
+      }
+    }
+    for (const bg of decision.basicGroups || []) {
+      for (const f of bg.erFields || []) push(f, bg.name || "Group");
+      for (const f of bg.dpFields || []) push(f, bg.name || "Group");
+    }
+    return rows;
+  }
+
+  // Builds the readable inspector model from the live legs. Spend is optional
+  // — pass null for the projected-first pass, then rebuild with spend once the
+  // Actual leg lands.
+  function buildInspectorModel({ table, context, spend, viewId }) {
+    const decision = __cb.buildImportDecisionSet({ table, viewId, context, spend });
+    return {
+      plan: __cb.currentPlanPricing || null,
+      recordCount: contextRecordCount(context),
+      counts: inspectorCounts(decision),
+      fieldRows: buildInspectorFieldRows(decision),
+      decision,
+    };
+  }
 
   // Pulls workspace / workbook / table / view IDs out of the current Clay URL
   // path. parseIdsFromUrl in config.js stops at workbook — it's wired into
@@ -1396,23 +1291,6 @@
       tableId: tIdx !== -1 ? parts[tIdx + 1] || null : null,
       viewId: vIdx !== -1 ? parts[vIdx + 1] || null : null,
     };
-  }
-
-  // Resolves a viewId for the combined endpoint when the URL doesn't have one
-  // (e.g. user opened the modal from the workbook home). Falls back to the
-  // table's firstViewId — same default the import flow uses.
-  async function resolveViewId(workbookId, tableId, knownViewId) {
-    if (knownViewId) return knownViewId;
-    if (!workbookId || !tableId || !__cb.fetchTableList) return null;
-    try {
-      const list = await __cb.fetchTableList(workbookId);
-      const tables = list?.tables || list || [];
-      const match = (Array.isArray(tables) ? tables : []).find((t) => t.id === tableId);
-      return match?.firstViewId || match?.views?.[0]?.id || null;
-    } catch (err) {
-      console.warn("[Clay Scoping] resolveViewId failed:", err);
-      return null;
-    }
   }
 
   // Resolves the full table object (with fields, fieldGroupMap, views) for
@@ -1492,116 +1370,60 @@
   // Per-endpoint live fetch. Returns { payload, durationMs, legDurations? }.
   // Throws when prerequisite IDs are missing so the caller can render an
   // empty-state hint instead of a JSON blob.
-  async function fetchJsonForEndpoint(endpointId) {
+  // Fetches the raw payload for one import-flow step (for the per-step JSON
+  // view). Cached static steps resolve via ensureStaticData and return the
+  // in-memory lookups; the rest hit their endpoint. Returns { payload,
+  // durationMs }; throws with code "missing_table" when a table is required
+  // but none is open.
+  async function fetchStepPayload(stepId) {
     const ids = parseTableIdsFromUrl();
     const workspaceId = ids?.workspaceId;
     const tableId = ids?.tableId;
-    if (!workspaceId || !tableId) {
-      const err = new Error("Open a Clay table to fetch live data.");
+    if (!workspaceId) {
+      const err = new Error("Open a Clay workspace to inspect the import flow.");
       err.code = "missing_table";
       throw err;
     }
 
-    if (endpointId === "sculptor") {
-      const t = await timed("context", __cb.fetchTableContext(workspaceId, tableId));
+    if (stepId === "catalog") {
+      const t = await timed("catalog", __cb.ensureStaticData(workspaceId));
+      if (t.error) throw t.error;
+      return { payload: { actions: Object.values(__cb.enrichmentLookup || {}) }, durationMs: t.durationMs };
+    }
+    if (stepId === "modelpricing") {
+      const t = await timed("modelpricing", __cb.ensureStaticData(workspaceId));
+      if (t.error) throw t.error;
+      return { payload: __cb.livePricingByModel || {}, durationMs: t.durationMs };
+    }
+    if (stepId === "plan") {
+      const t = await timed("plan", __cb.ensureStaticData(workspaceId));
+      if (t.error) throw t.error;
+      return { payload: __cb.currentPlanPricing || null, durationMs: t.durationMs };
+    }
+    if (stepId === "tables") {
+      const t = await timed("tables", __cb.fetchTableList(ids.workbookId));
       if (t.error) throw t.error;
       return { payload: t.value, durationMs: t.durationMs };
     }
 
-    if (endpointId === "full") {
-      const t = await timed("context-full", __cb.fetchTableContextFull(workspaceId, tableId));
+    if (!tableId) {
+      const err = new Error("Open a Clay table to inspect this step.");
+      err.code = "missing_table";
+      throw err;
+    }
+
+    if (stepId === "context") {
+      const t = await timed("context", __cb.fetchTableContextForImport(workspaceId, tableId));
+      if (t.error) throw t.error;
+      return { payload: t.value, durationMs: t.durationMs };
+    }
+    if (stepId === "spend") {
+      const t = await timed("spend", __cb.fetchColumnSpend(workspaceId, tableId, 30));
       if (t.error) throw t.error;
       return { payload: t.value, durationMs: t.durationMs };
     }
 
-    if (endpointId === "import") {
-      // Mirrors importTableToCanvas's two-leg fan-out plus the table-list
-      // fetch the picker normally hands the import flow. We re-use the
-      // exact helper (__cb.buildImportDecisionSet) the canvas calls so the
-      // preview is byte-for-byte what would get stamped.
-      if (!__cb.buildImportDecisionSet) {
-        throw new Error("buildImportDecisionSet is not loaded — reload the extension and try again.");
-      }
-      const overall = performance.now();
-      const [tableR, contextR, spendR] = await Promise.all([
-        timed("table", resolveTable(ids.workbookId, tableId)),
-        timed("context-full", __cb.fetchTableContextFull(workspaceId, tableId)),
-        timed("spend", __cb.fetchColumnSpend(workspaceId, tableId, 30)),
-      ]);
-      const durationMs = performance.now() - overall;
-      if (!tableR.value) {
-        throw new Error(
-          "Table not found in workbook listing. Open the workbook this table belongs to and try again."
-        );
-      }
-      const decisionSet = __cb.buildImportDecisionSet({
-        table: tableR.value,
-        viewId: ids.viewId,
-        context: contextR.value,
-        spend: spendR.value,
-      });
-      return {
-        payload: decisionSet,
-        durationMs,
-        legDurations: {
-          table: tableR.durationMs,
-          context: contextR.durationMs,
-          spend: spendR.durationMs,
-        },
-      };
-    }
-
-    if (endpointId === "combined") {
-      const viewId = await resolveViewId(ids.workbookId, tableId, ids.viewId);
-      const overall = performance.now();
-      const [viewCountR, runStatusR, contextR, spendR] = await Promise.all([
-        viewId
-          ? timed("viewCount", __cb.fetchViewCount(tableId, viewId))
-          : Promise.resolve({ label: "viewCount", value: null, durationMs: 0, error: null }),
-        timed("runStatus", __cb.fetchFieldRunStatus(workspaceId, tableId)),
-        timed("context", __cb.fetchTableContext(workspaceId, tableId)),
-        timed("spend", __cb.fetchColumnSpend(workspaceId, tableId, 30)),
-      ]);
-      const durationMs = performance.now() - overall;
-
-      const fields = contextR.value?.fieldConfigurationsData?.allFields
-        || contextR.value?.fieldConfigurationsData?.fieldConfigs
-        || [];
-      const joinedMap = __cb.joinTableStats
-        ? __cb.joinTableStats({
-            fields,
-            runStatus: runStatusR.value,
-            context: contextR.value,
-            spend: spendR.value,
-            viewCount: viewCountR.value,
-          })
-        : new Map();
-      const joined = {};
-      for (const [fieldId, stats] of joinedMap.entries()) {
-        joined[fieldId] = stats;
-      }
-
-      const legDurations = {
-        viewCount: viewCountR.durationMs,
-        runStatus: runStatusR.durationMs,
-        context: contextR.durationMs,
-        spend: spendR.durationMs,
-      };
-
-      return {
-        payload: {
-          viewCount: viewCountR.value,
-          runStatus: runStatusR.value,
-          context: contextR.value,
-          spend: spendR.value,
-          joined,
-        },
-        durationMs,
-        legDurations,
-      };
-    }
-
-    throw new Error(`Unknown endpoint: ${endpointId}`);
+    throw new Error(`Unknown step: ${stepId}`);
   }
 
   // Browsers force-name downloads via a synthetic <a download> click. The
@@ -1636,15 +1458,19 @@
   __cb.openExportJsonModal = function openExportJsonModal() {
     closeExportJsonModal();
 
-    // Per-endpoint live cache so toggling between options doesn't refetch
-    // and the timing chip can show the prior measurement at a glance.
-    const cache = {
-      sculptor: { state: "idle", payload: null, durationMs: null, error: null, legDurations: null },
-      full:     { state: "idle", payload: null, durationMs: null, error: null, legDurations: null },
-      combined: { state: "idle", payload: null, durationMs: null, error: null, legDurations: null },
-    };
-    let selectedEndpoint = "sculptor";
-    let mode = "schema";
+    // Per-step JSON cache (the raw payload behind each call), fetched lazily
+    // when a step is selected.
+    const stepCache = {};
+    for (const s of IMPORT_FLOW_STEPS) {
+      if (s.fetchable) stepCache[s.id] = { state: "idle", payload: null, durationMs: null, error: null };
+    }
+    // The readable "what's being imported" model. Projected first; the Actual
+    // (spend) leg fills in afterwards.
+    let model = null;
+    let modelState = "idle"; // idle | loading | ready | error | sample
+    let modelError = null;
+    let spendState = "idle"; // idle | loading | ready | error
+    let selected = "breakdown";
 
     jsonModalBackdrop = document.createElement("div");
     jsonModalBackdrop.className = "cb-export-modal-backdrop";
@@ -1662,12 +1488,12 @@
     titleWrap.className = "cb-export-modal-title-wrap";
     const title = document.createElement("h2");
     title.className = "cb-export-modal-title";
-    title.textContent = "Export as JSON";
+    title.textContent = "Import flow inspector";
     const subtitle = document.createElement("div");
     subtitle.className = "cb-export-modal-subtitle";
     subtitle.textContent =
-      "Pick which Clay endpoint to pull the table's structure + stats from. " +
-      "Preview the schema or fetch live data, then download.";
+      "Every API call the table import makes, in order — Projected first, then Actual. " +
+      "See what gets imported and inspect any call's raw JSON.";
     titleWrap.appendChild(title);
     titleWrap.appendChild(subtitle);
 
@@ -1686,7 +1512,7 @@
     const body = document.createElement("div");
     body.className = "cb-export-modal-body cb-export-json-body";
 
-    // Left column ----------------------------------------------------------
+    // Left column: ordered API-call breakdown grouped by phase ------------
     const left = document.createElement("div");
     left.className = "cb-export-json-left";
 
@@ -1694,7 +1520,21 @@
     picker.className = "cb-export-json-picker";
     picker.setAttribute("role", "tablist");
     const pickerButtons = new Map();
-    for (const def of JSON_ENDPOINT_DEFS) {
+
+    const phaseLabel = (text) => {
+      const el = document.createElement("div");
+      el.className = "cb-export-json-phase-label";
+      el.textContent = text;
+      return el;
+    };
+
+    let lastPhase = null;
+    for (const def of IMPORT_FLOW_STEPS) {
+      if (def.phase !== lastPhase) {
+        lastPhase = def.phase;
+        if (def.phase === "projected") picker.appendChild(phaseLabel("Projected \u2014 on import"));
+        else if (def.phase === "actual") picker.appendChild(phaseLabel("Actual \u2014 background"));
+      }
       const btn = document.createElement("button");
       btn.type = "button";
       btn.className = "cb-export-json-endpoint";
@@ -1709,10 +1549,10 @@
       btn.appendChild(label);
       btn.appendChild(tag);
       btn.addEventListener("click", () => {
-        if (selectedEndpoint === def.id) return;
-        selectedEndpoint = def.id;
+        if (selected === def.id) return;
+        selected = def.id;
         renderAll();
-        if (mode === "live") refreshLive();
+        if (def.fetchable) loadStep(def.id);
       });
       picker.appendChild(btn);
       pickerButtons.set(def.id, btn);
@@ -1723,33 +1563,17 @@
     explain.className = "cb-export-json-explain";
     left.appendChild(explain);
 
-    // Right column ---------------------------------------------------------
+    // Right column --------------------------------------------------------
     const right = document.createElement("div");
     right.className = "cb-export-json-right";
 
     const rightHeader = document.createElement("div");
     rightHeader.className = "cb-export-json-right-header";
 
-    const modeToggle = document.createElement("div");
-    modeToggle.className = "cb-export-json-mode-toggle";
-    modeToggle.setAttribute("role", "tablist");
-    const modeButtons = new Map();
-    for (const m of [{ id: "schema", label: "Schema" }, { id: "live", label: "Live data" }]) {
-      const btn = document.createElement("button");
-      btn.type = "button";
-      btn.className = "cb-export-json-mode-btn";
-      btn.dataset.modeId = m.id;
-      btn.textContent = m.label;
-      btn.addEventListener("click", () => {
-        if (mode === m.id) return;
-        mode = m.id;
-        renderAll();
-        if (mode === "live") refreshLive();
-      });
-      modeToggle.appendChild(btn);
-      modeButtons.set(m.id, btn);
-    }
-    rightHeader.appendChild(modeToggle);
+    // Projected -> Actual progress indicator.
+    const phaseStatus = document.createElement("div");
+    phaseStatus.className = "cb-export-json-phase-status";
+    rightHeader.appendChild(phaseStatus);
 
     const timing = document.createElement("div");
     timing.className = "cb-export-json-timing";
@@ -1757,16 +1581,13 @@
 
     right.appendChild(rightHeader);
 
-    // Search bar — only meaningful in live mode (the schemas are short
-    // enough to skim). Hidden via the visible-modifier class so the
-    // mode-toggle stays as the lone right-of-header concern when user is
-    // looking at the schema.
+    // Search bar (JSON view only).
     const searchBar = document.createElement("div");
     searchBar.className = "cb-export-json-search-bar";
     const searchInput = document.createElement("input");
     searchInput.type = "search";
     searchInput.className = "cb-export-json-search-input";
-    searchInput.placeholder = "Search live data\u2026  (Enter \u2014 next, Shift+Enter \u2014 prev)";
+    searchInput.placeholder = "Search JSON\u2026  (Enter \u2014 next, Shift+Enter \u2014 prev)";
     searchInput.autocomplete = "off";
     searchInput.spellcheck = false;
     const searchCounter = document.createElement("span");
@@ -1775,6 +1596,12 @@
     searchBar.appendChild(searchCounter);
     right.appendChild(searchBar);
 
+    // Readable breakdown container (shown for the "breakdown" selection).
+    const breakdownWrap = document.createElement("div");
+    breakdownWrap.className = "cb-export-json-breakdown-wrap";
+    right.appendChild(breakdownWrap);
+
+    // Raw JSON preview (shown for any individual call).
     const previewWrap = document.createElement("div");
     previewWrap.className = "cb-export-json-preview-wrap";
     const preview = document.createElement("pre");
@@ -1782,10 +1609,6 @@
     previewWrap.appendChild(preview);
     right.appendChild(previewWrap);
 
-    // Search state. `searchText` caches the raw JSON string so re-running
-    // the highlighter on each keystroke doesn't have to JSON.stringify the
-    // payload again. `currentMatchIdx` is -1 when there are no matches or
-    // no query.
     let searchQuery = "";
     let searchText = "";
     let currentMatchIdx = -1;
@@ -1793,12 +1616,9 @@
 
     searchInput.addEventListener("input", () => {
       searchQuery = searchInput.value;
-      // Always reset to the first match when the query changes — keeps
-      // jump-to-next predictable as the user refines the term.
       currentMatchIdx = searchQuery ? 0 : -1;
       applySearchHighlight({ scroll: !!searchQuery });
     });
-
     searchInput.addEventListener("keydown", (evt) => {
       if (evt.key === "Enter") {
         evt.preventDefault();
@@ -1809,10 +1629,6 @@
         focusActiveMatch();
         renderSearchCounter();
       } else if (evt.key === "Escape") {
-        // Local escape clears the query; we deliberately do NOT close the
-        // modal here, even though the global Escape handler would —
-        // stopPropagation prevents that from firing while the search input
-        // has focus.
         if (searchQuery) {
           evt.stopPropagation();
           searchQuery = "";
@@ -1832,30 +1648,15 @@
     const footerHint = document.createElement("div");
     footerHint.className = "cb-export-modal-footer-hint";
     footerHint.textContent =
-      "Live mode hits Clay's APIs with your session cookies. Nothing is uploaded anywhere.";
+      "Read-only — hits Clay's APIs with your session cookies. Nothing is uploaded anywhere.";
 
     const downloadBtn = document.createElement("button");
     downloadBtn.type = "button";
     downloadBtn.className = "cb-export-submit cb-export-json-download";
     downloadBtn.textContent = "Download JSON";
     downloadBtn.addEventListener("click", () => {
-      const def = JSON_ENDPOINT_DEFS.find((d) => d.id === selectedEndpoint);
-      const ids = parseTableIdsFromUrl();
-      const tablePart = ids?.tableId ? `-${ids.tableId}` : "";
-      if (mode === "schema") {
-        downloadJson(
-          `clay-context-${def.id}-schema.json`,
-          JSON_SCHEMA_SAMPLES[def.id] || "{}"
-        );
-        return;
-      }
-      const entry = cache[selectedEndpoint];
-      if (entry.state !== "ready" || entry.payload == null) return;
-      const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-      downloadJson(
-        `clay-context-${def.id}${tablePart}-${stamp}.json`,
-        JSON.stringify(entry.payload, null, 2)
-      );
+      const dl = currentDownload();
+      if (dl) downloadJson(dl.filename, dl.text);
     });
 
     const cancelBtn = document.createElement("button");
@@ -1879,27 +1680,53 @@
     document.body.appendChild(jsonModalBackdrop);
     document.addEventListener("keydown", onJsonModalKeydown);
 
-    // ---- Render helpers ----
+    // ---- Formatters ----
+    const creditText = (n) =>
+      n == null || !Number.isFinite(n) ? "\u2014" : (n % 1 === 0 ? String(n) : n.toFixed(1));
+    const coverageText = (cov) =>
+      cov && Number(cov.total)
+        ? `${Number(cov.ran).toLocaleString()} / ${Number(cov.total).toLocaleString()}`
+        : "\u2014";
+    const fillText = (fr) =>
+      fr && Number(fr.ran) ? `${Math.round((Number(fr.success) / Number(fr.ran)) * 100)}%` : "\u2014";
+    const actualText = (sp) => {
+      if (sp) return `${Number(sp.credits).toLocaleString()} cr`;
+      if (spendState === "loading") return "computing\u2026";
+      return "\u2014";
+    };
 
+    // ---- Render helpers ----
     function renderPicker() {
       for (const [id, btn] of pickerButtons.entries()) {
-        btn.classList.toggle("cb-export-json-endpoint-active", id === selectedEndpoint);
-        btn.setAttribute("aria-selected", id === selectedEndpoint ? "true" : "false");
+        btn.classList.toggle("cb-export-json-endpoint-active", id === selected);
+        btn.setAttribute("aria-selected", id === selected ? "true" : "false");
+        const def = IMPORT_FLOW_STEPS.find((d) => d.id === id);
+        let dot = "";
+        if (def?.fetchable) {
+          const st = stepCache[id]?.state;
+          dot =
+            st === "ready" ? " \u2713" : st === "loading" ? " \u2026" : st === "error" ? " !" : "";
+        }
+        const labelEl = btn.querySelector(".cb-export-json-endpoint-label");
+        if (labelEl) labelEl.textContent = def.label + dot;
       }
     }
 
-    function renderModeButtons() {
-      for (const [id, btn] of modeButtons.entries()) {
-        btn.classList.toggle("cb-export-json-mode-btn-active", id === mode);
-        btn.setAttribute("aria-selected", id === mode ? "true" : "false");
-      }
+    function renderPhaseStatus() {
+      const proj =
+        modelState === "ready" ? "\u2713" : modelState === "loading" ? "\u2026" : modelState === "error" ? "!" : "";
+      const act =
+        spendState === "ready" ? "\u2713" : spendState === "loading" ? "\u2026" : "";
+      phaseStatus.innerHTML =
+        `<span class="cb-export-json-phase-pill cb-export-json-phase-pill-${modelState}">Projected ${proj}</span>` +
+        `<span class="cb-export-json-phase-arrow">\u2192</span>` +
+        `<span class="cb-export-json-phase-pill cb-export-json-phase-pill-${spendState}">Actual ${act}</span>`;
     }
 
     function renderExplain() {
-      const def = JSON_ENDPOINT_DEFS.find((d) => d.id === selectedEndpoint);
+      const def = IMPORT_FLOW_STEPS.find((d) => d.id === selected);
       explain.innerHTML = "";
       if (!def) return;
-
       const h = (text) => {
         const el = document.createElement("div");
         el.className = "cb-export-json-explain-h";
@@ -1922,18 +1749,13 @@
         }
         return ul;
       };
-
       explain.appendChild(p(def.summary, "cb-export-json-explain-summary"));
-
       explain.appendChild(h("What you get"));
       explain.appendChild(list(def.whatYouGet));
-
       explain.appendChild(h("Trade-offs"));
       explain.appendChild(list(def.tradeoffs, "cb-export-json-explain-cons"));
-
       explain.appendChild(h("When to use"));
       explain.appendChild(p(def.whenToUse));
-
       explain.appendChild(h("Calls"));
       const callsList = document.createElement("ul");
       callsList.className = "cb-export-json-explain-calls";
@@ -1947,66 +1769,92 @@
 
     function renderTimingChip() {
       timing.className = "cb-export-json-timing";
-      if (mode !== "live") {
+      if (selected === "breakdown") {
         timing.style.visibility = "hidden";
         timing.textContent = "";
         return;
       }
       timing.style.visibility = "visible";
-      const entry = cache[selectedEndpoint];
+      const entry = stepCache[selected];
+      if (!entry || entry.state === "idle") { timing.textContent = ""; return; }
       if (entry.state === "loading") {
         timing.classList.add("cb-export-json-timing-loading");
-        timing.textContent = "Fetching…";
+        timing.textContent = "Fetching\u2026";
         return;
       }
       if (entry.state === "error") {
         timing.classList.add("cb-export-json-timing-error");
-        timing.textContent = entry.error?.message
-          ? `Error · ${formatDuration(entry.durationMs)}`
-          : `Error`;
+        timing.textContent = `Error \u00b7 ${formatDuration(entry.durationMs)}`;
         timing.title = entry.error?.message || "";
         return;
       }
-      if (entry.state === "ready") {
-        timing.classList.add("cb-export-json-timing-ready");
-        let text = formatDuration(entry.durationMs);
-        if (entry.legDurations) {
-          let slowestKey = null;
-          let slowestMs = -1;
-          for (const [k, v] of Object.entries(entry.legDurations)) {
-            if (v != null && v > slowestMs) { slowestMs = v; slowestKey = k; }
-          }
-          if (slowestKey) {
-            text += ` (slowest: ${slowestKey} ${formatDuration(slowestMs)})`;
-          }
-        }
-        timing.textContent = text;
-        timing.title = "Wall-clock latency of the network call(s) that produced this payload.";
-        return;
-      }
-      timing.textContent = "";
+      timing.classList.add("cb-export-json-timing-ready");
+      timing.textContent = formatDuration(entry.durationMs);
+      timing.title = "Wall-clock latency of this call.";
     }
 
-    function renderPreview() {
+    // Renders the readable "what's being imported" table.
+    function renderBreakdown() {
+      breakdownWrap.innerHTML = "";
+      if (modelState === "loading") {
+        breakdownWrap.innerHTML = `<div class="cb-export-json-breakdown-empty">Running the projected import legs\u2026</div>`;
+        return;
+      }
+      if (modelState === "error") {
+        breakdownWrap.innerHTML = `<div class="cb-export-json-breakdown-empty">${escapeHtml(modelError?.message || "Could not load the import flow.")}<br><br>Open a Clay table and reopen this dialog.</div>`;
+        return;
+      }
+      if (!model) {
+        breakdownWrap.innerHTML = `<div class="cb-export-json-breakdown-empty">Open a Clay table to inspect the import.</div>`;
+        return;
+      }
+      const plan = model.plan;
+      const planText = plan
+        ? `${plan.displayName || plan.planType || "plan"} (${plan.planIsModern || plan.isModern ? "modern" : "legacy"} pricing)`
+        : "unknown plan";
+      const c = model.counts || {};
+      const rec = Number.isFinite(model.recordCount) ? model.recordCount.toLocaleString() : "\u2014";
+      const sampleNote = model.sample
+        ? `<div class="cb-export-json-breakdown-sample">Sample data — open a Clay table for live values.</div>`
+        : "";
+
+      let rowsHtml = "";
+      for (const r of model.fieldRows || []) {
+        rowsHtml +=
+          "<tr>" +
+          `<td class="cb-bd-name" title="${escapeHtml(r.name)}">${escapeHtml(r.name)}</td>` +
+          `<td>${escapeHtml(r.group)}</td>` +
+          `<td class="cb-bd-num">${r.type === "Enrichment" ? creditText(r.projected) : "\u2014"}</td>` +
+          `<td class="cb-bd-num">${coverageText(r.coverage)}</td>` +
+          `<td class="cb-bd-num">${fillText(r.fill)}</td>` +
+          `<td class="cb-bd-num cb-bd-actual">${actualText(r.spend)}</td>` +
+          "</tr>";
+      }
+
+      breakdownWrap.innerHTML =
+        sampleNote +
+        `<div class="cb-export-json-breakdown-summary">` +
+          `<span class="cb-bd-chip">Plan: ${escapeHtml(planText)}</span>` +
+          `<span class="cb-bd-chip">${rec} rows</span>` +
+          `<span class="cb-bd-chip">${c.standalone || 0} standalone</span>` +
+          `<span class="cb-bd-chip">${c.waterfalls || 0} waterfalls</span>` +
+          `<span class="cb-bd-chip">${c.basicGroups || 0} groups</span>` +
+          `<span class="cb-bd-chip">${c.inputs || 0} inputs</span>` +
+        `</div>` +
+        `<table class="cb-export-json-breakdown-table"><thead><tr>` +
+          `<th>Field</th><th>Group</th><th class="cb-bd-num">Projected cr/row</th>` +
+          `<th class="cb-bd-num">Coverage</th><th class="cb-bd-num">Fill</th>` +
+          `<th class="cb-bd-num">Actual</th>` +
+        `</tr></thead><tbody>${rowsHtml}</tbody></table>`;
+    }
+
+    function renderStepJson() {
       preview.classList.remove("cb-export-json-preview-error", "cb-export-json-preview-empty");
-      // Clear cached search text — only the live/ready branch sets it
-      // back, which is also the only branch where search makes sense.
       searchText = "";
-      if (mode === "schema") {
-        preview.textContent = JSON_SCHEMA_SAMPLES[selectedEndpoint] || "{}";
-        applySearchHighlight({ scroll: false });
-        return;
-      }
-      const entry = cache[selectedEndpoint];
-      if (entry.state === "idle") {
+      const entry = stepCache[selected];
+      if (!entry || entry.state === "idle" || entry.state === "loading") {
         preview.classList.add("cb-export-json-preview-empty");
-        preview.textContent = "Click \u201cLive data\u201d again or switch endpoints to fetch.";
-        applySearchHighlight({ scroll: false });
-        return;
-      }
-      if (entry.state === "loading") {
-        preview.classList.add("cb-export-json-preview-empty");
-        preview.textContent = "Fetching from Clay…";
+        preview.textContent = "Fetching from Clay\u2026";
         applySearchHighlight({ scroll: false });
         return;
       }
@@ -2014,59 +1862,49 @@
         preview.classList.add("cb-export-json-preview-error");
         preview.textContent =
           (entry.error?.message || "Request failed.") +
-          "\n\n" +
-          "If you're not on a Clay table page, open one and reopen this dialog. " +
-          "Otherwise, check the browser console for the underlying error.";
+          "\n\nOpen a Clay table and reopen this dialog, or check the console.";
         applySearchHighlight({ scroll: false });
         return;
       }
-      if (entry.state === "ready") {
-        try {
-          searchText = JSON.stringify(entry.payload, null, 2);
-        } catch (err) {
-          preview.classList.add("cb-export-json-preview-error");
-          preview.textContent = `Could not stringify payload: ${err.message}`;
-          applySearchHighlight({ scroll: false });
-          return;
-        }
+      try {
+        searchText = JSON.stringify(entry.payload, null, 2);
+      } catch (err) {
+        preview.classList.add("cb-export-json-preview-error");
+        preview.textContent = `Could not stringify payload: ${err.message}`;
         applySearchHighlight({ scroll: false });
+        return;
+      }
+      applySearchHighlight({ scroll: false });
+    }
+
+    function renderRight() {
+      const isBreakdown = selected === "breakdown";
+      breakdownWrap.style.display = isBreakdown ? "" : "none";
+      previewWrap.style.display = isBreakdown ? "none" : "";
+      if (isBreakdown) {
+        searchBar.classList.remove("cb-export-json-search-bar-visible");
+        renderBreakdown();
+      } else {
+        renderStepJson();
       }
     }
 
-    // Renders the preview's body, applying the current search highlight if
-    // one is set and we're in live/ready mode. When no query is set we use
-    // textContent (cheaper, no parse), otherwise we build escaped HTML
-    // with <mark> wrappers around matches and inject it via innerHTML.
     function applySearchHighlight({ scroll }) {
-      const canSearch = mode === "live" && searchText !== "";
+      const canSearch = selected !== "breakdown" && searchText !== "";
       searchBar.classList.toggle("cb-export-json-search-bar-visible", canSearch);
-
       if (!canSearch) {
-        currentMatchCount = 0;
-        currentMatchIdx = -1;
-        renderSearchCounter();
-        // searchText is empty here, so renderPreview already wrote the
-        // appropriate placeholder/error text via textContent. Nothing
-        // more to do.
-        return;
+        currentMatchCount = 0; currentMatchIdx = -1; renderSearchCounter(); return;
       }
-
       if (!searchQuery) {
         preview.textContent = searchText;
-        currentMatchCount = 0;
-        currentMatchIdx = -1;
-        renderSearchCounter();
-        return;
+        currentMatchCount = 0; currentMatchIdx = -1; renderSearchCounter(); return;
       }
-
       const { html, count } = buildHighlightedHtml(searchText, searchQuery);
       preview.innerHTML = html;
       currentMatchCount = count;
       if (count === 0) {
         currentMatchIdx = -1;
       } else {
-        // Clamp so a stale idx (from a prior, larger result set) doesn't
-        // point past the end after the user narrows the query.
         if (currentMatchIdx < 0 || currentMatchIdx >= count) currentMatchIdx = 0;
         markActiveMatch();
         if (scroll) focusActiveMatch();
@@ -2081,7 +1919,6 @@
         marks[currentMatchIdx].classList.add("cb-export-json-match-active");
       }
     }
-
     function focusActiveMatch() {
       markActiveMatch();
       const marks = preview.querySelectorAll(".cb-export-json-match");
@@ -2090,7 +1927,6 @@
         target.scrollIntoView({ block: "center", inline: "nearest" });
       }
     }
-
     function renderSearchCounter() {
       if (!searchQuery) {
         searchCounter.textContent = "";
@@ -2106,60 +1942,103 @@
       searchCounter.textContent = `${currentMatchIdx + 1} / ${currentMatchCount}`;
     }
 
+    function currentDownload() {
+      const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+      if (selected === "breakdown") {
+        if (!model) return null;
+        const payload = model.decision || model;
+        return { filename: `clay-import-breakdown-${stamp}.json`, text: JSON.stringify(payload, null, 2) };
+      }
+      const entry = stepCache[selected];
+      if (!entry || entry.state !== "ready" || entry.payload == null) return null;
+      return { filename: `clay-import-${selected}-${stamp}.json`, text: JSON.stringify(entry.payload, null, 2) };
+    }
+
     function renderDownloadButton() {
-      // Always enabled in schema mode (we ship hand-written samples). In
-      // live mode, gate on a successful fetch so we never download an empty
-      // or in-flight payload.
-      const enabled = mode === "schema" || cache[selectedEndpoint].state === "ready";
+      const enabled = !!currentDownload();
       downloadBtn.disabled = !enabled;
       downloadBtn.classList.toggle("cb-export-json-download-disabled", !enabled);
     }
 
     function renderAll() {
       renderPicker();
-      renderModeButtons();
+      renderPhaseStatus();
       renderExplain();
       renderTimingChip();
-      renderPreview();
+      renderRight();
       renderDownloadButton();
     }
 
-    async function refreshLive() {
-      const entry = cache[selectedEndpoint];
-      // Already-fetched payloads are reused — saves a roundtrip when the
-      // user toggles back to a previously-viewed endpoint.
-      if (entry.state === "ready") {
-        renderTimingChip();
-        renderPreview();
-        renderDownloadButton();
+    // Lazily fetch a single step's raw payload for the JSON view.
+    async function loadStep(stepId) {
+      const entry = stepCache[stepId];
+      if (!entry || entry.state === "ready" || entry.state === "loading") {
+        renderAll();
         return;
       }
       entry.state = "loading";
       entry.error = null;
-      renderTimingChip();
-      renderPreview();
-      renderDownloadButton();
-
-      const endpointAtStart = selectedEndpoint;
+      renderAll();
       try {
-        const result = await fetchJsonForEndpoint(endpointAtStart);
-        // Bail if the user switched endpoints while we were waiting — the
-        // result still gets cached for whichever endpoint requested it.
-        cache[endpointAtStart].state = "ready";
-        cache[endpointAtStart].payload = result.payload;
-        cache[endpointAtStart].durationMs = result.durationMs;
-        cache[endpointAtStart].legDurations = result.legDurations || null;
+        const result = await fetchStepPayload(stepId);
+        entry.state = "ready";
+        entry.payload = result.payload;
+        entry.durationMs = result.durationMs;
       } catch (err) {
-        cache[endpointAtStart].state = "error";
-        cache[endpointAtStart].error = err;
+        entry.state = "error";
+        entry.error = err;
       }
-      if (selectedEndpoint === endpointAtStart) {
-        renderTimingChip();
-        renderPreview();
-        renderDownloadButton();
+      if (selected === stepId || selected === "breakdown") renderAll();
+    }
+
+    // Runs the projected legs, renders the breakdown, then fills in actuals.
+    async function loadModel() {
+      const ids = parseTableIdsFromUrl();
+      if (!ids?.tableId) {
+        model = SAMPLE_MODEL;
+        modelState = "sample";
+        spendState = "idle";
+        renderAll();
+        return;
+      }
+      if (!__cb.buildImportDecisionSet) {
+        modelState = "error";
+        modelError = new Error("buildImportDecisionSet not loaded — reload the extension.");
+        renderAll();
+        return;
+      }
+      modelState = "loading";
+      renderAll();
+      try {
+        await __cb.ensureStaticData(ids.workspaceId);
+        const [table, context] = await Promise.all([
+          resolveTable(ids.workbookId, ids.tableId),
+          __cb.fetchTableContextForImport(ids.workspaceId, ids.tableId),
+        ]);
+        if (!table) throw new Error("Table not found in this workbook's listing.");
+        model = buildInspectorModel({ table, context, spend: null, viewId: ids.viewId });
+        modelState = "ready";
+        renderAll();
+
+        // Actual leg in the background — rebuild with spend when it lands.
+        spendState = "loading";
+        renderAll();
+        try {
+          const spend = await __cb.fetchColumnSpend(ids.workspaceId, ids.tableId, 30);
+          model = buildInspectorModel({ table, context, spend, viewId: ids.viewId });
+          spendState = "ready";
+        } catch {
+          spendState = "error";
+        }
+        renderAll();
+      } catch (err) {
+        modelState = "error";
+        modelError = err;
+        renderAll();
       }
     }
 
     renderAll();
+    loadModel();
   };
 })();

@@ -407,29 +407,79 @@
   //
   //   - unlimited     → 0 (e.g. LinkedIn under the unlimited flag)
   //   - isPrivateKey  → 0 (private-key invocations charge nothing in Clay)
-  //   - costBy=RESULT → cost × min(maxResultsPerRow, fallback)
-  //                     Mirrors getWaterfallCreditEstimate's per-result
-  //                     handling in libs/shared/src/credits/credit-cost-utils.ts
-  //                     line 555. Fallback of 5 matches
-  //                     FALLBACK_ESTIMATED_RESULTS_PER_ROW.
+  //   - costBy=RESULT → cost × (maxResultsPerRow ?? FALLBACK)
+  //                     Mirrors calculatePerResultCost /
+  //                     getWaterfallCreditEstimate in
+  //                     libs/shared/src/credits/credit-cost-utils.ts: it
+  //                     multiplies by maxResultsPerRow with a fallback of
+  //                     FALLBACK_ESTIMATED_RESULTS_PER_ROW = 3 and NO upper
+  //                     cap. (Previously this capped at 5 / fell back to 5,
+  //                     which under/over-counted per-result enrichments
+  //                     relative to Clay's own estimate.)
   //
   // Falls back to the catalog default when the server didn't attach a
   // creditCost block (rare — happens when getActionCost throws or the field
   // has no action definition).
-  function resolveEffectiveCredits(creditCost, fallback) {
-    if (!creditCost) return fallback ?? null;
+  const FALLBACK_ESTIMATED_RESULTS_PER_ROW = 3;
+  //
+  // `baseOverride` (optional): use this base cost instead of
+  // `creditCost.cost`, while still honoring the server's resolution flags
+  // (unlimited / isPrivateKey / costBy / maxResultsPerRow). The import uses
+  // it to substitute the plan-correct catalog base on MODERN plans, because
+  // /context computes creditCost.cost at LEGACY pricing (getActionCost is
+  // called without billingPlanType server-side → defaults to legacy).
+  function resolveEffectiveCredits(creditCost, fallback, baseOverride) {
+    if (!creditCost) return baseOverride ?? fallback ?? null;
     if (creditCost.unlimited) return 0;
     if (creditCost.isPrivateKey) return 0;
-    let cost = Number(creditCost.cost);
+    let cost = baseOverride != null ? Number(baseOverride) : Number(creditCost.cost);
     if (!Number.isFinite(cost)) return fallback ?? null;
     if (creditCost.costBy === "result") {
       const max = Number(creditCost.maxResultsPerRow);
-      const n = Number.isFinite(max) && max > 0 ? Math.min(max, 5) : 5;
+      const n = Number.isFinite(max) && max > 0 ? max : FALLBACK_ESTIMATED_RESULTS_PER_ROW;
       cost = cost * n;
     }
     return cost;
   }
   __cb.resolveEffectiveCredits = resolveEffectiveCredits;
+
+  // ---------------------------------------------------------------------------
+  // Plan-aware catalog credit selection.
+  //
+  // Each catalog entry (from fetchEnrichments) carries BOTH pricing tiers:
+  //   - modern (post-2026): `credits` / `actionExecutions` / `privateKeyCredits`
+  //   - legacy (pre-2026):  `legacyCredits` / `legacyActionExecutions` / `legacyPrivateKeyCredits`
+  // /context's per-field creditCost is always legacy (server defaults), so on
+  // a modern-plan workspace we read the modern tier from the catalog instead.
+  // Defaults to legacy when the plan is unknown — matching /context.
+  // ---------------------------------------------------------------------------
+  function importPlanIsModern() {
+    return !!__cb.currentPlanPricing?.planIsModern;
+  }
+  function planAwareBaseCredits(info) {
+    if (!info) return null;
+    return importPlanIsModern()
+      ? (info.credits ?? info.legacyCredits ?? null)
+      : (info.legacyCredits ?? info.credits ?? null);
+  }
+  function planAwarePrivateKeyCredits(info) {
+    if (!info) return 0;
+    const v = importPlanIsModern()
+      ? (info.privateKeyCredits ?? info.legacyPrivateKeyCredits ?? 0)
+      : (info.legacyPrivateKeyCredits ?? info.privateKeyCredits ?? 0);
+    return Number(v) || 0;
+  }
+  function planAwareActionExecutions(info) {
+    if (!info) return 0;
+    // Legacy plans have no actionExecution billing dimension, so this is
+    // typically 0 on legacy and 0/1 on modern.
+    const v = importPlanIsModern()
+      ? (info.actionExecutions ?? info.legacyActionExecutions ?? 0)
+      : (info.legacyActionExecutions ?? info.actionExecutions ?? 0);
+    return Number(v) || 0;
+  }
+  __cb.importPlanIsModern = importPlanIsModern;
+  __cb.planAwareBaseCredits = planAwareBaseCredits;
 
   // Re-exposed under __cb so the JSON export modal can run the exact same
   // join the import flow uses, without re-implementing the per-field merge
@@ -492,11 +542,11 @@
 
     const requiresApiKey = info?.requiresApiKey ?? false;
 
-    // Catalog default. For AI actions this is the action-level base cost
-    // (e.g. 0.1 for use-ai), so it's wrong for any non-default model — we
-    // override below from either the matched modelOption or the
-    // server-resolved stats.cost.
-    let credits = info?.credits ?? null;
+    // Catalog default, plan-aware (modern vs legacy tier). For AI actions
+    // this is the action-level base cost (e.g. 0.1 for use-ai), so it's wrong
+    // for any non-default model — we override below from either the matched
+    // modelOption or the server-resolved stats.cost.
+    let credits = planAwareBaseCredits(info);
 
     // Prefer the model's own creditCostMetadata when this is an AI card —
     // matches what the canvas's model picker shows when the user later
@@ -528,7 +578,13 @@
       if (stats.cost.unlimited || stats.cost.isPrivateKey) {
         credits = 0;
       } else if (!ai) {
-        const resolved = resolveEffectiveCredits(stats.cost, credits);
+        // On modern plans, substitute the plan-correct catalog base for
+        // /context's legacy-priced cost while keeping its resolution flags
+        // (costBy / maxResultsPerRow). On legacy plans, /context's cost is
+        // already correct (and richer — it includes per-action toggle/override
+        // deltas), so we pass no override.
+        const baseOverride = importPlanIsModern() ? planAwareBaseCredits(info) : null;
+        const resolved = resolveEffectiveCredits(stats.cost, credits, baseOverride);
         if (resolved != null) credits = resolved;
       }
     }
@@ -560,8 +616,9 @@
       // apps/api uses `?? 0` for the same reason). The previous `?? 1`
       // default overcounted every Salesforce / Pardot lookup + every
       // records-* source action in the canvas's "Total Actions" / "Avg
-      // Actions / Row" headlines.
-      actionExecutions: info?.actionExecutions ?? 0,
+      // Actions / Row" headlines. Plan-aware: legacy plans have no
+      // actionExecution dimension, so this resolves to 0 there.
+      actionExecutions: planAwareActionExecutions(info),
       iconUrl,
       iconSvgHtml: null,
       creditText: credits != null ? `~${credits} / row` : null,
@@ -743,15 +800,16 @@
     const total = typeof fromRunInfo === "number" && fromRunInfo > 0
       ? fromRunInfo
       : (typeof fromProfile === "number" && fromProfile > 0 ? fromProfile : null);
-    if (total == null) return;
+    if (total == null) return null;
     const input = document.getElementById("cb-records-input");
-    if (!input) return;
+    if (!input) return total;
     // Remember the imported count as the "actual" (POC) number. Set it BEFORE
     // dispatching so overlay.js's input handler styles the box as indigo
     // (value === actual) rather than as an override.
     __cb.recordsActual = total;
     input.value = total.toLocaleString();
     input.dispatchEvent(new Event("input"));
+    return total;
   }
 
   // ---------------------------------------------------------------------------
@@ -1103,18 +1161,34 @@
 
     showImportStatus(`Importing from ${table.name || "table"}\u2026`, anchorEl);
 
+    // PROJECTED leg only — the fast /context (small sample) call. Actual
+    // spend (GET /realtime-credit-usage) is fetched in the background AFTER
+    // the projected rows land (see fetchSpendInBackground below), so the
+    // import never blocks on it and the Actual toggle has data ready.
     let context = null;
-    let spend = null;
+    const spend = null;
     try {
-      [context, spend] = await Promise.all([
-        workspaceId ? __cb.fetchTableContextFull(workspaceId, tableId).catch(() => null) : Promise.resolve(null),
-        workspaceId ? __cb.fetchColumnSpend(workspaceId, tableId, 30).catch(() => null) : Promise.resolve(null),
-      ]);
+      context = workspaceId
+        ? await __cb.fetchTableContextForImport(workspaceId, tableId).catch(() => null)
+        : null;
     } finally {
       closeImportStatus();
     }
 
-    prefillRecordsCount(context);
+    const tableRecordCount = prefillRecordsCount(context);
+
+    // Record per-table metadata (source row count + import time + name +
+    // color) in the canvas state so the table-view per-table header can show
+    // "N rows · imported X ago" and so tableName/importColor survive reload
+    // (the DP/input restore path doesn't carry those on the card).
+    if (typeof __cb.canvas.setImportedTable === "function") {
+      __cb.canvas.setImportedTable(tableId, {
+        name: currentImportTags.tableName,
+        importColor: currentImportTags.importColor,
+        recordCount: tableRecordCount ?? null,
+        importedAt: Date.now(),
+      });
+    }
 
     // Single source of truth for the compute phase — re-used by the JSON
     // export modal's Import option so users can preview / download exactly
@@ -1224,7 +1298,7 @@
         // sync with the canvas's own model dropdown. We still honor the
         // unlimited / isPrivateKey flags (per-step authAccountId →
         // private-key billing → 0 credits).
-        const catalogCredits = typeof info.credits === "number" ? info.credits : null;
+        const catalogCredits = planAwareBaseCredits(info);
         let stepCredits;
         if (ai) {
           const stepField = fieldById[step.fieldId];
@@ -1248,8 +1322,9 @@
             stepCredits = modelCredit;
           }
         } else {
+          const baseOverride = importPlanIsModern() ? catalogCredits : null;
           stepCredits = stepStats?.cost
-            ? resolveEffectiveCredits(stepStats.cost, catalogCredits)
+            ? resolveEffectiveCredits(stepStats.cost, catalogCredits, baseOverride)
             : catalogCredits;
         }
         providers.push({
@@ -1313,10 +1388,11 @@
             ? statsByFieldId.get(validationFieldId)
             : null;
           const catalogValidationPrice = keyOnly
-            ? (entry.privateKeyCredits ?? 0)
-            : (entry.credits ?? 0);
+            ? planAwarePrivateKeyCredits(entry)
+            : (planAwareBaseCredits(entry) ?? 0);
+          const validationBaseOverride = importPlanIsModern() ? catalogValidationPrice : null;
           const resolvedValidationPrice = validationStats?.cost
-            ? resolveEffectiveCredits(validationStats.cost, catalogValidationPrice)
+            ? resolveEffectiveCredits(validationStats.cost, catalogValidationPrice, validationBaseOverride)
             : catalogValidationPrice;
           validationPrice = resolvedValidationPrice ?? 0;
           validationRequiresApiKey = !!entry.requiresApiKey;
@@ -1345,16 +1421,16 @@
       // (private-key state suppresses credit cost, NOT the action
       // billing line — same rule canvas/credits.js applies).
       const validationActionsPerStep = firstValidation
-        ? (Number(__cb.actionByIdLookup?.[
+        ? planAwareActionExecutions(__cb.actionByIdLookup?.[
             `${firstValidation.actionPackageId ?? "clay"}-${firstValidation.actionKey}`
-          ]?.actionExecutions) || 0)
+          ])
         : 0;
       let stepActionsSum = 0;
       for (const step of wf.steps) {
         const stepInfo = __cb.actionByIdLookup?.[
           `${step.actionPackageId ?? "clay"}-${step.actionKey}`
         ];
-        const stepActions = Number(stepInfo?.actionExecutions) || 0;
+        const stepActions = planAwareActionExecutions(stepInfo);
         stepActionsSum += stepActions + validationActionsPerStep;
       }
       const wfActionsAvg = wf.steps.length > 0
@@ -1601,21 +1677,12 @@
       __cb.canvas.refreshClusters({ dragCardIds: new Set() });
     }
 
-    // Decide the view mode AFTER cards are placed (so we can read
-    // statsByFieldId, which carries the joined spend rows). Actual only
-    // makes sense when at least one imported field has real billed spend
-    // — otherwise the summary boxes would display 0 / 0 because Actual
-    // mode sums card.data.stats.spend and ignores card.data.credits.
-    // Projected mode falls back to the model-aware catalog credits, which
-    // is the right "what would this cost?" answer when there's no
-    // historical spend to anchor on (e.g. a brand-new table or one with
-    // no runs in the last 30 days).
-    const hasAnySpend = Array.isArray(spend)
-      && spend.some((row) => Number(row?.creditsSpent) > 0
-        || Number(row?.actionExecutionCreditsSpent) > 0
-        || Number(row?.cellCount) > 0);
+    // Always start in Projected mode. The projected leg (model-aware catalog
+    // credits) is what's available the moment rows land; actual spend is still
+    // being fetched in the background (fetchSpendInBackground below). The user
+    // can flip to Actual once those values populate.
     if (typeof __cb.setViewMode === "function") {
-      __cb.setViewMode(hasAnySpend ? "actual" : "projected");
+      __cb.setViewMode("projected");
     }
 
     // Bulk imports add many cards in sequence. Each addCard internally
@@ -1639,7 +1706,73 @@
       }
     }
 
+    // Background ACTUAL leg: fetch the 30-day realtime spend without blocking
+    // the import, then stamp card.data.stats.spend so the Projected -> Actual
+    // toggle has real numbers ready by the time the user flips it.
+    if (importedAny && workspaceId) {
+      fetchSpendInBackground(workspaceId, tableId);
+    }
+
     return importedAny;
+  }
+
+  // Fetches realtime column spend after the projected import has rendered and
+  // folds it into the already-placed cards' stats. Standalone / basic ER + DP
+  // cards carry data.fieldId; waterfall cards carry per-provider fieldIds, so
+  // we stamp each provider then re-aggregate the parent card's stats (which
+  // sums provider spend). Refreshes the credit total + table view so Actual
+  // mode reflects the new numbers, and persists via notifyChange.
+  async function fetchSpendInBackground(workspaceId, tableId) {
+    let spendRows = null;
+    try {
+      spendRows = await __cb.fetchColumnSpend(workspaceId, tableId, 30);
+    } catch {
+      return;
+    }
+    if (!Array.isArray(spendRows) || !__cb.canvas) return;
+
+    const spendByFieldId = new Map();
+    for (const row of spendRows) {
+      if (!row?.fieldId) continue;
+      spendByFieldId.set(row.fieldId, {
+        credits: Number(row.creditsSpent) || 0,
+        actionExecutions: Number(row.actionExecutionCreditsSpent) || 0,
+        cellCount: Number(row.cellCount) || 0,
+      });
+    }
+    if (spendByFieldId.size === 0) return;
+
+    let stamped = false;
+    for (const card of __cb.canvas.getCards()) {
+      const d = card.data;
+      if (!d || d.tableId !== tableId) continue;
+
+      if (d.type === "waterfall" && Array.isArray(d.providers)) {
+        let any = false;
+        for (const p of d.providers) {
+          const sp = p?.fieldId ? spendByFieldId.get(p.fieldId) : null;
+          if (!sp) continue;
+          p.stats = { ...(p.stats || {}), spend: sp };
+          any = true;
+        }
+        if (any) {
+          d.stats = aggregateWaterfallStats(d.providers) || d.stats || null;
+          stamped = true;
+        }
+      } else if (d.fieldId) {
+        const sp = spendByFieldId.get(d.fieldId);
+        if (sp) {
+          d.stats = { ...(d.stats || {}), spend: sp };
+          stamped = true;
+        }
+      }
+    }
+
+    if (!stamped) return;
+    if (typeof __cb.canvas.refreshCreditTotal === "function") __cb.canvas.refreshCreditTotal();
+    if (typeof __cb.canvas.updateGroupCredits === "function") __cb.canvas.updateGroupCredits();
+    if (typeof __cb.canvas.notifyChange === "function") __cb.canvas.notifyChange();
+    if (__cb.tableView?.refresh) __cb.tableView.refresh();
   }
 
   // ---------------------------------------------------------------------------
@@ -1975,12 +2108,12 @@
     showLoadingPicker(anchorEl);
 
     try {
-      if (Object.keys(__cb.actionByIdLookup).length === 0) {
-        await __cb.fetchEnrichments(ids.workspaceId);
-      }
-      if (Object.keys(__cb.livePricingByModel).length === 0) {
-        await __cb.fetchModelPricing(ids.workspaceId);
-      }
+      // Catalog + model pricing + billing plan: hydrate instantly from the
+      // 24h localStorage cache when available, fetch only what's missing, and
+      // revalidate stale entries in the background. This is what makes the
+      // first import fast on a warm cache. ensureStaticData also populates
+      // __cb.currentPlanPricing so the import's projected cost is plan-aware.
+      await __cb.ensureStaticData(ids.workspaceId);
       // Pre-fetch the curated attribute → validators map so imported
       // waterfall cards can render the validation dropdown with options.
       // Without this, an "open overlay → import" path runs before the

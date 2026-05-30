@@ -339,11 +339,45 @@
     return Math.round((fr.numerator / fr.denominator) * 100);
   }
 
+  // Coverage = how many times the enrichment behind a data point attempted to
+  // run (stats.coverage.ran), out of the table's total rows (coverage.total).
+  // Returns { ratio, pct } for the table-view Coverage column, or null when
+  // the data point has no run-status-backed coverage (manual DPs, basic
+  // columns without runstatus).
+  function coverageInfo(cov) {
+    if (!cov || !Number(cov.total)) return null;
+    const ran = Number(cov.ran) || 0;
+    const total = Number(cov.total) || 0;
+    return {
+      ratio: `${ran.toLocaleString()} / ${total.toLocaleString()}`,
+      pct: Math.round((ran / total) * 100),
+    };
+  }
+
   function formatNumber(n) {
     if (!Number.isFinite(n)) return "0";
     return n % 1 === 0
       ? n.toLocaleString()
       : n.toLocaleString(undefined, { maximumFractionDigits: 1 });
+  }
+
+  // Compact relative time ("just now", "5m ago", "3h ago", "2d ago"). Used
+  // for the per-table "imported X ago" header; the absolute timestamp rides
+  // along in the element's title attribute.
+  function relativeTimeText(ts) {
+    const diffMs = Date.now() - ts;
+    if (!Number.isFinite(diffMs)) return "";
+    const sec = Math.max(0, Math.round(diffMs / 1000));
+    if (sec < 45) return "just now";
+    const min = Math.round(sec / 60);
+    if (min < 60) return `${min}m ago`;
+    const hr = Math.round(min / 60);
+    if (hr < 24) return `${hr}h ago`;
+    const day = Math.round(hr / 24);
+    if (day < 30) return `${day}d ago`;
+    const mo = Math.round(day / 30);
+    if (mo < 12) return `${mo}mo ago`;
+    return `${Math.round(mo / 12)}y ago`;
   }
 
   // ---- Row model ----
@@ -496,6 +530,10 @@
     // loops (Y sort, erKey lookup, drag block resolution).
     const cardById = new Map();
     for (const c of allCards) cardById.set(c.id, c);
+    // Per-imported-table metadata (source row count + import time + name +
+    // color). Keyed by tableId. Authoritative over per-card tableName /
+    // importColor — those aren't restored onto DP/input cards across reloads.
+    const importedTables = canvas.getImportedTables ? canvas.getImportedTables() : {};
 
     // erKey: stable string identity for a row's ER set, used to detect
     // contiguous DP rows that share the same ERs (Link result OR organic
@@ -517,6 +555,7 @@
         y: card.y,
         name: card.data.text || card.data.displayName || "",
         fillRatePct: fillRatePct(card.data.fillRate),
+        coverage: card.data.stats?.coverage || null,
         credits: info ? info.credits : 0,
         actions: info ? info.actions : 0,
         ers,
@@ -885,8 +924,20 @@
     function tableTagForCardId(cardId) {
       const c = cardById.get(cardId);
       const d = c?.data;
-      if (!d || !d.tableId || !d.tableName) return null;
-      return { tableId: d.tableId, tableName: d.tableName, importColor: d.importColor || null };
+      if (!d || !d.tableId) return null;
+      // Resolve presentation from the per-table metadata map first (survives
+      // reload), falling back to the card's own tags for ER cards / older
+      // states that predate the map.
+      const meta = importedTables[d.tableId] || null;
+      const tableName = meta?.name || d.tableName;
+      if (!tableName) return null;
+      return {
+        tableId: d.tableId,
+        tableName,
+        importColor: meta?.importColor || d.importColor || null,
+        recordCount: meta?.recordCount ?? null,
+        importedAt: meta?.importedAt ?? null,
+      };
     }
     function rowTableTag(row) {
       return tableTagForCardId(row.cardId);
@@ -910,6 +961,8 @@
           tableId: tag.tableId,
           tableName: tag.tableName,
           importColor: tag.importColor,
+          recordCount: tag.recordCount ?? null,
+          importedAt: tag.importedAt ?? null,
           sections: [],
           rows: [],
           minY: Infinity,
@@ -1822,6 +1875,7 @@
     const headers = [
       { label: "", cls: "col-drag" },
       { label: "Data point", cls: "col-dp" },
+      { label: "Coverage", cls: "col-coverage" },
       { label: "Fill rate (%)", cls: "col-fill" },
       { label: "Credits / row", cls: "col-credits" },
       { label: "Actions / row", cls: "col-actions" },
@@ -1901,6 +1955,8 @@
         const header = buildGroupHeaderRow(tableSection, headers.length, tableCollapsed, 0, {
           color,
           isTable: true,
+          recordCount: tg.recordCount,
+          importedAt: tg.importedAt,
         });
         tbody.appendChild(header);
         visibleRowOrder.push(tg.key);
@@ -2302,9 +2358,13 @@
     dpCell.appendChild(dpInput);
     tr.appendChild(dpCell);
 
-    // Fill rate stays muted until the row promotes to a real DP — there's
-    // no card to write the value to yet. The rep can edit it from the
-    // promoted row on the next render.
+    // Coverage + fill stay muted until the row promotes to a real DP —
+    // there's no card to write the value to yet.
+    const coverageCell = document.createElement("td");
+    coverageCell.className = "col-coverage cb-table-view-cell-muted";
+    coverageCell.textContent = "\u2014";
+    tr.appendChild(coverageCell);
+
     const fillCell = document.createElement("td");
     fillCell.className = "col-fill cb-table-view-cell-muted";
     fillCell.textContent = "\u2014";
@@ -2455,6 +2515,20 @@
     dpInput.addEventListener("blur", () => commitDpName(row.cardId, dpInput.value));
     dpCell.appendChild(dpInput);
     tr.appendChild(dpCell);
+
+    // Coverage = enrichment run attempts vs total rows (read-only). Comes
+    // from the run-status aggregation folded in at import time.
+    const coverageCell = document.createElement("td");
+    const cov = coverageInfo(row.coverage);
+    if (cov) {
+      coverageCell.className = "col-coverage cb-table-view-cell-readonly";
+      coverageCell.textContent = cov.ratio;
+      coverageCell.title = `${cov.pct}% of rows attempted`;
+    } else {
+      coverageCell.className = "col-coverage cb-table-view-cell-muted";
+      coverageCell.textContent = "\u2014";
+    }
+    tr.appendChild(coverageCell);
 
     const fillCell = document.createElement("td");
     fillCell.className = "col-fill";
@@ -2719,6 +2793,26 @@
     wrap.appendChild(icon);
     wrap.appendChild(labelEl);
     wrap.appendChild(count);
+
+    // Per-table header extras (Import Clay Table): the SOURCE table's total
+    // row count and when it was imported. Distinct from the "N data points"
+    // count above (which is imported columns, not source rows).
+    if (opts.isTable) {
+      if (Number.isFinite(opts.recordCount) && opts.recordCount > 0) {
+        const rows = document.createElement("span");
+        rows.className = "cb-table-view-group-row-meta";
+        rows.textContent = `${opts.recordCount.toLocaleString()} row${opts.recordCount === 1 ? "" : "s"}`;
+        wrap.appendChild(rows);
+      }
+      if (Number.isFinite(opts.importedAt) && opts.importedAt > 0) {
+        const when = document.createElement("span");
+        when.className = "cb-table-view-group-row-meta";
+        when.textContent = `imported ${relativeTimeText(opts.importedAt)}`;
+        when.title = new Date(opts.importedAt).toLocaleString();
+        wrap.appendChild(when);
+      }
+    }
+
     td.appendChild(wrap);
     tr.appendChild(td);
 

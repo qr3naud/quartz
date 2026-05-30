@@ -3,6 +3,135 @@
 
   const __cb = window.__cb;
 
+  // ===========================================================================
+  // Static-data cache (stale-while-revalidate, localStorage)
+  //
+  // The action catalog, AI model pricing, and the workspace billing plan
+  // rarely change but are (re-)fetched at startup on every page load, which
+  // delays the first import. We cache them per workspace in localStorage with
+  // a 24h TTL and a version stamp (so an extension update never reads a stale
+  // shape). On open we hydrate instantly from cache, then refetch in the
+  // background when the entry is older than the TTL. localStorage is the same
+  // store the extension already uses for tabs — no new permission needed.
+  // ===========================================================================
+  const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+  const CACHE_KEYS = {
+    actions: (ws) => `cb-cache-actions-${ws}`,
+    modelpricing: (ws) => `cb-cache-modelpricing-${ws}`,
+    plan: (ws) => `cb-cache-plan-${ws}`,
+  };
+
+  function extVersion() {
+    try {
+      return chrome.runtime.getManifest().version;
+    } catch {
+      return "0";
+    }
+  }
+
+  // Reads a cache entry, returning the full `{ workspaceId, version,
+  // fetchedAt, data }` wrapper or null when missing / for a different
+  // workspace / from an older extension version (shape may have changed).
+  __cb.readStaticCache = function (key, workspaceId) {
+    try {
+      const raw = localStorage.getItem(key);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      if (!parsed || parsed.workspaceId !== workspaceId || parsed.version !== extVersion()) {
+        return null;
+      }
+      return parsed;
+    } catch {
+      return null;
+    }
+  };
+
+  __cb.writeStaticCache = function (key, workspaceId, data) {
+    try {
+      localStorage.setItem(
+        key,
+        JSON.stringify({ workspaceId, version: extVersion(), fetchedAt: Date.now(), data })
+      );
+    } catch (err) {
+      // Quota or serialization failure — non-fatal, just skip caching.
+      console.warn("[Clay Scoping] static cache write failed:", err);
+    }
+  };
+
+  function isCacheFresh(entry) {
+    return !!entry && Number.isFinite(entry.fetchedAt) && Date.now() - entry.fetchedAt < CACHE_TTL_MS;
+  }
+
+  // Rebuilds the enrichment lookups from a flat array of catalog entries.
+  // Used both after a live fetch and when hydrating from cache. Indexing by
+  // both `packageId/key` and `packageId-key` mirrors fetchEnrichments so all
+  // existing call sites keep working.
+  function applyEnrichmentEntries(entries) {
+    __cb.enrichmentLookup = {};
+    __cb.actionByIdLookup = {};
+    for (const entry of entries ?? []) {
+      if (!entry?.displayName) continue;
+      __cb.enrichmentLookup[entry.displayName.toLowerCase()] = entry;
+      __cb.actionByIdLookup[`${entry.packageId}/${entry.key}`] = entry;
+      __cb.actionByIdLookup[`${entry.packageId}-${entry.key}`] = entry;
+    }
+  }
+  __cb.applyEnrichmentEntries = applyEnrichmentEntries;
+
+  // Hydrate-then-revalidate orchestrator for the three rarely-changing
+  // datasets. Hydrates from cache synchronously (so the caller can proceed
+  // immediately), awaits a real fetch only for datasets with no cache and no
+  // in-memory value (first run), and fires a background refetch for stale
+  // entries. Safe to call repeatedly — subsequent calls are cheap.
+  __cb.ensureStaticData = async function (workspaceId) {
+    if (!workspaceId) return;
+
+    const actionsCache = __cb.readStaticCache(CACHE_KEYS.actions(workspaceId), workspaceId);
+    const modelCache = __cb.readStaticCache(CACHE_KEYS.modelpricing(workspaceId), workspaceId);
+    const planCache = __cb.readStaticCache(CACHE_KEYS.plan(workspaceId), workspaceId);
+
+    // 1. Hydrate in-memory state from cache (instant, no network).
+    if (Object.keys(__cb.actionByIdLookup || {}).length === 0 && Array.isArray(actionsCache?.data)) {
+      applyEnrichmentEntries(actionsCache.data);
+    }
+    if (Object.keys(__cb.livePricingByModel || {}).length === 0 && modelCache?.data) {
+      __cb.livePricingByModel = modelCache.data;
+    }
+    if (!__cb.currentPlanPricing && planCache && "data" in planCache) {
+      __cb.currentPlanPricing = planCache.data;
+    }
+
+    // 2. Decide what to fetch now (no usable value) vs in the background (stale).
+    const mustAwait = [];
+    const background = [];
+
+    if (Object.keys(__cb.actionByIdLookup || {}).length === 0) {
+      mustAwait.push(__cb.fetchEnrichments(workspaceId));
+    } else if (!isCacheFresh(actionsCache)) {
+      background.push(() => __cb.fetchEnrichments(workspaceId));
+    }
+
+    if (Object.keys(__cb.livePricingByModel || {}).length === 0) {
+      mustAwait.push(__cb.fetchModelPricing(workspaceId));
+    } else if (!isCacheFresh(modelCache)) {
+      background.push(() => __cb.fetchModelPricing(workspaceId));
+    }
+
+    if (!planCache) {
+      mustAwait.push(__cb.fetchCurrentPlanPricing(workspaceId));
+    } else if (!isCacheFresh(planCache)) {
+      background.push(() => __cb.fetchCurrentPlanPricing(workspaceId));
+    }
+
+    for (const run of background) {
+      Promise.resolve()
+        .then(run)
+        .catch((err) => console.warn("[Clay Scoping] background cache refresh failed:", err));
+    }
+
+    await Promise.all(mustAwait);
+  };
+
   __cb.fetchEnrichments = async function (workspaceId) {
     const res = await fetch(
       `https://api.clay.com/v3/actions?workspaceId=${workspaceId}`,
@@ -11,8 +140,10 @@
     if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
     const data = await res.json();
 
-    __cb.enrichmentLookup = {};
-    __cb.actionByIdLookup = {};
+    // Build a flat entry array first so we can both hydrate the lookups and
+    // cache the (trimmed) entries — caching the raw /v3/actions response
+    // would be far larger and is unnecessary since only these fields are read.
+    const entries = [];
     for (const action of data.actions) {
       const pkgName = action.package?.displayName ?? "Other";
       const iconUrl = action.iconUri ?? action.package?.icon ?? null;
@@ -73,18 +204,14 @@
           fallback?.usesPrivateKeyCredits?.basic ??
           0,
       };
-      __cb.enrichmentLookup[action.displayName.toLowerCase()] = entry;
-      // Clay's canonical action-id format is `${packageId}/${actionKey}`
-      // (see libs/shared/src/actions/build-action-ids.ts). Indexing here
-      // with the same format lets attribute.actionIds and
-      // attribute.validationProviders look up entries directly without a
-      // conversion step. The hyphen form is also indexed for legacy
-      // call-sites in table-import.js / picker.js until those switch.
-      const slashId = `${entry.packageId}/${action.key}`;
-      const dashId = `${entry.packageId}-${action.key}`;
-      __cb.actionByIdLookup[slashId] = entry;
-      __cb.actionByIdLookup[dashId] = entry;
+      entries.push(entry);
     }
+    // Clay's canonical action-id format is `${packageId}/${actionKey}`
+    // (see libs/shared/src/actions/build-action-ids.ts). applyEnrichmentEntries
+    // indexes by both the slash form and the hyphen form for legacy call-sites
+    // in table-import.js / picker.js.
+    applyEnrichmentEntries(entries);
+    __cb.writeStaticCache(CACHE_KEYS.actions(workspaceId), workspaceId, entries);
   };
 
   __cb.fetchModelPricing = async function (workspaceId) {
@@ -99,6 +226,7 @@
       for (const entry of data.baseCosts ?? []) {
         __cb.livePricingByModel[entry.modelName] = entry.baseCostCredits;
       }
+      __cb.writeStaticCache(CACHE_KEYS.modelpricing(workspaceId), workspaceId, __cb.livePricingByModel);
     } catch (err) {
       console.warn("[Clay Scoping] model pricing fetch failed, using defaults:", err);
     }
@@ -170,6 +298,7 @@
       const cp = data?.currentPlan;
       if (!cp) {
         __cb.currentPlanPricing = null;
+        __cb.writeStaticCache(CACHE_KEYS.plan(workspaceId), workspaceId, null);
         return;
       }
 
@@ -224,7 +353,14 @@
         cpc,
         isLegacy: isLegacyType && cpc !== null,
         isModern: isModernType && cpc !== null,
+        // Raw plan-type classification for credit math (independent of the
+        // cpc !== null guard the comparison modal's auto-fill needs). Lets
+        // the import pick the pre/post-2026 catalog tier even for Enterprise
+        // placeholder plans whose priceInfo isn't usable for a CPC.
+        planIsLegacy: isLegacyType,
+        planIsModern: isModernType,
       };
+      __cb.writeStaticCache(CACHE_KEYS.plan(workspaceId), workspaceId, __cb.currentPlanPricing);
     } catch (err) {
       console.warn("[Clay Scoping] current plan pricing fetch failed:", err);
       __cb.currentPlanPricing = null;
@@ -504,6 +640,54 @@
       return body?.result ?? null;
     } catch (err) {
       console.warn("[Clay Scoping] fetchTableContextFull failed:", err);
+      return null;
+    }
+  };
+
+  // Fast import context — the import path's projected leg. Same /context
+  // endpoint, but instead of the `full` preset (DEFAULT_FIELD_CONFIG_OPTIONS,
+  // sampleSize: 0 = profile EVERY row) we send customOptions that:
+  //   - keep includeCreditCosts (per-field ActionCostMetadata → Layer A)
+  //   - keep includeStatusCounts + includeDataProfiling with a TINY sampleSize
+  //     so the server still folds in the all-rows run-status aggregation
+  //     (coverage / fill for action fields stays exact — it comes from
+  //     getRunStatusCounts, not the sample) without the all-rows value scan
+  //   - turn OFF the heavy error/example/schema analysis the import never uses
+  // customOptions is spread over the base preset server-side
+  // ({ ...MEDIUM_FIELD_CONFIG_OPTIONS, ...customOptions }), so no backend
+  // change is needed. See apps/api/v3/clay-context/services/table-context.service.ts.
+  __cb.IMPORT_CONTEXT_SAMPLE_SIZE = 50;
+  __cb.fetchTableContextForImport = async function (workspaceId, tableId) {
+    try {
+      const res = await fetch(
+        `https://api.clay.com/v3/workspaces/${workspaceId}/tables/${tableId}/context`,
+        {
+          method: "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            formatAsXML: false,
+            contextDetailLevel: "medium",
+            getExampleRows: 0,
+            customOptions: {
+              includeCreditCosts: true,
+              includeStatusCounts: true,
+              includeDataProfiling: true,
+              sampleSize: __cb.IMPORT_CONTEXT_SAMPLE_SIZE,
+              includeActionFieldAnalysis: false,
+              includeFormulaFieldAnalysis: false,
+              includeExampleValues: false,
+              includeErrorExamples: false,
+              includeFullSchemas: false,
+            },
+          }),
+        }
+      );
+      if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
+      const body = await res.json();
+      return body?.result ?? null;
+    } catch (err) {
+      console.warn("[Clay Scoping] fetchTableContextForImport failed:", err);
       return null;
     }
   };
