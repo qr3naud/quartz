@@ -2145,7 +2145,7 @@
     // Default a table's view selector to the view the user has open (when this
     // is that table), else its first/default view.
     function defaultViewIdFor(table) {
-      const views = selectableViews(table);
+      const views = getNonPreconfiguredViews(table);
       if (table.id === curTableId && curViewId && views.some((v) => v.id === curViewId)) {
         return curViewId;
       }
@@ -2229,7 +2229,7 @@
       // Per-table view selector (re-introduced): the table's selectable views
       // + a "Full table" option. Defaults to the view the user has open. The
       // chosen view scopes which fields/data points the import brings in.
-      const views = selectableViews(table);
+      const views = getNonPreconfiguredViews(table);
       const defaultViewId = defaultViewIdFor(table);
       viewByTable.set(table, defaultViewId);
 
