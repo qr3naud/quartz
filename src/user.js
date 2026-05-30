@@ -127,16 +127,43 @@
   function pushUserToSupabase(user) {
     const supa = window.__cbSupabase;
     if (!supa || !user?.id) return;
+    // Only include fields we actually have. PostgREST's merge-duplicates
+    // upsert updates exactly the columns present in the body, so omitting a
+    // null field preserves whatever is already stored. This matters while
+    // impersonating: the admin's avatar may not be in memory yet, and sending
+    // profile_picture: null would wipe the avatar saved from a prior session.
+    const body = { id: user.id, updated_at: new Date().toISOString() };
+    if (user.email) body.email = user.email;
+    if (user.name) body.name = user.name;
+    if (user.profilePicture) body.profile_picture = user.profilePicture;
     supa.supabaseFetch("users", "POST", {
       prefer: "resolution=merge-duplicates",
-      body: {
-        id: user.id,
-        name: user.name,
-        profile_picture: user.profilePicture,
-        email: user.email,
-        updated_at: new Date().toISOString(),
-      },
+      body,
     }).catch(err => console.warn("[Clay Scoping] user upsert failed:", err));
+  }
+
+  /**
+   * Reads a user's stored name + avatar from the Supabase `users` table.
+   * Used to recover the impersonating admin's avatar, which /v3/me's
+   * `adminUser` payload doesn't include. RLS already permits this read for
+   * your own row (id = sub) and for internal callers, so it succeeds once the
+   * JWT has been minted/refreshed for the acting identity.
+   */
+  async function fetchUserRowFromSupabase(userId) {
+    const supa = window.__cbSupabase;
+    if (!supa || !userId) return null;
+    try {
+      const rows = await supa.supabaseFetch("users", "GET", {
+        query: { id: `eq.${userId}`, select: "name,profile_picture", limit: "1" },
+      });
+      const row = rows && rows[0];
+      return row
+        ? { name: row.name || null, profilePicture: row.profile_picture || null }
+        : null;
+    } catch (err) {
+      console.warn("[Clay Scoping] users row fetch failed:", err);
+      return null;
+    }
   }
 
   /**
@@ -177,6 +204,22 @@
         __cb.refreshSupabaseJwt
       ) {
         await __cb.refreshSupabaseJwt();
+      }
+
+      // While impersonating, /v3/me's adminUser carries no avatar and local
+      // cache may be empty (e.g. a fresh browser). Recover the admin's
+      // name/avatar from their own Supabase row so presence + the
+      // collaborators widget show the real photo, not just an initial. Done
+      // after the re-mint so the JWT sub matches and RLS permits the read.
+      if (impersonating && !acting.profilePicture) {
+        const dbUser = await fetchUserRowFromSupabase(acting.id);
+        if (dbUser) {
+          acting.name = acting.name || dbUser.name;
+          acting.profilePicture = dbUser.profilePicture || acting.profilePicture;
+          __cb.user = acting;
+          // Cache so the next page load has it synchronously.
+          if (acting.profilePicture) saveCachedUser(acting);
+        }
       }
 
       pushUserToSupabase(acting);
