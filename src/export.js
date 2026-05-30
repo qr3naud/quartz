@@ -19,7 +19,8 @@
     { id: "gtme",    label: "Export to GTME Calculator", enabled: true,  feature: "gtme_export" },
     { id: "dealops", label: "Export to DealOps",         enabled: false, feature: "gtme_export" },
     { id: "table",   label: "Export as Table",           enabled: true  },
-    { id: "json",    label: "Export as JSON",            enabled: true  },
+    // "Import Inspector" (formerly "Export as JSON") moved to the three-dots
+    // ("more") menu — see __cb.openMoreMenu in src/overlay.js.
   ];
 
   // ---- Menu ----
@@ -49,7 +50,7 @@
     menuEl.addEventListener("mousedown", (evt) => evt.stopPropagation());
 
     // Filter options the JWT doesn't entitle this user to see. Internal
-    // GTMEs get every row; non-internal users get just `table` + `json`.
+    // GTMEs get every row; non-internal users get just `table`.
     // The handler switch below doesn't need its own feature checks because
     // gated branches are unreachable when the row isn't rendered.
     const visibleOptions = EXPORT_OPTIONS.filter(
@@ -75,7 +76,6 @@
           closeExportMenu();
           if (opt.id === "table") __cb.openExportTableModal();
           else if (opt.id === "gtme") __cb.openGtmeExportModal();
-          else if (opt.id === "json") __cb.openExportJsonModal();
         });
       }
       menuEl.appendChild(item);

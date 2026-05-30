@@ -24,6 +24,15 @@
     '<path d="M5 8l-3 7a4 4 0 0 0 6 0L5 8z"/>' +
     '<path d="M19 8l-3 7a4 4 0 0 0 6 0L19 8z"/></svg>';
 
+  // Magnifying-glass-over-list glyph for the Import Inspector row — reads as
+  // "inspect what the import pulls in".
+  const INSPECT_ICON_SVG =
+    '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" ' +
+    'fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" ' +
+    'stroke-linejoin="round" aria-hidden="true">' +
+    '<path d="M3 5h10"/><path d="M3 10h7"/><path d="M3 15h5"/>' +
+    '<circle cx="16" cy="15" r="4"/><path d="m22 21-2.8-2.8"/></svg>';
+
   // Kebab/overflow icon for the topbar "more" button. Three vertical dots
   // is the conventional affordance for "secondary options live here".
   const MORE_ICON_SVG =
@@ -154,6 +163,25 @@
         __cb.startPricingComparison(anchorEl);
       });
       moreMenuEl.appendChild(pricingItem);
+    }
+
+    // Import Inspector (formerly "Export as JSON" in the Export menu) — a
+    // read-only debugger for the import flow: the ordered API calls plus the
+    // per-field projected/actual breakdown. Available to everyone.
+    if (__cb.openExportJsonModal) {
+      const inspectItem = document.createElement("button");
+      inspectItem.type = "button";
+      inspectItem.className = "cb-export-menu-option cb-more-menu-option";
+      inspectItem.title = "Inspect the import flow: API calls + per-field credits, coverage, fill, and actual spend";
+      inspectItem.innerHTML =
+        `<span class="cb-more-menu-icon">${INSPECT_ICON_SVG}</span>` +
+        `<span class="cb-more-menu-label">Import Inspector</span>`;
+      inspectItem.addEventListener("click", (evt) => {
+        evt.stopPropagation();
+        closeMoreMenu();
+        __cb.openExportJsonModal();
+      });
+      moreMenuEl.appendChild(inspectItem);
     }
 
     document.body.appendChild(moreMenuBackdrop);
