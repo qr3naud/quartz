@@ -1032,6 +1032,12 @@
         fieldId: opts?.fieldId ?? null,
         tableId: opts?.tableId ?? null,
         viewId: opts?.viewId ?? null,
+        // Lineage link (Phase 1): which enrichment this data point was
+        // extracted from. Either an action field id (standalone / basic-group
+        // ER) or "wf:<groupId>" for a waterfall. The table view matches DPs to
+        // enrichments + shares cost by this field, independent of canvas
+        // clusters/geometry. Null for manual / unmatched data points.
+        sourceEnrichmentFieldId: opts?.sourceEnrichmentFieldId ?? null,
         // Source-table presentation tags (set by the Import Clay Table flow).
         // tableName labels the per-table section; importColor cycles per
         // distinct imported table so the table view renders each as its own

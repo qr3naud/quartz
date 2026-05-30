@@ -392,47 +392,56 @@
     if (!canvas) return { orphanErRows: [], groupSections: [], dpRows: [] };
 
     const allCards = canvas.getCards();
-    // Model-backed cluster membership: each cluster is `{id, cardIds}`.
-    // We only need cardIds for the cost/coverage reducers below so flatten
-    // here; richer per-cluster metadata (name, ordering, etc.) can be
-    // surfaced once we have a use case that needs it.
-    const clusters = canvas.getClusters().map((cl) => cl.cardIds);
 
-    // Map each cluster's ER cards to the DPs that "claim" them. Clusters
-    // without DPs leave their ERs eligible for the orphan section below.
+    // DP <-> enrichment matching (Phase 1): driven by the first-class
+    // `sourceEnrichmentFieldId` lineage field on each data point, NOT canvas
+    // clusters/geometry. Cost is shared across exactly the in-view data points
+    // of each enrichment: per-DP cost = ER credits / (# imported DPs with that
+    // key) — e.g. a 5-credit enrichment with 2 of its DPs in view -> 2.5 each.
+    // Enrichments with >=1 matched DP are "claimed" (excluded from the
+    // orphan-ER section below); the rest fall through to orphan rows.
     const dpInfoMap = new Map();
     const claimedErIds = new Set();
 
-    for (const cluster of clusters) {
-      const clusterCards = cluster
-        .map((id) => allCards.find((c) => c.id === id))
-        .filter(Boolean);
-      const erCards = clusterCards.filter((c) => isErType(c.data.type));
-      const dpCards = clusterCards.filter((c) => c.data.type === "dp");
-      if (dpCards.length === 0) continue;
+    // Enrichment cards keyed the way DPs reference them: action field id for
+    // standalone / basic-group ERs, "wf:<groupId>" for waterfall cards.
+    const erByKey = new Map();
+    for (const c of allCards) {
+      if (!isErType(c.data.type)) continue;
+      const key = c.data.type === "waterfall"
+        ? (c.data.groupCluster != null ? `wf:${c.data.groupCluster}` : null)
+        : (c.data.fieldId ?? null);
+      if (key != null && !erByKey.has(key)) erByKey.set(key, c);
+    }
 
-      let totalCredits = 0;
-      let totalActions = 0;
-      for (const er of erCards) {
-        if (!er.data.usePrivateKey && er.data.credits != null) {
-          totalCredits += er.data.credits;
-        }
-        if (er.data.actionExecutions != null) {
-          totalActions += er.data.actionExecutions;
-        }
-        claimedErIds.add(er.id);
+    const dpsByEnrichmentKey = new Map();
+    for (const c of allCards) {
+      if (c.data.type !== "dp") continue;
+      const key = c.data.sourceEnrichmentFieldId ?? null;
+      if (key == null || !erByKey.has(key)) {
+        // Unmatched data point (manual column, source-derived, or its
+        // enrichment isn't in view) -> renders as "Not connected".
+        dpInfoMap.set(c.id, { credits: 0, actions: 0, ers: [], enrichmentCount: 0 });
+        continue;
       }
+      if (!dpsByEnrichmentKey.has(key)) dpsByEnrichmentKey.set(key, []);
+      dpsByEnrichmentKey.get(key).push(c);
+    }
 
-      const perDpCredits = dpCards.length > 0 ? totalCredits / dpCards.length : 0;
-      const perDpActions = dpCards.length > 0 ? totalActions / dpCards.length : 0;
-      const erList = erCards.map((er) => buildErChipData(er));
-
+    for (const [key, dpCards] of dpsByEnrichmentKey) {
+      const er = erByKey.get(key);
+      claimedErIds.add(er.id);
+      const credits = !er.data.usePrivateKey && er.data.credits != null ? er.data.credits : 0;
+      const actions = er.data.actionExecutions != null ? er.data.actionExecutions : 0;
+      const perDpCredits = dpCards.length > 0 ? credits / dpCards.length : 0;
+      const perDpActions = dpCards.length > 0 ? actions / dpCards.length : 0;
+      const erList = [buildErChipData(er)];
       for (const dp of dpCards) {
         dpInfoMap.set(dp.id, {
           credits: perDpCredits,
           actions: perDpActions,
           ers: erList,
-          enrichmentCount: erCards.length,
+          enrichmentCount: 1,
         });
       }
     }

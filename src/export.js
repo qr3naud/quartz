@@ -1225,20 +1225,33 @@
     if (!decision) return [];
     const joined = decision.joined || {};
     const rows = [];
-    const push = (field, group) => {
+
+    // Enrichment display name by lineage key (action field id, or
+    // "wf:<groupId>"), so each data point row can show its source enrichment.
+    const enrichmentNameByKey = new Map();
+    for (const f of decision.standaloneFields || []) enrichmentNameByKey.set(f.id, f.name || f.id);
+    for (const bg of decision.basicGroups || []) {
+      for (const f of bg.erFields || []) enrichmentNameByKey.set(f.id, f.name || f.id);
+    }
+    for (const wf of decision.waterfalls || []) {
+      enrichmentNameByKey.set(`wf:${wf.groupId}`, wf.name || "Waterfall");
+    }
+
+    const push = (field, group, source) => {
       const stats = joined[field.id] || null;
       rows.push({
         name: field.name || field.id,
         type: field.type === "action" ? "Enrichment" : (field.type || "—"),
         group,
+        source: source ?? "\u2014",
         projected: projectedCreditsForField(field, stats),
         coverage: stats?.coverage || null,
         fill: stats?.fillRate || null,
         spend: stats?.spend || null,
       });
     };
-    for (const f of decision.inputs?.leafInputFields || []) push(f, "Input");
-    for (const f of decision.standaloneFields || []) push(f, "Standalone");
+    for (const f of decision.inputs?.leafInputFields || []) push(f, "Input", "\u2014");
+    for (const f of decision.standaloneFields || []) push(f, "Standalone", "\u2014");
     for (const wf of decision.waterfalls || []) {
       for (const s of wf.steps || []) {
         push(
@@ -1249,13 +1262,19 @@
             actionKey: s.actionKey,
             actionPackageId: s.actionPackageId,
           },
-          "Waterfall"
+          "Waterfall",
+          "\u2014"
         );
       }
     }
     for (const bg of decision.basicGroups || []) {
-      for (const f of bg.erFields || []) push(f, bg.name || "Group");
-      for (const f of bg.dpFields || []) push(f, bg.name || "Group");
+      for (const f of bg.erFields || []) push(f, bg.name || "Group", "\u2014");
+    }
+    // Data points (lineage) — each shows the enrichment it was extracted from.
+    for (const dp of decision.dataPoints || []) {
+      const sourceName =
+        enrichmentNameByKey.get(dp.sourceEnrichmentFieldId) || dp.sourceEnrichmentFieldId || "\u2014";
+      push({ id: dp.id, name: dp.name, type: "data point" }, "Data point", sourceName);
     }
     return rows;
   }
@@ -1824,6 +1843,7 @@
           "<tr>" +
           `<td class="cb-bd-name" title="${escapeHtml(r.name)}">${escapeHtml(r.name)}</td>` +
           `<td>${escapeHtml(r.group)}</td>` +
+          `<td class="cb-bd-name" title="${escapeHtml(r.source || "\u2014")}">${escapeHtml(r.source || "\u2014")}</td>` +
           `<td class="cb-bd-num">${r.type === "Enrichment" ? creditText(r.projected) : "\u2014"}</td>` +
           `<td class="cb-bd-num">${coverageText(r.coverage)}</td>` +
           `<td class="cb-bd-num">${fillText(r.fill)}</td>` +
@@ -1842,7 +1862,7 @@
           `<span class="cb-bd-chip">${c.inputs || 0} inputs</span>` +
         `</div>` +
         `<table class="cb-export-json-breakdown-table"><thead><tr>` +
-          `<th>Field</th><th>Group</th><th class="cb-bd-num">Projected cr/row</th>` +
+          `<th>Field</th><th>Group</th><th>Source enrichment</th><th class="cb-bd-num">Projected cr/row</th>` +
           `<th class="cb-bd-num">Coverage</th><th class="cb-bd-num">Fill</th>` +
           `<th class="cb-bd-num">Actual</th>` +
         `</tr></thead><tbody>${rowsHtml}</tbody></table>`;

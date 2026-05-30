@@ -148,6 +148,7 @@
             fieldId: cs.data.fieldId,
             tableId: cs.data.tableId,
             viewId: cs.data.viewId,
+            sourceEnrichmentFieldId: cs.data.sourceEnrichmentFieldId,
           });
         }
         else if (cs.data.type === "input") addInputCard(cs.data.text || "", {

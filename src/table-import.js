@@ -728,7 +728,7 @@
   // interleaving concern across a multi-table import.
   let currentImportTags = { tableName: null, importColor: null };
 
-  function addDpCard(field, x, y, stats, groupCluster, tableId, viewId) {
+  function addDpCard(field, x, y, stats, groupCluster, tableId, viewId, sourceEnrichmentFieldId) {
     return __cb.canvas.addDataPointCard(field.name, {
       x,
       y,
@@ -739,6 +739,7 @@
       viewId: viewId ?? null,
       tableName: currentImportTags.tableName,
       importColor: currentImportTags.importColor,
+      sourceEnrichmentFieldId: sourceEnrichmentFieldId ?? null,
     });
   }
 
@@ -990,6 +991,75 @@
       })
       .filter((g) => g.dpFields.length > 0 || g.erFields.length > 0);
 
+    // -------------------------------------------------------------------------
+    // Lineage resolution (Phase 1) — map each visible data-point column to the
+    // enrichment it was extracted from, the same way Clay's "Show extracted
+    // fields" graph does (server getExtractedFieldMap). This is the source of
+    // truth for DP<->ER matching: the table view reads `sourceEnrichmentFieldId`
+    // off each DP card directly instead of deriving from canvas clusters.
+    //
+    // Enrichment key:
+    //   - waterfall step / merge / validation field -> "wf:<groupId>" (the
+    //     single waterfall card)
+    //   - any other action field -> its own field id (standalone / basic-group ER)
+    //   - basic extracted field -> resolved to its parent enrichment
+    //   - source field / unmatched -> null (no enrichment, no shared cost)
+    // -------------------------------------------------------------------------
+    const waterfallGroupByFieldId = new Map();
+    for (const [groupId, group] of Object.entries(fieldGroupMap)) {
+      if (group.type !== "waterfall") continue;
+      for (const step of group.groupDetails?.sequenceSteps ?? []) {
+        if (step.fieldId) waterfallGroupByFieldId.set(step.fieldId, groupId);
+        if (step.validation?.fieldId) waterfallGroupByFieldId.set(step.validation.fieldId, groupId);
+      }
+      const mergeId = group.groupDetails?.mergeField?.fieldId;
+      if (mergeId) waterfallGroupByFieldId.set(mergeId, groupId);
+    }
+
+    // First {{fieldId}} reference in a formula — the extracted column's parent
+    // when the API didn't serialize extractedField / inputFieldIds.
+    const FORMULA_PARENT_RE = /\{\{\s*([a-zA-Z0-9_-]+)\s*\}\}/;
+    function parseFormulaParent(formulaText) {
+      if (typeof formulaText !== "string") return null;
+      const m = formulaText.match(FORMULA_PARENT_RE);
+      return m ? m[1] : null;
+    }
+
+    function resolveEnrichmentKey(fieldId, seen) {
+      if (!fieldId) return null;
+      seen = seen || new Set();
+      if (seen.has(fieldId)) return null;
+      seen.add(fieldId);
+      const wfGroup = waterfallGroupByFieldId.get(fieldId);
+      if (wfGroup) return `wf:${wfGroup}`;
+      const field = fieldById[fieldId];
+      if (!field) return null;
+      if (field.type === "action") return fieldId;
+      if (field.type === "source") return null;
+      // basic / formula column: walk to the field it was extracted from.
+      const parentId =
+        field.extractedField?.fieldIdExtractedFrom ??
+        field.inputFieldIds?.[0] ??
+        parseFormulaParent(field.typeSettings?.formulaText);
+      if (!parentId) return null;
+      return resolveEnrichmentKey(parentId, seen);
+    }
+
+    // Every visible basic data point that resolves to an enrichment (excludes
+    // leaf inputs). dpEnrichmentKeyById is the per-DP lineage link the import
+    // stamps onto cards; dataPointFields is the full set to import.
+    const dpEnrichmentKeyById = new Map();
+    const dataPointFields = [];
+    for (const f of table?.fields ?? []) {
+      if (!visibleFieldIds.has(f.id)) continue;
+      if (f.type !== "basic") continue;
+      if (leafInputFieldIds.has(f.id)) continue;
+      const key = resolveEnrichmentKey(f.id);
+      if (!key) continue;
+      dpEnrichmentKeyById.set(f.id, key);
+      dataPointFields.push(f);
+    }
+
     const statsByFieldId = buildStatsByFieldId({
       fields: table?.fields ?? [],
       context,
@@ -1055,6 +1125,13 @@
         erFields: g.erFields.map(trimField),
       })),
       standaloneFields: standaloneFields.map(trimField),
+      // Lineage (Phase 1): each visible data point + the enrichment it was
+      // extracted from. The source of truth for DP<->ER matching.
+      dataPoints: dataPointFields.map((f) => ({
+        id: f.id,
+        name: f.name,
+        sourceEnrichmentFieldId: dpEnrichmentKeyById.get(f.id) ?? null,
+      })),
       joined: Object.fromEntries(statsByFieldId),
     };
 
@@ -1081,6 +1158,8 @@
         basicGroups,
         standaloneFields,
         statsByFieldId,
+        dataPointFields,
+        dpEnrichmentKeyById,
       },
       enumerable: false,
       writable: false,
@@ -1211,6 +1290,10 @@
     const waterfalls = internal.waterfalls;
     const basicGroups = internal.basicGroups;
     const statsByFieldId = internal.statsByFieldId;
+    // Lineage (Phase 1): per-DP enrichment key + the full set of visible data
+    // points to import. The table view matches/costs DPs by this key.
+    const dpEnrichmentKeyById = internal.dpEnrichmentKeyById ?? new Map();
+    const dataPointFields = internal.dataPointFields ?? [];
 
     const existingKeys = getExistingCardKeys();
     const CARD_H_GAP = 230;
@@ -1529,7 +1612,8 @@
             mergeStats,
             wf.groupId,
             tableId,
-            viewId
+            viewId,
+            dpEnrichmentKeyById.get(mergeField.id) ?? `wf:${wf.groupId}`
           );
         }
       }
@@ -1612,7 +1696,8 @@
           statsByFieldId.get(dpFields[i].id) ?? null,
           bg.groupId,
           tableId,
-          viewId
+          viewId,
+          dpEnrichmentKeyById.get(dpFields[i].id) ?? null
         );
       }
 
@@ -1665,6 +1750,38 @@
       if (col >= COLS) {
         col = 0;
         standaloneY += CARD_V_GAP;
+      }
+      importedAny = true;
+    }
+
+    // -------------------------------------------------------------------------
+    // Lineage data points (Phase 1) — every visible extracted data point not
+    // already placed by a group / waterfall above. Captures the data points of
+    // standalone enrichments and any ungrouped extractions. Each is stamped
+    // with its sourceEnrichmentFieldId; the table view matches it to its
+    // enrichment and shares cost by that key, so placement here is cosmetic
+    // (canvas-only) — a simple grid below the rest.
+    // -------------------------------------------------------------------------
+    let dpY = standaloneY + (col > 0 ? CARD_V_GAP : 0);
+    let dpCol = 0;
+    for (const field of dataPointFields) {
+      const dpKey = `dp-${field.id}`;
+      if (existingKeys.has(dpKey)) continue;
+      existingKeys.add(dpKey);
+      addDpCard(
+        field,
+        START_X + dpCol * CARD_W,
+        dpY,
+        statsByFieldId.get(field.id) ?? null,
+        null,
+        tableId,
+        viewId,
+        dpEnrichmentKeyById.get(field.id) ?? null
+      );
+      dpCol++;
+      if (dpCol >= COLS) {
+        dpCol = 0;
+        dpY += CARD_H + CARD_V_GAP;
       }
       importedAny = true;
     }
