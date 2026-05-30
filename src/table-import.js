@@ -932,10 +932,15 @@
       }
     }
 
+    // "basic" field = NOT an action or source. The /v3/workbooks/.../tables
+    // serializer reports a basic field's DATA type (text / formula / boolean /
+    // date / ...), never the literal "basic", so we detect it by exclusion.
+    const isBasicField = (f) => f.type !== "action" && f.type !== "source";
+
     const leafInputFields = (table?.fields ?? []).filter(
       (f) =>
         visibleFieldIds.has(f.id) &&
-        f.type === "basic" &&
+        isBasicField(f) &&
         !f.typeSettings?.formula &&
         !f.typeSettings?.formulaText &&
         !f.typeSettings?.formulaType &&
@@ -1052,7 +1057,9 @@
     const dataPointFields = [];
     for (const f of table?.fields ?? []) {
       if (!visibleFieldIds.has(f.id)) continue;
-      if (f.type !== "basic") continue;
+      // Data points are basic columns (formula / text / boolean / date / ...),
+      // not actions or sources — see isBasicField above.
+      if (!isBasicField(f)) continue;
       if (leafInputFieldIds.has(f.id)) continue;
       const key = resolveEnrichmentKey(f.id);
       if (!key) continue;
@@ -2089,6 +2096,24 @@
   // its column count (free off the list response) and its row count (fetched
   // lazily per row via the view-count API — the table-list response carries
   // no record count). The footer imports every checked table.
+  // The table + view the user currently has open, parsed from the URL. Used
+  // to default each picker row's view selector to "what I'm looking at". Works
+  // for both /tables/:id/views/:vid and /graphs/:id/views/:vid (graph view).
+  function currentImportTableAndView() {
+    try {
+      const parts = window.location.pathname.split("/");
+      const tIdx = parts.indexOf("tables");
+      const gIdx = parts.indexOf("graphs");
+      const vIdx = parts.indexOf("views");
+      const tableId =
+        tIdx !== -1 ? (parts[tIdx + 1] || null) : gIdx !== -1 ? (parts[gIdx + 1] || null) : null;
+      const viewId = vIdx !== -1 ? (parts[vIdx + 1] || null) : null;
+      return { tableId, viewId };
+    } catch {
+      return { tableId: null, viewId: null };
+    }
+  }
+
   function showMultiTablePicker(tables, anchorEl, onImport) {
     closeTablePicker();
 
@@ -2113,6 +2138,43 @@
     );
 
     const selected = new Set();
+    // Per-table chosen view: a view id, or null = "Full table" (no view filter).
+    const viewByTable = new Map();
+    const { tableId: curTableId, viewId: curViewId } = currentImportTableAndView();
+
+    // Default a table's view selector to the view the user has open (when this
+    // is that table), else its first/default view.
+    function defaultViewIdFor(table) {
+      const views = selectableViews(table);
+      if (table.id === curTableId && curViewId && views.some((v) => v.id === curViewId)) {
+        return curViewId;
+      }
+      if (table.firstViewId && views.some((v) => v.id === table.firstViewId)) {
+        return table.firstViewId;
+      }
+      return views[0]?.id ?? table.firstViewId ?? null;
+    }
+
+    // Update a row's "N cols · M rows" meta for the chosen view. For "Full
+    // table" (null) we use firstViewId's count as a proxy for total rows.
+    function refreshRowCount(table, viewId, metaEl, cols) {
+      const countViewId = viewId || table.firstViewId;
+      if (countViewId && __cb.fetchViewCount) {
+        __cb.fetchViewCount(table.id, countViewId)
+          .then((res) => {
+            const count = extractViewCount(res);
+            metaEl.textContent =
+              count == null
+                ? cols
+                : `${cols} \u00b7 ${count.toLocaleString()} ${count === 1 ? "row" : "rows"}`;
+          })
+          .catch(() => {
+            metaEl.textContent = cols;
+          });
+      } else {
+        metaEl.textContent = cols;
+      }
+    }
 
     const footer = document.createElement("div");
     footer.className = "cb-table-picker-footer";
@@ -2163,31 +2225,64 @@
 
       main.appendChild(nameEl);
       main.appendChild(meta);
+
+      // Per-table view selector (re-introduced): the table's selectable views
+      // + a "Full table" option. Defaults to the view the user has open. The
+      // chosen view scopes which fields/data points the import brings in.
+      const views = selectableViews(table);
+      const defaultViewId = defaultViewIdFor(table);
+      viewByTable.set(table, defaultViewId);
+
+      const viewSelect = document.createElement("select");
+      viewSelect.className = "cb-table-picker-view-select";
+      for (const v of views) {
+        const opt = document.createElement("option");
+        opt.value = v.id;
+        opt.textContent = v.name || "View";
+        if (v.id === defaultViewId) opt.selected = true;
+        viewSelect.appendChild(opt);
+      }
+      const fullOpt = document.createElement("option");
+      fullOpt.value = "__full__";
+      fullOpt.textContent = "Full table";
+      if (defaultViewId == null) fullOpt.selected = true;
+      viewSelect.appendChild(fullOpt);
+
+      // The row is a <label> wrapping the checkbox, so interacting with the
+      // select would otherwise toggle the checkbox — stop that.
+      viewSelect.addEventListener("click", (e) => e.stopPropagation());
+      viewSelect.addEventListener("mousedown", (e) => e.stopPropagation());
+      viewSelect.addEventListener("change", (e) => {
+        e.stopPropagation();
+        const val = viewSelect.value === "__full__" ? null : viewSelect.value;
+        viewByTable.set(table, val);
+        refreshRowCount(table, val, meta, cols);
+      });
+
       row.appendChild(cb);
       row.appendChild(main);
+      row.appendChild(viewSelect);
       list.appendChild(row);
 
-      // Lazy per-table row count. On failure / no view, drop to columns-only.
-      const viewId = table.firstViewId;
-      if (viewId && __cb.fetchViewCount) {
-        __cb.fetchViewCount(table.id, viewId)
-          .then((res) => {
-            const count = extractViewCount(res);
-            meta.textContent =
-              count == null
-                ? cols
-                : `${cols} \u00b7 ${count.toLocaleString()} ${count === 1 ? "row" : "rows"}`;
-          })
-          .catch(() => { meta.textContent = cols; });
-      } else {
-        meta.textContent = cols;
+      // Single-table workbooks: pre-check the only table so the user just
+      // confirms the view + clicks Import.
+      if (sorted.length === 1) {
+        cb.checked = true;
+        selected.add(table);
+        row.classList.add("cb-table-picker-checkrow-checked");
       }
+
+      refreshRowCount(table, defaultViewId, meta, cols);
     }
+    updateFooter();
 
     importBtn.addEventListener("click", () => {
       if (selected.size === 0) return;
-      // Preserve the sorted display order for a predictable color cycle.
-      const chosen = sorted.filter((t) => selected.has(t));
+      // Preserve the sorted display order for a predictable color cycle. Each
+      // chosen table carries its selected view (id, or null = Full table).
+      const chosen = sorted
+        .filter((t) => selected.has(t))
+        .map((t) => ({ table: t, viewId: viewByTable.get(t) }));
       closeTablePicker();
       onImport(chosen);
     });
@@ -2248,14 +2343,15 @@
         return;
       }
 
-      // Sequentially import each selected table at its default view. Awaiting
+      // Sequentially import each selected table at its CHOSEN view. Awaiting
       // one before the next keeps card placement deterministic (each import
       // appends below the previous) and lets the per-table color cycle read a
-      // stable "already imported" set as it advances.
+      // stable "already imported" set as it advances. `chosen` is an array of
+      // { table, viewId } where viewId is a view id or null = Full table.
       const importSelected = async (chosen) => {
-        for (const table of chosen) {
+        for (const { table, viewId } of chosen) {
           try {
-            await importTableToCanvas(table, undefined, anchorEl);
+            await importTableToCanvas(table, viewId, anchorEl);
           } catch (err) {
             console.error(`[Clay Scoping] Import failed for ${table?.name}:`, err);
             closeImportStatus();
@@ -2263,14 +2359,11 @@
         }
       };
 
-      if (tables.length === 1) {
-        closeTablePicker();
-        importSelected([tables[0]]);
-      } else {
-        showMultiTablePicker(tables, anchorEl, (chosen) => {
-          importSelected(chosen);
-        });
-      }
+      // Always show the picker — even for a single-table workbook — so the
+      // user can choose which view (or Full table) to import.
+      showMultiTablePicker(tables, anchorEl, (chosen) => {
+        importSelected(chosen);
+      });
     } catch (err) {
       console.error("[Clay Scoping] Failed to fetch tables:", err);
       closeTablePicker();

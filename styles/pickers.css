@@ -219,6 +219,31 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* Per-table view selector (which view / Full table to import). Sits at the
+   right of each checkbox row. */
+.cb-table-picker-view-select {
+  flex-shrink: 0;
+  max-width: 150px;
+  padding: 4px 8px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #374151;
+  font-family: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.cb-table-picker-view-select:hover {
+  border-color: #a5b4fc;
+}
+
+.cb-table-picker-view-select:focus {
+  outline: none;
+  border-color: #6366f1;
+  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.15);
+}
+
 .cb-table-picker-footer {
   display: flex;
   align-items: center;
