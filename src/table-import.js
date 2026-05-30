@@ -1968,7 +1968,11 @@
     function positionMenu(menu) {
       const r = trigger.getBoundingClientRect();
       menu.style.top = `${r.bottom + 4}px`;
-      menu.style.left = `${r.left}px`;
+      // Right-align the menu to the trigger so it pans LEFT — the per-view
+      // column counts sit near the picker / viewport right edge and would
+      // otherwise be clipped.
+      menu.style.left = "auto";
+      menu.style.right = `${Math.max(8, window.innerWidth - r.right)}px`;
       menu.style.minWidth = `${r.width}px`;
     }
 
