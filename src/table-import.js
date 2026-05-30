@@ -1913,12 +1913,114 @@
   // ---------------------------------------------------------------------------
 
   function closeTablePicker() {
+    closeOpenViewMenu();
     if (tablePickerEl) { tablePickerEl.remove(); tablePickerEl = null; }
     if (tablePickerBackdrop) { tablePickerBackdrop.remove(); tablePickerBackdrop = null; }
   }
 
   function getNonPreconfiguredViews(table) {
     return (table.views ?? []).filter((v) => !v.typeSettings?.isPreconfigured);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Custom view dropdown for the import picker. A styled trigger + a
+  // body-positioned (fixed) menu so it isn't clipped by the picker list's
+  // overflow. Each option shows the view's visible-column count. Only one menu
+  // is open at a time.
+  // ---------------------------------------------------------------------------
+  let openViewMenu = null;
+
+  function closeOpenViewMenu() {
+    if (!openViewMenu) return;
+    openViewMenu.menu.remove();
+    document.removeEventListener("mousedown", openViewMenu.onDoc, true);
+    document.removeEventListener("keydown", openViewMenu.onKey, true);
+    window.removeEventListener("resize", openViewMenu.onReposition, true);
+    openViewMenu = null;
+  }
+
+  const VIEW_DD_CHEVRON =
+    '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>';
+
+  function buildViewDropdown(options, defaultValue, onChange) {
+    const wrap = document.createElement("div");
+    wrap.className = "cb-view-dd";
+
+    const trigger = document.createElement("button");
+    trigger.type = "button";
+    trigger.className = "cb-view-dd-trigger";
+    const labelSpan = document.createElement("span");
+    labelSpan.className = "cb-view-dd-label";
+    const chevron = document.createElement("span");
+    chevron.className = "cb-view-dd-chevron";
+    chevron.innerHTML = VIEW_DD_CHEVRON;
+    trigger.appendChild(labelSpan);
+    trigger.appendChild(chevron);
+    wrap.appendChild(trigger);
+
+    let current = defaultValue;
+    const labelFor = (val) => {
+      const o = options.find((x) => x.value === val);
+      return o ? o.label : "Select view";
+    };
+    labelSpan.textContent = labelFor(current);
+
+    function positionMenu(menu) {
+      const r = trigger.getBoundingClientRect();
+      menu.style.top = `${r.bottom + 4}px`;
+      menu.style.left = `${r.left}px`;
+      menu.style.minWidth = `${r.width}px`;
+    }
+
+    trigger.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const mineOpen = openViewMenu && openViewMenu.trigger === trigger;
+      closeOpenViewMenu();
+      if (mineOpen) return;
+
+      const menu = document.createElement("div");
+      menu.className = "cb-view-dd-menu";
+      for (const o of options) {
+        const item = document.createElement("button");
+        item.type = "button";
+        item.className = "cb-view-dd-item" + (o.value === current ? " cb-view-dd-item-active" : "");
+        const nm = document.createElement("span");
+        nm.className = "cb-view-dd-item-name";
+        nm.textContent = o.label;
+        const colsEl = document.createElement("span");
+        colsEl.className = "cb-view-dd-item-cols";
+        colsEl.textContent = `${o.cols} col${o.cols === 1 ? "" : "s"}`;
+        item.appendChild(nm);
+        item.appendChild(colsEl);
+        item.addEventListener("click", (ev) => {
+          ev.preventDefault();
+          ev.stopPropagation();
+          current = o.value;
+          labelSpan.textContent = labelFor(current);
+          closeOpenViewMenu();
+          onChange(o.value);
+        });
+        menu.appendChild(item);
+      }
+      document.body.appendChild(menu);
+      positionMenu(menu);
+
+      const onDoc = (ev) => {
+        if (!menu.contains(ev.target) && !trigger.contains(ev.target)) closeOpenViewMenu();
+      };
+      const onKey = (ev) => {
+        if (ev.key === "Escape") { ev.stopPropagation(); closeOpenViewMenu(); }
+      };
+      const onReposition = () => positionMenu(menu);
+      // Capture phase so we beat the picker backdrop's own mousedown handler.
+      document.addEventListener("mousedown", onDoc, true);
+      document.addEventListener("keydown", onKey, true);
+      window.addEventListener("resize", onReposition, true);
+      openViewMenu = { menu, trigger, onDoc, onKey, onReposition };
+    });
+
+    return wrap;
   }
 
   function showTablePicker(tables, anchorEl, onPick, opts) {
@@ -2228,40 +2330,30 @@
 
       // Per-table view selector (re-introduced): the table's selectable views
       // + a "Full table" option. Defaults to the view the user has open. The
-      // chosen view scopes which fields/data points the import brings in.
+      // chosen view scopes which fields/data points the import brings in. Each
+      // option shows that view's visible-column count.
       const views = getNonPreconfiguredViews(table);
       const defaultViewId = defaultViewIdFor(table);
       viewByTable.set(table, defaultViewId);
 
-      const viewSelect = document.createElement("select");
-      viewSelect.className = "cb-table-picker-view-select";
-      for (const v of views) {
-        const opt = document.createElement("option");
-        opt.value = v.id;
-        opt.textContent = v.name || "View";
-        if (v.id === defaultViewId) opt.selected = true;
-        viewSelect.appendChild(opt);
-      }
-      const fullOpt = document.createElement("option");
-      fullOpt.value = "__full__";
-      fullOpt.textContent = "Full table";
-      if (defaultViewId == null) fullOpt.selected = true;
-      viewSelect.appendChild(fullOpt);
+      const colsForView = (v) =>
+        Object.values(v.fields || {}).filter((s) => s.isVisible !== false).length;
+      const viewOptions = views.map((v) => ({
+        value: v.id,
+        label: v.name || "View",
+        cols: colsForView(v),
+      }));
+      // "Full table" = every field, regardless of view visibility.
+      viewOptions.push({ value: null, label: "Full table", cols: (table.fields || []).length });
 
-      // The row is a <label> wrapping the checkbox, so interacting with the
-      // select would otherwise toggle the checkbox — stop that.
-      viewSelect.addEventListener("click", (e) => e.stopPropagation());
-      viewSelect.addEventListener("mousedown", (e) => e.stopPropagation());
-      viewSelect.addEventListener("change", (e) => {
-        e.stopPropagation();
-        const val = viewSelect.value === "__full__" ? null : viewSelect.value;
+      const viewDd = buildViewDropdown(viewOptions, defaultViewId, (val) => {
         viewByTable.set(table, val);
         refreshRowCount(table, val, meta, cols);
       });
 
       row.appendChild(cb);
       row.appendChild(main);
-      row.appendChild(viewSelect);
+      row.appendChild(viewDd);
       list.appendChild(row);
 
       // Single-table workbooks: pre-check the only table so the user just
