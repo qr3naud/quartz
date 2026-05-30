@@ -1812,10 +1812,19 @@
 
     const intro = document.createElement("div");
     intro.className = "cb-table-view-intro";
-    const introTitle = document.createElement("div");
-    introTitle.className = "cb-table-view-intro-title";
-    introTitle.textContent = "Spreadsheet view";
-    intro.appendChild(introTitle);
+
+    // Left side of the intro row: the collaborators presence widget, mounted
+    // inline here (it floats top-right on the canvas). The widget is a
+    // singleton — mounting it here moves it off the canvas; setBrainstormView
+    // re-mounts it on the canvas when switching back. Data (contributors +
+    // presence) persists at the module level, so this re-mount is cheap and
+    // doesn't refetch. Replaces the old "Spreadsheet view" title.
+    const introLead = document.createElement("div");
+    introLead.className = "cb-table-view-intro-lead";
+    intro.appendChild(introLead);
+    if (typeof __cb.mountCollaboratorsWidget === "function") {
+      __cb.mountCollaboratorsWidget(introLead, { inline: true });
+    }
 
     const introActions = document.createElement("div");
     introActions.className = "cb-table-view-intro-actions";

@@ -360,6 +360,13 @@
         if (host && __cb.tableView?.mount) __cb.tableView.mount(host);
       } else {
         if (__cb.tableView?.unmount) __cb.tableView.unmount();
+        // The table view moves the collaborators widget inline into its header;
+        // unmount tore it down with the table DOM. Put it back in the canvas
+        // area's floating top-right corner. Only needed when actually coming
+        // from the table view — the initial canvas open already mounted it.
+        if (prev === "table" && __cb.mountCollaboratorsWidget) {
+          __cb.mountCollaboratorsWidget(mainArea);
+        }
         // Coming back from the table view: clusters that the table-side
         // mutated (deleted a bridge ER, merged orphan clusters, etc.)
         // may be relationally intact but geometrically scattered. Pull

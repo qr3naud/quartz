@@ -195,13 +195,19 @@
    * Mount the widget into `parent`. Returns the element so callers can
    * remove it on teardown.
    */
-  __cb.mountCollaboratorsWidget = function (parent) {
+  __cb.mountCollaboratorsWidget = function (parent, options = {}) {
     if (!parent) return null;
-    // Remove any previously-mounted instance (e.g. from a prior canvas open).
+    // Remove any previously-mounted instance (e.g. from a prior canvas open, or
+    // when moving between the canvas float and the table view's inline slot).
     if (widgetEl && widgetEl.parentNode) widgetEl.parentNode.removeChild(widgetEl);
 
     widgetEl = document.createElement("div");
     widgetEl.className = "cb-collab-widget";
+    // Inline mode: sits in normal flow inside a toolbar row (table view header)
+    // instead of floating absolutely in the canvas top-right. CSS keys off the
+    // modifier class to drop the absolute positioning + float shadow and shrink
+    // the pill to the row height.
+    if (options.inline) widgetEl.classList.add("cb-collab-widget-inline");
 
     const header = document.createElement("button");
     header.className = "cb-collab-header";
@@ -235,7 +241,11 @@
     // Presence: subscribe to the realtime channel's presence stream so the
     // active/inactive split reflects who's currently viewing, in real time.
     // The contributors list itself still comes from the historical
-    // canvas_contributors table via refreshCollaborators().
+    // canvas_contributors table via refreshCollaborators(). Drop any prior
+    // subscription first — the widget re-mounts when toggling between the
+    // canvas float and the table-view inline slot, and leaking handlers would
+    // pile up stale closures pointing at detached stack nodes.
+    if (unsubPresence) { unsubPresence(); unsubPresence = null; }
     if (__cb.realtime?.onPresenceSync) {
       unsubPresence = __cb.realtime.onPresenceSync((byUser) => {
         activeUserIds = new Set(Array.from(byUser.keys()).map(String));

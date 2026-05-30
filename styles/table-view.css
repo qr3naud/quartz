@@ -82,9 +82,26 @@
   color: #111827;
 }
 
+/* Left lead slot — hosts the inline collaborators presence widget. min-height
+   keeps the row stable when the widget is empty (before contributors load). */
+.cb-table-view-intro-lead {
+  display: flex;
+  align-items: center;
+  min-height: 32px;
+}
+
 .cb-table-view-intro-actions {
   display: flex;
+  align-items: center;
   gap: 8px;
+}
+
+/* The Projected/Actual toggle's intrinsic height (content-box 32px + padding +
+   border) ran taller than the 32px action buttons beside it. Pin it to the
+   same 32px box so the row lines up. */
+.cb-table-view-mode-toggle {
+  box-sizing: border-box;
+  height: 32px;
 }
 
 .cb-table-view-add-er-btn {

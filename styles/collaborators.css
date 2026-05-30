@@ -14,6 +14,33 @@
   color: #1f2937;
 }
 
+/* Inline variant: mounted in the table view header row rather than floating in
+   the canvas corner. Relative (not absolute) keeps it in normal flow while
+   still anchoring the absolutely-positioned dropdown. Sized to the 32px toolbar
+   row so it lines up with the toggle and action buttons. */
+.cb-collab-widget-inline {
+  position: relative;
+  top: auto;
+  right: auto;
+}
+
+.cb-collab-widget-inline .cb-collab-header {
+  padding: 4px 10px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+}
+
+.cb-collab-widget-inline .cb-collab-stack .cb-collab-avatar {
+  width: 22px;
+  height: 22px;
+}
+
+/* Open the dropdown left-aligned under the widget (it now sits on the left of
+   the row, not the right of the canvas). */
+.cb-collab-widget-inline .cb-collab-dropdown {
+  left: 0;
+  right: auto;
+}
+
 .cb-collab-header {
   display: inline-flex;
   align-items: center;
