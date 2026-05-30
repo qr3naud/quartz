@@ -84,6 +84,7 @@
     const delays = isWrite ? WRITE_RETRY_DELAYS_MS : [];
 
     let lastErr = null;
+    let remintAttempted = false;
     for (let attempt = 0; attempt <= delays.length; attempt++) {
       const started = Date.now();
       try {
@@ -100,6 +101,39 @@
             window.__cb.clearSupabaseJwt();
           }
           const text = await res.text().catch(() => "");
+          // 42501 = Postgres RLS rejection. Almost always means the cached JWT
+          // is scoped to a different Clay identity than the row we're writing —
+          // e.g. just after starting/stopping impersonation, or a pre-Phase-4
+          // token minted without the `is_internal` claim. Re-mint once and
+          // retry with the fresh token before surfacing the error.
+          if (
+            res.status === 403 &&
+            !remintAttempted &&
+            text.includes("42501") &&
+            typeof window !== "undefined" &&
+            window.__cb?.refreshSupabaseJwt
+          ) {
+            remintAttempted = true;
+            try {
+              await window.__cb.refreshSupabaseJwt();
+            } catch {
+              /* refreshSupabaseJwt logs its own failures */
+            }
+            const freshBearer = await resolveBearer();
+            const retryRes = await fetch(url.toString(), {
+              method,
+              headers: { ...headers, Authorization: `Bearer ${freshBearer}` },
+              body: options.body !== undefined ? JSON.stringify(options.body) : undefined,
+            });
+            if (retryRes.ok) {
+              const retryText = await retryRes.text();
+              return retryText ? JSON.parse(retryText) : null;
+            }
+            const retryText = await retryRes.text().catch(() => "");
+            throw new Error(
+              `Supabase ${method} ${table} failed: ${retryRes.status} ${retryRes.statusText} ${retryText}`,
+            );
+          }
           throw new Error(`Supabase ${method} ${table} failed: ${res.status} ${res.statusText} ${text}`);
         }
         const text = await res.text();

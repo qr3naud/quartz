@@ -25,7 +25,11 @@
 
   const __cb = window.__cb;
 
-  const STORAGE_KEY = "cb-supabase-jwt-v1";
+  // v2: bumped from v1 so every client re-mints once after the Phase-4
+  // internal-admin rollout. The old v1 tokens lack the `is_internal` claim
+  // that RLS now reads, so reusing them would deny cross-workspace access to
+  // Clay members until they expired (~1h). Bumping forces a fresh mint.
+  const STORAGE_KEY = "cb-supabase-jwt-v2";
   // Stale JWTs are useless if they're already expired or about to be —
   // refresh proactively when this much time is left on the clock.
   const REFRESH_WINDOW_MS = 5 * 60 * 1000;
@@ -74,6 +78,11 @@
   function adoptStored(stored) {
     __cb.supabaseJwt = stored?.jwt ?? null;
     __cb.supabaseJwtExpiresAt = stored?.expiresAt ?? 0;
+    // The Clay identity (`sub`) the current JWT is scoped to. Kept distinct
+    // from __cb.userId (which user.js overwrites with the acting identity from
+    // /v3/me) so ensureUserId can detect when the JWT belongs to a different
+    // user and re-mint. null when there's no JWT yet.
+    __cb.supabaseJwtUserId = stored?.userId ?? null;
     __cb.userId = stored?.userId ?? __cb.userId ?? null;
     __cb.userEmail = stored?.email ?? __cb.userEmail ?? null;
     __cb.userWorkspaces = stored?.workspaces ?? [];
