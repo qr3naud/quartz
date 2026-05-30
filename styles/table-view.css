@@ -10,13 +10,11 @@
 .cb-overlay[data-cb-brainstorm-view="table"] .cb-canvas-area,
 .cb-overlay[data-cb-brainstorm-view="table"] .cb-toolbox,
 .cb-overlay[data-cb-brainstorm-view="table"] .cb-zoom-controls,
-/* Presence UI is canvas-anchored (avatar pile sits in the top-right of the
-   canvas area; remote cursors render inside the canvas pan/zoom layer). In
-   table mode the canvas is hidden, so the cursors would float over an empty
-   container and the avatar pile would visually clash with the table content
-   underneath. Hide both — collaborators are still tracked behind the scenes
-   and reappear instantly when the user flips back to Cards. */
-.cb-overlay[data-cb-brainstorm-view="table"] .cb-collab-widget,
+/* Remote cursors render inside the canvas pan/zoom layer, so they'd float over
+   an empty container in table mode — hide them. The collaborators avatar pile,
+   however, is now re-mounted inline in the table header (cb-collab-widget-inline),
+   so only hide the canvas-anchored float here; the inline variant stays. */
+.cb-overlay[data-cb-brainstorm-view="table"] .cb-collab-widget:not(.cb-collab-widget-inline),
 .cb-overlay[data-cb-brainstorm-view="table"] .cb-cursors-layer,
 /* The "?" helper popover documents canvas-only concepts (Navigate / DP /
    Enrichment tools, Enter-to-link, Cmd+Enter waterfall, etc.). None of it
@@ -92,16 +90,26 @@
 
 .cb-table-view-intro-actions {
   display: flex;
-  align-items: center;
+  /* Stretch so the segmented toggle grows to the action buttons' height. The
+     buttons are padding-driven (~34px, not 32px), so stretching avoids a
+     hard-coded magic number that would drift with font/zoom. */
+  align-items: stretch;
   gap: 8px;
 }
 
-/* The Projected/Actual toggle's intrinsic height (content-box 32px + padding +
-   border) ran taller than the 32px action buttons beside it. Pin it to the
-   same 32px box so the row lines up. */
-.cb-table-view-mode-toggle {
+/* Match the Projected/Actual toggle's outer box to the action buttons beside
+   it. Override the base fixed heights (32px shell, 26px halves) so the shell
+   stretches to the row and the inner halves fill it — the outer border then
+   lines up with the button outline exactly. */
+.cb-overlay .cb-table-view-mode-toggle {
   box-sizing: border-box;
-  height: 32px;
+  height: auto;
+  align-self: stretch;
+  align-items: stretch;
+}
+
+.cb-overlay .cb-table-view-mode-toggle .cb-view-mode-btn {
+  height: auto;
 }
 
 .cb-table-view-add-er-btn {
