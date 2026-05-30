@@ -138,11 +138,11 @@
   border-width: 0;
 }
 
-/* Green ring marks avatars whose owner is currently viewing the canvas.
-   box-shadow is used instead of outline so it sits flush against the
-   circular border without jaggies. */
+/* Indigo ring marks avatars whose owner is currently viewing. box-shadow is
+   used instead of outline so it sits flush against the circular border without
+   jaggies. Brand indigo, kept thin. */
 .cb-collab-avatar-active {
-  box-shadow: 0 0 0 2px #10b981;
+  box-shadow: 0 0 0 1.5px #6366f1;
 }
 
 /* Dropdown
@@ -180,16 +180,11 @@
   background: #f3f4f6;
 }
 
-/* Small green dot rendered before the avatar for currently-viewing users.
-   Matches the ring color on the header avatars for consistency. */
-.cb-collab-row-active::before {
-  content: "";
-  display: inline-block;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: #10b981;
-  flex-shrink: 0;
+/* Currently-viewing users in the dropdown get the same indigo ring around
+   their avatar as the header pile (instead of a separate leading dot), so the
+   active treatment reads consistently everywhere. */
+.cb-collab-row-active .cb-collab-avatar {
+  box-shadow: 0 0 0 1.5px #6366f1;
 }
 
 .cb-collab-row-name {
