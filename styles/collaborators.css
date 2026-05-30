@@ -138,11 +138,12 @@
   border-width: 0;
 }
 
-/* Indigo ring marks avatars whose owner is currently viewing. box-shadow is
-   used instead of outline so it sits flush against the circular border without
-   jaggies. Brand indigo, kept thin. */
+/* Indigo ring marks avatars whose owner is currently viewing. Two stacked
+   box-shadows: a 2px white spacer ring (so the ring floats off the photo —
+   the avatar's own white border is hidden under the cover-sized background
+   image) then the thin brand-indigo ring outside it. */
 .cb-collab-avatar-active {
-  box-shadow: 0 0 0 1.5px #6366f1;
+  box-shadow: 0 0 0 2px #ffffff, 0 0 0 3.5px #6366f1;
 }
 
 /* Dropdown
@@ -180,11 +181,11 @@
   background: #f3f4f6;
 }
 
-/* Currently-viewing users in the dropdown get the same indigo ring around
-   their avatar as the header pile (instead of a separate leading dot), so the
-   active treatment reads consistently everywhere. */
+/* Currently-viewing users in the dropdown get the same white-spacer + indigo
+   ring around their avatar as the header pile (instead of a separate leading
+   dot), so the active treatment reads consistently everywhere. */
 .cb-collab-row-active .cb-collab-avatar {
-  box-shadow: 0 0 0 1.5px #6366f1;
+  box-shadow: 0 0 0 2px #ffffff, 0 0 0 3.5px #6366f1;
 }
 
 .cb-collab-row-name {
