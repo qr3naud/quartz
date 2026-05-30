@@ -29,11 +29,6 @@
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
 }
 
-.cb-collab-widget-inline .cb-collab-stack .cb-collab-avatar {
-  width: 24px;
-  height: 24px;
-}
-
 /* Open the dropdown left-aligned under the widget (it now sits on the left of
    the row, not the right of the canvas). */
 .cb-collab-widget-inline .cb-collab-dropdown {
@@ -112,8 +107,11 @@
 /* Avatar
    ------------------------------------------------------------------------ */
 .cb-collab-avatar {
-  width: 24px;
-  height: 24px;
+  /* Single size driver so the active ring (box-shadow below) can be expressed
+     as a fraction of the avatar size and stay proportional at any size. */
+  --cb-collab-av-size: 24px;
+  width: var(--cb-collab-av-size);
+  height: var(--cb-collab-av-size);
   border-radius: 50%;
   background-color: #6366f1;
   color: #ffffff;
@@ -132,20 +130,26 @@
 }
 
 .cb-collab-avatar-lg {
-  width: 28px;
-  height: 28px;
+  --cb-collab-av-size: 28px;
+  width: var(--cb-collab-av-size);
+  height: var(--cb-collab-av-size);
   font-size: 11px;
   border-width: 0;
 }
 
 /* Indigo ring marks avatars whose owner is currently viewing. Two stacked
-   box-shadows: a thin white spacer ring (so the ring floats off the photo —
-   the avatar's own white border is hidden under the cover-sized background
-   image) then the thin brand-indigo ring outside it. The header pile avatars
-   are smaller than the dropdown ones, so the spacer is kept tighter here to
-   stay proportional (the dropdown overrides it below). */
-.cb-collab-avatar-active {
-  box-shadow: 0 0 0 1.5px #ffffff, 0 0 0 3px #6366f1;
+   box-shadows: a white spacer ring (so the ring floats off the photo — the
+   avatar's own white border is hidden under the cover-sized background image)
+   then the brand-indigo ring outside it. Both widths are fractions of the
+   avatar size (--cb-collab-av-size) so the ring stays proportional at every
+   size instead of a hard-coded px that looks too thick on the smaller header
+   avatars. Fractions are calibrated to the 28px dropdown avatar (~2px gap,
+   ~1.5px ring), so that one is unchanged and the 24px header scales down. */
+.cb-collab-avatar-active,
+.cb-collab-row-active .cb-collab-avatar {
+  box-shadow:
+    0 0 0 calc(var(--cb-collab-av-size) * 0.0714) #ffffff,
+    0 0 0 calc(var(--cb-collab-av-size) * 0.125) #6366f1;
 }
 
 /* Dropdown
@@ -183,12 +187,6 @@
   background: #f3f4f6;
 }
 
-/* Currently-viewing users in the dropdown get the same white-spacer + indigo
-   ring around their avatar as the header pile (instead of a separate leading
-   dot), so the active treatment reads consistently everywhere. */
-.cb-collab-row-active .cb-collab-avatar {
-  box-shadow: 0 0 0 2px #ffffff, 0 0 0 3.5px #6366f1;
-}
 
 .cb-collab-row-name {
   flex: 1;
