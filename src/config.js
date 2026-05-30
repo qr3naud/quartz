@@ -196,11 +196,14 @@
     // "projected" (default — catalog credits × records) vs "actual" (real
     // spend pulled from Clay's realtime credit usage warehouse, attached to
     // ER cards via data.stats.spend at import time). Toggled by the
-    // Projected/Actual segmented control in the overlay topbar; persisted on
-    // tabStore.viewMode. The toggle itself is gated behind Pro Mode in CSS,
-    // so non-Pro users never see it.
+    // Projected/Actual segmented control, which lives in the table view's
+    // action row (built via buildViewModeToggle); persisted on
+    // tabStore.viewMode.
     viewMode: "projected",
     setViewMode: null,
+    // Builds the Projected/Actual segmented control. Defined in overlay.js and
+    // called by table-view.js to mount the toggle far-left in its action row.
+    buildViewModeToggle: null,
 
     onCanvasStateChange: null,
     updateCreditTotal: null,

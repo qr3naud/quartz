@@ -40,12 +40,52 @@
 }
 
 .cb-topbar-left {
-  flex: 1;
-  min-width: 0;
+  /* Tabs side: take the leftover space but keep at least a sliver visible
+     (the tab-bar inside scrolls). Prevents the action side from clipping the
+     tabs — the two sides share the bar and never overlap. position:relative is
+     the anchor for the ::after blur divider below. */
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 80px;
   overflow: hidden;
 }
 
+/* Soft "blur divider" where the tabs meet the action side. The strip frosts +
+   fades the last tab into white right at the boundary, so when the two halves
+   are touching it reads as a gentle seam (and hints the tabs scroll under it).
+   When tabs are few they don't reach this edge, so it sits over empty white and
+   is invisible — it only shows up once the sides actually touch. */
+.cb-topbar-left::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 22px;
+  pointer-events: none;
+  background: linear-gradient(to right, rgba(255, 255, 255, 0), #ffffff 92%);
+  backdrop-filter: blur(2px);
+  -webkit-backdrop-filter: blur(2px);
+  -webkit-mask-image: linear-gradient(to right, transparent, #000 75%);
+  mask-image: linear-gradient(to right, transparent, #000 75%);
+}
+
 .cb-topbar-right {
+  /* Action side: size to content (stays full when it fits), but shrink and
+     scroll horizontally when the bar is narrow instead of clipping the last
+     button. Buttons keep their size (see > * below). Scrollbar hidden to match
+     the tab-bar in the same bar; scroll via trackpad / shift+wheel. */
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.cb-topbar-right::-webkit-scrollbar {
+  display: none;
+}
+
+.cb-topbar-right > * {
   flex-shrink: 0;
 }
 
@@ -59,6 +99,9 @@
   gap: 2px;
   overflow-x: auto;
   scrollbar-width: none;
+  /* Trailing room so the last tab can scroll out from under the ::after blur
+     divider (22px) — without it the rightmost tab stays frosted at max scroll. */
+  padding-right: 28px;
 }
 
 .cb-tab-bar::-webkit-scrollbar {
@@ -548,6 +591,13 @@
   display: none;
 }
 
+/* …but always show it when it's mounted in the table view's action row: the
+   Projected / Actual columns it switches are part of the table regardless of
+   Pro Mode, so the toggle belongs there for every user. */
+.cb-overlay:not([data-cb-pro-mode]) .cb-view-mode-toggle.cb-table-view-mode-toggle {
+  display: inline-flex;
+}
+
 /* Loading banner anchored under the import button while the four stat
    fetches run in the background. Lives at document.body level so it
    doesn't get masked by the tab list / toolbar. */
@@ -587,6 +637,10 @@
   background: #ffffff;
   border-bottom: 1px solid #e5e7eb;
   flex-shrink: 0;
+  /* On narrow widths, scroll the boxes horizontally instead of squishing /
+     clipping them — keeps every metric readable at its natural size. */
+  overflow-x: auto;
+  scrollbar-width: thin;
 }
 
 .cb-summary-box {
@@ -598,6 +652,8 @@
   border-radius: 10px;
   background: #f9fafb;
   min-width: 120px;
+  /* Keep each box at its natural size; the bar scrolls when they don't fit. */
+  flex-shrink: 0;
 }
 
 .cb-summary-label {

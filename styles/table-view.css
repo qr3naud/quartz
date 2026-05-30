@@ -129,13 +129,14 @@
   border: 1px solid #e5e7eb;
   border-radius: 10px;
   /* The SINGLE scroll viewport for both axes: vertical for long tables and
-     horizontal once the columns exceed the available width. It flex-fills the
-     wrap's remaining height (after the intro row) so it's sized to the real
-     available space — no magic max-height, no second scrollbar. Keeping both
-     axes on this one element means the sticky thead (top: 0) and the sticky
-     add-data-point footer (bottom: 0) both keep working while scrolling. */
+     horizontal once the columns exceed the available width.
+     flex: 0 1 auto -> size to content when it fits (so a collapsed / short
+     table stays snug instead of a tall empty box), but shrink to the wrap's
+     remaining height and scroll when the content is taller than the available
+     space. No magic max-height, no second scrollbar. The sticky thead (top: 0)
+     and sticky add-data-point footer (bottom: 0) keep working while scrolling. */
   overflow: auto;
-  flex: 1 1 auto;
+  flex: 0 1 auto;
   min-height: 0;
   box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
 }

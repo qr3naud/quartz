@@ -445,41 +445,60 @@
       if (__cb.debouncedSave) __cb.debouncedSave();
     };
 
-    // Projected / Actual mode toggle. "Projected" uses catalog credit costs
+    // Projected / Actual cost toggle. "Projected" uses catalog credit costs
     // multiplied by record count (the existing behavior). "Actual" pulls
     // realtime credit usage from Redshift via /column/recent and sums the
     // observed spend. Source of truth lives on `__cb.viewMode` and
-    // `tabStore.viewMode` so it survives reloads and tab switches. Visual
-    // gating is CSS-driven via `[data-cb-view-mode]` on the overlay, AND
-    // the toggle itself is hidden when Pro Mode is off (CSS rule in
-    // overlay.css) — non-Pro users don't see the stat pills anyway.
-    const viewModeWrap = document.createElement("div");
-    viewModeWrap.className = "cb-view-mode-toggle";
+    // `tabStore.viewMode` so it survives reloads and tab switches. The toggle
+    // no longer lives in the topbar — it's mounted far-left in the table view's
+    // action row (src/table-view.js calls __cb.buildViewModeToggle). Because
+    // that row is rebuilt on every render we can't hold node references, so
+    // setViewMode reflects the active half by querying the overlay each time.
+    __cb.buildViewModeToggle = function () {
+      const wrap = document.createElement("div");
+      wrap.className = "cb-view-mode-toggle";
 
-    const viewModeProjected = document.createElement("button");
-    viewModeProjected.className = "cb-view-mode-btn cb-view-mode-projected";
-    viewModeProjected.type = "button";
-    viewModeProjected.title = "Projected: catalog credits \u00d7 records";
-    viewModeProjected.textContent = "Projected";
+      const proj = document.createElement("button");
+      proj.className = "cb-view-mode-btn cb-view-mode-projected";
+      proj.type = "button";
+      proj.title = "Projected: catalog credits \u00d7 records";
+      proj.textContent = "Projected";
 
-    const viewModeActual = document.createElement("button");
-    viewModeActual.className = "cb-view-mode-btn cb-view-mode-actual";
-    viewModeActual.type = "button";
-    viewModeActual.title = "Actual: real spend from Clay's billing pipeline";
-    viewModeActual.textContent = "Actual";
+      const act = document.createElement("button");
+      act.className = "cb-view-mode-btn cb-view-mode-actual";
+      act.type = "button";
+      act.title = "Actual: real spend from Clay's billing pipeline";
+      act.textContent = "Actual";
 
-    viewModeWrap.appendChild(viewModeProjected);
-    viewModeWrap.appendChild(viewModeActual);
+      const mode = __cb.viewMode === "actual" ? "actual" : "projected";
+      proj.classList.toggle("cb-view-mode-btn-active", mode === "projected");
+      act.classList.toggle("cb-view-mode-btn-active", mode === "actual");
 
-    viewModeProjected.addEventListener("click", () => __cb.setViewMode("projected"));
-    viewModeActual.addEventListener("click", () => __cb.setViewMode("actual"));
+      proj.addEventListener("click", () => __cb.setViewMode("projected"));
+      act.addEventListener("click", () => __cb.setViewMode("actual"));
+
+      wrap.appendChild(proj);
+      wrap.appendChild(act);
+      return wrap;
+    };
 
     __cb.setViewMode = function (value) {
       const next = value === "actual" ? "actual" : "projected";
       __cb.viewMode = next;
-      if (__cb.overlayEl) __cb.overlayEl.setAttribute("data-cb-view-mode", next);
-      viewModeProjected.classList.toggle("cb-view-mode-btn-active", next === "projected");
-      viewModeActual.classList.toggle("cb-view-mode-btn-active", next === "actual");
+      if (__cb.overlayEl) {
+        __cb.overlayEl.setAttribute("data-cb-view-mode", next);
+        // Reflect the active half on whatever toggle is currently mounted.
+        __cb.overlayEl
+          .querySelectorAll(".cb-view-mode-projected")
+          .forEach((b) =>
+            b.classList.toggle("cb-view-mode-btn-active", next === "projected"),
+          );
+        __cb.overlayEl
+          .querySelectorAll(".cb-view-mode-actual")
+          .forEach((b) =>
+            b.classList.toggle("cb-view-mode-btn-active", next === "actual"),
+          );
+      }
       if (__cb.tabStore) __cb.tabStore.viewMode = next;
       // Re-run credit math so the summary boxes flip immediately.
       if (__cb.canvas?.refreshCreditTotal) {
@@ -491,7 +510,6 @@
       if (__cb.debouncedSave) __cb.debouncedSave();
     };
 
-    rightGroup.appendChild(viewModeWrap);
     // Salesforce opportunity link — leads the action-button cluster
     // (Link opp → Generate POC → Import → Export). The element
     // internally swaps between a "Link opportunity" button and a
@@ -1642,6 +1660,7 @@
     __cb.setCanvasMode = null;
     __cb.setProMode = null;
     __cb.setViewMode = null;
+    __cb.buildViewModeToggle = null;
     __cb.setBrainstormView = null;
     __cb.brainstormView = "canvas";
     __cb.setGlobalFrequency = null;

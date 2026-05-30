@@ -1820,6 +1820,17 @@
     const introActions = document.createElement("div");
     introActions.className = "cb-table-view-intro-actions";
 
+    // Projected / Actual cost toggle leads the action row (furthest left). It
+    // used to live in the overlay topbar; it sits here now because the
+    // Projected/Actual columns it switches are part of this table. Built via
+    // the overlay helper so the toggle logic stays in one place; rebuilt on
+    // every render (setViewMode reflects the active half by query, not ref).
+    if (typeof __cb.buildViewModeToggle === "function") {
+      const viewToggle = __cb.buildViewModeToggle();
+      viewToggle.classList.add("cb-table-view-mode-toggle");
+      introActions.appendChild(viewToggle);
+    }
+
     // "Upload POC" sits to the LEFT of "Add enrichment" so the rep's eye
     // lands on the import option first when they're starting fresh — POC
     // import is the bulk-action shortcut, "Add enrichment" is the granular
