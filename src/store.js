@@ -150,6 +150,10 @@
     restore(stateArg, opts) {
       const c = canvas();
       if (c && typeof c.restore === "function") c.restore(stateArg, opts);
+      // Notify subscribers after the rebuild (C3.5) so a mounted table view
+      // re-renders on restore / tab switch / remote canvas sync. (During the
+      // rebuild, `restoring` suppressed per-card notifies.)
+      model.notify();
       return model;
     },
 

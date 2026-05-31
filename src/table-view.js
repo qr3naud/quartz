@@ -23,6 +23,10 @@
 
   let hostEl = null;
   let tableEl = null;
+  // Store subscription (C3.5): while mounted, the table re-renders whenever the
+  // model notifies (any store.update or store.restore), so it's a true store
+  // subscriber rather than depending on the canvas's onCanvasStateChange.
+  let modelUnsub = null;
 
   // Tracks which group sections are currently collapsed (Set<groupClusterId>).
   // Lives at module scope so re-renders triggered by canvas state changes
@@ -3589,6 +3593,13 @@
     mount(host) {
       hostEl = host;
       render();
+      // Subscribe to the store: any model change (edit, undo/redo, restore,
+      // remote sync) re-renders the table. refresh() self-guards mid-edit/drag.
+      if (!modelUnsub && __cb.model && __cb.model.subscribe) {
+        modelUnsub = __cb.model.subscribe(() => {
+          if (__cb.tableView && __cb.tableView.refresh) __cb.tableView.refresh();
+        });
+      }
       // Document-level listeners: outside-clicks clear the selection;
       // Esc cancels drag / closes context menu / clears selection. Both
       // are removed on unmount() so they don't leak across mode toggles.
@@ -3596,6 +3607,7 @@
       document.addEventListener("keydown", onDocKeyDown);
     },
     unmount() {
+      if (modelUnsub) { modelUnsub(); modelUnsub = null; }
       document.removeEventListener("mousedown", onDocClick);
       document.removeEventListener("keydown", onDocKeyDown);
       // Clear transient state so a remount starts fresh — selection and
