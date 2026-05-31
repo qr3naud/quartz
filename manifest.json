@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Clay Scoping Tool",
-  "version": "3.48.2",
+  "version": "3.48.3",
   "description": "Visual scoping canvas for Clay enrichment workflows",
   "permissions": ["activeTab", "cookies"],
   "host_permissions": [
@@ -39,6 +39,7 @@
         "vendor/supabase-realtime.js",
         "src/supabase.js",
         "src/config.js",
+        "src/store.js",
         "src/auth.js",
         "src/user.js",
         "src/workbook-info.js",

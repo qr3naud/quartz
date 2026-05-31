@@ -192,9 +192,8 @@
   // off the canvas card so the lookup is O(N) over cards, not O(N²)
   // over snap-derived geometry.
   function getClusterForCard(cardId) {
-    const canvas = __cb.canvas;
-    if (!canvas?.getClusters) return [cardId];
-    for (const cl of canvas.getClusters()) {
+    const clusters = __cb.model?.getClusters?.() || [];
+    for (const cl of clusters) {
       if (cl.cardIds.includes(cardId)) return cl.cardIds.slice();
     }
     return [cardId];
@@ -522,7 +521,7 @@
     const canvas = __cb.canvas;
     if (!canvas) return { orphanErRows: [], groupSections: [], dpRows: [] };
 
-    const allCards = canvas.getCards();
+    const allCards = __cb.model.getNodes();
 
     // DP <-> enrichment matching (Phase 1): driven by the first-class
     // `sourceEnrichmentFieldId` lineage field on each data point, NOT canvas
@@ -585,7 +584,7 @@
     // expects the section header's editable input to be the place where
     // the user types the name. Skipping empty-label groups would hide
     // the just-created group entirely.
-    const realGroups = typeof canvas.getGroups === "function" ? canvas.getGroups() : [];
+    const realGroups = __cb.model?.getGroups?.() || [];
     const groupNameById = new Map();
     const groupById = new Map();
     for (const g of realGroups) {
@@ -673,7 +672,7 @@
     // Per-imported-table metadata (source row count + import time + name +
     // color). Keyed by tableId. Authoritative over per-card tableName /
     // importColor — those aren't restored onto DP/input cards across reloads.
-    const importedTables = canvas.getImportedTables ? canvas.getImportedTables() : {};
+    const importedTables = __cb.model?.getImportedTables?.() || {};
 
     // erKey: stable string identity for a row's ER set, used to detect
     // contiguous DP rows that share the same ERs (Link result OR organic
@@ -1368,7 +1367,7 @@
     // isn't disturbed when the user switches back. Using offsets relative
     // to existing cards (vs canvas center) avoids stacking many new DPs on
     // top of each other when the user adds several from the table view.
-    const cards = canvas.getCards();
+    const cards = __cb.model.getNodes();
     let nextX = 0;
     let nextY = 0;
     if (cards.length > 0) {
@@ -1523,7 +1522,7 @@
   }
 
   function getBlockCardIdsForGroup(canvasGroupId) {
-    const groups = __cb.canvas?.getGroups?.() || [];
+    const groups = __cb.model?.getGroups?.() || [];
     const g = groups.find((gg) => gg.id === canvasGroupId);
     return g ? g.cardIds.slice() : [];
   }
@@ -1797,7 +1796,7 @@
     const blocks = [];
     if (section === "groups") {
       // Groups section: each block is one cb-group.
-      for (const g of canvas.getGroups?.() || []) {
+      for (const g of __cb.model?.getGroups?.() || []) {
         const cardIds = g.cardIds.slice();
         if (cardIds.length === 0) continue;
         blocks.push(makeBlock(`group:${g.id}`, cardIds));
@@ -1805,7 +1804,7 @@
     } else if (section === "orphan") {
       // Orphan section: each ER (or ER-only cluster) is its own block.
       const seen = new Set();
-      for (const c of canvas.getCards()) {
+      for (const c of __cb.model.getNodes()) {
         if (!isErType(c.data?.type)) continue;
         if (seen.has(c.id)) continue;
         const cluster = getClusterForCard(c.id);
@@ -1823,7 +1822,7 @@
       // Flat DP rows (no group, no comment-card cluster) — one block per
       // snap-cluster.
       const seen = new Set();
-      for (const c of canvas.getCards()) {
+      for (const c of __cb.model.getNodes()) {
         if (c.data?.type !== "dp") continue;
         if (c.groupId != null) continue;
         if (c.data.groupCluster) continue;
@@ -1842,7 +1841,7 @@
         ? sectionKey.slice(2)
         : null;
       const seen = new Set();
-      for (const c of canvas.getCards()) {
+      for (const c of __cb.model.getNodes()) {
         if (c.data?.type !== "dp") continue;
         if (isRealGroup && c.groupId !== realGroupId) continue;
         if (commentClusterId != null && c.data.groupCluster !== commentClusterId) continue;
