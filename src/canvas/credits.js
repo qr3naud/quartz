@@ -4,13 +4,11 @@
   window.__cbCanvasModules = window.__cbCanvasModules || {};
 
   window.__cbCanvasModules.createCreditHelpers = function createCreditHelpers(deps) {
-    // `getClusters()` returns the model-backed `[{id, cardIds}]` shape;
-    // we destructure into the local `getClusterCardIds` adapter so the
-    // existing per-cluster reducers can keep iterating cardId arrays
-    // unchanged. Migrating to the richer `{id, cardIds}` shape is a
-    // separate cleanup we'll pick up alongside per-cluster metadata.
-    const { cardsRef, groupsRef, getCardById, getClusters } = deps;
-    const getClusterCardIds = () => getClusters().map((cl) => cl.cardIds);
+    // Credits are derived from the semantic model only: DP↔ER association comes
+    // from lineage (`sourceEnrichmentFieldId`), never canvas geometry/clusters.
+    // This keeps the canvas per-DP cost pill AND the per-group credit badge in
+    // agreement with the lineage-driven table regardless of card positions.
+    const { cardsRef, groupsRef, getCardById } = deps;
 
     function isNonErType(type) {
       return type === "dp" || type === "input" || type === "comment";
@@ -134,18 +132,18 @@
         : (c.data.fieldId ?? null);
     }
 
-    function updateDpCosts() {
+    // Shared lineage index for the per-DP cost pill and the per-group credit
+    // badge. `erByKey` maps each enrichment's lineage key (action field id, or
+    // `wf:<groupCluster>` for waterfalls) to its ER card; `dpCountByKey` counts
+    // how many data points each enrichment feeds, so a DP's cost is the ER's
+    // credits split across all its DPs (matching the table).
+    function buildLineageIndex() {
       const allCards = cardsRef();
-
-      // Match data points to their enrichment by LINEAGE
-      // (data.sourceEnrichmentFieldId), not canvas geometry — so the canvas
-      // "~N / row" / "Not connected" pill agrees with the lineage-driven table.
       const erByKey = new Map();
       for (const c of allCards) {
         const key = erLineageKey(c);
         if (key != null && !erByKey.has(key)) erByKey.set(key, c);
       }
-      // Cost splits across the data points one enrichment returns.
       const dpCountByKey = new Map();
       for (const c of allCards) {
         if (c.data.type !== "dp") continue;
@@ -153,6 +151,16 @@
         if (key == null || !erByKey.has(key)) continue;
         dpCountByKey.set(key, (dpCountByKey.get(key) || 0) + 1);
       }
+      return { erByKey, dpCountByKey };
+    }
+
+    function updateDpCosts() {
+      const allCards = cardsRef();
+
+      // Match data points to their enrichment by LINEAGE
+      // (data.sourceEnrichmentFieldId), not canvas geometry — so the canvas
+      // "~N / row" / "Not connected" pill agrees with the lineage-driven table.
+      const { erByKey, dpCountByKey } = buildLineageIndex();
 
       for (const card of allCards) {
         if (card.data.type !== "dp") continue;
@@ -185,7 +193,13 @@
     }
 
     function updateGroupCredits() {
-      const clusters = getClusterCardIds();
+      // Lineage-based (not cluster-based): a group's cost is attributed the
+      // same way the canvas DP pill and the table are — each data point in the
+      // group carries its share (ER credits ÷ all DPs that ER feeds), and any
+      // ER in the group whose output DPs aren't represented anywhere counts its
+      // full cost directly. So the badge agrees with the table regardless of
+      // canvas geometry.
+      const { erByKey, dpCountByKey } = buildLineageIndex();
 
       for (const g of groupsRef()) {
         const badge = g.el.querySelector(".cb-group-credits");
@@ -201,39 +215,35 @@
         let weightedSum = 0;
         let weightedActionSum = 0;
         let hasCredits = false;
-        const countedErIds = new Set();
 
+        // Data point members contribute their per-DP share of the source ER's
+        // cost — the exact figure updateDpCosts renders on the canvas pill.
         for (const c of members) {
           if (c.data.type !== "dp") continue;
-          for (const cluster of clusters) {
-            if (!cluster.includes(c.id)) continue;
-            const clusterCards = cluster
-              .map((id) => cardsRef().find((cc) => cc.id === id))
-              .filter(Boolean);
-            const erCards = clusterCards.filter((cc) => !isNonErType(cc.data.type));
-            const dpCards = clusterCards.filter((cc) => cc.data.type === "dp");
-            if (dpCards.length === 0) break;
-
-            for (const er of erCards) {
-              countedErIds.add(er.id);
-              const cov = coverageRatio(er, records);
-              if (!er.data.usePrivateKey && er.data.credits != null && er.data.credits > 0) {
-                sum += er.data.credits / dpCards.length;
-                weightedSum += (er.data.credits / dpCards.length) * cov;
-                hasCredits = true;
-              }
-              if (er.data.actionExecutions != null && er.data.actionExecutions > 0) {
-                actionSum += er.data.actionExecutions / dpCards.length;
-                weightedActionSum += (er.data.actionExecutions / dpCards.length) * cov;
-              }
-            }
-            break;
+          const key = c.data.sourceEnrichmentFieldId ?? null;
+          const er = key != null ? erByKey.get(key) : null;
+          if (!er) continue;
+          const count = dpCountByKey.get(key) || 1;
+          const cov = coverageRatio(er, records);
+          if (!er.data.usePrivateKey && er.data.credits != null && er.data.credits > 0) {
+            sum += er.data.credits / count;
+            weightedSum += (er.data.credits / count) * cov;
+            hasCredits = true;
+          }
+          if (er.data.actionExecutions != null && er.data.actionExecutions > 0) {
+            actionSum += er.data.actionExecutions / count;
+            weightedActionSum += (er.data.actionExecutions / count) * cov;
           }
         }
 
+        // ER members whose extracted DPs aren't represented anywhere (standalone
+        // enrichments with no data point cards) count their full cost. ERs that
+        // DO feed DPs are already attributed via those DPs' shares above, so we
+        // skip them here to avoid double counting.
         for (const c of members) {
           if (isNonErType(c.data.type)) continue;
-          if (countedErIds.has(c.id)) continue;
+          const key = erLineageKey(c);
+          if ((dpCountByKey.get(key) || 0) > 0) continue;
           const cov = coverageRatio(c, records);
           if (!c.data.usePrivateKey && c.data.credits != null && c.data.credits > 0) {
             sum += c.data.credits;

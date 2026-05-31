@@ -374,6 +374,16 @@
         if (prev === "table" && __cb.mountCollaboratorsWidget) {
           __cb.mountCollaboratorsWidget(mainArea);
         }
+        // Lineage grouping (C2.4): fold each enrichment together with its
+        // extracted data points into one cluster so the canvas matches the
+        // lineage-driven table. Idempotent — a no-op when hydrateCanvasDom
+        // already ran it (table→canvas toggle); does the work when a canvas-view
+        // tab was opened directly (hydrateCanvasDom early-returns as already
+        // hydrated by restore).
+        let lineageGrouped = false;
+        if (__cb.canvas?.clusterByLineage) {
+          lineageGrouped = __cb.canvas.clusterByLineage();
+        }
         // Coming back from the table view: clusters that the table-side
         // mutated (deleted a bridge ER, merged orphan clusters, etc.)
         // may be relationally intact but geometrically scattered. Pull
@@ -388,14 +398,19 @@
           const moved = __cb.canvas.tightenBrokenClusters();
           if (moved) {
             // Refresh visuals so snap classes line up with the new
-            // adjacencies, then push the moved positions through the
-            // canonical save path.
+            // adjacencies.
             if (__cb.canvas.refreshClusters) {
               __cb.canvas.refreshClusters({ dragCardIds: new Set() });
             }
             if (__cb.canvas.updateGroupBounds) __cb.canvas.updateGroupBounds();
-            if (__cb.canvas.notifyChange) __cb.canvas.notifyChange();
+            lineageGrouped = true;
           }
+        }
+        // Persist the (re)grouping through the canonical save path. Covers the
+        // initial canvas-view open, where setBrainstormView's prev===next means
+        // the trailing debouncedSave below won't fire.
+        if (lineageGrouped && __cb.canvas?.notifyChange) {
+          __cb.canvas.notifyChange();
         }
       }
       if (prev !== next && __cb.debouncedSave) __cb.debouncedSave();

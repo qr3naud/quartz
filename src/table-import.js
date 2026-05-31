@@ -1844,8 +1844,12 @@
     let col = 0;
 
     // Standalone enrichments + promoted (hidden-but-referenced) enrichments are
-    // placed the same way. Placement is cosmetic — the table view links each to
-    // its data point by lineage (sourceEnrichmentFieldId), not canvas position.
+    // placed in a plain grid. Lineage grouping (each ER + its extracted data
+    // points sharing a cluster) is applied uniformly on the canvas by
+    // canvas.clusterByLineage() at hydration — it handles standalone,
+    // basic-group, and waterfall ERs together with real card heights, which is
+    // far more reliable than positioning here. So placement here is purely
+    // cosmetic; the table groups by lineage (sourceEnrichmentFieldId) anyway.
     for (const field of [...standaloneFields, ...promotedErFields]) {
       const cardData = mapFieldToCardData(field, statsByFieldId, tableId, viewId);
       const dedupKey = cardData.isAi
@@ -1869,11 +1873,10 @@
 
     // -------------------------------------------------------------------------
     // Lineage data points (Phase 1) — every visible extracted data point not
-    // already placed by a group / waterfall above. Captures the data points of
-    // standalone enrichments and any ungrouped extractions. Each is stamped
-    // with its sourceEnrichmentFieldId; the table view matches it to its
-    // enrichment and shares cost by that key, so placement here is cosmetic
-    // (canvas-only) — a simple grid below the rest.
+    // already placed by a group / waterfall above. Each is stamped with its
+    // sourceEnrichmentFieldId; the table matches + costs it by that key, and
+    // canvas.clusterByLineage() groups it with its source ER on the canvas at
+    // hydration. Placement here is a simple grid below the rest.
     // -------------------------------------------------------------------------
     let dpY = standaloneY + (col > 0 ? CARD_V_GAP : 0);
     let dpCol = 0;

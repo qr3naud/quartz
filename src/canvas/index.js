@@ -638,6 +638,97 @@
     return mutated;
   }
 
+  // ER lineage key — identical to the table view and credits.js: action field
+  // id for standalone / basic-group ERs, `wf:<groupCluster>` for waterfalls.
+  function erLineageKeyOf(c) {
+    if (!c || !c.data) return null;
+    const t = c.data.type;
+    if (t === "dp" || t === "input" || t === "comment") return null;
+    return t === "waterfall"
+      ? (c.data.groupCluster != null ? `wf:${c.data.groupCluster}` : null)
+      : (c.data.fieldId ?? null);
+  }
+
+  // Lineage-driven clustering (C2.4). Makes every enrichment and its extracted
+  // data points share ONE canvas cluster so the canvas grouping matches the
+  // lineage-driven table — independent of snap geometry, which can't reliably
+  // attach a tall ER card to its shorter DP cards, nor attach an ER to DPs that
+  // live in a basic group. Run AFTER geometry settles (post-hydrate /
+  // post-refreshClusters) so it can fold existing geometry clusters in.
+  //
+  // Option (a): preserve basic-group comments. We pull each member's existing
+  // cluster-mates into the merged cluster, so a basic group's comment rides
+  // along with its ER + DPs.
+  //
+  // Idempotent: a lineage group whose members already form one shared cluster
+  // is left untouched (so manual arrangements / already-correct groups aren't
+  // disturbed). Returns true if anything changed.
+  function clusterByLineage() {
+    const erByKey = new Map();
+    for (const c of cards) {
+      const k = erLineageKeyOf(c);
+      if (k != null && !erByKey.has(k)) erByKey.set(k, c);
+    }
+    const dpsByKey = new Map();
+    for (const c of cards) {
+      if (c.data.type !== "dp") continue;
+      const k = c.data.sourceEnrichmentFieldId ?? null;
+      if (k == null || !erByKey.has(k)) continue;
+      let arr = dpsByKey.get(k);
+      if (!arr) { arr = []; dpsByKey.set(k, arr); }
+      arr.push(c);
+    }
+
+    let changed = false;
+    for (const [key, er] of erByKey) {
+      const dps = dpsByKey.get(key);
+      if (!dps || dps.length === 0) continue;
+
+      // Seed = ER + its lineage DPs; expand to include any cards already
+      // sharing a cluster with a seed member (one hop) so basic-group comments
+      // and siblings ride along.
+      const memberIds = new Set([er.id, ...dps.map((d) => d.id)]);
+      const seedClusters = new Set();
+      for (const id of memberIds) {
+        const c = getCardById(id);
+        if (c && c.clusterId != null) seedClusters.add(c.clusterId);
+      }
+      if (seedClusters.size > 0) {
+        for (const c of cards) {
+          if (c.clusterId != null && seedClusters.has(c.clusterId)) memberIds.add(c.id);
+        }
+      }
+
+      const ids = [...memberIds];
+      // Already a single shared cluster across every member? leave it alone.
+      const distinct = new Set(ids.map((id) => getCardById(id)?.clusterId));
+      if (distinct.size === 1 && !distinct.has(null) && !distinct.has(undefined)) continue;
+
+      const existing = ids
+        .map((id) => getCardById(id)?.clusterId)
+        .filter((v) => v != null);
+      const targetId = existing.length ? Math.min(...existing) : allocateClusterId();
+      assignToCluster(ids, targetId);
+
+      // Co-locate the cluster so the grouping reads spatially too. Anchor at the
+      // current topmost-leftmost member so the cluster stays near where it was.
+      const anchor = ids
+        .map((id) => getCardById(id))
+        .filter(Boolean)
+        .sort((a, b) => a.y - b.y || a.x - b.x)[0];
+      if (anchor) {
+        layoutCardsAsCluster(ids, { anchorX: anchor.x, anchorY: anchor.y });
+      }
+      changed = true;
+    }
+
+    if (changed && domHydrated) {
+      getSnapHelpers().renderClusterOutlines();
+      updateGroupBounds();
+    }
+    return changed;
+  }
+
   function screenToCanvas(sx, sy) {
     const rect = canvasArea.getBoundingClientRect();
     return { x: (sx - rect.left - panX) / scale, y: (sy - rect.top - panY) / scale };
@@ -1718,6 +1809,9 @@
     const helpers = getCardHelpers();
     for (const c of cards) helpers.mountCardElForType(c);
     refreshClusters({ dragCardIds: new Set() });
+    // Lineage grouping override (C2.4): after the geometry baseline, fold each
+    // ER together with its extracted DPs so the canvas matches the table.
+    clusterByLineage();
     notifyCreditTotal();
     updateDpCosts();
     updateGroupCredits();
@@ -1825,6 +1919,11 @@
     // callers (and verification) check whether canvas DOM is currently built.
     hydrateCanvasDom,
     isDomHydrated: () => domHydrated,
+    // Lineage-driven canvas grouping (C2.4). Folds each ER together with its
+    // extracted data points into one cluster (option a: keeps basic-group
+    // comments). Idempotent; returns true if it changed anything. Called on
+    // hydrate and on every switch to the canvas view.
+    clusterByLineage,
     zoomIn: () => zoomBy(0.15),
     zoomOut: () => zoomBy(-0.15),
     refreshClusters,
