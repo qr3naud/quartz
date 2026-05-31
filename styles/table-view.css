@@ -543,16 +543,21 @@
 }
 
 .cb-table-view-er-menu-footer {
+  display: flex;
+  gap: 8px;
   padding-top: 8px;
   border-top: 1px solid #f1f5f9;
 }
 
 /* Mirrors the intro action buttons (.cb-table-view-add-er-btn + the Upload
-   POC indigo treatment) so "Open in table" reads as an action button, not a
-   heavy solid CTA. */
+   POC indigo treatment) so the footer buttons read as action buttons, not a
+   heavy solid CTA. flex:1 makes a lone button full-width; two buttons split
+   the footer into equal halves. */
 .cb-table-view-er-menu-open {
-  display: inline-flex;
+  display: flex;
+  flex: 1 1 0;
   align-items: center;
+  justify-content: center;
   gap: 6px;
   padding: 7px 12px;
   background: #eef2ff;
@@ -774,9 +779,11 @@
   /* Left padding tightened from 10px: the trigger's logo now provides the
      visual left inset. */
   padding: 3px 4px 3px 5px;
-  background: #eef2ff;
-  color: #4338ca;
-  border: 1px solid #e0e7ff;
+  /* Uniform classic-white pill for every enrichment kind — the kind is
+     surfaced in the details-menu badge, not the pill color. */
+  background: #ffffff;
+  color: #374151;
+  border: 1px solid #e5e7eb;
   border-radius: 999px;
   font-size: 12px;
   font-weight: 500;
@@ -792,7 +799,9 @@
   min-width: 0;
   max-width: 252px;
   margin: 0;
-  padding: 1px 2px;
+  /* Constant padding (no layout jump on hover); the hover background then
+     reads as a padded rounded highlight around the logo + label. */
+  padding: 2px 6px;
   background: transparent;
   border: none;
   border-radius: 999px;
@@ -849,25 +858,9 @@
   max-width: 230px;
 }
 
-.cb-table-view-er-chip-waterfall {
-  background: #f0fdf4;
-  color: #047857;
-  border-color: #d1fae5;
-}
-
-/* Function (subroutine / "Run function") — violet. */
-.cb-table-view-er-chip-function {
-  background: #f5f3ff;
-  color: #6d28d9;
-  border-color: #ede9fe;
-}
-
-/* Source enrichment — amber. */
-.cb-table-view-er-chip-source {
-  background: #fff7ed;
-  color: #c2410c;
-  border-color: #fed7aa;
-}
+/* Per-kind pill colors removed — every enrichment kind now renders as the
+   same classic-white pill (.cb-table-view-er-chip). The kind is communicated
+   through the details-menu badge instead. */
 
 /* Per-ER frequency badge inside an ER chip. Same amber-on-white pill
    as the canvas .cb-er-freq badge (cards.css) so reps recognize the

@@ -1757,13 +1757,88 @@
     __cb.currentWorkspaceId = null;
   };
 
-  // Right-click → "Open in table" entry point. Closes the canvas overlay and
-  // navigates the tab to the source view URL with `?fieldId=...`, which
-  // Clay's VirtualizedGrid (apps/frontend/src/components/VirtualizedGrid)
-  // consumes via useQuerySchemaActions to scroll the column into view. Only
-  // imported cards carry both fieldId and tableId — earlier cards / picker-
-  // dropped cards return early and the menu never appears for them anyway
-  // (the cards.js guard checks the same fields before showing the menu).
+  // Scrolls a column into view inside Clay's grid and pulses an outline on its
+  // header, without navigating. Shared by:
+  //   1. src/table-focus.js — after a cross-table reload, replaying the
+  //      `cb-focus-field` sentinel once the destination page mounts.
+  //   2. __cb.openCardInTable's same-table soft path below — no reload needed.
+  // Clay's own scrollToField right-aligns columns coming in from off-screen
+  // right (apps/frontend/.../useGridScrollToPosition.ts); we override that by
+  // left-aligning the column flush against the pinned strip. Waits (via a
+  // MutationObserver, 10s safety cap) for the header to mount — covers both a
+  // fresh page load and a virtualized column React Router scrolls into range.
+  __cb.focusFieldInGrid = function (fieldId) {
+    if (!fieldId) return;
+    const HEADER_ID = `table-header-cell-${fieldId}`;
+    const CONTAINER_ID = "grid-view-scroll-container";
+    const PINNED_CONTAINER_ID = "table-header-pinned-fields-container";
+    const FLASH_CLASS = "cb-focus-flash";
+    const FLASH_DURATION_MS = 5000;
+    const POST_MOUNT_DELAY_MS = 200;
+    const SAFETY_TIMEOUT_MS = 10000;
+
+    function leftAlignAndFlash() {
+      const container = document.getElementById(CONTAINER_ID);
+      const header = document.getElementById(HEADER_ID);
+      if (!container || !header) return false;
+      // Pinned (sticky) headers always sit in the pinned strip; scrolling
+      // won't move them, so flash only (mirrors Clay's own
+      // scrollTableHeaderCellIntoView pinned short-circuit).
+      const isPinned = getComputedStyle(header).position === "sticky";
+      if (!isPinned) {
+        const pinned = document.getElementById(PINNED_CONTAINER_ID);
+        const pinnedRight = pinned?.getBoundingClientRect().right ?? 0;
+        const headerLeft = header.getBoundingClientRect().left;
+        const amount = headerLeft - pinnedRight;
+        if (Math.abs(amount) > 1) {
+          const target = Math.max(0, container.scrollLeft + amount);
+          container.scrollTo({ left: target, behavior: "auto" });
+        }
+      }
+      header.classList.add(FLASH_CLASS);
+      setTimeout(() => header.classList.remove(FLASH_CLASS), FLASH_DURATION_MS);
+      return true;
+    }
+
+    let done = false;
+    let observer = null;
+    let safetyTimer = null;
+    function finish() {
+      if (done) return;
+      done = true;
+      if (observer) observer.disconnect();
+      if (safetyTimer) clearTimeout(safetyTimer);
+    }
+    function attempt() {
+      if (done) return;
+      if (!document.getElementById(HEADER_ID)) return;
+      // Defer past Clay's own ?fieldId= scroll cycle (React commit → effect →
+      // scroll may straddle frames); 200ms clears it on every machine tested.
+      setTimeout(() => {
+        if (done) return;
+        if (leftAlignAndFlash()) finish();
+      }, POST_MOUNT_DELAY_MS);
+    }
+    observer = new MutationObserver(attempt);
+    observer.observe(document.body, { childList: true, subtree: true });
+    safetyTimer = setTimeout(finish, SAFETY_TIMEOUT_MS);
+    attempt();
+  };
+
+  // Reads the current table id out of the location path (…/tables/{id}/…).
+  function currentTableIdFromUrl() {
+    const parts = window.location.pathname.split("/");
+    const idx = parts.indexOf("tables");
+    return idx !== -1 ? parts[idx + 1] || null : null;
+  }
+
+  // Right-click → "Find in table" entry point. Navigates the tab to the source
+  // view URL with `?fieldId=...`, which Clay's VirtualizedGrid
+  // (apps/frontend/src/components/VirtualizedGrid) consumes via
+  // useQuerySchemaActions to scroll the column into view. Only imported cards
+  // carry both fieldId and tableId — earlier cards / picker-dropped cards
+  // return early and the menu never appears for them anyway (the cards.js
+  // guard checks the same fields before showing the menu).
   __cb.openCardInTable = function (card) {
     const data = card?.data;
     if (!data?.fieldId || !data?.tableId) return;
@@ -1777,11 +1852,28 @@
       ? `${base}/views/${data.viewId}?fieldId=${encodeURIComponent(data.fieldId)}`
       : `${base}?fieldId=${encodeURIComponent(data.fieldId)}`;
 
-    // Hand-off sentinel for src/table-focus.js on the destination page:
-    // it left-aligns the column (overriding Clay's default right-aligned
-    // scroll) and pulses an outline on the header so the user spots it
-    // immediately. 10s TTL guards against stale entries if the user
-    // navigates manually before the destination page loads.
+    // Same-table jump: the extension is already overlaying this exact table, so
+    // the grid (and the target column's neighborhood) is mounted. Soft-navigate
+    // via History + popstate so React Router v5 picks up the new ?fieldId= and
+    // runs scrollToField (handles virtualized off-screen columns) — no full page
+    // reload — then left-align + flash in place via focusFieldInGrid.
+    if (currentTableIdFromUrl() === data.tableId) {
+      __cb.closeCanvas();
+      try {
+        window.history.pushState(window.history.state, "", url);
+        window.dispatchEvent(new PopStateEvent("popstate"));
+      } catch (_e) {
+        // History API unavailable — fall back to a hard navigation.
+        window.location.assign(url);
+        return;
+      }
+      __cb.focusFieldInGrid(data.fieldId);
+      return;
+    }
+
+    // Cross-table jump: stamp the hand-off sentinel and reload. table-focus.js
+    // replays it (via focusFieldInGrid) once the destination page mounts. 10s
+    // TTL guards against stale entries if the user navigates manually first.
     try {
       sessionStorage.setItem(
         "cb-focus-field",
@@ -1789,6 +1881,22 @@
       );
     } catch (_e) { /* private mode etc. — silently fall through */ }
 
+    __cb.closeCanvas();
+    window.location.assign(url);
+  };
+
+  // "Open function" entry point — jumps to a subroutine's referenced "main
+  // function" table. The referenced table can live in a different workbook, so
+  // we use the workspace-level table route (/workspaces/{ws}/tables/{tableId}),
+  // which Clay resolves to the correct workbook + default view
+  // (RedirectWithWorkbookId on ROUTES.table; apps/frontend/src/routes/Workspace.tsx).
+  __cb.openReferencedTable = function (er) {
+    const refId = er?.referencedTableId;
+    if (!refId) return;
+    const ids = __cb.parseIdsFromUrl();
+    const workspaceId = ids?.workspaceId ?? __cb.currentWorkspaceId;
+    if (!workspaceId) return;
+    const url = `/workspaces/${workspaceId}/tables/${refId}`;
     __cb.closeCanvas();
     window.location.assign(url);
   };

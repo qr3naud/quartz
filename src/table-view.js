@@ -1325,11 +1325,14 @@
       frequencyId,
       frequencyLabel,
       multiplier,
-      // Navigation back to the source Clay column ("Open in table"). Present
+      // Navigation back to the source Clay column ("Find in table"). Present
       // only on imported cards; gates the menu footer action.
       fieldId: d.fieldId || null,
       tableId: d.tableId || null,
       viewId: d.viewId || null,
+      // Subroutine ("Run function") cards reference a "main function" table.
+      // Gates the function-only "Open function" footer action.
+      referencedTableId: d.referencedTableId || null,
     };
   }
 
@@ -2882,16 +2885,9 @@
 
   function buildErChipEl(er, removable) {
     const chip = document.createElement("span");
-    // One color per enrichment kind (precedence: waterfall > function > source
-    // > normal ER). CSS defines the palette.
-    const typeClass = er.isWaterfall
-      ? " cb-table-view-er-chip-waterfall"
-      : er.isFunction
-        ? " cb-table-view-er-chip-function"
-        : er.isSource
-          ? " cb-table-view-er-chip-source"
-          : "";
-    chip.className = "cb-table-view-er-chip" + typeClass;
+    // Uniform classic-white pill for every kind — the enrichment kind is
+    // surfaced in the details-menu badge, not the pill color.
+    chip.className = "cb-table-view-er-chip";
     chip.title =
       er.isWaterfall && er.providerChain
         ? `${er.name} \u2014 ${er.providerChain}`
@@ -2997,9 +2993,10 @@
   //
   // Anchored popover opened by clicking an ER pill. Summarizes the
   // enrichment (kind + provider/model), its per-row cost + frequency, the
-  // AI model (when applicable), and offers "Open in table" — the same
+  // AI model (when applicable), and offers "Find in table" — the same
   // navigation the canvas right-click menu uses (__cb.openCardInTable),
-  // gated on the card carrying fieldId + tableId. Built on click (not per
+  // gated on the card carrying fieldId + tableId. Functions additionally get
+  // "Open function" (jumps to the referenced table). Built on click (not per
   // chip) so a large import only pays for the logo per pill.
 
   function closeErChipMenu() {
@@ -3136,16 +3133,19 @@
       menu.appendChild(modelSection);
     }
 
-    // Footer: Open in table (reuses the canvas navigation). Disabled when the
-    // card wasn't imported from a Clay table (no fieldId / tableId).
+    // Footer: "Find in table" scrolls the source column into view (reuses the
+    // canvas navigation). Functions also get "Open function", which jumps to
+    // the subroutine's referenced "main function" table. CSS flex:1 makes a
+    // lone button full-width and splits two buttons into equal halves.
     const canOpen = !!(er.fieldId && er.tableId);
     const footer = document.createElement("div");
     footer.className = "cb-table-view-er-menu-footer";
+
     const openBtn = document.createElement("button");
     openBtn.type = "button";
     openBtn.className =
       "cb-table-view-er-menu-open" + (canOpen ? "" : " cb-table-view-er-menu-open-disabled");
-    openBtn.innerHTML = tableSvg(13) + "<span>Open in table</span>";
+    openBtn.innerHTML = tableSvg(13) + "<span>Find in table</span>";
     if (canOpen) {
       openBtn.addEventListener("click", (evt) => {
         evt.stopPropagation();
@@ -3160,6 +3160,22 @@
       openBtn.title = "This enrichment wasn't imported from a Clay table";
     }
     footer.appendChild(openBtn);
+
+    if (er.isFunction && er.referencedTableId) {
+      const openFnBtn = document.createElement("button");
+      openFnBtn.type = "button";
+      openFnBtn.className = "cb-table-view-er-menu-open";
+      openFnBtn.innerHTML = externalLinkSvg(13) + "<span>Open function</span>";
+      openFnBtn.addEventListener("click", (evt) => {
+        evt.stopPropagation();
+        closeErChipMenu();
+        if (typeof __cb.openReferencedTable === "function") {
+          __cb.openReferencedTable(er);
+        }
+      });
+      footer.appendChild(openFnBtn);
+    }
+
     menu.appendChild(footer);
 
     document.body.appendChild(erChipMenuBackdrop);
@@ -3541,6 +3557,21 @@
       '<line x1="3" y1="9" x2="21" y2="9"/>' +
       '<line x1="3" y1="15" x2="21" y2="15"/>' +
       '<line x1="9" y1="3" x2="9" y2="21"/>' +
+      '</svg>'
+    );
+  }
+
+  // Box with an out-arrow — signals "opens another table" for the
+  // function-only "Open function" footer action.
+  function externalLinkSvg(size) {
+    const s = String(size);
+    return (
+      `<svg xmlns="http://www.w3.org/2000/svg" width="${s}" height="${s}" viewBox="0 0 24 24" ` +
+      'fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" ' +
+      'stroke-linejoin="round" aria-hidden="true">' +
+      '<path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>' +
+      '<polyline points="15 3 21 3 21 9"/>' +
+      '<line x1="10" y1="14" x2="21" y2="3"/>' +
       '</svg>'
     );
   }

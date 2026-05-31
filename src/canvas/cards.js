@@ -280,7 +280,7 @@
       const openBtn = document.createElement("button");
       openBtn.type = "button";
       openBtn.className = "cb-card-context-menu-btn";
-      openBtn.textContent = "Open in table";
+      openBtn.textContent = "Find in table";
       openBtn.addEventListener("click", (e) => {
         e.stopPropagation();
         closeCardMenu();
