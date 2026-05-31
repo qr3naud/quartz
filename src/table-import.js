@@ -629,6 +629,9 @@
       creditText: credits != null ? `~${credits} / row` : null,
       badges: [],
       isAi: ai,
+      // Marks source-type enrichments (vs actions) so the table view can color
+      // their chip distinctly. Persists with the card.
+      isSource: field?.type === "source",
       modelOptions,
       selectedModel,
       requiresApiKey,
@@ -966,7 +969,7 @@
         visibleFieldIds.has(f.id) &&
         !groupedFieldIds.has(f.id) &&
         !leafInputFieldIds.has(f.id) &&
-        f.type === "action"
+        (f.type === "action" || f.type === "source")
     );
 
     // Waterfall enumeration — see visibleWaterfallGroupIds above for why
@@ -997,7 +1000,9 @@
           if (!field) continue;
           if (!visibleFieldIds.has(field.id)) continue;
           if (leafInputFieldIds.has(field.id)) continue;
-          if (field.type === "action") {
+          // Actions AND sources are enrichments (both can be paid); everything
+          // else in the group is a data point.
+          if (field.type === "action" || field.type === "source") {
             erFields.push(field);
           } else {
             dpFields.push(field);
@@ -1051,7 +1056,9 @@
       const field = fieldById[fieldId];
       if (!field) return null;
       if (field.type === "action") return fieldId;
-      if (field.type === "source") return null;
+      // Sources are paid enrichments too — return the source's own id so a data
+      // point extracted from a source links to it (was: null = "unmatched").
+      if (field.type === "source") return fieldId;
       // basic / formula column: walk to the field it was extracted from.
       const parentId =
         field.extractedField?.fieldIdExtractedFrom ??
@@ -1076,6 +1083,27 @@
       if (!key) continue;
       dpEnrichmentKeyById.set(f.id, key);
       dataPointFields.push(f);
+    }
+
+    // Promotion: an enrichment a visible data point was extracted from MUST be
+    // imported even if its own column is hidden in the view — otherwise the DP
+    // renders "Not connected" and its cost silently vanishes. Collect the
+    // required enrichment field ids (action or source) that the visible buckets
+    // above didn't already cover, and import them too. Waterfall keys (wf:<gid>)
+    // are handled by visibleWaterfallGroupIds and skipped here.
+    const importedErIds = new Set([
+      ...standaloneFields.map((f) => f.id),
+      ...basicGroups.flatMap((g) => g.erFields.map((f) => f.id)),
+    ]);
+    const promotedErFields = [];
+    const promotedSeen = new Set();
+    for (const key of dpEnrichmentKeyById.values()) {
+      if (!key || typeof key !== "string" || key.startsWith("wf:")) continue;
+      if (importedErIds.has(key) || promotedSeen.has(key)) continue;
+      const f = fieldById[key];
+      if (!f || (f.type !== "action" && f.type !== "source")) continue;
+      promotedSeen.add(key);
+      promotedErFields.push(f);
     }
 
     const statsByFieldId = buildStatsByFieldId({
@@ -1143,6 +1171,9 @@
         erFields: g.erFields.map(trimField),
       })),
       standaloneFields: standaloneFields.map(trimField),
+      // Enrichments rescued because a visible data point points at them even
+      // though their own column is hidden.
+      promotedErFields: promotedErFields.map(trimField),
       // Lineage (Phase 1): each visible data point + the enrichment it was
       // extracted from. The source of truth for DP<->ER matching.
       dataPoints: dataPointFields.map((f) => ({
@@ -1175,6 +1206,7 @@
         waterfalls,
         basicGroups,
         standaloneFields,
+        promotedErFields,
         statsByFieldId,
         dataPointFields,
         dpEnrichmentKeyById,
@@ -1305,6 +1337,7 @@
     const leafInputFields = internal.leafInputFields;
     const leafInputFieldIds = internal.leafInputFieldIds;
     const standaloneFields = internal.standaloneFields;
+    const promotedErFields = internal.promotedErFields ?? [];
     const waterfalls = internal.waterfalls;
     const basicGroups = internal.basicGroups;
     const statsByFieldId = internal.statsByFieldId;
@@ -1751,7 +1784,10 @@
     let standaloneY = groupY;
     let col = 0;
 
-    for (const field of standaloneFields) {
+    // Standalone enrichments + promoted (hidden-but-referenced) enrichments are
+    // placed the same way. Placement is cosmetic — the table view links each to
+    // its data point by lineage (sourceEnrichmentFieldId), not canvas position.
+    for (const field of [...standaloneFields, ...promotedErFields]) {
       const cardData = mapFieldToCardData(field, statsByFieldId, tableId, viewId);
       const dedupKey = cardData.isAi
         ? `ai-${field.id}`

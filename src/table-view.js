@@ -1103,6 +1103,10 @@
       id: er.id,
       name: er.data.displayName || er.data.text || (isWaterfall ? "Waterfall" : "Untitled enrichment"),
       isWaterfall,
+      // Type flags for per-kind chip color (see buildErChipEl): function =
+      // subroutine ("Run function"), source = source-type enrichment.
+      isFunction: er.data.actionKey === "execute-subroutine",
+      isSource: !!er.data.isSource,
       providerChain,
       frequencyId,
       frequencyLabel,
@@ -2685,8 +2689,16 @@
 
   function buildErChipEl(er, removable) {
     const chip = document.createElement("span");
-    chip.className =
-      "cb-table-view-er-chip" + (er.isWaterfall ? " cb-table-view-er-chip-waterfall" : "");
+    // One color per enrichment kind (precedence: waterfall > function > source
+    // > normal ER). CSS defines the palette.
+    const typeClass = er.isWaterfall
+      ? " cb-table-view-er-chip-waterfall"
+      : er.isFunction
+        ? " cb-table-view-er-chip-function"
+        : er.isSource
+          ? " cb-table-view-er-chip-source"
+          : "";
+    chip.className = "cb-table-view-er-chip" + typeClass;
     chip.title =
       er.isWaterfall && er.providerChain
         ? `${er.name} \u2014 ${er.providerChain}`

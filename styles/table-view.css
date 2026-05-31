@@ -612,6 +612,20 @@
   border-color: #d1fae5;
 }
 
+/* Function (subroutine / "Run function") — violet. */
+.cb-table-view-er-chip-function {
+  background: #f5f3ff;
+  color: #6d28d9;
+  border-color: #ede9fe;
+}
+
+/* Source enrichment — amber. */
+.cb-table-view-er-chip-source {
+  background: #fff7ed;
+  color: #c2410c;
+  border-color: #fed7aa;
+}
+
 /* Per-ER frequency badge inside an ER chip. Same amber-on-white pill
    as the canvas .cb-er-freq badge (cards.css) so reps recognize the
    ×N affordance across views. Sits flush between the label and the
