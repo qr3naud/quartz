@@ -551,6 +551,7 @@
     const linkedErs = list.filter(isErCard);
     const linkedDps = list.filter((c) => c && c.data && c.data.type === "dp");
     if (linkedErs.length === 1 && linkedDps.length > 0) {
+      // Explicit ER + DP(s): every linked DP points at that enrichment.
       // ensureErLineageKey synthesizes + persists a stable key for canvas /
       // picker-authored ERs that carry no Clay fieldId, so a manual link in
       // the table view (or canvas Enter) actually attaches the DP in the
@@ -558,6 +559,19 @@
       const erKey = ensureErLineageKey(linkedErs[0]);
       if (erKey != null) {
         for (const dp of linkedDps) dp.data.sourceEnrichmentFieldId = erKey;
+      }
+    } else if (linkedErs.length === 0 && linkedDps.length >= 2) {
+      // DP-only link — the table-view "Link N data points" path, where each
+      // DP's enrichment is an inline chip rather than a selected card. Make
+      // the DPs share ONE source enrichment so they read as that
+      // enrichment's outputs and its per-row cost splits across them. Adopt
+      // the first existing lineage key in the selection; if none of the DPs
+      // carries one there's no enrichment to share, so the link is a no-op in
+      // the lineage model (the caller gates the menu on the same condition).
+      const sharedKey =
+        linkedDps.map((dp) => dp.data.sourceEnrichmentFieldId).find((k) => k != null) ?? null;
+      if (sharedKey != null) {
+        for (const dp of linkedDps) dp.data.sourceEnrichmentFieldId = sharedKey;
       }
     }
 
@@ -1951,6 +1965,12 @@
     zoomOut: () => zoomBy(-0.15),
     refreshClusters,
     getCardById,
+    // Remove a card by id. Lazy-safe (card.el?.remove()) and runs the full
+    // cleanup (group membership, cluster reconcile, selection, credit total,
+    // notifyChange), so the table view's row × / chip × can delete without a
+    // hydrated canvas DOM. Replaces the old "simulate a click on the card's
+    // delete button" hack, which silently no-op'd once the canvas went lazy.
+    removeCard,
     // Live snapshot of cluster membership backed by the explicit
     // `card.clusterId` model. Both the canvas (credits) and the table
     // view read this. Returns clusters of size >= 2 only — singletons

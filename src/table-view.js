@@ -1433,9 +1433,18 @@
     if (!canvas?.getCardById) return;
     const card = canvas.getCardById(cardId);
     if (!card) return;
-    // The card's own .cb-card-delete button calls removeCard() through the
-    // cards.js IIFE. Replicate that by simulating the click — keeps undo /
-    // group cleanup / cluster recalc all flowing through the canonical path.
+    // Delete through the canvas's removeCard (group cleanup, cluster recalc,
+    // credit total, notifyChange all flow through the canonical path). We used
+    // to simulate a click on the card's .cb-card-delete button, but that
+    // element only exists when the canvas DOM is hydrated — under the lazy
+    // canvas (table view is the active surface) card.el is null, so the row ×
+    // / chip × silently did nothing.
+    if (typeof canvas.removeCard === "function") {
+      canvas.removeCard(cardId);
+      if (__cb.saveTabs) __cb.saveTabs();
+      return;
+    }
+    // Fallback for older canvas builds without an exposed removeCard.
     const del = card.el?.querySelector(".cb-card-delete");
     if (del) del.click();
   }
@@ -1930,17 +1939,28 @@
     // Adaptive label so the menu reads naturally for each selection
     // shape (DPs, ERs, or a mix). `noun` flips between "data points",
     // "enrichments", and "rows" depending on what's actually selected.
+    const selCards = cardIds.map(getCardForRowId).filter(Boolean);
+    const erCount = selCards.filter((c) => isErType(c.data?.type)).length;
+    const dpCards = selCards.filter((c) => c.data?.type === "dp");
+    const dpWithLineage = dpCards.some(
+      (c) => (c.data?.sourceEnrichmentFieldId ?? null) != null,
+    );
     let noun = "rows";
     if (enough) {
-      const types = new Set(
-        cardIds.map((id) => {
-          const card = getCardForRowId(id);
-          return card?.data?.type === "dp" ? "dp" : "er";
-        }),
-      );
+      const types = new Set(selCards.map((c) => (c.data?.type === "dp" ? "dp" : "er")));
       if (types.size === 1 && types.has("dp")) noun = "data points";
       else if (types.size === 1 && types.has("er")) noun = "enrichments";
     }
+    // Link = "share an enrichment" in the lineage model (cost splits across
+    // the DPs). It's meaningful only when the selection can actually share
+    // one: exactly one enrichment + data point(s), or DP-only where at least
+    // one DP already carries a source enrichment to propagate. Pure orphan
+    // DPs / multiple enrichments have nothing to share, so the action is
+    // disabled with a hint instead of silently no-op'ing.
+    const canShareEnrichment =
+      enough &&
+      ((erCount === 1 && dpCards.length >= 1) ||
+        (erCount === 0 && dpCards.length >= 2 && dpWithLineage));
     const items = [
       {
         id: "group",
@@ -1952,10 +1972,14 @@
       {
         id: "link",
         label: enough
-          ? `Link ${cardIds.length} ${noun} (share cluster)`
+          ? `Link ${cardIds.length} ${noun} (share enrichment)`
           : "Link selected",
-        hint: enough ? null : "Shift+click another row to enable",
-        enabled: enough,
+        hint: !enough
+          ? "Shift+click another row to enable"
+          : canShareEnrichment
+            ? null
+            : "Select rows that share an enrichment",
+        enabled: canShareEnrichment,
         action: () => linkSelected(),
       },
     ];
