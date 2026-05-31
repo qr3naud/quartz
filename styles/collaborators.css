@@ -140,16 +140,24 @@
 /* Indigo ring marks avatars whose owner is currently viewing. Two stacked
    box-shadows: a white spacer ring (so the ring floats off the photo — the
    avatar's own white border is hidden under the cover-sized background image)
-   then the brand-indigo ring outside it. Both the gap (white, 4% of avatar)
-   and the ring (indigo, the next 5%) are fractions of the avatar size
-   (--cb-collab-av-size) so the gap + ring scale together and read the same at
-   every size — a tight hairline gap rather than a hard-coded px that looked
-   like too much white on the smaller header avatars. */
+   then the brand-indigo ring outside it. Both widths are fractions of the
+   avatar size (--cb-collab-av-size) so the ring stays proportional at every
+   size instead of a hard-coded px that looks too thick on the smaller header
+   avatars. Fractions are calibrated to the 28px dropdown avatar (~2px gap,
+   ~1.5px ring), so that one is unchanged and the 24px header scales down. */
 .cb-collab-avatar-active,
 .cb-collab-row-active .cb-collab-avatar {
+  /* Drop the avatar's solid 2px white border for the active state. That border
+     is a fixed, non-proportional constant: the header avatars carry it (base
+     .cb-collab-avatar) while the dropdown -lg avatars set border-width:0, so it
+     doubled the white gap on the smaller header pile only. With it transparent
+     the photo fills the full circle and the gap is purely the proportional
+     box-shadow below — so the header tightens to match the dropdown, which is
+     unaffected (it already had no border). */
+  border-color: transparent;
   box-shadow:
-    0 0 0 calc(var(--cb-collab-av-size) * 0.04) #ffffff,
-    0 0 0 calc(var(--cb-collab-av-size) * 0.09) #6366f1;
+    0 0 0 calc(var(--cb-collab-av-size) * 0.0714) #ffffff,
+    0 0 0 calc(var(--cb-collab-av-size) * 0.125) #6366f1;
 }
 
 /* Dropdown
