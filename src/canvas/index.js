@@ -21,10 +21,9 @@
   let importedTables = {};
   let nextCardId = 1, nextGroupId = 1;
   // Monotonic id counter for relational cluster membership (see
-  // `getClusters` / `assignToCluster`). Survives across snap-reconcile
-  // because `syncClusterModelFromSnap` reuses existing cluster ids
-  // whenever any member already has one — only fully-new clusters
-  // bump the counter.
+  // `getClusters` / `assignToCluster`). clusterByLineage reuses an existing
+  // cluster id whenever any lineage member already has one — only fully-new
+  // lineage clusters bump the counter.
   let nextClusterId = 1;
   let selectedCards = new Set();
   let dragState = null, panState = null, selBoxState = null, groupDragState = null;
@@ -213,12 +212,15 @@
         setRestoring: (next) => {
           __cb.model.setRestoring(next);
         },
-        // Legacy state migration: persistence calls this once after
-        // restore() if the loaded blob carried no cluster ids. We use
-        // snap-derived geometry as the seed and stamp explicit ids so
-        // subsequent saves carry the model forward.
-        backfillClusterModel: () => {
-          syncClusterModelFromSnap();
+        // Cluster membership is derived from lineage, not geometry. After a
+        // restore rebuilds the cards, persistence calls this once to stamp
+        // each ER + its lineage data points with a shared clusterId. It is
+        // DOM-safe (the clusterId assignment needs no element; co-location /
+        // halos are self-gated on domHydrated), so it runs on the table-view
+        // surface too — keeping clusterId correct even when the canvas is
+        // never opened. Subsequent saves carry the ids forward.
+        deriveClusters: () => {
+          clusterByLineage();
         },
       });
     }
@@ -297,106 +299,6 @@
     return nextClusterId++;
   }
 
-  // Reconcile the model from current geometry. Called from
-  // refreshClusters() so snap-adjacency stays the dominant writer in
-  // canvas-driven flows (drag-end, picker placement, importer drops).
-  // Existing cluster ids are preserved whenever possible: if any member
-  // of a snap-cluster already has a clusterId, that id wins (smallest if
-  // multiple). Only fully-new snap-clusters allocate a new id.
-  //
-  // `opts.dragCardIds` (Set<cardId> | null) scopes both PROMOTION and
-  // DEMOTION to a known set of cards. Snap-as-writer is a UX shortcut
-  // for explicit user drags and for legacy backfill — non-drag callers
-  // should never have their geometry silently rewrite saved cluster
-  // membership.
-  //
-  // - Demotion (clearing clusterId on cards no longer geometrically
-  //   adjacent): only cards in `dragCardIds` are eligible. Without this
-  //   guard, deleting a "bridge" card from a chain-shaped cluster
-  //   (DP — ER1 — ER2 — ER3) demotes the now-isolated DP as collateral
-  //   damage on the snap-reconcile that follows the remove. Added in
-  //   v3.20.2.
-  //
-  // - Promotion: standard promotion (assign canonical clusterId to all
-  //   members of a snap-cluster) runs unconditionally for snap-clusters
-  //   whose existing non-null clusterIds are all the SAME id (or all
-  //   null) — those are pure backfill / canonicalization and never
-  //   destroy saved membership. Snap-clusters that span TWO OR MORE
-  //   distinct existing cluster ids ("cross-cluster merges") only
-  //   promote when a dragged card is present. This is what stops the
-  //   table-view "swap two independent DPs → they get linked" bug:
-  //   non-drag flows that happen to land previously independent
-  //   clusters snap-adjacent leave their cluster ids intact.
-  //
-  // Drag handlers pass the cards the user actually moved; every other
-  // caller (removeCard, picker placement, importers, link, waterfall,
-  // align, reflow, table-view writers, overlay first-open refresh)
-  // passes an empty Set so demotion stays scoped AND cross-cluster
-  // merges are blocked. A null `dragCardIds` preserves the legacy
-  // "snap is the dominant writer" behavior for both directions — we
-  // still pass it through internal callers (eg. legacy backfill) where
-  // the model is being seeded from scratch and geometry is the only
-  // available signal.
-  function syncClusterModelFromSnap(opts) {
-    const dragCardIds = opts?.dragCardIds ?? null;
-    const snapClusters = getSnapHelpers().getSnapClusters();
-    const inAnyCluster = new Set();
-
-    for (const cluster of snapClusters) {
-      // Inspect existing clusterIds among members up front. A snap-
-      // cluster whose members carry 2+ distinct non-null clusterIds is
-      // a cross-cluster merge candidate — only allowed when a dragged
-      // card is involved. Pure backfill (all null) and canonicalization
-      // (all share one id, or fill-in nulls toward one id) is always
-      // safe and runs regardless of dragCardIds.
-      const existingIds = new Set();
-      for (const id of cluster) {
-        const c = getCardById(id);
-        if (c?.clusterId != null) existingIds.add(c.clusterId);
-      }
-      const isCrossClusterMerge = existingIds.size >= 2;
-      if (
-        isCrossClusterMerge &&
-        dragCardIds &&
-        !cluster.some((id) => dragCardIds.has(id))
-      ) {
-        // Track membership so demotion below doesn't strip clusterId
-        // from cards that are still geometrically in some cluster —
-        // we just aren't re-canonicalizing this one.
-        for (const id of cluster) inAnyCluster.add(id);
-        continue;
-      }
-
-      let canonical = null;
-      for (const id of cluster) {
-        const c = getCardById(id);
-        if (c?.clusterId == null) continue;
-        if (canonical == null || c.clusterId < canonical) canonical = c.clusterId;
-      }
-      if (canonical == null) {
-        canonical = allocateClusterId();
-      } else {
-        ensureNextClusterId(canonical);
-      }
-      for (const id of cluster) {
-        const c = getCardById(id);
-        if (!c) continue;
-        c.clusterId = canonical;
-        inAnyCluster.add(id);
-      }
-    }
-
-    // Demote cards that snap-derive no longer sees in any cluster.
-    // Scoped: only cards in `dragCardIds` are eligible — anything else
-    // keeps its saved `clusterId` so the table view's mutations don't
-    // accidentally bleed into the model.
-    for (const c of cards) {
-      if (inAnyCluster.has(c.id)) continue;
-      if (dragCardIds && !dragCardIds.has(c.id)) continue;
-      c.clusterId = null;
-    }
-  }
-
   // Render-only variant: redraws snap outlines and recomputes costs
   // from the current relational model, WITHOUT running snap-reconcile.
   // Called from persistence paths (restore, undo, redo) where the
@@ -419,13 +321,15 @@
     updateGroupCredits();
   }
 
-  function refreshClusters(opts) {
-    // Snap-as-writer reads geometry off card.el (via getCardRect) and writes
-    // classes during refreshClusterVisuals. Both require canvas DOM, so this
-    // is a no-op while unhydrated (table-view surface). hydrateCanvasDom()
+  function refreshClusters() {
+    // Lineage is the single writer of cluster membership (snap geometry no
+    // longer writes clusterId — clusterByLineage owns it). Both clusterByLineage
+    // co-location and refreshClusterVisuals read card.el geometry, so this is a
+    // no-op while unhydrated (table-view surface); the lineage assignment for
+    // that surface happens in restore()'s deriveClusters pass. hydrateCanvasDom()
     // runs a full refreshClusters once the cards are mounted.
     if (!domHydrated) return;
-    syncClusterModelFromSnap(opts);
+    clusterByLineage();
     refreshClusterVisuals();
   }
 

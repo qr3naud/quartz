@@ -1808,14 +1808,10 @@
   // and the two views can show the same data in different orders
   // without one bleeding into the other.
   //
-  // Why we don't reflow card.y any more: under the legacy approach
-  // (`shiftBlockY` + sequential zero-gap restacking) the new geometry
-  // could land previously independent clusters snap-adjacent. The
-  // follow-up `refreshClusters` would then promote them into a single
-  // cluster id ("swap two orphan DPs → they get linked"). Even with
-  // promotion now scoped to user drags in canvas/index.js's
-  // `syncClusterModelFromSnap`, keeping table-view reorders geometry-
-  // free guarantees the canvas stays bit-for-bit unchanged.
+  // Why we don't reflow card.y any more: table-view reorders must never
+  // touch canvas geometry. Cluster membership is owned by lineage
+  // (clusterByLineage), not geometry, so keeping table-view reorders
+  // geometry-free guarantees the canvas stays bit-for-bit unchanged.
   function performDrop(hoverRowId, dropPosition) {
     const canvas = __cb.canvas;
     if (!canvas) return;

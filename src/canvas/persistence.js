@@ -24,12 +24,10 @@
       restoreGroup,
       updateDpCosts,
       setRestoring,
-      // Optional: invoked once after restore() finishes to backfill
-      // card.clusterId for legacy state that has no explicit cluster
-      // membership. Implementation lives in canvas/index.js so it can
-      // call into the snap helpers AND bump nextClusterId; persistence
-      // stays decoupled from both.
-      backfillClusterModel,
+      // Invoked once after restore() rebuilds the cards: derives clusterId for
+      // every ER + its lineage data points (clusterByLineage). Lives in
+      // canvas/index.js so persistence stays decoupled from the cluster model.
+      deriveClusters,
     } = deps;
 
     function serialize() {
@@ -125,15 +123,7 @@
         });
         applyTransform();
       }
-      // Track whether the loaded state had explicit cluster membership.
-      // Legacy state pre-dating the cluster model carries no `clusterId`
-      // on any card and no `nextClusterId` at the top level — for that
-      // case we backfill by snap-deriving once after geometry is in
-      // place (handled below).
-      let stateHasClusterModel = state.nextClusterId != null;
-
       for (const cs of state.cards || []) {
-        if (cs.clusterId != null) stateHasClusterModel = true;
         if (cs.data.type === "dp") {
           // Pass through everything that influences the visible state so
           // reloads preserve the user's edit decisions AND the import's
@@ -199,21 +189,13 @@
       setRestoring(false);
       updateDpCosts();
 
-      // Legacy migration: pre-cluster-model state had cluster membership
-      // implicit in card x/y. Derive it once now that geometry is in
-      // place; subsequent saves carry the explicit ids forward.
-      //
-      // The initial canvas open re-runs this from overlay.js after the
-      // saved Pro Mode attribute is applied (so cards measure at the
-      // right pitch), making this in-restore call largely redundant
-      // for the open-canvas path. We keep it because applyRemoteCanvas
-      // and similar callers re-invoke restore() at runtime — the
-      // overlay attribute is already correct by then, so deriving
-      // here is the cheapest way to ensure remote legacy snapshots
-      // get cluster ids stamped without extra plumbing.
-      if (!stateHasClusterModel && backfillClusterModel) {
-        backfillClusterModel();
-      }
+      // Derive cluster membership from lineage now that the cards exist.
+      // clusterByLineage is the single writer of clusterId: it stamps every
+      // ER + its lineage data points with a shared id. DOM-safe, so it runs on
+      // the table-view surface too (co-location / halos self-gate on
+      // domHydrated). Idempotent — re-running on applyRemoteCanvas / tab switch
+      // only heals, never double-assigns.
+      if (deriveClusters) deriveClusters();
     }
 
     return { serialize, restore };

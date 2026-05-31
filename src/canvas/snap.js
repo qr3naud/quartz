@@ -135,49 +135,6 @@
       return null;
     }
 
-    function getSnapClusters() {
-      const cards = cardsRef();
-      if (cards.length === 0) return [];
-
-      const parent = new Map();
-      const rnk = new Map();
-      for (const c of cards) {
-        parent.set(c.id, c.id);
-        rnk.set(c.id, 0);
-      }
-      function find(x) {
-        if (parent.get(x) !== x) parent.set(x, find(parent.get(x)));
-        return parent.get(x);
-      }
-      function union(a, b) {
-        const ra = find(a),
-          rb = find(b);
-        if (ra === rb) return;
-        if (rnk.get(ra) < rnk.get(rb)) parent.set(ra, rb);
-        else if (rnk.get(ra) > rnk.get(rb)) parent.set(rb, ra);
-        else {
-          parent.set(rb, ra);
-          rnk.set(ra, rnk.get(ra) + 1);
-        }
-      }
-
-      for (let i = 0; i < cards.length; i++) {
-        const r1 = getCardRect(cards[i]);
-        for (let j = i + 1; j < cards.length; j++) {
-          const r2 = getCardRect(cards[j]);
-          if (areAdjacent(r1, r2)) union(cards[i].id, cards[j].id);
-        }
-      }
-
-      const clusterMap = new Map();
-      for (const c of cards) {
-        const root = find(c.id);
-        if (!clusterMap.has(root)) clusterMap.set(root, []);
-        clusterMap.get(root).push(c.id);
-      }
-      return [...clusterMap.values()].filter((cl) => cl.length >= 2);
-    }
-
     function getAdjacentPairs() {
       const cards = cardsRef();
       const pairs = [];
@@ -251,7 +208,6 @@
 
     return {
       findSnapTarget,
-      getSnapClusters,
       getAdjacentPairs,
       areAdjacent,
       renderClusterOutlines,

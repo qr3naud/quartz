@@ -1006,13 +1006,11 @@
         updateGroupBounds();
       }
 
-      // Removing a card geometrically isolates anyone that was bridged
-      // through it (DP — ER1 — ER2 — ER3, remove ER1 → DP looks alone
-      // to snap-derive). Empty dragCardIds tells syncClusterModelFromSnap
-      // to skip demotion: surviving cluster members keep their saved
-      // clusterId so the table view's "delete one chip" doesn't orphan
-      // the rest of the row's enrichments.
-      refreshClusters({ dragCardIds: new Set() });
+      // Re-derive cluster membership from lineage after the removal. Lineage
+      // (not geometry) owns clusterId, so a DP that was visually bridged
+      // through the removed card stays grouped with its enrichment as long as
+      // its sourceEnrichmentFieldId still resolves.
+      refreshClusters();
       notifySelection();
       notifyCreditTotal();
       notifyChange();
