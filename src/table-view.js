@@ -2651,7 +2651,9 @@
       addErBtn.type = "button";
       addErBtn.className = "cb-table-view-add-er-chip";
       addErBtn.title = "Add an enrichment to this data point";
-      addErBtn.innerHTML = plusSvg(11) + "<span>Add enrichment</span>";
+      // Icon-only "+" — the row context already makes the action clear; the
+      // title carries the label for hover/a11y.
+      addErBtn.innerHTML = plusSvg(11);
       addErBtn.addEventListener("mousedown", (evt) => evt.stopPropagation());
       addErBtn.addEventListener("click", (evt) => {
         evt.stopPropagation();

@@ -1855,14 +1855,15 @@
   }
 
   // Subroutine ("Run function") fields have no catalog or /context cost of
-  // their own — their projected cost is the sum of the table they reference
-  // (data.referencedTableId). We resolve that here in the background: one
-  // /context per unique referenced table (deduped + session-cached), summed
-  // with resolveEffectiveCredits (same per-result / private-key handling Clay
-  // uses), then stamped onto data.credits so Projected mode shows the same
-  // number as Clay's Edit-column panel.
+  // their own — their projected credits AND actions are the sum of the table
+  // they reference (data.referencedTableId). We resolve that here in the
+  // background: one /context per unique referenced table (deduped + session-
+  // cached). Credits come from each field's creditCost (resolveEffectiveCredits,
+  // matching Clay's Edit-column panel); actions come from each action field's
+  // catalog actionExecutions, looked up via the field's actionInfo. Both are
+  // stamped onto the card so Projected mode reflects the full cost.
   async function fetchSubroutineCostsInBackground(workspaceId, tableId) {
-    if (!__cb.canvas || typeof __cb.fetchReferencedTableCreditCosts !== "function") return;
+    if (!__cb.canvas || typeof __cb.fetchReferencedTableFieldConfigs !== "function") return;
 
     const fnCards = [];
     const refIds = new Set();
@@ -1881,23 +1882,32 @@
     await Promise.all(
       Array.from(refIds).map(async (refId) => {
         if (cache.has(refId)) return;
-        const costs = await __cb.fetchReferencedTableCreditCosts(workspaceId, refId);
-        if (!Array.isArray(costs)) return;
-        let sum = 0;
-        for (const cc of costs) {
-          const c = resolveEffectiveCredits(cc, null);
-          if (Number.isFinite(c)) sum += c;
+        const fcs = await __cb.fetchReferencedTableFieldConfigs(workspaceId, refId);
+        if (!Array.isArray(fcs)) return;
+        let credits = 0;
+        let actions = 0;
+        for (const fc of fcs) {
+          if (fc.creditCost) {
+            const c = resolveEffectiveCredits(fc.creditCost, null);
+            if (Number.isFinite(c)) credits += c;
+          }
+          const ai = fc.actionInfo;
+          if (ai && ai.actionKey) {
+            const info = __cb.actionByIdLookup?.[`${ai.actionPackageId}-${ai.actionKey}`];
+            actions += planAwareActionExecutions(info);
+          }
         }
-        cache.set(refId, sum);
+        cache.set(refId, { credits, actions });
       })
     );
 
     let stamped = false;
     for (const card of fnCards) {
-      const sum = cache.get(card.data.referencedTableId);
-      if (sum == null) continue;
-      card.data.credits = sum;
-      card.data.creditText = `~${sum} / row`;
+      const v = cache.get(card.data.referencedTableId);
+      if (v == null) continue;
+      card.data.credits = v.credits;
+      card.data.creditText = v.credits != null ? `~${v.credits} / row` : null;
+      card.data.actionExecutions = v.actions;
       stamped = true;
     }
     if (!stamped) return;

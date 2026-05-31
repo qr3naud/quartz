@@ -666,8 +666,10 @@
 .cb-table-view-add-er-chip {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  padding: 3px 10px;
+  justify-content: center;
+  /* Icon-only "+" button — compact, squarish padding instead of the old
+     pill width that assumed a text label. */
+  padding: 3px 5px;
   background: transparent;
   color: #6366f1;
   border: 1px dashed #c7d2fe;

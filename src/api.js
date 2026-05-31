@@ -692,14 +692,16 @@
     }
   };
 
-  // Per-field credit-cost blocks for a referenced "main function" table. A
-  // subroutine ("Run function") field has no cost of its own — its projected
-  // cost is the sum of the table it points at (typeSettings.referencedTableId),
-  // which is exactly what Clay's Edit-column panel shows. We fetch only the
-  // credit costs (no profiling / status / sampling) and return the raw
-  // ActionCostMetadata blocks so the caller can sum them with resolveEffectiveCredits.
-  // Returns an array of creditCost objects, or null on failure.
-  __cb.fetchReferencedTableCreditCosts = async function (workspaceId, tableId) {
+  // Per-field configs for a referenced "main function" table. A subroutine
+  // ("Run function") field has no cost of its own — its projected credits AND
+  // actions are the sum of the table it points at (typeSettings.referencedTableId):
+  //   - credits → sum of each field's `creditCost` (what Clay's Edit-column panel shows)
+  //   - actions → sum of each action field's catalog actionExecutions, looked up
+  //     via the `actionInfo` block (actionKey + actionPackageId)
+  // `includeFullSchemas: true` is REQUIRED to get `actionInfo`, and (unlike
+  // `false`, which suppresses it) still returns `creditCost`. Returns the raw
+  // fieldConfigs array (each may carry `creditCost` and/or `actionInfo`), or null.
+  __cb.fetchReferencedTableFieldConfigs = async function (workspaceId, tableId) {
     try {
       const res = await fetch(
         `https://api.clay.com/v3/workspaces/${workspaceId}/tables/${tableId}/context`,
@@ -707,10 +709,6 @@
           method: "POST",
           credentials: "include",
           headers: { "Content-Type": "application/json" },
-          // NOTE: keep this option set minimal. Adding `includeFullSchemas: false`
-          // (counterintuitively) suppresses the per-field `creditCost` for a
-          // subroutine's function table, so the sum would come back as 0. These
-          // four options are the proven set that returns creditCost blocks.
           body: JSON.stringify({
             formatAsXML: false,
             contextDetailLevel: "medium",
@@ -720,6 +718,7 @@
               includeStatusCounts: false,
               includeDataProfiling: false,
               sampleSize: 1,
+              includeFullSchemas: true,
             },
           }),
         }
@@ -727,10 +726,9 @@
       if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
       const body = await res.json();
       const fcs = body?.result?.fieldConfigurationsData?.fieldConfigs;
-      if (!Array.isArray(fcs)) return null;
-      return fcs.filter((fc) => fc && fc.creditCost).map((fc) => fc.creditCost);
+      return Array.isArray(fcs) ? fcs : null;
     } catch (err) {
-      console.warn("[Clay Scoping] fetchReferencedTableCreditCosts failed:", err);
+      console.warn("[Clay Scoping] fetchReferencedTableFieldConfigs failed:", err);
       return null;
     }
   };
