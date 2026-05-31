@@ -698,7 +698,7 @@
 
   function getExistingCardKeys() {
     if (!__cb.canvas) return new Set();
-    const state = __cb.canvas.serialize();
+    const state = __cb.model.serialize();
     const keys = new Set();
     for (const c of state.cards || []) {
       if (c.data.type === "dp" && c.data.fieldId) {

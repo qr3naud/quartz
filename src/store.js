@@ -88,6 +88,20 @@
       return model;
     },
 
+    // Persistence entry points (C3.3). The store is the public serialize /
+    // restore API; the canvas is the registered renderer (it still owns the
+    // DOM build loop, lazy-DOM mountDom/hydrate/clusterByLineage, and the blob
+    // assembly for the not-yet-relocated slices). External callers — saveTabs,
+    // importers, realtime apply, tab switch, overlay restore — go through here.
+    serialize() {
+      return call("serialize", null);
+    },
+    restore(stateArg, opts) {
+      const c = canvas();
+      if (c && typeof c.restore === "function") c.restore(stateArg, opts);
+      return model;
+    },
+
     subscribe(listener) {
       if (typeof listener !== "function") return function () {};
       listeners.add(listener);

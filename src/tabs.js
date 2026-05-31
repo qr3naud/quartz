@@ -389,7 +389,7 @@
       activeIndex = __cb.tabStore.tabs.findIndex(t => t.id === __cb.tabStore.activeId);
       if (activeIndex !== -1) {
         activeTab = __cb.tabStore.tabs[activeIndex];
-        const state = __cb.canvas.serialize();
+        const state = __cb.model.serialize();
         const recordsInput = document.getElementById("cb-records-input");
         if (recordsInput) state.records = recordsInput.value;
         // The imported "actual" (POC) record count, so the indigo/override
@@ -547,7 +547,7 @@
       // teleported to user A's last view position. Same pattern undo/redo
       // already uses internally.
       const { view: _ignoredView, ...stateForRestore } = active.state;
-      __cb.canvas.restore(stateForRestore);
+      __cb.model.restore(stateForRestore);
       __cb.recordsActual = active.state.recordsActual ?? null;
       const recordsInput = document.getElementById("cb-records-input");
       if (recordsInput && active.state.records != null) {
@@ -675,7 +675,7 @@
         groups: newTab.state?.groups?.length,
       });
       const { view: _ignoredView, ...stateForRestore } = newTab.state;
-      __cb.canvas.restore(stateForRestore);
+      __cb.model.restore(stateForRestore);
       __cb.recordsActual = stateForRestore.recordsActual ?? null;
       const recordsInput = document.getElementById("cb-records-input");
       if (recordsInput && stateForRestore.records != null) {
@@ -1246,7 +1246,7 @@
 
     const tab = __cb.tabStore.tabs.find(t => t.id === tabId);
     if (tab?.state && __cb.canvas) {
-      __cb.canvas.restore(tab.state);
+      __cb.model.restore(tab.state);
     }
 
     __cb.recordsActual = tab?.state?.recordsActual ?? null;

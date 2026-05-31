@@ -948,7 +948,7 @@
     // on a DP row did nothing).
     const tw = target.el?.offsetWidth || CARD_W;
     const th = target.el?.offsetHeight || CARD_H;
-    const state = __cb.canvas.serialize();
+    const state = __cb.model.serialize();
     const allCards = state.cards || [];
 
     const sides = [

@@ -1578,7 +1578,7 @@
     if (activeTab?.state && __cb.canvas) {
       // Table-view tabs restore data-only (mountDom:false) so the canvas
       // builds zero .cb-card elements; canvas-view tabs mount as before.
-      __cb.canvas.restore(activeTab.state, { mountDom: mountCanvasDom });
+      __cb.model.restore(activeTab.state, { mountDom: mountCanvasDom });
       __cb.recordsActual = activeTab.state.recordsActual ?? null;
       if (activeTab.state.records) {
         recordsInput.value = activeTab.state.records;
