@@ -645,6 +645,10 @@
       } else {
         recalcTotal();
       }
+      // Table view shows the effective frequency on each ER chip and (in
+      // Projected) frequency-weighted group totals — refresh so it tracks the
+      // new default the same way the canvas badges do.
+      if (__cb.tableView?.refresh) __cb.tableView.refresh();
       if (opts?.skipSave) return;
       if (__cb.debouncedSave) __cb.debouncedSave();
     }
@@ -900,8 +904,17 @@
       //    that ran). Multiplying by Records lets a GTME project the real
       //    measured cost onto an actual contract volume. When Records equals
       //    the number of cells that ran, this equals the raw spend.
-      const perRowCredits = isActual ? currentCreditsPerRow : currentWeightedCreditsPerRow;
-      const perRowActions = isActual ? currentActionsPerRow : currentWeightedActionsPerRow;
+      // Frequency: Projected already bakes per-ER frequency into the weighted
+      // per-row sum (notifyCreditTotal). Actual's measured per-row has none, so
+      // apply the global (default) frequency here — so the Frequency dropdown
+      // moves the Actual total too (e.g. "Monthly" = 12× the one-run cost).
+      // Annually (×1) is a no-op, so Actual still equals raw measured spend
+      // when Records matches the run count.
+      const actualFreqMult = isActual
+        ? (__cb.getFrequencyMultiplier?.(__cb.getCurrentFrequencyId?.()) ?? 1)
+        : 1;
+      const perRowCredits = isActual ? currentCreditsPerRow * actualFreqMult : currentWeightedCreditsPerRow;
+      const perRowActions = isActual ? currentActionsPerRow * actualFreqMult : currentWeightedActionsPerRow;
       const totalCredits = perRowCredits * records;
       const totalActions = perRowActions * records;
       // Totals are whole-number figures in the summary bar — at scoping
