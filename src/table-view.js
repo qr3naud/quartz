@@ -3268,16 +3268,24 @@
       // Skip during an active drag so the dragged row's DOM doesn't get
       // torn down mid-gesture (which would crash mouseup with no source).
       if (dragInProgress) return;
-      // hostEl IS the scroll container (.cb-table-view-area has overflow:
-      // auto). render() wipes hostEl.innerHTML, which resets scrollTop to 0,
-      // making every chip-× / row-× / picker-confirm snap the user back to
-      // the top. Capture and restore around the re-render so the table
-      // looks visually stable across mutations.
-      const prevScrollTop = hostEl.scrollTop;
+      // The single scroll viewport is the INNER .cb-table-view-table-container
+      // (hostEl / .cb-table-view-area is overflow:hidden). render() rebuilds
+      // that container from scratch, resetting it to (0,0) — so every commit
+      // (coverage/fill edit, chip-×, row-×, picker-confirm) snaps the user
+      // back to the top. Capture both axes off the old container and restore
+      // them onto the freshly-built one so the re-render feels in-place.
+      const prevScroller = hostEl.querySelector(".cb-table-view-table-container");
+      const prevTop = prevScroller ? prevScroller.scrollTop : 0;
+      const prevLeft = prevScroller ? prevScroller.scrollLeft : 0;
       render();
-      if (prevScrollTop > 0) {
-        const maxScroll = hostEl.scrollHeight - hostEl.clientHeight;
-        hostEl.scrollTop = Math.min(prevScrollTop, Math.max(0, maxScroll));
+      if (prevTop > 0 || prevLeft > 0) {
+        const nextScroller = hostEl.querySelector(".cb-table-view-table-container");
+        if (nextScroller) {
+          const maxTop = nextScroller.scrollHeight - nextScroller.clientHeight;
+          const maxLeft = nextScroller.scrollWidth - nextScroller.clientWidth;
+          nextScroller.scrollTop = Math.min(prevTop, Math.max(0, maxTop));
+          nextScroller.scrollLeft = Math.min(prevLeft, Math.max(0, maxLeft));
+        }
       }
     },
     isMounted() {

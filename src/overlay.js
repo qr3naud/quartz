@@ -902,8 +902,11 @@
       const totalActions = isActual
         ? currentWeightedActionsPerRow
         : currentWeightedActionsPerRow * records;
-      totalValue.textContent = formatNumber(totalCredits);
-      totalActionsValue.textContent = formatNumber(totalActions);
+      // Totals are whole-number figures in the summary bar — at scoping
+      // volumes the fractional tail (e.g. 15,458.4) is noise. The per-row
+      // "Avg" boxes keep their decimals via formatNumber.
+      totalValue.textContent = Math.round(totalCredits).toLocaleString();
+      totalActionsValue.textContent = Math.round(totalActions).toLocaleString();
 
       const creditDollars = totalCredits * creditCost;
       const actionDollars = totalActions * actionCost;

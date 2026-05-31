@@ -253,11 +253,22 @@
   //
   // `ERROR_RUN_CONDITION_NOT_MET` is bucketed into `successCount`
   // server-side via isStatusTreatedAsSuccess
-  // (libs/shared/src/fields/status-processing-utils.ts line 5). For the
-  // canvas, that's misleading: rows where the user's run-condition formula
-  // evaluated to false were never actually attempted, so they shouldn't
-  // count toward coverage OR fill rate. We peel them back out using the
-  // raw `statusBreakdown` array.
+  // (libs/shared/src/fields/status-processing-utils.ts line 5). Rows where
+  // the user's run-condition formula evaluated to false were never actually
+  // attempted, so we peel them out of the NUMERATOR using the raw
+  // `statusBreakdown` array.
+  //
+  // Coverage = ran / total, where:
+  //   - `ran` (numerator) = rows the enrichment actually executed on
+  //     (success − condNotMet + error + inProgress). Excludes condition-skipped
+  //     and not-yet-run rows.
+  //   - `total` (denominator) = the WHOLE table (totalRecords). Keeping
+  //     condNotMet + notRun in the denominator is the point: coverage should
+  //     read as "this enrichment ran on X of N rows" — a real fraction. (Using
+  //     total − condNotMet made it ~N/N whenever the table was fully run, which
+  //     told the user nothing.)
+  // Fill rate keeps the tighter `ran` denominator ("of what ran, how much
+  // filled").
   //
   // Returns a stat block matching the rest of buildStatsByFieldId's output
   // shape, or null when there's no usable data on this field.
@@ -279,12 +290,11 @@
     }
 
     const adjustedSuccess = Math.max(0, success - condNotMet);
-    const adjustedTotal = Math.max(0, total - condNotMet);
     const ran = adjustedSuccess + error + inProgress;
 
-    if (ran <= 0 || adjustedTotal <= 0) return null;
+    if (ran <= 0 || total <= 0) return null;
     return {
-      coverage: { ran, total: adjustedTotal },
+      coverage: { ran, total },
       fillRate: { success: adjustedSuccess, ran },
       condNotMet,
     };
