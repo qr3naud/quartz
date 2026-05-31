@@ -509,6 +509,30 @@
       }
     }
 
+    // Intentional-link lineage (Phase 2.c / C1.4). A deliberate link — the
+    // canvas Enter shortcut and the table-view "Link" button both route here —
+    // with exactly one enrichment commits semantic lineage on the linked data
+    // point(s): each DP's `sourceEnrichmentFieldId` is set to that ER's key
+    // (action field id, or `wf:<groupCluster>` for waterfalls). This is how
+    // manually authored canvas links flow into the table. Passive snap-reconcile
+    // (refreshClusters) never calls this, so geometry alone never writes
+    // lineage. Multi-ER links are ambiguous, so they cluster but write none. We
+    // only stamp the explicitly-selected `list`, not the cluster-mates pulled
+    // into `all` for membership integrity.
+    const isErCard = (c) =>
+      c && c.data && c.data.type !== "dp" && c.data.type !== "input" && c.data.type !== "comment";
+    const linkedErs = list.filter(isErCard);
+    const linkedDps = list.filter((c) => c && c.data && c.data.type === "dp");
+    if (linkedErs.length === 1 && linkedDps.length > 0) {
+      const er = linkedErs[0];
+      const erKey = er.data.type === "waterfall"
+        ? (er.data.groupCluster != null ? `wf:${er.data.groupCluster}` : null)
+        : (er.data.fieldId ?? null);
+      if (erKey != null) {
+        for (const dp of linkedDps) dp.data.sourceEnrichmentFieldId = erKey;
+      }
+    }
+
     assignToCluster([...all], targetId);
     layoutCardsAsCluster([...all], { anchorX: anchor.x, anchorY: anchor.y });
     return targetId;
