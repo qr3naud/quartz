@@ -14,7 +14,11 @@
     }
 
     function getCardRect(c) {
-      return { x: c.x, y: c.y, w: c.el.offsetWidth || 220, h: c.el.offsetHeight || 70 };
+      // Null-safe on `el`: with lazy canvas DOM (C2.2) a card can be
+      // data-only (no element) while a table-view tab is open. Fall back to
+      // the default card box so any geometry consumer that runs in that state
+      // (e.g. eager group-bounds during a table-view restore) doesn't throw.
+      return { x: c.x, y: c.y, w: c.el?.offsetWidth || 220, h: c.el?.offsetHeight || 70 };
     }
 
     function edgePoint(c, side) {

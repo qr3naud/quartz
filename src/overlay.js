@@ -359,6 +359,13 @@
         const host = __cb.overlayEl?.querySelector(".cb-table-view-area");
         if (host && __cb.tableView?.mount) __cb.tableView.mount(host);
       } else {
+        // Lazy canvas DOM (C2.2): a table-view tab restored without mounting
+        // any .cb-card elements. Build them now, before revealing the canvas.
+        // Idempotent — no-ops if the canvas was already hydrated (e.g. opened
+        // directly in canvas view). Runs refreshClusters + credit/group
+        // bookkeeping internally, so the tightenBrokenClusters pass below sees
+        // real geometry.
+        if (__cb.canvas?.hydrateCanvasDom) __cb.canvas.hydrateCanvasDom();
         if (__cb.tableView?.unmount) __cb.tableView.unmount();
         // The table view moves the collaborators widget inline into its header;
         // unmount tore it down with the table DOM. Put it back in the canvas
@@ -1539,8 +1546,24 @@
     };
 
     const activeTab = __cb.tabStore.tabs.find(t => t.id === __cb.tabStore.activeId);
+
+    // Resolve the per-tab Cards/Tables choice BEFORE restore so we know whether
+    // to mount canvas DOM (lazy DOM, C2.2). Defaults to "table" — tabs saved
+    // before this feature shipped won't carry the field, and the spreadsheet is
+    // the canonical entry point. Canvas is allow-listed (see canUseCanvasView),
+    // so a tab last left in "canvas" still opens as a table for locked users.
+    let savedBrainstormView = activeTab?.state?.brainstormView === "canvas"
+      ? "canvas"
+      : "table";
+    if (savedBrainstormView === "canvas" && !__cb.canUseCanvasView?.()) {
+      savedBrainstormView = "table";
+    }
+    const mountCanvasDom = savedBrainstormView === "canvas";
+
     if (activeTab?.state && __cb.canvas) {
-      __cb.canvas.restore(activeTab.state);
+      // Table-view tabs restore data-only (mountDom:false) so the canvas
+      // builds zero .cb-card elements; canvas-view tabs mount as before.
+      __cb.canvas.restore(activeTab.state, { mountDom: mountCanvasDom });
       __cb.recordsActual = activeTab.state.recordsActual ?? null;
       if (activeTab.state.records) {
         recordsInput.value = activeTab.state.records;
@@ -1592,7 +1615,16 @@
     else __cb.overlayEl.removeAttribute("data-cb-pro-mode");
     __cb.proMode = savedProMode;
 
-    if (savedProMode !== targetProMode) {
+    if (!mountCanvasDom) {
+      // Table-view tab (lazy DOM, C2.2): there is no canvas DOM to measure or
+      // reflow, so skip all the snap/pitch geometry below. We still adopt the
+      // target Pro Mode as state + attribute (the table view's coverage/fill
+      // columns are gated on [data-cb-pro-mode]); cards mount at this pitch
+      // when the canvas is hydrated on first toggle, so no Y-reflow is needed.
+      __cb.proMode = targetProMode;
+      if (targetProMode) __cb.overlayEl.setAttribute("data-cb-pro-mode", "");
+      else __cb.overlayEl.removeAttribute("data-cb-pro-mode");
+    } else if (savedProMode !== targetProMode) {
       const oldH = savedProMode ? 96 : 70;
       const newH = targetProMode ? 96 : 70;
       const clustersBefore = __cb.canvas?.getSnapClusters
@@ -1629,19 +1661,8 @@
 
     __cb.setViewMode(__cb.tabStore.viewMode || "projected");
 
-    // Restore the per-tab Cards/Tables choice. Defaults to "table" — tabs
-    // saved before this feature shipped won't carry the field, and the
-    // spreadsheet is now the canonical entry point for scoping. Explicit
-    // "canvas" choices the user made via the toggle are still respected.
-    let savedBrainstormView = restoredTab?.state?.brainstormView === "canvas"
-      ? "canvas"
-      : "table";
-    // Canvas is allow-listed (see __cb.canUseCanvasView). Everyone else is
-    // locked to the table view regardless of what the tab saved, so a tab
-    // last left in "canvas" still opens as a table for them.
-    if (savedBrainstormView === "canvas" && !__cb.canUseCanvasView?.()) {
-      savedBrainstormView = "table";
-    }
+    // savedBrainstormView was resolved before restore() (above) so we could
+    // pick the lazy-DOM mount mode; apply it now.
     __cb.setBrainstormView(savedBrainstormView);
 
     window.addEventListener("beforeunload", __cb.saveTabs);

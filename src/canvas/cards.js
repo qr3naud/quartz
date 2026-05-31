@@ -119,7 +119,18 @@
       // propagate per-ER frequency picks across the rest of the
       // cluster ("update one, all update").
       getClusters,
+      // Lazy-DOM gate (C2.2). True once the canvas view has been
+      // hydrated; false while a table-view tab is open. The addX
+      // wrappers below build card DATA unconditionally but only mount
+      // DOM when this is true, so a table-view restore (or table-view
+      // add) stays data-only and the canvas mounts on toggle. Defaults
+      // to eager (true) when the host doesn't supply it, preserving the
+      // pre-C2.2 behavior.
+      isDomHydrated,
     } = deps;
+
+    const domHydrated = () =>
+      typeof isDomHydrated === "function" ? isDomHydrated() : true;
 
     // Keep this predicate in sync with the identical one in credits.js —
     // "non-ER" means the card is not an enrichment and therefore doesn't
@@ -956,12 +967,15 @@
       return el;
     }
 
-    // Card creation = data half + DOM half. addCard runs both for live adds
-    // (behavior-identical). Lazy restore (C2.2) calls buildCardData alone and
-    // defers mountCardEl until the canvas view is opened.
+    // Card creation = data half + DOM half. addCard always builds DATA; it
+    // mounts DOM immediately only when the canvas is hydrated (live canvas
+    // add). During a table-view restore — or a table-view add — domHydrated()
+    // is false, so the card stays data-only and hydrateCanvasDom mounts it
+    // when the user opens the canvas. Idempotent regardless: mountCardEl
+    // early-returns if card.el already exists.
     function addCard(data, opts) {
       const card = buildCardData(data, opts);
-      mountCardEl(card);
+      if (domHydrated()) mountCardEl(card);
       notifyCreditTotal();
       notifyChange();
       return card;
@@ -970,7 +984,10 @@
     function removeCard(id) {
       const card = cardsRef().find((c) => c.id === id);
       if (card) {
-        card.el.remove();
+        // Null-safe: the table view's row × / chip × delete routes here
+        // while the canvas may be unhydrated (lazy DOM, C2.2), so the
+        // card can be data-only with no element to remove.
+        card.el?.remove();
         setCards(cardsRef().filter((c) => c.id !== id));
         selectedCardsRef().delete(id);
         for (const g of groupsRef()) g.cardIds.delete(id);
@@ -1227,7 +1244,7 @@
 
     function addDataPointCard(text, opts) {
       const card = buildDataPointCardData(text, opts);
-      mountDpCardEl(card);
+      if (domHydrated()) mountDpCardEl(card);
       notifyChange();
       return card;
     }
@@ -1346,7 +1363,7 @@
 
     function addInputCard(text, opts) {
       const card = buildInputCardData(text, opts);
-      mountInputCardEl(card);
+      if (domHydrated()) mountInputCardEl(card);
       notifyChange();
       return card;
     }
@@ -1465,7 +1482,7 @@
 
     function addCommentCard(text, opts) {
       const card = buildCommentCardData(text, opts);
-      mountCommentCardEl(card);
+      if (domHydrated()) mountCommentCardEl(card);
       notifyChange();
       return card;
     }

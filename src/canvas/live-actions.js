@@ -39,9 +39,14 @@
 
     card.x = x;
     card.y = y;
-    card.el.style.transform = `translate(${x}px, ${y}px)`;
+    // Null-safe on el: with lazy canvas DOM (C2.2) we may receive a peer's
+    // move while a table-view tab is open and this card is data-only. The
+    // model x/y is still updated above, so the card lands at the right spot
+    // when the canvas is hydrated on toggle; we just skip the DOM write.
+    if (card.el) card.el.style.transform = `translate(${x}px, ${y}px)`;
     // Keep any surrounding group's bounding box in sync so the group rect
-    // follows the card as it moves. Safe to call frequently.
+    // follows the card as it moves. Safe to call frequently (no-ops the
+    // geometry when cards are unmounted — getCardRect falls back to defaults).
     canvas.updateGroupBounds?.();
     // Snap clusters (connections/waterfall groupings) depend on card rects
     // too. refreshClusters recomputes them + redraws connections. Pass
@@ -60,21 +65,25 @@
     if (!card) return;
 
     // DP, input, and comment cards each have a different contenteditable.
-    // Grab whichever exists; there's at most one per card.
-    const textEl = card.el.querySelector(
+    // Grab whichever exists; there's at most one per card. Null-safe on el:
+    // a data-only card (lazy DOM, table-view tab open) has no element, so we
+    // fall through to updating just the model below.
+    const textEl = card.el?.querySelector(
       ".cb-dp-text,.cb-input-text,.cb-comment-text",
     );
-    if (!textEl) return;
 
-    // Local edit wins: if our caret is currently inside this very element,
-    // skip the update so the peer's keystroke stream doesn't clobber the
-    // text we're typing.
-    if (textEl === document.activeElement) return;
+    if (textEl) {
+      // Local edit wins: if our caret is currently inside this very element,
+      // skip the update so the peer's keystroke stream doesn't clobber the
+      // text we're typing.
+      if (textEl === document.activeElement) return;
+      // Avoid no-op writes that would still reset the caret / scroll position.
+      if (textEl.textContent === text) return;
+      textEl.textContent = text;
+    }
 
-    // Avoid no-op writes that would still reset the caret / scroll position.
-    if (textEl.textContent === text) return;
-
-    textEl.textContent = text;
+    // Always update the model so a data-only card (no element yet) picks up the
+    // peer's text and renders it correctly when the canvas hydrates.
     card.data.text = text;
     card.data.displayName = text;
   }

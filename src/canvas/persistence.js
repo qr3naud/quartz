@@ -33,21 +33,27 @@
     } = deps;
 
     function serialize() {
+      // Each branch syncs the latest contentEditable text back onto c.data
+      // before snapshotting. With lazy canvas DOM (C2.2) a card can be
+      // data-only (c.el === null) while a table-view tab is open — and
+      // serialize() runs on that surface too (every notifyChange / save, and
+      // at the end of restore). When there's no element, c.data already holds
+      // the current text, so `c.el?.` simply skips the DOM read.
       for (const c of cardsRef()) {
         if (c.data.type === "dp") {
-          const textEl = c.el.querySelector(".cb-dp-text");
+          const textEl = c.el?.querySelector(".cb-dp-text");
           if (textEl) {
             c.data.text = textEl.textContent;
             c.data.displayName = textEl.textContent;
           }
         } else if (c.data.type === "input") {
-          const textEl = c.el.querySelector(".cb-input-text");
+          const textEl = c.el?.querySelector(".cb-input-text");
           if (textEl) {
             c.data.text = textEl.textContent;
             c.data.displayName = textEl.textContent;
           }
         } else if (c.data.type === "comment") {
-          const textEl = c.el.querySelector(".cb-comment-text");
+          const textEl = c.el?.querySelector(".cb-comment-text");
           if (textEl) {
             c.data.text = textEl.textContent;
             c.data.displayName = textEl.textContent;
@@ -57,7 +63,7 @@
           // .cb-card-name element as AI cards) so their displayName can
           // drift from c.data while the user is typing. Sync from DOM at
           // serialize time so undo / reload / realtime sees the latest.
-          const nameEl = c.el.querySelector(".cb-card-name");
+          const nameEl = c.el?.querySelector(".cb-card-name");
           if (nameEl) c.data.displayName = nameEl.textContent;
         }
       }

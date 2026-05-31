@@ -34,6 +34,15 @@
   let redoStack = [];
   let lastSnapshot = null;
   let lastMouse = null;
+  // Lazy canvas DOM gate (C2.2). False while a table-view tab is open: the
+  // model (`cards`) is fully built but no `.cb-card` elements are mounted, so
+  // the table view (the primary surface) renders from the store with zero
+  // canvas DOM. Flipped true by hydrateCanvasDom() on first toggle to the
+  // canvas, and set directly by restore() per the tab's saved view. Every
+  // function that touches `card.el` and can run while this is false must
+  // tolerate `el === null` (see the guards below + cards.js / geometry.js /
+  // persistence.js / live-actions.js).
+  let domHydrated = false;
   const MAX_UNDO = 50;
   const __cbCanvasModules = window.__cbCanvasModules || {};
   const __geometry = __cbCanvasModules.createGeometryHelpers
@@ -159,6 +168,9 @@
         // update"). Now reads from the relational model rather than
         // re-deriving from snap geometry.
         getClusters,
+        // Lazy-DOM gate (C2.2): addX wrappers mount DOM only when the
+        // canvas view is hydrated; otherwise they build data-only cards.
+        isDomHydrated: () => domHydrated,
       });
     }
     return __cards;
@@ -390,12 +402,23 @@
   // importer drops) call refreshClusters() instead, which IS the
   // snap-as-writer path.
   function refreshClusterVisuals() {
+    // Lazy DOM (C2.2): renderClusterOutlines stamps snap classes onto
+    // card.el, which is null while a table-view tab is open. Skip entirely —
+    // there's nothing visual to update without canvas DOM, and clusterId is
+    // already persisted so the table view never needs a reconcile. Re-runs on
+    // hydrateCanvasDom() once the elements exist.
+    if (!domHydrated) return;
     getSnapHelpers().renderClusterOutlines();
     updateDpCosts();
     updateGroupCredits();
   }
 
   function refreshClusters(opts) {
+    // Snap-as-writer reads geometry off card.el (via getCardRect) and writes
+    // classes during refreshClusterVisuals. Both require canvas DOM, so this
+    // is a no-op while unhydrated (table-view surface). hydrateCanvasDom()
+    // runs a full refreshClusters once the cards are mounted.
+    if (!domHydrated) return;
     syncClusterModelFromSnap(opts);
     refreshClusterVisuals();
   }
@@ -444,16 +467,20 @@
     const dpOriginX = anchorX + inputColW;
     const dpOriginY = anchorY + commentRowH;
 
+    // Always update the model x/y so the relational layout is correct even on
+    // the table-view surface (lazy DOM, C2.2); only write the transform when
+    // the element exists. When unhydrated, hydrateCanvasDom mounts each card
+    // at its model x/y and tightenBrokenClusters tidies adjacency on toggle.
     for (let i = 0; i < commentCards.length; i++) {
       commentCards[i].x = dpOriginX + i * cardW;
       commentCards[i].y = anchorY;
-      commentCards[i].el.style.transform =
+      if (commentCards[i].el) commentCards[i].el.style.transform =
         `translate(${commentCards[i].x}px, ${commentCards[i].y}px)`;
     }
     for (let i = 0; i < inputCards.length; i++) {
       inputCards[i].x = anchorX;
       inputCards[i].y = dpOriginY + i * cardH;
-      inputCards[i].el.style.transform =
+      if (inputCards[i].el) inputCards[i].el.style.transform =
         `translate(${inputCards[i].x}px, ${inputCards[i].y}px)`;
     }
     for (let i = 0; i < dpCards.length; i++) {
@@ -461,7 +488,7 @@
       const c = i % dpCols;
       dpCards[i].x = dpOriginX + c * cardW;
       dpCards[i].y = dpOriginY + r * cardH;
-      dpCards[i].el.style.transform =
+      if (dpCards[i].el) dpCards[i].el.style.transform =
         `translate(${dpCards[i].x}px, ${dpCards[i].y}px)`;
     }
     const erColX = dpCards.length > 0
@@ -470,7 +497,7 @@
     for (let i = 0; i < erCards.length; i++) {
       erCards[i].x = erColX;
       erCards[i].y = dpOriginY + i * cardH;
-      erCards[i].el.style.transform =
+      if (erCards[i].el) erCards[i].el.style.transform =
         `translate(${erCards[i].x}px, ${erCards[i].y}px)`;
     }
   }
@@ -664,7 +691,10 @@
     closeGroupColorMenu();
     closeCanvasMenu();
 
-    for (const c of cards) c.el.remove();
+    // Null-safe on card.el: with lazy DOM (C2.2) cards can be data-only when
+    // clearCanvas runs (undo/redo restore, or re-restore in a table-view tab).
+    // Groups stay eager, so g.el always exists.
+    for (const c of cards) c.el?.remove();
     for (const g of groups) g.el.remove();
     if (selectionHintEl) selectionHintEl.classList.remove("cb-selection-hint-visible");
 
@@ -1308,7 +1338,7 @@
       for (const c of members) {
         const row = Math.round((c.y - leadY) / oldH);
         c.y = leadY + row * newH;
-        c.el.style.transform = `translate(${c.x}px, ${c.y}px)`;
+        if (c.el) c.el.style.transform = `translate(${c.x}px, ${c.y}px)`;
         // Stream new positions to peers so collaborators tracking the
         // canvas don't fall out of sync. Cross-user Pro Mode mismatches
         // can still cause transient magnet desync — a known caveat.
@@ -1641,7 +1671,7 @@
     getGroupLifecycleHelpers().restoreGroup(gs);
   }
 
-  function restore(state) {
+  function restore(state, opts) {
     // Always clear before re-applying. Without this, repeated restores (live
     // save propagation in particular) accumulate duplicate cards/groups in
     // both the cards array and the DOM, because addCard and friends never
@@ -1649,6 +1679,17 @@
     // restore on canvas open / tab switch). Mirrors the explicit clear that
     // undo/redo already do before calling persistence.restore.
     clearCanvas();
+    // Lazy DOM (C2.2): the caller MAY declare whether this tab should mount
+    // canvas DOM. Table-view tabs pass mountDom:false → the persistence build
+    // loop's addX calls stay data-only (they self-gate on isDomHydrated());
+    // canvas-view tabs pass mountDom:true → DOM mounts during the build, as
+    // before. Callers that omit mountDom (remote canvas/tab sync, tab switch)
+    // are re-restoring into whatever view is already showing, so we preserve
+    // the current hydration state. Set BEFORE persistence.restore so the build
+    // loop sees it.
+    if (opts && typeof opts.mountDom === "boolean") {
+      domHydrated = opts.mountDom;
+    }
     getPersistenceHelpers().restore(state);
     // Visuals-only after restore: the saved state already carries the
     // relational cluster model (or has just been backfilled from snap
@@ -1656,11 +1697,31 @@
     // clobber saved membership when overlay.js hasn't yet applied the
     // saved Pro Mode pitch — the next user-initiated geometry change
     // (drag-end) goes through the full refreshClusters path and re-
-    // reconciles from snap with the correct card heights.
+    // reconciles from snap with the correct card heights. No-ops when
+    // unhydrated (table-view tab) — hydrateCanvasDom runs it on toggle.
     refreshClusterVisuals();
     lastSnapshot = captureSnapshot();
     undoStack = [];
     redoStack = [];
+  }
+
+  // Mount canvas DOM for every card on first switch to the canvas view
+  // (C2.2). Idempotent: a no-op once hydrated, so the overlay can call it
+  // unconditionally before revealing the canvas. We flip domHydrated BEFORE
+  // the work so the guarded ops below (refreshClusters → snap, credit DOM)
+  // run for real. Groups stay eager, so their elements already exist; we
+  // re-derive their bounds here because they were sized against default card
+  // boxes while the cards were data-only during the table-view restore.
+  function hydrateCanvasDom() {
+    if (domHydrated) return;
+    domHydrated = true;
+    const helpers = getCardHelpers();
+    for (const c of cards) helpers.mountCardElForType(c);
+    refreshClusters({ dragCardIds: new Set() });
+    notifyCreditTotal();
+    updateDpCosts();
+    updateGroupCredits();
+    updateGroupBounds();
   }
 
   // ---- Init / Destroy ----
@@ -1706,6 +1767,9 @@
     undoStack = [];
     redoStack = [];
     lastSnapshot = null;
+    // Reset the lazy-DOM gate so the next openCanvas starts unhydrated and the
+    // first restore re-establishes it from the tab's saved view.
+    domHydrated = false;
     canvasArea = svgLayer = cardContainer = null;
   }
 
@@ -1756,6 +1820,11 @@
       label: g.el?.querySelector(".cb-group-label")?.value || "",
     })),
     destroy, serialize, restore, setActiveTool, getActiveTool,
+    // Lazy canvas DOM (C2.2). hydrateCanvasDom mounts every card element on
+    // first switch to the canvas view (idempotent); isDomHydrated lets
+    // callers (and verification) check whether canvas DOM is currently built.
+    hydrateCanvasDom,
+    isDomHydrated: () => domHydrated,
     zoomIn: () => zoomBy(0.15),
     zoomOut: () => zoomBy(-0.15),
     refreshClusters,
