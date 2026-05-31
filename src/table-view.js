@@ -898,40 +898,30 @@
     }
 
     const orphanErRows = [];
-    const orphanClusterSeen = new Set();
-    // ersByGroupId: groupId → Map(clusterKey → orphan row). Two layers
-    // because multiple clusters can land in the same cb-group (e.g. two
-    // separate ER clusters both grouped together).
+    const orphanSeen = new Set();
+    // ersByGroupId: groupId → Map(cardId → orphan row). Orphan enrichments
+    // (ERs with no visible DP) are grouped SEMANTICALLY (C1.3), never by canvas
+    // snap geometry: each orphan ER is its own row, sectioned by its cb-group
+    // and otherwise routed under its imported-table section by render(). This
+    // is what guarantees canvas snap/reconcile can't re-bundle or move the
+    // table. (Waterfalls are already a single card, so they stay one row.)
     const ersByGroupId = new Map();
 
     for (const card of allCards) {
       if (!isErType(card.data.type)) continue;
       if (claimedErIds.has(card.id)) continue;
-      // Snap-cluster of this ER. May include other ER cards (Link
-      // result) or just this one card.
-      const clusterIds = getClusterForCard(card.id);
-      const clusterKey = clusterIds.slice().sort((a, b) => a - b).join("|");
-      if (orphanClusterSeen.has(clusterKey)) continue;
-      orphanClusterSeen.add(clusterKey);
-      // Filter to ER cards only (snap cluster is bounded by DP-presence
-      // check above so this is mostly defensive — a DP in the cluster
-      // would have placed it in claimedErIds).
-      const erCards = clusterIds
-        .map((id) => cardById.get(id))
-        .filter((c) => c && isErType(c.data?.type));
-      if (erCards.length === 0) continue;
-      const row = buildOrphanRowFromCards(erCards);
+      if (orphanSeen.has(card.id)) continue;
+      orphanSeen.add(card.id);
+      const row = buildOrphanRowFromCards([card]);
 
-      // Bucket by groupId of the first (primary) ER. cb-groups apply to
-      // every member, so all ERs in the cluster share the same groupId
-      // when they were grouped together; mixed-group clusters are rare
-      // and map to the primary's group for consistency.
-      const primary = erCards.find((c) => c.id === row.cardId) || erCards[0];
-      if (primary.groupId != null && groupNameById.has(primary.groupId)) {
-        if (!ersByGroupId.has(primary.groupId)) {
-          ersByGroupId.set(primary.groupId, new Map());
+      // Section by the ER's own cb-group (a semantic, user-created grouping).
+      // Orphan ERs with no cb-group fall through to the flat list, which
+      // render() routes under the ER's imported-table section.
+      if (card.groupId != null && groupNameById.has(card.groupId)) {
+        if (!ersByGroupId.has(card.groupId)) {
+          ersByGroupId.set(card.groupId, new Map());
         }
-        ersByGroupId.get(primary.groupId).set(clusterKey, row);
+        ersByGroupId.get(card.groupId).set(String(card.id), row);
       } else {
         orphanErRows.push(row);
       }
