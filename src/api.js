@@ -692,6 +692,49 @@
     }
   };
 
+  // Per-field credit-cost blocks for a referenced "main function" table. A
+  // subroutine ("Run function") field has no cost of its own — its projected
+  // cost is the sum of the table it points at (typeSettings.referencedTableId),
+  // which is exactly what Clay's Edit-column panel shows. We fetch only the
+  // credit costs (no profiling / status / sampling) and return the raw
+  // ActionCostMetadata blocks so the caller can sum them with resolveEffectiveCredits.
+  // Returns an array of creditCost objects, or null on failure.
+  __cb.fetchReferencedTableCreditCosts = async function (workspaceId, tableId) {
+    try {
+      const res = await fetch(
+        `https://api.clay.com/v3/workspaces/${workspaceId}/tables/${tableId}/context`,
+        {
+          method: "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          // NOTE: keep this option set minimal. Adding `includeFullSchemas: false`
+          // (counterintuitively) suppresses the per-field `creditCost` for a
+          // subroutine's function table, so the sum would come back as 0. These
+          // four options are the proven set that returns creditCost blocks.
+          body: JSON.stringify({
+            formatAsXML: false,
+            contextDetailLevel: "medium",
+            getExampleRows: 0,
+            customOptions: {
+              includeCreditCosts: true,
+              includeStatusCounts: false,
+              includeDataProfiling: false,
+              sampleSize: 1,
+            },
+          }),
+        }
+      );
+      if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
+      const body = await res.json();
+      const fcs = body?.result?.fieldConfigurationsData?.fieldConfigs;
+      if (!Array.isArray(fcs)) return null;
+      return fcs.filter((fc) => fc && fc.creditCost).map((fc) => fc.creditCost);
+    } catch (err) {
+      console.warn("[Clay Scoping] fetchReferencedTableCreditCosts failed:", err);
+      return null;
+    }
+  };
+
   // App accounts (auth accounts) for the workspace. Used by the Old vs New
   // Pricing comparison modal (gated by the `pricing_comparison` feature
   // flag) to differentiate "Clay-managed shared key" (bills credits) from

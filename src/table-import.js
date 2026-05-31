@@ -607,7 +607,12 @@
     return {
       actionKey: actionKey ?? (displayName || "field").toLowerCase().replace(/[^a-z0-9]+/g, "_"),
       packageId: packageId ?? "clay",
-      displayName: ai ? (displayName || info?.displayName || "Use AI") : (info?.displayName || displayName || "Enrichment"),
+      // Prefer the column name (field.name) over the catalog action name for
+      // every enrichment — that's the label the user gave the column and what
+      // they see in Clay. It also fixes generic actions like "Run function"
+      // (execute-subroutine), whose catalog displayName masked the real column
+      // name. Falls back to the catalog name, then a generic label.
+      displayName: ai ? (displayName || info?.displayName || "Use AI") : (displayName || info?.displayName || "Enrichment"),
       packageName: info?.packageName ?? "Clay",
       credits,
       // Default to 0, NOT 1 — read / lookup / source actions
@@ -631,6 +636,12 @@
       fieldId: fieldId ?? field?.id,
       tableId: tableId ?? null,
       viewId: viewId ?? null,
+      // Subroutine ("Run function") fields reference a "main function" table.
+      // Carried so fetchSubroutineCostsInBackground can resolve the projected
+      // cost (sum of that table's per-field credit costs — what Clay shows in
+      // the Edit-column panel) and stamp it onto data.credits. Persists with
+      // the card, so a reload keeps the resolved cost.
+      referencedTableId: field?.typeSettings?.referencedTableId ?? null,
       stats: stats || null,
       groupCluster: groupCluster || null,
     };
@@ -1835,9 +1846,65 @@
     // toggle has real numbers ready by the time the user flips it.
     if (importedAny && workspaceId) {
       fetchSpendInBackground(workspaceId, tableId);
+      // Resolve projected cost for "Run function" (subroutine) cards, whose
+      // cost lives in the table they reference rather than the catalog.
+      fetchSubroutineCostsInBackground(workspaceId, tableId);
     }
 
     return importedAny;
+  }
+
+  // Subroutine ("Run function") fields have no catalog or /context cost of
+  // their own — their projected cost is the sum of the table they reference
+  // (data.referencedTableId). We resolve that here in the background: one
+  // /context per unique referenced table (deduped + session-cached), summed
+  // with resolveEffectiveCredits (same per-result / private-key handling Clay
+  // uses), then stamped onto data.credits so Projected mode shows the same
+  // number as Clay's Edit-column panel.
+  async function fetchSubroutineCostsInBackground(workspaceId, tableId) {
+    if (!__cb.canvas || typeof __cb.fetchReferencedTableCreditCosts !== "function") return;
+
+    const fnCards = [];
+    const refIds = new Set();
+    for (const card of __cb.canvas.getCards()) {
+      const d = card.data;
+      if (!d || d.tableId !== tableId) continue;
+      if (d.actionKey !== "execute-subroutine" || !d.referencedTableId) continue;
+      fnCards.push(card);
+      refIds.add(d.referencedTableId);
+    }
+    if (refIds.size === 0) return;
+
+    __cb._subroutineCostCache = __cb._subroutineCostCache || new Map();
+    const cache = __cb._subroutineCostCache;
+
+    await Promise.all(
+      Array.from(refIds).map(async (refId) => {
+        if (cache.has(refId)) return;
+        const costs = await __cb.fetchReferencedTableCreditCosts(workspaceId, refId);
+        if (!Array.isArray(costs)) return;
+        let sum = 0;
+        for (const cc of costs) {
+          const c = resolveEffectiveCredits(cc, null);
+          if (Number.isFinite(c)) sum += c;
+        }
+        cache.set(refId, sum);
+      })
+    );
+
+    let stamped = false;
+    for (const card of fnCards) {
+      const sum = cache.get(card.data.referencedTableId);
+      if (sum == null) continue;
+      card.data.credits = sum;
+      card.data.creditText = `~${sum} / row`;
+      stamped = true;
+    }
+    if (!stamped) return;
+    if (typeof __cb.canvas.refreshCreditTotal === "function") __cb.canvas.refreshCreditTotal();
+    if (typeof __cb.canvas.updateGroupCredits === "function") __cb.canvas.updateGroupCredits();
+    if (typeof __cb.canvas.notifyChange === "function") __cb.canvas.notifyChange();
+    if (__cb.tableView?.refresh) __cb.tableView.refresh();
   }
 
   // Fetches realtime column spend after the projected import has rendered and

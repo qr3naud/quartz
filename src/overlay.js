@@ -514,6 +514,9 @@
         recalcTotal();
       }
       if (__cb.canvas?.updateGroupCredits) __cb.canvas.updateGroupCredits();
+      // The table view's per-row Credits / Actions columns are view-mode-aware
+      // (projected catalog vs actual spend), so re-render it on toggle.
+      if (__cb.tableView?.refresh) __cb.tableView.refresh();
       if (__cb.debouncedSave) __cb.debouncedSave();
     };
 

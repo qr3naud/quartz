@@ -431,8 +431,7 @@
     for (const [key, dpCards] of dpsByEnrichmentKey) {
       const er = erByKey.get(key);
       claimedErIds.add(er.id);
-      const credits = !er.data.usePrivateKey && er.data.credits != null ? er.data.credits : 0;
-      const actions = er.data.actionExecutions != null ? er.data.actionExecutions : 0;
+      const { credits, actions, creditsUnknown } = erPerRowCost(er);
       const perDpCredits = dpCards.length > 0 ? credits / dpCards.length : 0;
       const perDpActions = dpCards.length > 0 ? actions / dpCards.length : 0;
       const erList = [buildErChipData(er)];
@@ -440,6 +439,7 @@
         dpInfoMap.set(dp.id, {
           credits: perDpCredits,
           actions: perDpActions,
+          creditsUnknown,
           ers: erList,
           enrichmentCount: 1,
         });
@@ -567,6 +567,7 @@
         coverage: card.data.stats?.coverage || null,
         credits: info ? info.credits : 0,
         actions: info ? info.actions : 0,
+        creditsUnknown: info ? !!info.creditsUnknown : false,
         ers,
         erKey: erKeyForList(ers),
         connected: !!info && info.enrichmentCount > 0,
@@ -739,9 +740,12 @@
     function buildOrphanRowFromCards(erCards) {
       let credits = 0;
       let actions = 0;
+      let creditsUnknown = false;
       for (const er of erCards) {
-        if (!er.data.usePrivateKey && er.data.credits != null) credits += er.data.credits;
-        if (er.data.actionExecutions != null) actions += er.data.actionExecutions;
+        const cost = erPerRowCost(er);
+        credits += cost.credits;
+        actions += cost.actions;
+        if (cost.creditsUnknown) creditsUnknown = true;
       }
       // Stable order within a cluster: by Y then X so chips render in
       // the same order as the cards' canvas layout.
@@ -753,6 +757,7 @@
         y: sorted[0].y,
         credits,
         actions,
+        creditsUnknown,
         ers: sorted.map((c) => buildErChipData(c)),
       };
     }
@@ -1050,6 +1055,33 @@
       dpRows: remainingDpRows,
       tableGroups,
     };
+  }
+
+  // Per-row credit/action cost for an enrichment card, view-mode-aware.
+  //   Projected: the card's resolved catalog / subroutine credits.
+  //   Actual: real spend (data.stats.spend) averaged over its cellCount; falls
+  //     back to the projected value when an ER has no spend yet so the column
+  //     never blanks. `creditsUnknown` is set when a function's projected cost
+  //     hasn't resolved yet (fetchSubroutineCostsInBackground still in flight)
+  //     so the cell can show a placeholder instead of a misleading 0.
+  function erPerRowCost(er) {
+    const d = er.data || {};
+    const sp = d.stats && d.stats.spend;
+    if (window.__cb?.viewMode === "actual" && sp && Number(sp.cellCount) > 0) {
+      return {
+        credits: (Number(sp.credits) || 0) / Number(sp.cellCount),
+        actions: (Number(sp.actionExecutions) || 0) / Number(sp.cellCount),
+        creditsUnknown: false,
+      };
+    }
+    const credits = d.usePrivateKey ? 0 : (d.credits != null ? Number(d.credits) : 0);
+    const actions = d.actionExecutions != null ? Number(d.actionExecutions) : 0;
+    // Only functions get the "loading" placeholder — a normal enrichment with
+    // null credits (e.g. an HTTP API that bills only action executions) still
+    // reads as 0 credits, which is accurate for it.
+    const creditsUnknown =
+      d.actionKey === "execute-subroutine" && d.credits == null && !d.usePrivateKey;
+    return { credits, actions, creditsUnknown };
   }
 
   function buildErChipData(er) {
@@ -2401,7 +2433,12 @@
 
     const creditsCell = document.createElement("td");
     creditsCell.className = "col-credits cb-table-view-cell-readonly";
-    creditsCell.textContent = formatNumber(row.credits);
+    if (row.creditsUnknown) {
+      creditsCell.textContent = "\u2014";
+      creditsCell.title = "Function cost is loading\u2026 switch to Actual for real spend";
+    } else {
+      creditsCell.textContent = formatNumber(row.credits);
+    }
     tr.appendChild(creditsCell);
 
     const actionsCell = document.createElement("td");
@@ -2588,7 +2625,12 @@
       const creditsCell = document.createElement("td");
       creditsCell.className = "col-credits cb-table-view-cell-readonly";
       if (mergeSpan > 1) creditsCell.rowSpan = mergeSpan;
-      creditsCell.textContent = formatNumber(row.credits);
+      if (row.creditsUnknown) {
+        creditsCell.textContent = "\u2014";
+        creditsCell.title = "Function cost is loading\u2026 switch to Actual for real spend";
+      } else {
+        creditsCell.textContent = formatNumber(row.credits);
+      }
       tr.appendChild(creditsCell);
 
       const actionsCell = document.createElement("td");
