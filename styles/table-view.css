@@ -482,6 +482,32 @@
   letter-spacing: 0.03em;
 }
 
+/* Per-kind category colors — match the ER chip palette so a kind reads the
+   same in the pill and the menu. Action keeps the default indigo above. */
+.cb-table-view-er-menu-kind-waterfall {
+  background: #f0fdf4;
+  color: #047857;
+  border-color: #d1fae5;
+}
+
+.cb-table-view-er-menu-kind-formula {
+  background: #f5f3ff;
+  color: #6d28d9;
+  border-color: #ede9fe;
+}
+
+.cb-table-view-er-menu-kind-source {
+  background: #fff7ed;
+  color: #c2410c;
+  border-color: #fed7aa;
+}
+
+.cb-table-view-er-menu-kind-ai {
+  background: #eff6ff;
+  color: #1d4ed8;
+  border-color: #dbeafe;
+}
+
 .cb-table-view-er-menu-summary {
   font-size: 12px;
   color: #6b7280;
@@ -521,26 +547,29 @@
   border-top: 1px solid #f1f5f9;
 }
 
+/* Mirrors the intro action buttons (.cb-table-view-add-er-btn + the Upload
+   POC indigo treatment) so "Open in table" reads as an action button, not a
+   heavy solid CTA. */
 .cb-table-view-er-menu-open {
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  justify-content: center;
   gap: 6px;
-  width: 100%;
-  padding: 8px 12px;
-  background: #4338ca;
-  color: #ffffff;
-  border: none;
-  border-radius: 6px;
+  padding: 7px 12px;
+  background: #eef2ff;
+  border: 1px solid #c7d2fe;
+  border-radius: 8px;
+  color: #4338ca;
   font-family: inherit;
-  font-size: 12.5px;
-  font-weight: 600;
+  font-size: 13px;
+  font-weight: 500;
   cursor: pointer;
-  transition: background 0.12s;
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
 }
 
 .cb-table-view-er-menu-open:hover {
-  background: #3730a3;
+  background: #e0e7ff;
+  border-color: #a5b4fc;
+  color: #3730a3;
 }
 
 .cb-table-view-er-menu-open svg {
@@ -550,7 +579,8 @@
 
 .cb-table-view-er-menu-open-disabled,
 .cb-table-view-er-menu-open-disabled:hover {
-  background: #e5e7eb;
+  background: #ffffff;
+  border-color: #e5e7eb;
   color: #9ca3af;
   cursor: not-allowed;
 }

@@ -2690,6 +2690,14 @@
     });
     if (!newDp) return;
 
+    // Lineage link (Phase 2.c). The table view matches DP -> ER by
+    // `sourceEnrichmentFieldId`, NOT by cluster, so a cluster-only attach
+    // would leave the freshly-named DP as a separate "Not connected" row.
+    // Stamp the new DP's lineage to the anchor ER's key (synthesizing a
+    // stable local key for picker-created ERs that carry no Clay fieldId).
+    const erKey = ensureErLineageKey(anchor);
+    if (erKey != null) newDp.data.sourceEnrichmentFieldId = erKey;
+
     // Lay out the cluster so canvas-mode geometry matches the new
     // membership (DP on the LEFT of the ER column). Same bucketing
     // primitive linkCardsByIds uses; we don't call linkCardsByIds
@@ -2706,9 +2714,29 @@
     // confirmatory + cosmetic. Empty dragCardIds keeps unrelated cards
     // from being demoted on this pass.
     if (canvas.refreshClusters) canvas.refreshClusters({ dragCardIds: new Set() });
-    // No explicit notifyChange — addDataPointCard already fired one
-    // with the cluster set, so the table view's render saw the link
-    // on the first pass.
+    // addDataPointCard fired a notifyChange BEFORE the lineage stamp above,
+    // so that first render saw the DP as orphan. Re-notify + persist so the
+    // row picks up the freshly-stamped link.
+    if (canvas.notifyChange) canvas.notifyChange();
+    if (__cb.saveTabs) __cb.saveTabs();
+  }
+
+  // Returns an ER card's lineage key (action field id, or wf:<groupCluster>
+  // for waterfalls), synthesizing + persisting a stable local key on the card
+  // when it has none — the case for picker-created enrichments that carry no
+  // Clay fieldId. Mirrors the key derivation in buildRows() and the canvas's
+  // erLineageKeyOf so a DP's sourceEnrichmentFieldId matches the ER on the
+  // next render. The synthetic id never has a tableId, so "Open in table"
+  // stays correctly disabled for these cards.
+  function ensureErLineageKey(er) {
+    if (!er || !er.data) return null;
+    const d = er.data;
+    if (d.type === "waterfall") {
+      if (d.groupCluster == null) d.groupCluster = `wf-local-${er.id}`;
+      return `wf:${d.groupCluster}`;
+    }
+    if (d.fieldId == null) d.fieldId = `local-${er.id}`;
+    return String(d.fieldId);
   }
 
   function buildDpRow(row, sectionId) {
@@ -3040,7 +3068,8 @@
     title.textContent = er.name;
     header.appendChild(title);
     const kindBadge = document.createElement("span");
-    kindBadge.className = "cb-table-view-er-menu-kind";
+    kindBadge.className =
+      "cb-table-view-er-menu-kind cb-table-view-er-menu-kind-" + er.kind.toLowerCase();
     kindBadge.textContent = er.kind;
     header.appendChild(kindBadge);
     menu.appendChild(header);

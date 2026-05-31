@@ -940,8 +940,14 @@
     const target = __cb.canvas.getCardById(targetCardId);
     if (!target) return;
 
-    const tw = target.el.offsetWidth || CARD_W;
-    const th = target.el.offsetHeight || CARD_H;
+    // `target.el` is null when the canvas DOM isn't hydrated (lazy canvas /
+    // table view is the active surface). Geometry is irrelevant in that case
+    // — the table view orders by tableOrder / cluster, not x/y — so fall back
+    // to the card-size constants instead of dereferencing the missing element
+    // (which used to throw and silently abort the add, so "+ Add enrichment"
+    // on a DP row did nothing).
+    const tw = target.el?.offsetWidth || CARD_W;
+    const th = target.el?.offsetHeight || CARD_H;
     const state = __cb.canvas.serialize();
     const allCards = state.cards || [];
 
@@ -994,10 +1000,11 @@
       __cb.canvas.assignToCluster([targetCardId], targetClusterId);
     }
 
+    const addedCards = [];
     for (let i = 0; i < newCards.length; i++) {
       const x = target.x + bestSide.dx + i * bestSide.stackDx;
       const y = target.y + bestSide.dy + i * bestSide.stackDy;
-      __cb.canvas.addCard(newCards[i], { x, y, clusterId: targetClusterId });
+      addedCards.push(__cb.canvas.addCard(newCards[i], { x, y, clusterId: targetClusterId }));
     }
 
     // Picker placement is not a user drag — the new ER cards already
@@ -1008,6 +1015,34 @@
     // demoted.
     if (__cb.canvas.refreshClusters) {
       __cb.canvas.refreshClusters({ dragCardIds: new Set() });
+    }
+
+    // Lineage link (Phase 2.c). The table view matches DP -> ER by
+    // `sourceEnrichmentFieldId`, NOT by cluster/geometry, so a cluster-only
+    // link leaves the new enrichment stranded in the "Unattached
+    // enrichments" section. When the user adds a single enrichment to a
+    // specific data point (table-view "+ Add enrichment" or the canvas ER
+    // tool on a DP), stamp the DP's lineage to that ER's key. Picker-created
+    // ERs carry no Clay fieldId, so synthesize a stable local key (mirrors
+    // erLineageKeyOf in canvas/index.js + the table view's key derivation,
+    // both of which read data.fieldId / wf:<groupCluster>). The synthetic id
+    // never has a tableId, so "Open in table" stays correctly disabled.
+    if (target.data && target.data.type === "dp" && addedCards.length === 1 && addedCards[0]?.data) {
+      const er = addedCards[0];
+      let erKey;
+      if (er.data.type === "waterfall") {
+        if (er.data.groupCluster == null) er.data.groupCluster = `wf-local-${er.id}`;
+        erKey = `wf:${er.data.groupCluster}`;
+      } else {
+        if (er.data.fieldId == null) er.data.fieldId = `local-${er.id}`;
+        erKey = String(er.data.fieldId);
+      }
+      target.data.sourceEnrichmentFieldId = erKey;
+      // addCard already fired a notifyChange before the lineage was set, so
+      // the first table render saw the ER as orphan. Re-notify + persist so
+      // the row picks up the freshly-stamped link.
+      if (__cb.canvas.notifyChange) __cb.canvas.notifyChange();
+      if (__cb.saveTabs) __cb.saveTabs();
     }
   }
 
