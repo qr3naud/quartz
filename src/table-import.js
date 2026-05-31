@@ -878,6 +878,39 @@
             .map(([id]) => id)
         );
 
+    // Per-field stats (coverage / fill / cost). Built early so we can tell a
+    // billable enrichment from a free one before the ER buckets + lineage run.
+    const statsByFieldId = buildStatsByFieldId({
+      fields: table?.fields ?? [],
+      context,
+      spend,
+    });
+
+    // A column counts as a billable enrichment if it has any cost: a positive
+    // /context credit cost (not zeroed by private-key / unlimited), a positive
+    // catalog base-credit or action-execution, it's a subroutine (cost resolved
+    // in the background), or it's an AI action (model credits). Free columns —
+    // free CSV sources, "Send table data" / write-to-cell, and other 0-credit
+    // 0-action actions — are NOT imported as enrichments and don't link as a
+    // data point's source.
+    function fieldIsBillable(f) {
+      if (!f) return false;
+      const ts = f.typeSettings || {};
+      // Subroutines are billable (cost resolved in the background). Scope to the
+      // subroutine actionKey — other actions (e.g. route-row / "Send table data")
+      // also carry a referencedTableId (their write target) but are free.
+      if (ts.actionKey === "execute-subroutine") return true;
+      if (__cb.isAiAction?.(ts.actionKey, f.name, ts.actionPackageId)) return true;
+      const sc = statsByFieldId.get(f.id)?.cost;
+      if (sc && !sc.unlimited && !sc.isPrivateKey && Number(sc.cost) > 0) return true;
+      const info = __cb.actionByIdLookup?.[`${ts.actionPackageId}-${ts.actionKey}`];
+      if (info) {
+        if ((planAwareBaseCredits(info) || 0) > 0) return true;
+        if ((planAwareActionExecutions(info) || 0) > 0) return true;
+      }
+      return false;
+    }
+
     // Group buckets — same logic that used to live inline in
     // importTableToCanvas. Each set is a single-purpose index so the
     // downstream filters stay O(1) per field.
@@ -969,7 +1002,8 @@
         visibleFieldIds.has(f.id) &&
         !groupedFieldIds.has(f.id) &&
         !leafInputFieldIds.has(f.id) &&
-        (f.type === "action" || f.type === "source")
+        (f.type === "action" || f.type === "source") &&
+        fieldIsBillable(f)
     );
 
     // Waterfall enumeration — see visibleWaterfallGroupIds above for why
@@ -1001,9 +1035,10 @@
           if (!visibleFieldIds.has(field.id)) continue;
           if (leafInputFieldIds.has(field.id)) continue;
           // Actions AND sources are enrichments (both can be paid); everything
-          // else in the group is a data point.
+          // else in the group is a data point. Free (0-credit/0-action)
+          // enrichments are skipped entirely — neither ER nor DP.
           if (field.type === "action" || field.type === "source") {
-            erFields.push(field);
+            if (fieldIsBillable(field)) erFields.push(field);
           } else {
             dpFields.push(field);
           }
@@ -1055,10 +1090,12 @@
       if (wfGroup) return `wf:${wfGroup}`;
       const field = fieldById[fieldId];
       if (!field) return null;
-      if (field.type === "action") return fieldId;
-      // Sources are paid enrichments too — return the source's own id so a data
-      // point extracted from a source links to it (was: null = "unmatched").
-      if (field.type === "source") return fieldId;
+      // Actions and sources are enrichments — but only billable ones count as a
+      // DP's source. A column extracted from a free action/source (e.g. a free
+      // CSV source) resolves to null = "unmatched", so it isn't imported as a
+      // data point and no free chip is shown.
+      if (field.type === "action") return fieldIsBillable(field) ? fieldId : null;
+      if (field.type === "source") return fieldIsBillable(field) ? fieldId : null;
       // basic / formula column: walk to the field it was extracted from.
       const parentId =
         field.extractedField?.fieldIdExtractedFrom ??
@@ -1102,15 +1139,10 @@
       if (importedErIds.has(key) || promotedSeen.has(key)) continue;
       const f = fieldById[key];
       if (!f || (f.type !== "action" && f.type !== "source")) continue;
+      if (!fieldIsBillable(f)) continue;
       promotedSeen.add(key);
       promotedErFields.push(f);
     }
-
-    const statsByFieldId = buildStatsByFieldId({
-      fields: table?.fields ?? [],
-      context,
-      spend,
-    });
 
     // ---- JSON-safe public shape ----
     //
