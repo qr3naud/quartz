@@ -1001,7 +1001,7 @@
       notifyChange();
     }
 
-    function addDataPointCard(text, opts) {
+    function buildDataPointCardData(text, opts) {
       let x;
       let y;
       let id;
@@ -1081,6 +1081,18 @@
         clusterId: opts?.clusterId ?? null,
         tableOrder: opts?.tableOrder ?? null,
       };
+      cardsRef().push(card);
+      return card;
+    }
+
+    // DOM half of the data-point card (C2.1). data.stats / data.fillRate /
+    // data.text drive the pills, so it reads everything off card.data.
+    function mountDpCardEl(card) {
+      if (card.el) return card.el;
+      const data = card.data;
+      const x = card.x;
+      const y = card.y;
+      const text = data.text || "";
 
       const el = document.createElement("div");
       el.className = "cb-card cb-card-dp";
@@ -1209,13 +1221,18 @@
       el.addEventListener("dblclick", (evt) => handleCardDblClick(card, evt));
 
       card.el = el;
-      cardsRef().push(card);
       cardContainerRef().appendChild(el);
+      return el;
+    }
+
+    function addDataPointCard(text, opts) {
+      const card = buildDataPointCardData(text, opts);
+      mountDpCardEl(card);
       notifyChange();
       return card;
     }
 
-    function addInputCard(text, opts) {
+    function buildInputCardData(text, opts) {
       let x, y, id;
       if (opts && opts.x !== undefined) {
         x = opts.x;
@@ -1252,6 +1269,17 @@
         clusterId: opts?.clusterId ?? null,
         tableOrder: opts?.tableOrder ?? null,
       };
+      cardsRef().push(card);
+      return card;
+    }
+
+    // DOM half of the input card (C2.1).
+    function mountInputCardEl(card) {
+      if (card.el) return card.el;
+      const data = card.data;
+      const x = card.x;
+      const y = card.y;
+      const text = data.text || "";
 
       const el = document.createElement("div");
       el.className = "cb-card cb-card-input";
@@ -1312,13 +1340,18 @@
       el.addEventListener("dblclick", (evt) => handleCardDblClick(card, evt));
 
       card.el = el;
-      cardsRef().push(card);
       cardContainerRef().appendChild(el);
+      return el;
+    }
+
+    function addInputCard(text, opts) {
+      const card = buildInputCardData(text, opts);
+      mountInputCardEl(card);
       notifyChange();
       return card;
     }
 
-    function addCommentCard(text, opts) {
+    function buildCommentCardData(text, opts) {
       let x, y, id;
       if (opts && opts.x !== undefined) {
         x = opts.x;
@@ -1355,6 +1388,17 @@
         clusterId: opts?.clusterId ?? null,
         tableOrder: opts?.tableOrder ?? null,
       };
+      cardsRef().push(card);
+      return card;
+    }
+
+    // DOM half of the comment card (C2.1).
+    function mountCommentCardEl(card) {
+      if (card.el) return card.el;
+      const data = card.data;
+      const x = card.x;
+      const y = card.y;
+      const text = data.text || "";
 
       const el = document.createElement("div");
       el.className = "cb-card cb-card-comment";
@@ -1415,10 +1459,27 @@
       el.addEventListener("dblclick", (evt) => handleCardDblClick(card, evt));
 
       card.el = el;
-      cardsRef().push(card);
       cardContainerRef().appendChild(el);
+      return el;
+    }
+
+    function addCommentCard(text, opts) {
+      const card = buildCommentCardData(text, opts);
+      mountCommentCardEl(card);
       notifyChange();
       return card;
+    }
+
+    // Mounts the DOM for an already-built card object, dispatching on type.
+    // The single entry point the lazy-hydration pass (C2.2) calls per card.
+    function mountCardElForType(card) {
+      if (!card || !card.data || card.el) return card?.el || null;
+      switch (card.data.type) {
+        case "dp": return mountDpCardEl(card);
+        case "input": return mountInputCardEl(card);
+        case "comment": return mountCommentCardEl(card);
+        default: return mountCardEl(card);
+      }
     }
 
     // Called whenever the summary bar's Records input changes. Walks every
@@ -1480,6 +1541,7 @@
       addCard,
       buildCardData,
       mountCardEl,
+      mountCardElForType,
       addDataPointCard,
       addInputCard,
       addCommentCard,
