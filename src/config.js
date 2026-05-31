@@ -221,6 +221,42 @@
       };
     },
 
+    // Position a fixed popover relative to an anchor, clamped to the viewport so
+    // it never spills off-screen — the robust version of the Export menu's
+    // anchor math, shared by the model picker, table picker, etc. Anchors below
+    // the trigger (flips above when there's no room), and clamps horizontally
+    // (align "left" pins to the anchor's left edge, "right" to its right edge,
+    // then shifts inward to stay on-screen). The element MUST already be in the
+    // DOM so its size can be measured. Returns { left, top, flipSubmenuLeft }:
+    // flipSubmenuLeft is true when there isn't room for a right-flying submenu,
+    // so callers can mirror theirs leftward.
+    placePopover(el, anchorEl, opts = {}) {
+      const gap = opts.gap ?? 4;
+      const margin = opts.margin ?? 8;
+      const submenuWidth = opts.submenuWidth ?? 220;
+      const align = opts.align || "left";
+      const rect = anchorEl.getBoundingClientRect();
+      el.style.position = "fixed";
+      el.style.right = "auto";
+      const ew = el.offsetWidth;
+      const eh = el.offsetHeight;
+      const vw = window.innerWidth;
+      const vh = window.innerHeight;
+
+      let left = align === "right" ? rect.right - ew : rect.left;
+      left = Math.max(margin, Math.min(left, vw - ew - margin));
+
+      let top = rect.bottom + gap;
+      if (top + eh > vh - margin) {
+        const above = rect.top - gap - eh;
+        top = above >= margin ? above : Math.max(margin, vh - eh - margin);
+      }
+
+      el.style.left = `${left}px`;
+      el.style.top = `${top}px`;
+      return { left, top, flipSubmenuLeft: left + ew + submenuWidth > vw - margin };
+    },
+
     stringToColor(str) {
       const palette = [
         "#6366f1", "#ec4899", "#f59e0b", "#10b981", "#3b82f6",

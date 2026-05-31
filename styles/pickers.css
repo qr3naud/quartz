@@ -518,6 +518,16 @@
   display: block;
 }
 
+/* When the picker is anchored near the viewport's right edge, fly the provider
+   submenus out to the LEFT instead so they stay on-screen. Toggled by
+   __cb.placePopover via the cb-model-picker-flip-left class on the picker. */
+.cb-model-picker-flip-left .cb-model-submenu {
+  left: auto;
+  right: 100%;
+  padding-left: 0;
+  padding-right: 4px;
+}
+
 /* ---------- Model options (shared between flat & grouped) ---------- */
 
 .cb-model-option {

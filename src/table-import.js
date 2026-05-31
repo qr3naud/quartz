@@ -2401,9 +2401,9 @@
     document.body.appendChild(tablePickerEl);
 
     if (anchorEl) {
-      const rect = anchorEl.getBoundingClientRect();
-      tablePickerEl.style.top = (rect.bottom + 4) + "px";
-      tablePickerEl.style.left = rect.left + "px";
+      // Clamp to the viewport so a wide picker (or a narrow window) never
+      // pushes the panel off-screen — shared helper, same as the model picker.
+      __cb.placePopover(tablePickerEl, anchorEl, { gap: 4 });
     }
   }
 
@@ -2426,9 +2426,7 @@
     document.body.appendChild(tablePickerEl);
 
     if (anchorEl) {
-      const rect = anchorEl.getBoundingClientRect();
-      tablePickerEl.style.top = (rect.bottom + 4) + "px";
-      tablePickerEl.style.left = rect.left + "px";
+      __cb.placePopover(tablePickerEl, anchorEl, { gap: 4 });
     }
   }
 
