@@ -406,11 +406,11 @@
             lineageGrouped = true;
           }
         }
-        // Persist the (re)grouping through the canonical save path. Covers the
+        // Persist the (re)grouping through the canonical write path. Covers the
         // initial canvas-view open, where setBrainstormView's prev===next means
         // the trailing debouncedSave below won't fire.
-        if (lineageGrouped && __cb.canvas?.notifyChange) {
-          __cb.canvas.notifyChange();
+        if (lineageGrouped) {
+          __cb.model.update();
         }
       }
       if (prev !== next && __cb.debouncedSave) __cb.debouncedSave();

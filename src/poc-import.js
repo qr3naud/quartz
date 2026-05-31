@@ -386,7 +386,7 @@
     // derive cluster them by adjacency. Empty dragCardIds keeps any
     // pre-existing cards on the canvas from being re-bucketed.
     if (canvas.refreshClusters) canvas.refreshClusters({ dragCardIds: new Set() });
-    if (canvas.notifyChange) canvas.notifyChange();
+    __cb.model.update();
     if (canvas.refreshCreditTotal) canvas.refreshCreditTotal();
 
     return { groups: totalGroupsAdded, dataPoints: totalDpAdded };

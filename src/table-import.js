@@ -2014,7 +2014,7 @@
     if (!stamped) return;
     if (typeof __cb.canvas.refreshCreditTotal === "function") __cb.canvas.refreshCreditTotal();
     if (typeof __cb.canvas.updateGroupCredits === "function") __cb.canvas.updateGroupCredits();
-    if (typeof __cb.canvas.notifyChange === "function") __cb.canvas.notifyChange();
+    __cb.model.update();
     if (__cb.tableView?.refresh) __cb.tableView.refresh();
   }
 
@@ -2073,7 +2073,7 @@
     if (!stamped) return;
     if (typeof __cb.canvas.refreshCreditTotal === "function") __cb.canvas.refreshCreditTotal();
     if (typeof __cb.canvas.updateGroupCredits === "function") __cb.canvas.updateGroupCredits();
-    if (typeof __cb.canvas.notifyChange === "function") __cb.canvas.notifyChange();
+    __cb.model.update();
     if (__cb.tableView?.refresh) __cb.tableView.refresh();
   }
 
@@ -2147,7 +2147,7 @@
         stamped = true;
       }
     }
-    if (stamped && typeof __cb.canvas.notifyChange === "function") __cb.canvas.notifyChange();
+    if (stamped) __cb.model.update();
     // Always refresh so the Fill spinner clears (whether data arrived or the
     // fetch failed — in which case the sampled fill is used as a fallback).
     if (__cb.tableView?.refresh) __cb.tableView.refresh();

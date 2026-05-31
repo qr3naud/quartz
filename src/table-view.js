@@ -1333,8 +1333,8 @@
   //
   // Mirrors the writers in src/export.js — kept duplicated so the table view
   // doesn't have to depend on the export modal's IIFE-private functions.
-  // Both code paths converge on canvas.notifyChange() + saveTabs(), so undo
-  // history and persistence behave identically.
+  // Both code paths converge on __cb.model.update() (+ saveTabs()), the single
+  // write path (C3.1), so undo history and persistence behave identically.
 
   function commitDpName(cardId, value) {
     const canvas = __cb.canvas;
@@ -1355,7 +1355,7 @@
       else textEl.setAttribute("data-placeholder", "Type data point\u2026");
     }
 
-    if (canvas.notifyChange) canvas.notifyChange();
+    __cb.model.update();
     if (__cb.saveTabs) __cb.saveTabs();
   }
 
@@ -1377,7 +1377,7 @@
     const labelEl = card.el?.querySelector(".cb-dp-fill-label");
     if (labelEl) labelEl.textContent = `${pct}%`;
 
-    if (canvas.notifyChange) canvas.notifyChange();
+    __cb.model.update();
     if (__cb.saveTabs) __cb.saveTabs();
   }
 
@@ -1395,7 +1395,7 @@
     canvas.applyClusterFrequency(cardId, freqId);
     if (canvas.refreshCreditTotal) canvas.refreshCreditTotal();
     if (canvas.updateGroupCredits) canvas.updateGroupCredits();
-    if (canvas.notifyChange) canvas.notifyChange();
+    __cb.model.update();
     if (__cb.saveTabs) __cb.saveTabs();
   }
 
@@ -1473,7 +1473,7 @@
       nextY = maxBottom + 40;
     }
     const card = canvas.addDataPointCard(text || "", { x: nextX, y: nextY });
-    if (canvas.notifyChange) canvas.notifyChange();
+    __cb.model.update();
     return card;
   }
 
@@ -1581,7 +1581,7 @@
     // durable against any unrelated geometry that snap-derive happens
     // to read on this pass.
     if (canvas.refreshClusters) canvas.refreshClusters({ dragCardIds: new Set() });
-    if (canvas.notifyChange) canvas.notifyChange();
+    __cb.model.update();
   }
 
   // ---- Drag-and-reorder ----
@@ -1854,7 +1854,7 @@
     }
     // No geometry change → no refreshClusters needed (snap-derive has
     // nothing new to discover). Just persist + re-render.
-    if (canvas.notifyChange) canvas.notifyChange();
+    __cb.model.update();
   }
 
   // Build the list of {key, cardIds, minY, tableOrder} blocks for
@@ -2761,7 +2761,7 @@
     // addDataPointCard fired a notifyChange BEFORE the lineage stamp above,
     // so that first render saw the DP as orphan. Re-notify + persist so the
     // row picks up the freshly-stamped link.
-    if (canvas.notifyChange) canvas.notifyChange();
+    __cb.model.update();
     if (__cb.saveTabs) __cb.saveTabs();
   }
 

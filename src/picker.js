@@ -297,7 +297,7 @@
     // directly — that would fire a synchronous save on every keystroke.
     if (window.__cb.canvas?.refreshCreditTotal) window.__cb.canvas.refreshCreditTotal();
     if (window.__cb.canvas?.updateGroupCredits) window.__cb.canvas.updateGroupCredits();
-    if (window.__cb.canvas?.notifyChange) window.__cb.canvas.notifyChange();
+    window.__cb.model.update();
   };
 
   __cb.startPickerMode = function () {
@@ -1036,7 +1036,7 @@
         // addCard already fired a notifyChange before the lineage was set, so
         // the first table render saw the ER as orphan. Re-notify + persist so
         // the row picks up the freshly-stamped link.
-        if (__cb.canvas.notifyChange) __cb.canvas.notifyChange();
+        __cb.model.update();
         if (__cb.saveTabs) __cb.saveTabs();
       }
     }

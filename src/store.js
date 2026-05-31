@@ -60,9 +60,14 @@
       return call("getImportedTables", {});
     },
 
-    // Every write should flow through update() so there is one notify path. In
-    // C1 the canvas still owns persistence + realtime, so we also poke its
-    // notifyChange; later phases move that here.
+    // The single external write path (C3.1). Table view, importers, picker,
+    // export, and overlay grouping all call this after mutating the model
+    // instead of poking canvas.notifyChange() directly. Today it delegates to
+    // the canvas's notifyChange (which still owns undo + debounced persist) and
+    // also fires model subscribers; later C3 slices move undo/persist/realtime
+    // ownership into the store itself. `mutator` is optional — most callers
+    // mutate just before calling update(); pass a function to wrap the mutation
+    // once the store owns the transaction (C3.4+).
     update(mutator) {
       if (typeof mutator === "function") mutator();
       const c = canvas();

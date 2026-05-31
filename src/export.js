@@ -494,7 +494,7 @@
       else textEl.setAttribute("data-placeholder", "Type data point\u2026");
     }
 
-    if (canvas.notifyChange) canvas.notifyChange();
+    __cb.model.update();
     if (__cb.saveTabs) __cb.saveTabs();
   }
 
@@ -521,7 +521,7 @@
     const labelEl = card.el?.querySelector(".cb-dp-fill-label");
     if (labelEl) labelEl.textContent = `${pct}%`;
 
-    if (canvas.notifyChange) canvas.notifyChange();
+    __cb.model.update();
     if (__cb.saveTabs) __cb.saveTabs();
   }
 
