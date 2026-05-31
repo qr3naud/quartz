@@ -895,28 +895,14 @@
 
     function recalcTotal() {
       const records = parseRecordsValue();
-      const isActual = __cb.viewMode === "actual";
-      // Total = per-row × records in BOTH modes.
-      //  - Projected: per-row is the frequency/coverage-weighted catalog
-      //    estimate (currentWeighted*PerRow).
-      //  - Actual: per-row is the REAL measured spend per run cell
-      //    (currentCreditsPerRow / currentActionsPerRow, = total spend ÷ cells
-      //    that ran). Multiplying by Records lets a GTME project the real
-      //    measured cost onto an actual contract volume. When Records equals
-      //    the number of cells that ran, this equals the raw spend.
-      // Frequency: Projected already bakes per-ER frequency into the weighted
-      // per-row sum (notifyCreditTotal). Actual's measured per-row has none, so
-      // apply the global (default) frequency here — so the Frequency dropdown
-      // moves the Actual total too (e.g. "Monthly" = 12× the one-run cost).
-      // Annually (×1) is a no-op, so Actual still equals raw measured spend
-      // when Records matches the run count.
-      const actualFreqMult = isActual
-        ? (__cb.getFrequencyMultiplier?.(__cb.getCurrentFrequencyId?.()) ?? 1)
-        : 1;
-      const perRowCredits = isActual ? currentCreditsPerRow * actualFreqMult : currentWeightedCreditsPerRow;
-      const perRowActions = isActual ? currentActionsPerRow * actualFreqMult : currentWeightedActionsPerRow;
-      const totalCredits = perRowCredits * records;
-      const totalActions = perRowActions * records;
+      // Total = frequency-weighted per-row × records in BOTH modes.
+      // notifyCreditTotal builds the weighted per-row slot per ER (honoring
+      // per-card frequency overrides) for Projected (catalog estimate ×
+      // frequency × coverage) and Actual (measured spend/row × frequency)
+      // alike, so the math here is identical for both. Frequency is the GTME
+      // lever: it scales the total without touching the measured run stats.
+      const totalCredits = currentWeightedCreditsPerRow * records;
+      const totalActions = currentWeightedActionsPerRow * records;
       // Totals are whole-number figures in the summary bar — at scoping
       // volumes the fractional tail (e.g. 15,458.4) is noise. The per-row
       // "Avg" boxes keep their decimals via formatNumber.

@@ -31,28 +31,49 @@
       const isActual = cb.viewMode === "actual";
 
       if (isActual) {
-        // Actual mode: every number comes from data.stats.spend (which is
-        // populated at import time from Clay's realtime credit usage
-        // pipeline). The totals here are absolute credit counts already, so
-        // the "weighted" slots carry the raw totals and the "per-row" slots
-        // carry an average computed against the largest cellCount we've
-        // seen. recalcTotal() in overlay.js reads __cb.viewMode and skips
-        // the records multiplication when actual mode is on.
-        let actualCredits = 0;
-        let actualActions = 0;
-        let maxCells = 0;
+        // Actual mode: per-row cost comes from measured spend
+        // (data.stats.spend = credits/actions/cellCount from Clay's realtime
+        // credit usage). Each column's real per-row cost = spend / cells that
+        // ran. We sum those across columns for the per-row "Avg" boxes, and a
+        // SECOND frequency-weighted sum (each column × its own frequency) for
+        // the "Total" boxes — which recalcTotal multiplies by Records.
+        //
+        // Frequency is a GTME scoping lever, decorrelated from the run stats:
+        // run stats fix the measured per-row cost; frequency dials how many
+        // times per year that cost recurs. So it must weight Actual exactly
+        // like Projected (per ER, honoring per-card overrides), not as a
+        // single global multiplier.
+        let perRowCredits = 0;
+        let perRowActions = 0;
+        let weightedCreditTotal = 0;
+        let weightedActionExecTotal = 0;
+        const globalFreqId = cb.getCurrentFrequencyId
+          ? cb.getCurrentFrequencyId()
+          : cb.DEFAULT_FREQUENCY_ID;
         for (const c of cardsRef()) {
           if (isNonErType(c.data.type)) continue;
           const sp = c.data.stats?.spend;
           if (!sp) continue;
-          actualCredits += Number(sp.credits) || 0;
-          actualActions += Number(sp.actionExecutions) || 0;
-          maxCells = Math.max(maxCells, Number(sp.cellCount) || 0);
+          const cells = Number(sp.cellCount) || 0;
+          if (cells <= 0) continue;
+          const rowCredits = (Number(sp.credits) || 0) / cells;
+          const rowActions = (Number(sp.actionExecutions) || 0) / cells;
+          const freqId = c.data.frequencyCustom
+            ? c.data.frequency
+            : (c.data.frequency || globalFreqId);
+          const mult = cb.getFrequencyMultiplier ? cb.getFrequencyMultiplier(freqId) : 1;
+          perRowCredits += rowCredits;
+          perRowActions += rowActions;
+          weightedCreditTotal += rowCredits * mult;
+          weightedActionExecTotal += rowActions * mult;
         }
-        const avgCredits = maxCells > 0 ? actualCredits / maxCells : 0;
-        const avgActions = maxCells > 0 ? actualActions / maxCells : 0;
         if (cb.updateCreditTotal) {
-          cb.updateCreditTotal(avgCredits, avgActions, actualCredits, actualActions);
+          cb.updateCreditTotal(
+            perRowCredits,
+            perRowActions,
+            weightedCreditTotal,
+            weightedActionExecTotal
+          );
         }
         return;
       }
