@@ -75,6 +75,18 @@
   // Grouped model picker spawned from the details-menu Model pill (AI columns).
   let erMenuModelPickerEl = null;
   let erMenuModelPickerBackdrop = null;
+  // "Use private key / use Clay credits" toggle spawned from the cost pill's
+  // credit segment.
+  let erMenuKeyToggleEl = null;
+  let erMenuKeyToggleBackdrop = null;
+
+  // Duotone glyphs copied verbatim from the canvas credit pill
+  // (src/canvas/cards.js) so the table-view private-key toggle is pixel-identical
+  // — same blue duotone key, same green duotone coin.
+  const KEY_TOGGLE_KEY_SVG =
+    '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 256 256"><path fill="#3b82f6" d="M216.57,39.43A80,80,0,0,0,83.91,120.78L28.69,176A15.86,15.86,0,0,0,24,187.31V216a16,16,0,0,0,16,16H72a8,8,0,0,0,8-8V208H96a8,8,0,0,0,8-8V184h16a8,8,0,0,0,5.66-2.34l9.56-9.57A79.73,79.73,0,0,0,160,176h.1A80,80,0,0,0,216.57,39.43Z"/><path fill="#93c5fd" d="M224,98.1c-1.09,34.09-29.75,61.86-63.89,61.9H160a63.7,63.7,0,0,1-23.65-4.51,8,8,0,0,0-8.84,1.68L116.69,168H96a8,8,0,0,0-8,8v16H72a8,8,0,0,0-8,8v16H40V187.31l58.83-58.82a8,8,0,0,0,1.68-8.84A63.72,63.72,0,0,1,96,95.92c0-34.14,27.81-62.8,61.9-63.89A64,64,0,0,1,224,98.1ZM192,76a12,12,0,1,1-12-12A12,12,0,0,1,192,76Z"/></svg>';
+  const KEY_TOGGLE_CREDIT_SVG =
+    '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" fill="currentColor" viewBox="0 0 256 256"><path d="M207.58,63.84C186.85,53.48,159.33,48,128,48S69.15,53.48,48.42,63.84,16,88.78,16,104v48c0,15.22,11.82,29.85,32.42,40.16S96.67,208,128,208s58.85-5.48,79.58-15.84S240,167.22,240,152V104C240,88.78,228.18,74.15,207.58,63.84Z" opacity="0.2"/><path d="M128,64c62.64,0,96,23.23,96,40s-33.36,40-96,40-96-23.23-96-40S65.36,64,128,64Z"/></svg>';
 
   // After a Group action the new section's label input wants focus so the
   // user types the name immediately. We can't focus it synchronously
@@ -1529,6 +1541,76 @@
     // models + pricing — would be clipped).
     const pos = window.__cb.placePopover?.(picker, anchorEl, { gap: 4 });
     if (pos?.flipSubmenuLeft) picker.classList.add("cb-model-picker-flip-left");
+  }
+
+  // Table-view-safe private-key toggle. Mirrors the canvas credit pill's
+  // showKeyToggle data writes (usePrivateKey + _originalCredits round-trip) but
+  // persists via model.update + saveTabs instead of touching card.el. Private
+  // key zeroes data credits (erPerRowCost returns 0 when usePrivateKey) but
+  // leaves action executions unchanged.
+  function commitPrivateKey(cardId, useKey) {
+    const canvas = __cb.canvas;
+    if (!canvas?.getCardById) return;
+    const card = canvas.getCardById(cardId);
+    if (!card) return;
+    const d = card.data;
+    if (useKey) {
+      if (d._originalCredits == null && d.credits != null) d._originalCredits = d.credits;
+      d.usePrivateKey = true;
+    } else {
+      d.usePrivateKey = false;
+      if (d._originalCredits != null) {
+        d.credits = d._originalCredits;
+        d.creditText = `~${d._originalCredits} / row`;
+      }
+    }
+    if (canvas.refreshCreditTotal) canvas.refreshCreditTotal();
+    if (canvas.updateGroupCredits) canvas.updateGroupCredits();
+    if (canvas.updateDpCosts) canvas.updateDpCosts();
+    __cb.model.update();
+    if (__cb.saveTabs) __cb.saveTabs();
+  }
+
+  function closeErMenuKeyToggle() {
+    if (erMenuKeyToggleEl) { erMenuKeyToggleEl.remove(); erMenuKeyToggleEl = null; }
+    if (erMenuKeyToggleBackdrop) { erMenuKeyToggleBackdrop.remove(); erMenuKeyToggleBackdrop = null; }
+  }
+
+  // The cost pill's credit-segment popover, reusing the canvas .cb-key-toggle
+  // styling (styles/cards.css) so it's identical to the canvas. One option that
+  // flips between "Use private key" and "Use Clay credits".
+  function openErMenuKeyToggle(er, anchorEl) {
+    closeErMenuKeyToggle();
+    const isKeyMode = !!er.usePrivateKey;
+
+    erMenuKeyToggleBackdrop = document.createElement("div");
+    erMenuKeyToggleBackdrop.style.cssText = "position:fixed;inset:0;z-index:9999998;";
+    erMenuKeyToggleBackdrop.addEventListener("mousedown", (e) => {
+      e.stopPropagation();
+      closeErMenuKeyToggle();
+    });
+
+    const el = document.createElement("div");
+    el.className = "cb-key-toggle";
+    el.addEventListener("mousedown", (e) => e.stopPropagation());
+
+    const option = document.createElement("button");
+    option.type = "button";
+    option.className = "cb-key-toggle-option";
+    option.innerHTML = isKeyMode
+      ? '<span style="color:#059669;display:flex">' + KEY_TOGGLE_CREDIT_SVG + "</span><span>Use Clay credits</span>"
+      : KEY_TOGGLE_KEY_SVG + "<span>Use private key</span>";
+    option.addEventListener("click", (e) => {
+      e.stopPropagation();
+      closeErMenuKeyToggle();
+      commitPrivateKey(er.id, !isKeyMode);
+    });
+    el.appendChild(option);
+
+    document.body.appendChild(erMenuKeyToggleBackdrop);
+    document.body.appendChild(el);
+    el.style.zIndex = "9999999";
+    window.__cb.placePopover?.(el, anchorEl, { gap: 4 });
   }
 
   // Picker entry point. Setting linkTargetCardId hands placement off to
@@ -3126,6 +3208,7 @@
 
   function closeErChipMenu() {
     closeErMenuModelPicker();
+    closeErMenuKeyToggle();
     if (erChipMenuEl) { erChipMenuEl.remove(); erChipMenuEl = null; }
     if (erChipMenuBackdrop) { erChipMenuBackdrop.remove(); erChipMenuBackdrop = null; }
     document.removeEventListener("keydown", onErChipMenuKey);
@@ -3154,19 +3237,19 @@
   // Builds the Cost value as Clay's segmented credit/action pill (matches the
   // ActionExecutionBadge + CreditPriceBadge group in the column editor): a
   // StarFour glyph for action executions (nightshade) and a Coin/Coins glyph
-  // for data credits (matcha). Falls back to plain text for the private-key
-  // and still-calculating states.
+  // for data credits (matcha). The credit segment is clickable — it opens the
+  // same "use private key / use Clay credits" toggle as the canvas credit pill
+  // (private key zeroes data credits but not action executions, so the actions
+  // segment stays). Shows the blue key glyph + "Private key" when in key mode.
   function buildErMenuCostNode(er) {
-    if (er.usePrivateKey) return document.createTextNode("Private key (0 / row)");
     const c = er.cost || {};
-    if (c.creditsUnknown) return document.createTextNode("Calculating\u2026");
-    const credits = Number(c.credits) || 0;
+    const calculating = !!c.creditsUnknown;
     const actions = Number(c.actions) || 0;
 
     const pill = document.createElement("span");
     pill.className = "cb-table-view-er-cost-pill";
 
-    if (actions > 0) {
+    if (!calculating && actions > 0) {
       const seg = document.createElement("span");
       seg.className = "cb-table-view-er-cost-seg cb-table-view-er-cost-actions";
       seg.title = `${formatNumber(actions)} action${actions === 1 ? "" : "s"} / row`;
@@ -3176,11 +3259,33 @@
 
     const credSeg = document.createElement("span");
     credSeg.className = "cb-table-view-er-cost-seg cb-table-view-er-cost-credits";
-    credSeg.title = `${formatNumber(credits)} credit${credits === 1 ? "" : "s"} / row`;
-    const coin = Math.abs(credits) <= 1 ? coinSvg(12) : coinsSvg(12);
-    credSeg.innerHTML = coin + `<span>${formatNumber(credits)} / row</span>`;
-    pill.appendChild(credSeg);
+    if (calculating) {
+      credSeg.innerHTML = coinSvg(12) + "<span>Calculating\u2026</span>";
+    } else if (er.usePrivateKey) {
+      credSeg.classList.add("cb-table-view-er-cost-credits-key");
+      credSeg.title = "Billing against your private key (0 credits / row) \u2014 click to change";
+      credSeg.innerHTML = KEY_TOGGLE_KEY_SVG + "<span>Private key</span>";
+    } else {
+      const credits = Number(c.credits) || 0;
+      credSeg.title = `${formatNumber(credits)} credit${credits === 1 ? "" : "s"} / row \u2014 click to change`;
+      const coin = Math.abs(credits) <= 1 ? coinSvg(12) : coinsSvg(12);
+      credSeg.innerHTML = coin + `<span>${formatNumber(credits)} / row</span>`;
+    }
 
+    // Resolved cost → the credit segment toggles private key on click, exactly
+    // like the canvas credit pill's showKeyToggle.
+    if (!calculating) {
+      credSeg.classList.add("cb-table-view-er-cost-credits-toggle");
+      credSeg.setAttribute("role", "button");
+      credSeg.setAttribute("aria-haspopup", "true");
+      credSeg.addEventListener("mousedown", (evt) => evt.stopPropagation());
+      credSeg.addEventListener("click", (evt) => {
+        evt.stopPropagation();
+        openErMenuKeyToggle(er, credSeg);
+      });
+    }
+
+    pill.appendChild(credSeg);
     return pill;
   }
 

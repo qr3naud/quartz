@@ -587,6 +587,17 @@
   color: #0dac65;
 }
 
+/* The credit segment is a button (toggles private key) — signal it with a
+   pointer + hover wash; overflow:hidden + the pill radius clip the corner. */
+.cb-table-view-er-cost-credits-toggle {
+  cursor: pointer;
+  transition: background 0.12s;
+}
+
+.cb-table-view-er-cost-credits-toggle:hover {
+  background: #f3f4f6;
+}
+
 /* Model value pill — indigo selectable pill (mirrors the canvas model chip),
    opens the same grouped model picker on click. */
 .cb-table-view-er-menu-model {
