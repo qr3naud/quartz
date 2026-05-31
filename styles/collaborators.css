@@ -147,14 +147,14 @@
    ~1.5px ring), so that one is unchanged and the 24px header scales down. */
 .cb-collab-avatar-active,
 .cb-collab-row-active .cb-collab-avatar {
-  /* Drop the avatar's solid 2px white border for the active state. That border
-     is a fixed, non-proportional constant: the header avatars carry it (base
-     .cb-collab-avatar) while the dropdown -lg avatars set border-width:0, so it
-     doubled the white gap on the smaller header pile only. With it transparent
-     the photo fills the full circle and the gap is purely the proportional
-     box-shadow below — so the header tightens to match the dropdown, which is
-     unaffected (it already had no border). */
-  border-color: transparent;
+  /* Remove the avatar's 2px white border for the active state (header avatars
+     carry it via base .cb-collab-avatar; dropdown -lg already sets width 0).
+     Use width:0 — NOT border-color:transparent — because the photo is sized to
+     the padding-box (background-origin) but painted to the border-box, so a
+     transparent border leaves the avatar's bg-color showing as a dark ring in
+     that 2px band (the "black border"). Width:0 collapses the band so the gap
+     is purely the proportional box-shadow below. */
+  border-width: 0;
   box-shadow:
     0 0 0 calc(var(--cb-collab-av-size) * 0.0714) #ffffff,
     0 0 0 calc(var(--cb-collab-av-size) * 0.125) #6366f1;
