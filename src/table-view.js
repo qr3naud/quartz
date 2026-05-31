@@ -72,6 +72,9 @@
   // context menu) so it escapes the table's overflow clipping.
   let erChipMenuEl = null;
   let erChipMenuBackdrop = null;
+  // Grouped model picker spawned from the details-menu Model pill (AI columns).
+  let erMenuModelPickerEl = null;
+  let erMenuModelPickerBackdrop = null;
 
   // After a Group action the new section's label input wants focus so the
   // user types the name immediately. We can't focus it synchronously
@@ -1404,6 +1407,126 @@
     if (canvas.updateGroupCredits) canvas.updateGroupCredits();
     __cb.model.update();
     if (__cb.saveTabs) __cb.saveTabs();
+  }
+
+  // Table-view-safe model switch for AI columns. Mirrors the canvas applyModel
+  // (src/canvas/ui.js) data writes — selectedModel + credits + provider icon —
+  // but persists through the table view's canonical path (model.update +
+  // saveTabs) instead of touching card.el, which is null under the lazy canvas.
+  // model.update() notifies subscribers, so the table re-renders (which also
+  // closes this menu) with the new per-row credits.
+  function commitModel(cardId, model) {
+    const canvas = __cb.canvas;
+    if (!canvas?.getCardById) return;
+    const card = canvas.getCardById(cardId);
+    if (!card) return;
+    const d = card.data;
+    d.selectedModel = model.id;
+    if (d.usePrivateKey) {
+      d._originalCredits = model.credits;
+    } else {
+      d.credits = model.credits;
+      d.creditText = model.credits != null ? `~${model.credits} / row` : null;
+    }
+    const provIcon = model.provider && window.__cb.AI_PROVIDER_ICONS
+      ? window.__cb.AI_PROVIDER_ICONS[model.provider]
+      : null;
+    if (provIcon) d.iconUrl = provIcon;
+    if (canvas.refreshCreditTotal) canvas.refreshCreditTotal();
+    if (canvas.updateGroupCredits) canvas.updateGroupCredits();
+    __cb.model.update();
+    if (__cb.saveTabs) __cb.saveTabs();
+  }
+
+  // Grouped provider → model picker, reusing the canvas picker's CSS classes
+  // (styles/pickers.css) so it looks identical to the canvas model chip's
+  // dropdown. Picking a model commits via commitModel; selection triggers a
+  // table refresh that closes the details menu.
+  function closeErMenuModelPicker() {
+    if (erMenuModelPickerEl) { erMenuModelPickerEl.remove(); erMenuModelPickerEl = null; }
+    if (erMenuModelPickerBackdrop) { erMenuModelPickerBackdrop.remove(); erMenuModelPickerBackdrop = null; }
+  }
+
+  function openErMenuModelPicker(er, anchorEl) {
+    closeErMenuModelPicker();
+    const cb = window.__cb;
+    const card = cb?.canvas?.getCardById?.(er.id);
+    const options = (cb?.getModelOptions ? cb.getModelOptions() : null) || [];
+    if (!card || options.length === 0) return;
+    const selectedId = card.data.selectedModel;
+
+    const providers = new Map();
+    for (const m of options) {
+      const key = m.provider || "Other";
+      if (!providers.has(key)) providers.set(key, []);
+      providers.get(key).push(m);
+    }
+    const selectedProvider = options.find((m) => m.id === selectedId)?.provider || null;
+
+    erMenuModelPickerBackdrop = document.createElement("div");
+    erMenuModelPickerBackdrop.className = "cb-model-picker-backdrop";
+    erMenuModelPickerBackdrop.addEventListener("mousedown", (e) => {
+      e.stopPropagation();
+      closeErMenuModelPicker();
+    });
+
+    const picker = document.createElement("div");
+    picker.className = "cb-model-picker cb-model-picker-grouped";
+    picker.addEventListener("mousedown", (e) => e.stopPropagation());
+
+    for (const [providerName, models] of providers) {
+      const row = document.createElement("div");
+      row.className = "cb-model-provider-row";
+      if (providerName === selectedProvider) row.classList.add("cb-model-provider-active");
+
+      const label = document.createElement("span");
+      label.className = "cb-model-provider-name";
+      label.textContent = providerName;
+      const chevron = document.createElement("span");
+      chevron.className = "cb-model-provider-chevron";
+      chevron.innerHTML =
+        '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" ' +
+        'fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" ' +
+        'stroke-linejoin="round"><polyline points="9 6 15 12 9 18"/></svg>';
+      row.appendChild(label);
+      row.appendChild(chevron);
+
+      const sub = document.createElement("div");
+      sub.className = "cb-model-submenu";
+      const subInner = document.createElement("div");
+      subInner.className = "cb-model-submenu-inner";
+      for (const model of models) {
+        const opt = document.createElement("button");
+        opt.type = "button";
+        opt.className = "cb-model-option";
+        if (model.id === selectedId) opt.classList.add("cb-model-option-active");
+        const nameSpan = document.createElement("span");
+        nameSpan.className = "cb-model-option-name";
+        nameSpan.textContent = model.name;
+        const costSpan = document.createElement("span");
+        costSpan.className = "cb-model-option-cost";
+        costSpan.textContent = model.credits != null ? `~${model.credits} / row` : "";
+        opt.appendChild(nameSpan);
+        opt.appendChild(costSpan);
+        opt.addEventListener("click", (e) => {
+          e.stopPropagation();
+          commitModel(er.id, model);
+          closeErMenuModelPicker();
+        });
+        subInner.appendChild(opt);
+      }
+      sub.appendChild(subInner);
+      row.appendChild(sub);
+      picker.appendChild(row);
+    }
+
+    document.body.appendChild(erMenuModelPickerBackdrop);
+    document.body.appendChild(picker);
+    erMenuModelPickerEl = picker;
+
+    const rect = anchorEl.getBoundingClientRect();
+    picker.style.top = `${rect.bottom + 4}px`;
+    picker.style.left = `${rect.left}px`;
   }
 
   // Picker entry point. Setting linkTargetCardId hands placement off to
@@ -3000,6 +3123,7 @@
   // chip) so a large import only pays for the logo per pill.
 
   function closeErChipMenu() {
+    closeErMenuModelPicker();
     if (erChipMenuEl) { erChipMenuEl.remove(); erChipMenuEl = null; }
     if (erChipMenuBackdrop) { erChipMenuBackdrop.remove(); erChipMenuBackdrop = null; }
     document.removeEventListener("keydown", onErChipMenuKey);
@@ -3058,14 +3182,47 @@
     return pill;
   }
 
-  // The "cute little badge" — the same amber ×N pill the chips use, rendered
-  // read-only here (frequency is changed from the chip badge, not the menu).
+  // The "cute little badge" — the same amber ×N pill the chips use, editable:
+  // clicking opens the shared frequency picker and commits through the same
+  // path as the chip badge (commitFrequency → applyClusterFrequency).
   function buildErMenuFrequencyNode(er) {
-    const badge = document.createElement("span");
+    const badge = document.createElement("button");
+    badge.type = "button";
     badge.className = "cb-table-view-er-chip-freq cb-table-view-er-menu-freq";
-    badge.title = `Runs ${er.frequencyLabel || "annually"}`;
+    badge.title = `Runs ${er.frequencyLabel || "annually"} \u2014 click to change`;
     badge.textContent = "\u00d7" + (er.multiplier ?? 1);
+    badge.addEventListener("mousedown", (evt) => evt.stopPropagation());
+    badge.addEventListener("click", (evt) => {
+      evt.stopPropagation();
+      const cb = window.__cb;
+      if (!cb?.showFrequencyPicker) return;
+      cb.showFrequencyPicker(badge, er.frequencyId, (picked) => {
+        commitFrequency(er.id, picked);
+      });
+    });
     return badge;
+  }
+
+  // Model value — an indigo pill (mirrors the canvas model chip) that opens the
+  // same grouped provider/model picker. AI columns only.
+  function buildErMenuModelNode(er) {
+    const pill = document.createElement("button");
+    pill.type = "button";
+    pill.className = "cb-table-view-er-menu-model";
+    pill.title = er.model.provider
+      ? `${er.model.name} \u00b7 ${er.model.provider} \u2014 click to change`
+      : `${er.model.name} \u2014 click to change`;
+    const nameSpan = document.createElement("span");
+    nameSpan.className = "cb-table-view-er-menu-model-name";
+    nameSpan.textContent = er.model.name;
+    pill.appendChild(nameSpan);
+    pill.insertAdjacentHTML("beforeend", chevronDownSvg(11));
+    pill.addEventListener("mousedown", (evt) => evt.stopPropagation());
+    pill.addEventListener("click", (evt) => {
+      evt.stopPropagation();
+      openErMenuModelPicker(er, pill);
+    });
+    return pill;
   }
 
   // Annualized per-row cost — only meaningful when the enrichment runs more
@@ -3114,30 +3271,19 @@
     header.appendChild(kindBadge);
     menu.appendChild(header);
 
-    // Cost + frequency section.
+    // Cost / frequency / model section. The model row (AI columns only) is an
+    // editable pill in this same section — no separate "Model cost" row and no
+    // divider above it.
     const costSection = document.createElement("div");
     costSection.className = "cb-table-view-er-menu-section";
     costSection.appendChild(erMenuRow("Cost", buildErMenuCostNode(er)));
     costSection.appendChild(erMenuRow("Frequency", buildErMenuFrequencyNode(er)));
+    if (er.isAi && er.model) {
+      costSection.appendChild(erMenuRow("Model", buildErMenuModelNode(er)));
+    }
     const annual = erMenuAnnualText(er);
     if (annual) costSection.appendChild(erMenuRow("Per year", annual));
     menu.appendChild(costSection);
-
-    // Model section — AI columns only.
-    if (er.isAi && er.model) {
-      const modelSection = document.createElement("div");
-      modelSection.className = "cb-table-view-er-menu-section";
-      const modelVal = er.model.provider
-        ? `${er.model.name} \u00b7 ${er.model.provider}`
-        : er.model.name;
-      modelSection.appendChild(erMenuRow("Model", modelVal));
-      if (er.model.credits != null) {
-        modelSection.appendChild(
-          erMenuRow("Model cost", `${formatNumber(Number(er.model.credits))} credits / row`),
-        );
-      }
-      menu.appendChild(modelSection);
-    }
 
     // Footer: "Find in table" scrolls the source column into view (reuses the
     // canvas navigation). Functions also get "Open function", which jumps to
