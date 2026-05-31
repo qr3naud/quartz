@@ -107,6 +107,18 @@
       return model;
     },
 
+    // Apply a REMOTE-origin change (C3.6): run the mutation, then notify
+    // subscribers so both views reflect a peer's edit. Unlike update(), it does
+    // NOT capture undo, persist, or re-broadcast — the sender already owns
+    // those, and doing them here would echo back to peers and pollute local
+    // undo with remote edits. Used by live-actions for per-card text sync;
+    // whole-state remote sync goes through restore() (which also notifies).
+    applyRemote(mutator) {
+      if (typeof mutator === "function") mutator();
+      model.notify();
+      return model;
+    },
+
     // ---- Undo / redo history (C3.4) ----
     // The store owns the stacks; the canvas does the actual re-render for an
     // undo/redo (clearCanvas + restore the returned snapshot).

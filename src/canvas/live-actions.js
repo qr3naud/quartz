@@ -82,10 +82,15 @@
       textEl.textContent = text;
     }
 
-    // Always update the model so a data-only card (no element yet) picks up the
-    // peer's text and renders it correctly when the canvas hydrates.
-    card.data.text = text;
-    card.data.displayName = text;
+    // Route the model write through the store (C3.6) so subscribers (the table
+    // view) reflect the peer's text edit. applyRemote() notifies WITHOUT
+    // persisting / re-broadcasting (remote-origin — the sender owns those).
+    // Also covers data-only cards (no element yet): they pick up the text and
+    // render it on canvas hydrate.
+    __cb.model.applyRemote(() => {
+      card.data.text = text;
+      card.data.displayName = text;
+    });
   }
 
   __cb.mountLiveActions = function () {
