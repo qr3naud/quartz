@@ -888,8 +888,8 @@
     return __credits.notifyCreditTotal();
   }
 
-  function selectCard(id) { clearGroupSelection(); selectedCards.add(id); cards.find((c) => c.id === id)?.el.classList.add("cb-card-selected"); notifySelection(); }
-  function clearSelection() { for (const id of selectedCards) cards.find((c) => c.id === id)?.el.classList.remove("cb-card-selected"); selectedCards.clear(); clearGroupSelection(); notifySelection(); }
+  function selectCard(id) { clearGroupSelection(); selectedCards.add(id); cards.find((c) => c.id === id)?.el?.classList.add("cb-card-selected"); notifySelection(); }
+  function clearSelection() { for (const id of selectedCards) cards.find((c) => c.id === id)?.el?.classList.remove("cb-card-selected"); selectedCards.clear(); clearGroupSelection(); notifySelection(); }
 
   function selectGroup(id) {
     clearSelection();
@@ -1192,7 +1192,7 @@
   function groupCardsByIds(cardIds, label, opts) {
     if (!Array.isArray(cardIds) || cardIds.length < 2) return;
     for (const id of selectedCards) {
-      cards.find((c) => c.id === id)?.el.classList.remove("cb-card-selected");
+      cards.find((c) => c.id === id)?.el?.classList.remove("cb-card-selected");
     }
     selectedCards.clear();
     clearGroupSelection();

@@ -382,10 +382,10 @@
       totalGroupsAdded += 1;
     }
 
-    // POC import drops fresh DP + comment cards in a grid and lets snap-
-    // derive cluster them by adjacency. Empty dragCardIds keeps any
-    // pre-existing cards on the canvas from being re-bucketed.
-    if (canvas.refreshClusters) canvas.refreshClusters({ dragCardIds: new Set() });
+    // POC cards are bound visually by the labeled cb-group created above and
+    // carry no lineage, so this refresh is just visuals/credits — clusterByLineage
+    // has nothing to group here. No-op while the canvas is unhydrated (table view).
+    if (canvas.refreshClusters) canvas.refreshClusters();
     __cb.model.update();
     if (canvas.refreshCreditTotal) canvas.refreshCreditTotal();
 
