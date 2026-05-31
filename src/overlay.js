@@ -892,16 +892,18 @@
     function recalcTotal() {
       const records = parseRecordsValue();
       const isActual = __cb.viewMode === "actual";
-      // Projected mode: totals = per-row × records.
-      // Actual mode: totals come straight from credits.js (which sums
-      // data.stats.spend across ER cards). The "weighted" slots already
-      // hold absolute spend in actual mode, so we skip the multiplication.
-      const totalCredits = isActual
-        ? currentWeightedCreditsPerRow
-        : currentWeightedCreditsPerRow * records;
-      const totalActions = isActual
-        ? currentWeightedActionsPerRow
-        : currentWeightedActionsPerRow * records;
+      // Total = per-row × records in BOTH modes.
+      //  - Projected: per-row is the frequency/coverage-weighted catalog
+      //    estimate (currentWeighted*PerRow).
+      //  - Actual: per-row is the REAL measured spend per run cell
+      //    (currentCreditsPerRow / currentActionsPerRow, = total spend ÷ cells
+      //    that ran). Multiplying by Records lets a GTME project the real
+      //    measured cost onto an actual contract volume. When Records equals
+      //    the number of cells that ran, this equals the raw spend.
+      const perRowCredits = isActual ? currentCreditsPerRow : currentWeightedCreditsPerRow;
+      const perRowActions = isActual ? currentActionsPerRow : currentWeightedActionsPerRow;
+      const totalCredits = perRowCredits * records;
+      const totalActions = perRowActions * records;
       // Totals are whole-number figures in the summary bar — at scoping
       // volumes the fractional tail (e.g. 15,458.4) is noise. The per-row
       // "Avg" boxes keep their decimals via formatNumber.
