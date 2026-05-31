@@ -1028,21 +1028,17 @@
     // both of which read data.fieldId / wf:<groupCluster>). The synthetic id
     // never has a tableId, so "Open in table" stays correctly disabled.
     if (target.data && target.data.type === "dp" && addedCards.length === 1 && addedCards[0]?.data) {
-      const er = addedCards[0];
-      let erKey;
-      if (er.data.type === "waterfall") {
-        if (er.data.groupCluster == null) er.data.groupCluster = `wf-local-${er.id}`;
-        erKey = `wf:${er.data.groupCluster}`;
-      } else {
-        if (er.data.fieldId == null) er.data.fieldId = `local-${er.id}`;
-        erKey = String(er.data.fieldId);
+      const erKey = __cb.canvas.ensureErLineageKey
+        ? __cb.canvas.ensureErLineageKey(addedCards[0])
+        : null;
+      if (erKey != null) {
+        target.data.sourceEnrichmentFieldId = erKey;
+        // addCard already fired a notifyChange before the lineage was set, so
+        // the first table render saw the ER as orphan. Re-notify + persist so
+        // the row picks up the freshly-stamped link.
+        if (__cb.canvas.notifyChange) __cb.canvas.notifyChange();
+        if (__cb.saveTabs) __cb.saveTabs();
       }
-      target.data.sourceEnrichmentFieldId = erKey;
-      // addCard already fired a notifyChange before the lineage was set, so
-      // the first table render saw the ER as orphan. Re-notify + persist so
-      // the row picks up the freshly-stamped link.
-      if (__cb.canvas.notifyChange) __cb.canvas.notifyChange();
-      if (__cb.saveTabs) __cb.saveTabs();
     }
   }
 

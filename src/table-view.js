@@ -191,18 +191,60 @@
     return [...selectedRowIds].map(getCardForRowId).filter(Boolean);
   }
 
-  // Find the cluster a card belongs to. cardId must already be the
-  // canvas-native NUMERIC id. Returns the array of cardIds (the
-  // cluster), or [cardId] if the card sits alone (getClusters() only
-  // emits clusters of size >= 2). Reads the model-backed cluster id
-  // off the canvas card so the lookup is O(N) over cards, not O(N²)
-  // over snap-derived geometry.
-  function getClusterForCard(cardId) {
-    const clusters = __cb.model?.getClusters?.() || [];
-    for (const cl of clusters) {
-      if (cl.cardIds.includes(cardId)) return cl.cardIds.slice();
+  // ---- Lineage-derived row blocks ----
+  //
+  // The table view associates a data point with the enrichment(s) it was
+  // extracted from PURELY by lineage (`data.sourceEnrichmentFieldId`), never
+  // by canvas geometry / clusters — so canvas snap/reconcile can never move
+  // or re-bundle the table. These helpers are the single place that resolves
+  // "which cards belong to this row's block" for drag-reorder + section
+  // bucketing, replacing the old cluster-membership lookup.
+
+  // Read-only lineage key for an enrichment card (action fieldId, or
+  // `wf:<groupCluster>`; null when the ER has no key yet). Delegates to the
+  // canvas's shared derivation so every surface agrees, with an inline
+  // fallback for safety.
+  function lineageKeyOf(card) {
+    if (!card || !card.data) return null;
+    if (__cb.canvas?.erLineageKeyOf) return __cb.canvas.erLineageKeyOf(card);
+    if (!isErType(card.data.type)) return null;
+    return card.data.type === "waterfall"
+      ? (card.data.groupCluster != null ? `wf:${card.data.groupCluster}` : null)
+      : (card.data.fieldId ?? null);
+  }
+
+  // Enrichment cards a data point points at via lineage.
+  function erCardsForDp(dpCard) {
+    const key = dpCard?.data?.sourceEnrichmentFieldId ?? null;
+    if (key == null) return [];
+    return __cb.model.getNodes().filter(
+      (c) => isErType(c.data?.type) && lineageKeyOf(c) === key,
+    );
+  }
+
+  // Data point cards that point at a given enrichment via lineage.
+  function dpCardsForEr(erCard) {
+    const key = lineageKeyOf(erCard);
+    if (key == null) return [];
+    return __cb.model.getNodes().filter(
+      (c) => c.data?.type === "dp" && (c.data.sourceEnrichmentFieldId ?? null) === key,
+    );
+  }
+
+  // The set of card ids that move together as one table row unit: a data
+  // point plus the enrichment(s) it's linked to (those ride along as chips on
+  // the DP row), or an enrichment plus any DPs it feeds. Singletons return
+  // [self]. Used by drag-reorder so reordering never reads canvas geometry.
+  function getBlockForCard(cardId) {
+    const card = __cb.canvas?.getCardById?.(cardId) || __cb.model.getNode?.(cardId);
+    if (!card) return [cardId];
+    if (card.data?.type === "dp") {
+      return [card.id, ...erCardsForDp(card).map((c) => c.id)];
     }
-    return [cardId];
+    if (isErType(card.data?.type)) {
+      return [card.id, ...dpCardsForEr(card).map((c) => c.id)];
+    }
+    return [card.id];
   }
 
   // ---- Selection mutators ----
@@ -1548,15 +1590,10 @@
   function getBlockCardIdsForRow(rowId) {
     const card = getCardForRowId(rowId);
     if (!card) return [];
-    if (card.data?.type === "dp") {
-      return getClusterForCard(card.id);
-    }
-    if (isErType(card.data?.type)) {
-      // Orphan ER rows never share their cluster with DPs, so the block
-      // is just the ER itself plus any other ERs adjacent to it (rare).
-      return getClusterForCard(card.id);
-    }
-    return [card.id];
+    // DP rows carry their linked enrichments as chips; orphan-ER rows are a
+    // lone ER (no DP points at them). getBlockForCard resolves both by
+    // lineage, not geometry.
+    return getBlockForCard(card.id);
   }
 
   function getBlockCardIdsForGroup(canvasGroupId) {
@@ -1840,53 +1877,36 @@
         blocks.push(makeBlock(`group:${g.id}`, cardIds));
       }
     } else if (section === "orphan") {
-      // Orphan section: each ER (or ER-only cluster) is its own block.
-      const seen = new Set();
+      // Orphan section: each enrichment with NO data point pointing at it
+      // (by lineage) is its own row/block.
       for (const c of __cb.model.getNodes()) {
         if (!isErType(c.data?.type)) continue;
-        if (seen.has(c.id)) continue;
-        const cluster = getClusterForCard(c.id);
-        // Skip clusters that contain a DP — they belong to a DP section,
-        // not the orphan section.
-        const hasDp = cluster.some((id) => {
-          const cc = canvas.getCardById(id);
-          return cc?.data?.type === "dp";
-        });
-        if (hasDp) continue;
-        for (const id of cluster) seen.add(id);
-        blocks.push(makeBlock(`row:${c.id}`, cluster));
+        if (dpCardsForEr(c).length > 0) continue; // attached -> lives on a DP row
+        blocks.push(makeBlock(`row:${c.id}`, [c.id]));
       }
     } else if (section === "flat") {
-      // Flat DP rows (no group, no comment-card cluster) — one block per
-      // snap-cluster.
-      const seen = new Set();
+      // Flat DP rows (no group, no comment-card cluster) — one block per DP,
+      // its linked enrichments riding along via getBlockForCard.
       for (const c of __cb.model.getNodes()) {
         if (c.data?.type !== "dp") continue;
         if (c.groupId != null) continue;
         if (c.data.groupCluster) continue;
-        if (seen.has(c.id)) continue;
-        const cluster = getClusterForCard(c.id);
-        for (const id of cluster) seen.add(id);
-        blocks.push(makeBlock(`row:${c.id}`, cluster));
+        blocks.push(makeBlock(`row:${c.id}`, getBlockForCard(c.id)));
       }
     } else if (section.startsWith("section:")) {
-      // Inside a group (real cb-group OR legacy comment-card section) —
-      // each snap-cluster of DPs in that group is one block.
+      // Inside a group (real cb-group OR legacy comment-card section) — one
+      // block per DP in that group.
       const sectionKey = section.slice("section:".length);
       const isRealGroup = sectionKey.startsWith("g-");
       const realGroupId = isRealGroup ? Number(sectionKey.slice(2)) : null;
       const commentClusterId = !isRealGroup && sectionKey.startsWith("c-")
         ? sectionKey.slice(2)
         : null;
-      const seen = new Set();
       for (const c of __cb.model.getNodes()) {
         if (c.data?.type !== "dp") continue;
         if (isRealGroup && c.groupId !== realGroupId) continue;
         if (commentClusterId != null && c.data.groupCluster !== commentClusterId) continue;
-        if (seen.has(c.id)) continue;
-        const cluster = getClusterForCard(c.id);
-        for (const id of cluster) seen.add(id);
-        blocks.push(makeBlock(`row:${c.id}`, cluster));
+        blocks.push(makeBlock(`row:${c.id}`, getBlockForCard(c.id)));
       }
     }
     blocks.sort((a, b) =>
@@ -2693,9 +2713,9 @@
     // Lineage link (Phase 2.c). The table view matches DP -> ER by
     // `sourceEnrichmentFieldId`, NOT by cluster, so a cluster-only attach
     // would leave the freshly-named DP as a separate "Not connected" row.
-    // Stamp the new DP's lineage to the anchor ER's key (synthesizing a
-    // stable local key for picker-created ERs that carry no Clay fieldId).
-    const erKey = ensureErLineageKey(anchor);
+    // Stamp the new DP's lineage to the anchor ER's key via the canvas's
+    // shared writer (synthesizes a stable local key for picker-authored ERs).
+    const erKey = __cb.canvas?.ensureErLineageKey?.(anchor) ?? null;
     if (erKey != null) newDp.data.sourceEnrichmentFieldId = erKey;
 
     // Lay out the cluster so canvas-mode geometry matches the new
@@ -2719,24 +2739,6 @@
     // row picks up the freshly-stamped link.
     if (canvas.notifyChange) canvas.notifyChange();
     if (__cb.saveTabs) __cb.saveTabs();
-  }
-
-  // Returns an ER card's lineage key (action field id, or wf:<groupCluster>
-  // for waterfalls), synthesizing + persisting a stable local key on the card
-  // when it has none — the case for picker-created enrichments that carry no
-  // Clay fieldId. Mirrors the key derivation in buildRows() and the canvas's
-  // erLineageKeyOf so a DP's sourceEnrichmentFieldId matches the ER on the
-  // next render. The synthetic id never has a tableId, so "Open in table"
-  // stays correctly disabled for these cards.
-  function ensureErLineageKey(er) {
-    if (!er || !er.data) return null;
-    const d = er.data;
-    if (d.type === "waterfall") {
-      if (d.groupCluster == null) d.groupCluster = `wf-local-${er.id}`;
-      return `wf:${d.groupCluster}`;
-    }
-    if (d.fieldId == null) d.fieldId = `local-${er.id}`;
-    return String(d.fieldId);
   }
 
   function buildDpRow(row, sectionId) {

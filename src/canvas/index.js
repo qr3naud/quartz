@@ -551,10 +551,11 @@
     const linkedErs = list.filter(isErCard);
     const linkedDps = list.filter((c) => c && c.data && c.data.type === "dp");
     if (linkedErs.length === 1 && linkedDps.length > 0) {
-      const er = linkedErs[0];
-      const erKey = er.data.type === "waterfall"
-        ? (er.data.groupCluster != null ? `wf:${er.data.groupCluster}` : null)
-        : (er.data.fieldId ?? null);
+      // ensureErLineageKey synthesizes + persists a stable key for canvas /
+      // picker-authored ERs that carry no Clay fieldId, so a manual link in
+      // the table view (or canvas Enter) actually attaches the DP in the
+      // lineage-driven model instead of leaving it stranded.
+      const erKey = ensureErLineageKey(linkedErs[0]);
       if (erKey != null) {
         for (const dp of linkedDps) dp.data.sourceEnrichmentFieldId = erKey;
       }
@@ -647,6 +648,28 @@
     return t === "waterfall"
       ? (c.data.groupCluster != null ? `wf:${c.data.groupCluster}` : null)
       : (c.data.fieldId ?? null);
+  }
+
+  // Like erLineageKeyOf but GUARANTEES a non-null key for any enrichment card
+  // by synthesizing + persisting a stable local key when the card has none —
+  // the case for ERs authored on the canvas / via the picker (only ERs
+  // imported from a Clay table carry a real `fieldId`). This is the single
+  // writer of lineage keys, shared by every "link" path (canvas Enter / table
+  // Link via linkCardsByIds, the picker's placeCardsAdjacentTo, and the table
+  // view's attach-DP-to-orphan-ER) so authored links behave identically to
+  // imported ones. The synthetic id never has a `tableId`, so "Open in table"
+  // stays correctly disabled for these cards.
+  function ensureErLineageKey(card) {
+    if (!card || !card.data) return null;
+    const d = card.data;
+    const t = d.type;
+    if (t === "dp" || t === "input" || t === "comment") return null;
+    if (t === "waterfall") {
+      if (d.groupCluster == null) d.groupCluster = `wf-local-${card.id}`;
+      return `wf:${d.groupCluster}`;
+    }
+    if (d.fieldId == null) d.fieldId = `local-${card.id}`;
+    return String(d.fieldId);
   }
 
   // Lineage-driven clustering (C2.4). Makes every enrichment and its extracted
@@ -1948,6 +1971,15 @@
     assignToCluster,
     layoutCardsAsCluster,
     linkCardsByIds,
+    // Lineage key helpers — the single source of truth for how a DP points at
+    // its source enrichment. erLineageKeyOf is the read-only derivation (action
+    // fieldId, or `wf:<groupCluster>`; null when the ER has no key yet).
+    // ensureErLineageKey is the write variant that synthesizes + persists a
+    // stable local key for canvas/picker-authored ERs so every link path
+    // (canvas Enter, table Link, picker add, orphan attach) stamps lineage
+    // identically. Both mirror the table view + credits.js derivation.
+    erLineageKeyOf,
+    ensureErLineageKey,
     // Find clusters whose members aren't all snap-adjacent and re-run
     // layoutCardsAsCluster to bring them back together. Called by
     // overlay.js on table → canvas view switch so a session of
