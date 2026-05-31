@@ -538,7 +538,10 @@
       setDragState(dragState);
     }
 
-    function addCard(data, opts) {
+    // Data half of card creation (C2.1). Computes geometry + id, seeds
+    // frequency defaults, builds the card object and pushes it to the model.
+    // No DOM — mountCardEl builds that, so the canvas can be hydrated lazily.
+    function buildCardData(data, opts) {
       let x;
       let y;
       let id;
@@ -592,6 +595,18 @@
         clusterId: opts?.clusterId ?? null,
         tableOrder: opts?.tableOrder ?? null,
       };
+      cardsRef().push(card);
+      return card;
+    }
+
+    // DOM half of card creation (C2.1). Builds + wires the element for an
+    // already-built card object and appends it to the canvas. Idempotent so a
+    // hydration pass can call it on every card safely.
+    function mountCardEl(card) {
+      if (card.el) return card.el;
+      const data = card.data;
+      const x = card.x;
+      const y = card.y;
       const el = document.createElement("div");
       el.className = "cb-card";
       el.setAttribute("data-card-id", card.id);
@@ -937,8 +952,16 @@
       el.addEventListener("dblclick", (evt) => handleCardDblClick(card, evt));
 
       card.el = el;
-      cardsRef().push(card);
       cardContainerRef().appendChild(el);
+      return el;
+    }
+
+    // Card creation = data half + DOM half. addCard runs both for live adds
+    // (behavior-identical). Lazy restore (C2.2) calls buildCardData alone and
+    // defers mountCardEl until the canvas view is opened.
+    function addCard(data, opts) {
+      const card = buildCardData(data, opts);
+      mountCardEl(card);
       notifyCreditTotal();
       notifyChange();
       return card;
@@ -1455,6 +1478,8 @@
 
     return {
       addCard,
+      buildCardData,
+      mountCardEl,
       addDataPointCard,
       addInputCard,
       addCommentCard,
