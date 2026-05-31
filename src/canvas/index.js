@@ -36,9 +36,8 @@
   let groupColorMenuGroupId = null;
   let selectionHintEl = null;
   let selectionMenuEl = null;
-  let undoStack = [];
-  let redoStack = [];
-  let lastSnapshot = null;
+  // Undo/redo + lastSnapshot + the `restoring` flag now live in the store
+  // (C3.4). The canvas drives undo/redo render via __cb.model history methods.
   let lastMouse = null;
   // Lazy canvas DOM gate (C2.2). False while a table-view tab is open: the
   // model (`cards`) is fully built but no `.cb-card` elements are mounted, so
@@ -49,7 +48,6 @@
   // tolerate `el === null` (see the guards below + cards.js / geometry.js /
   // persistence.js / live-actions.js).
   let domHydrated = false;
-  const MAX_UNDO = 50;
   const __cbCanvasModules = window.__cbCanvasModules || {};
   const __geometry = __cbCanvasModules.createGeometryHelpers
     ? __cbCanvasModules.createGeometryHelpers()
@@ -213,7 +211,7 @@
         restoreGroup,
         updateDpCosts,
         setRestoring: (next) => {
-          restoring = next;
+          __cb.model.setRestoring(next);
         },
         // Legacy state migration: persistence calls this once after
         // restore() if the loaded blob carried no cluster ids. We use
@@ -805,21 +803,13 @@
     return __geometry.closestEdge(c, cx, cy);
   }
 
-  let restoring = false;
-
-  function captureSnapshot() {
-    return getPersistenceHelpers().serialize();
-  }
-
+  // Change notification now flows through the store transaction (C3.4):
+  // mutate -> capture undo snapshot -> notify subscribers -> schedule persist.
+  // Canvas-internal writers (addX, removeCard, drag-end, link, reflow, ...)
+  // call notifyChange(); it delegates to __cb.model.update(). During a restore
+  // the store's `restoring` flag makes update() a no-op, matching the old guard.
   function notifyChange() {
-    if (restoring) return;
-    if (lastSnapshot) {
-      undoStack.push(lastSnapshot);
-      if (undoStack.length > MAX_UNDO) undoStack.shift();
-      redoStack = [];
-    }
-    lastSnapshot = captureSnapshot();
-    if (__cb.onCanvasStateChange) __cb.onCanvasStateChange();
+    __cb.model.update();
   }
 
   function clearCanvas() {
@@ -842,15 +832,16 @@
   }
 
   function undo() {
-    if (undoStack.length === 0) return;
     if (dragState || groupDragState || panState || selBoxState) return;
-    redoStack.push(lastSnapshot);
-    lastSnapshot = undoStack.pop();
+    // Store owns the stacks (C3.4): pop undo + push current onto redo, returning
+    // the snapshot to re-render. Null = nothing to undo.
+    const snap = __cb.model.historyUndo();
+    if (!snap) return;
     clearCanvas();
-    restoring = true;
-    const { view: _v, ...stateToRestore } = lastSnapshot;
+    __cb.model.setRestoring(true);
+    const { view: _v, ...stateToRestore } = snap;
     getPersistenceHelpers().restore(stateToRestore);
-    restoring = false;
+    __cb.model.setRestoring(false);
     // Visuals-only: the undo snapshot already carries the relational
     // cluster model, so re-running snap-reconcile would only risk
     // clobbering saved membership. See refreshClusterVisuals comment.
@@ -860,15 +851,14 @@
   }
 
   function redo() {
-    if (redoStack.length === 0) return;
     if (dragState || groupDragState || panState || selBoxState) return;
-    undoStack.push(lastSnapshot);
-    lastSnapshot = redoStack.pop();
+    const snap = __cb.model.historyRedo();
+    if (!snap) return;
     clearCanvas();
-    restoring = true;
-    const { view: _v, ...stateToRestore } = lastSnapshot;
+    __cb.model.setRestoring(true);
+    const { view: _v, ...stateToRestore } = snap;
     getPersistenceHelpers().restore(stateToRestore);
-    restoring = false;
+    __cb.model.setRestoring(false);
     refreshClusterVisuals();
     notifyCreditTotal();
     if (__cb.onCanvasStateChange) __cb.onCanvasStateChange();
@@ -1836,9 +1826,8 @@
     // reconciles from snap with the correct card heights. No-ops when
     // unhydrated (table-view tab) — hydrateCanvasDom runs it on toggle.
     refreshClusterVisuals();
-    lastSnapshot = captureSnapshot();
-    undoStack = [];
-    redoStack = [];
+    // Baseline the store's history at the freshly-restored state (C3.4).
+    __cb.model.historyResetBaseline();
   }
 
   // Mount canvas DOM for every card on first switch to the canvas view
@@ -1903,9 +1892,7 @@
     document.removeEventListener("keydown", onKeyDown); document.removeEventListener("keyup", onKeyUp);
     document.removeEventListener("mousedown", onDocumentMouseDown);
     spaceHeld = false;
-    undoStack = [];
-    redoStack = [];
-    lastSnapshot = null;
+    __cb.model.historyClear();
     // Reset the lazy-DOM gate so the next openCanvas starts unhydrated and the
     // first restore re-establishes it from the tab's saved view.
     domHydrated = false;

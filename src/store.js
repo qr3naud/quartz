@@ -33,6 +33,18 @@
     cards: [],
   };
 
+  // Undo/redo + change-notification ownership (C3.4). The store is the single
+  // transaction: update() mutates -> captures an undo snapshot -> notifies
+  // subscribers -> schedules persist. `restoring` suppresses capture/persist
+  // while a restore rebuilds the model (matches the canvas's old notifyChange
+  // guard). lastSnapshot holds the pre-edit blob, pushed onto undoStack on the
+  // next change.
+  let restoring = false;
+  let lastSnapshot = null;
+  let undoStack = [];
+  let redoStack = [];
+  const MAX_UNDO = 50;
+
   function canvas() {
     return (window.__cb && window.__cb.canvas) || null;
   }
@@ -72,20 +84,59 @@
       return call("getImportedTables", {});
     },
 
-    // The single external write path (C3.1). Table view, importers, picker,
-    // export, and overlay grouping all call this after mutating the model
-    // instead of poking canvas.notifyChange() directly. Today it delegates to
-    // the canvas's notifyChange (which still owns undo + debounced persist) and
-    // also fires model subscribers; later C3 slices move undo/persist/realtime
-    // ownership into the store itself. `mutator` is optional — most callers
-    // mutate just before calling update(); pass a function to wrap the mutation
-    // once the store owns the transaction (C3.4+).
+    // The single write path + transaction (C3.1 + C3.4). Every write — external
+    // (table view, importers, picker, export, overlay) and canvas-internal
+    // (canvas.notifyChange delegates here) — runs through update(): apply the
+    // mutation, capture an undo snapshot, notify subscribers, schedule persist.
+    // `mutator` is optional (most callers mutate just before calling update()).
     update(mutator) {
       if (typeof mutator === "function") mutator();
-      const c = canvas();
-      if (c && typeof c.notifyChange === "function") c.notifyChange();
+      // Edits applied while a restore is rebuilding the model aren't their own
+      // undo steps and must not persist mid-rebuild (matches the canvas's old
+      // notifyChange `if (restoring) return`).
+      if (restoring) return model;
+      if (lastSnapshot != null) {
+        undoStack.push(lastSnapshot);
+        if (undoStack.length > MAX_UNDO) undoStack.shift();
+        redoStack = [];
+      }
+      lastSnapshot = model.serialize();
       model.notify();
+      const cb = window.__cb;
+      if (cb && typeof cb.onCanvasStateChange === "function") cb.onCanvasStateChange();
       return model;
+    },
+
+    // ---- Undo / redo history (C3.4) ----
+    // The store owns the stacks; the canvas does the actual re-render for an
+    // undo/redo (clearCanvas + restore the returned snapshot).
+    setRestoring(v) { restoring = !!v; },
+    isRestoring() { return restoring; },
+    canUndo() { return undoStack.length > 0; },
+    canRedo() { return redoStack.length > 0; },
+    historyUndo() {
+      if (undoStack.length === 0) return null;
+      redoStack.push(lastSnapshot);
+      lastSnapshot = undoStack.pop();
+      return lastSnapshot;
+    },
+    historyRedo() {
+      if (redoStack.length === 0) return null;
+      undoStack.push(lastSnapshot);
+      lastSnapshot = redoStack.pop();
+      return lastSnapshot;
+    },
+    // After a fresh restore: set the baseline snapshot + clear history.
+    historyResetBaseline() {
+      lastSnapshot = model.serialize();
+      undoStack = [];
+      redoStack = [];
+    },
+    // Full teardown (canvas destroy).
+    historyClear() {
+      lastSnapshot = null;
+      undoStack = [];
+      redoStack = [];
     },
 
     // Persistence entry points (C3.3). The store is the public serialize /
