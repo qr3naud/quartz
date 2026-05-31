@@ -63,6 +63,12 @@
   let contextMenuEl = null;
   let contextMenuBackdrop = null;
 
+  // ER chip details menu — anchored popover opened by clicking an ER pill.
+  // Single open instance at a time; lives at document.body level (like the
+  // context menu) so it escapes the table's overflow clipping.
+  let erChipMenuEl = null;
+  let erChipMenuBackdrop = null;
+
   // After a Group action the new section's label input wants focus so the
   // user types the name immediately. We can't focus it synchronously
   // because render() hasn't run yet (it fires off notifyChange →
@@ -1210,32 +1216,74 @@
   }
 
   function buildErChipData(er) {
-    const isWaterfall = er.data.type === "waterfall";
+    const d = er.data || {};
+    const isWaterfall = d.type === "waterfall";
     const providerChain = isWaterfall
-      ? (er.data.providers || []).map((p) => p.displayName || "Provider").join(" \u2192 ")
+      ? (d.providers || []).map((p) => p.displayName || "Provider").join(" \u2192 ")
       : null;
     // Effective frequency mirrors the canvas freqBadge logic (cards.js
     // ~line 830): a per-ER override wins, otherwise fall back to the
     // tab's global default. Read via __cb so we stay in sync with
     // whatever the summary bar most recently set.
     const cb = window.__cb;
-    const frequencyId = er.data.frequencyCustom
-      ? er.data.frequency
-      : (er.data.frequency || cb?.getCurrentFrequencyId?.() || cb?.DEFAULT_FREQUENCY_ID);
+    const frequencyId = d.frequencyCustom
+      ? d.frequency
+      : (d.frequency || cb?.getCurrentFrequencyId?.() || cb?.DEFAULT_FREQUENCY_ID);
     const multiplier = cb?.getFrequencyMultiplier?.(frequencyId) ?? 1;
     const frequencyLabel = cb?.getFrequencyLabel?.(frequencyId) || "Annually";
+
+    const isFunction = d.actionKey === "execute-subroutine";
+    const isSource = !!d.isSource;
+    const isAi = !!d.isAi;
+
+    // Resolve the selected AI model (name + provider + per-row credits) so the
+    // chip menu can show "which model this AI column runs". modelOptions is
+    // stamped at import time (buildErCardData) with live workspace pricing.
+    let model = null;
+    if (isAi && Array.isArray(d.modelOptions) && d.modelOptions.length > 0) {
+      const sel = d.modelOptions.find((m) => m.id === d.selectedModel) || d.modelOptions[0];
+      if (sel) model = { name: sel.name, provider: sel.provider, credits: sel.credits };
+    }
+
+    // One-word kind label; precedence mirrors the chip color precedence in
+    // buildErChipEl (waterfall > function > source > ai > action).
+    const kind = isWaterfall
+      ? "Waterfall"
+      : isFunction
+        ? "Formula"
+        : isSource
+          ? "Source"
+          : isAi
+            ? "AI"
+            : "Action";
+
     return {
       id: er.id,
-      name: er.data.displayName || er.data.text || (isWaterfall ? "Waterfall" : "Untitled enrichment"),
+      name: d.displayName || d.text || (isWaterfall ? "Waterfall" : "Untitled enrichment"),
       isWaterfall,
       // Type flags for per-kind chip color (see buildErChipEl): function =
       // subroutine ("Run function"), source = source-type enrichment.
-      isFunction: er.data.actionKey === "execute-subroutine",
-      isSource: !!er.data.isSource,
+      isFunction,
+      isSource,
+      isAi,
+      kind,
       providerChain,
+      packageName: d.packageName || null,
+      // Logo inputs (mirror the canvas card icon logic in cards.js).
+      iconUrl: d.iconUrl || null,
+      iconSvgHtml: d.iconSvgHtml || null,
+      model,
+      // Per-row cost (view-mode-aware) for the details menu.
+      cost: erPerRowCost(er),
+      usePrivateKey: !!d.usePrivateKey,
       frequencyId,
       frequencyLabel,
       multiplier,
+      // Navigation back to the source Clay column ("Open in table"). Present
+      // only on imported cards; gates the menu footer action.
+      fieldId: d.fieldId || null,
+      tableId: d.tableId || null,
+      viewId: d.viewId || null,
     };
   }
 
@@ -2794,10 +2842,26 @@
       er.isWaterfall && er.providerChain
         ? `${er.name} \u2014 ${er.providerChain}`
         : er.name;
+
+    // Icon + label form a single clickable trigger that opens the details
+    // menu underneath the pill. mousedown stopPropagation keeps the click
+    // from starting row selection / row drag (same trick the freq + remove
+    // buttons use). The freq badge and remove × stay separate siblings.
+    const trigger = document.createElement("button");
+    trigger.type = "button";
+    trigger.className = "cb-table-view-er-chip-trigger";
+    trigger.setAttribute("aria-haspopup", "true");
+    trigger.appendChild(buildErChipIcon(er));
     const label = document.createElement("span");
     label.className = "cb-table-view-er-chip-label";
     label.textContent = er.name;
-    chip.appendChild(label);
+    trigger.appendChild(label);
+    trigger.addEventListener("mousedown", (evt) => evt.stopPropagation());
+    trigger.addEventListener("click", (evt) => {
+      evt.stopPropagation();
+      openErChipMenu(er, trigger);
+    });
+    chip.appendChild(trigger);
 
     // Per-ER frequency badge — same "×N" affordance as the canvas
     // freqBadge (cards.js ~line 822). Clicking opens the shared
@@ -2835,6 +2899,237 @@
       chip.appendChild(x);
     }
     return chip;
+  }
+
+  // Builds the logo node for an ER chip, mirroring the canvas card icon
+  // logic (src/canvas/cards.js ~639-666): waterfalls get the stacked-layers
+  // glyph; otherwise an <img> (with a first-letter fallback on error), then
+  // inline SVG, then a colored first-letter monogram. Returns a fresh node
+  // each call so the same `er` can render an icon in both the chip and the
+  // details-menu header.
+  function buildErChipIcon(er) {
+    const icon = document.createElement("span");
+    icon.className = "cb-table-view-er-chip-icon";
+    if (er.isWaterfall) {
+      icon.classList.add("cb-table-view-er-chip-icon-waterfall");
+      icon.innerHTML = waterfallSvg(13);
+      return icon;
+    }
+    if (er.iconUrl) {
+      const img = document.createElement("img");
+      img.src = er.iconUrl;
+      img.alt = "";
+      img.className = "cb-table-view-er-chip-icon-img";
+      img.onerror = () => {
+        img.remove();
+        icon.textContent = (er.packageName || er.name || "C").charAt(0).toUpperCase();
+      };
+      icon.appendChild(img);
+      return icon;
+    }
+    if (er.iconSvgHtml) {
+      icon.innerHTML = er.iconSvgHtml;
+      icon.querySelector("svg")?.setAttribute("class", "cb-table-view-er-chip-icon-svg");
+      return icon;
+    }
+    const color = __cb.stringToColor ? __cb.stringToColor(er.packageName || er.name || "Clay") : "#6366f1";
+    icon.style.backgroundColor = color + "18";
+    icon.style.color = color;
+    icon.textContent = (er.packageName || er.name || "C").charAt(0).toUpperCase();
+    return icon;
+  }
+
+  // ---- ER chip details menu ----
+  //
+  // Anchored popover opened by clicking an ER pill. Summarizes the
+  // enrichment (kind + provider/model), its per-row cost + frequency, the
+  // AI model (when applicable), and offers "Open in table" — the same
+  // navigation the canvas right-click menu uses (__cb.openCardInTable),
+  // gated on the card carrying fieldId + tableId. Built on click (not per
+  // chip) so a large import only pays for the logo per pill.
+
+  function closeErChipMenu() {
+    if (erChipMenuEl) { erChipMenuEl.remove(); erChipMenuEl = null; }
+    if (erChipMenuBackdrop) { erChipMenuBackdrop.remove(); erChipMenuBackdrop = null; }
+    document.removeEventListener("keydown", onErChipMenuKey);
+  }
+
+  function onErChipMenuKey(evt) {
+    if (evt.key === "Escape") closeErChipMenu();
+  }
+
+  function erMenuRow(labelText, valueText) {
+    const row = document.createElement("div");
+    row.className = "cb-table-view-er-menu-row";
+    const l = document.createElement("span");
+    l.className = "cb-table-view-er-menu-row-label";
+    l.textContent = labelText;
+    const v = document.createElement("span");
+    v.className = "cb-table-view-er-menu-row-value";
+    v.textContent = valueText;
+    row.appendChild(l);
+    row.appendChild(v);
+    return row;
+  }
+
+  // One-line "what this is" summary, composed from available fields (there's
+  // no rich description on the catalog entry).
+  function erMenuSummaryText(er) {
+    if (er.isWaterfall) {
+      return er.providerChain ? `Waterfall: ${er.providerChain}` : "Waterfall enrichment";
+    }
+    if (er.isFunction) return "Run function (formula)";
+    if (er.isAi) {
+      const prov = er.model?.provider;
+      return prov ? `AI column \u00b7 ${prov}` : "AI column";
+    }
+    if (er.isSource) return er.packageName ? `Source \u00b7 ${er.packageName}` : "Source enrichment";
+    return er.packageName ? `Action \u00b7 ${er.packageName}` : "Enrichment";
+  }
+
+  function erMenuCostText(er) {
+    if (er.usePrivateKey) return "Private key (0 credits / row)";
+    const c = er.cost || {};
+    if (c.creditsUnknown) return "Calculating\u2026";
+    const credits = Number(c.credits) || 0;
+    const actions = Number(c.actions) || 0;
+    const creditPart = `${formatNumber(credits)} credit${credits === 1 ? "" : "s"} / row`;
+    if (actions > 0) {
+      return `${creditPart} \u00b7 ${formatNumber(actions)} action${actions === 1 ? "" : "s"} / row`;
+    }
+    return creditPart;
+  }
+
+  // Annualized per-row cost — only meaningful when the enrichment runs more
+  // than once a year (multiplier > 1), otherwise it equals the per-row cost.
+  function erMenuAnnualText(er) {
+    if (er.usePrivateKey) return null;
+    const c = er.cost || {};
+    if (c.creditsUnknown) return null;
+    const mult = er.multiplier ?? 1;
+    if (mult <= 1) return null;
+    const perYear = (Number(c.credits) || 0) * mult;
+    return `${formatNumber(perYear)} credits / row`;
+  }
+
+  function openErChipMenu(er, anchorEl) {
+    closeErChipMenu();
+    closeContextMenu();
+
+    erChipMenuBackdrop = document.createElement("div");
+    erChipMenuBackdrop.className = "cb-table-view-er-menu-backdrop";
+    erChipMenuBackdrop.addEventListener("mousedown", (evt) => {
+      evt.stopPropagation();
+      closeErChipMenu();
+    });
+    erChipMenuBackdrop.addEventListener("contextmenu", (evt) => {
+      evt.preventDefault();
+      closeErChipMenu();
+    });
+
+    const menu = document.createElement("div");
+    menu.className = "cb-table-view-er-menu";
+    menu.addEventListener("mousedown", (evt) => evt.stopPropagation());
+
+    // Header: logo + name + kind badge.
+    const header = document.createElement("div");
+    header.className = "cb-table-view-er-menu-header";
+    header.appendChild(buildErChipIcon(er));
+    const title = document.createElement("div");
+    title.className = "cb-table-view-er-menu-title";
+    title.textContent = er.name;
+    header.appendChild(title);
+    const kindBadge = document.createElement("span");
+    kindBadge.className = "cb-table-view-er-menu-kind";
+    kindBadge.textContent = er.kind;
+    header.appendChild(kindBadge);
+    menu.appendChild(header);
+
+    // Summary line.
+    const summaryText = erMenuSummaryText(er);
+    if (summaryText) {
+      const summary = document.createElement("div");
+      summary.className = "cb-table-view-er-menu-summary";
+      summary.textContent = summaryText;
+      menu.appendChild(summary);
+    }
+
+    // Cost + frequency section.
+    const costSection = document.createElement("div");
+    costSection.className = "cb-table-view-er-menu-section";
+    costSection.appendChild(erMenuRow("Cost", erMenuCostText(er)));
+    costSection.appendChild(
+      erMenuRow("Frequency", `${er.frequencyLabel} (\u00d7${er.multiplier ?? 1})`),
+    );
+    const annual = erMenuAnnualText(er);
+    if (annual) costSection.appendChild(erMenuRow("Per year", annual));
+    menu.appendChild(costSection);
+
+    // Model section — AI columns only.
+    if (er.isAi && er.model) {
+      const modelSection = document.createElement("div");
+      modelSection.className = "cb-table-view-er-menu-section";
+      const modelVal = er.model.provider
+        ? `${er.model.name} \u00b7 ${er.model.provider}`
+        : er.model.name;
+      modelSection.appendChild(erMenuRow("Model", modelVal));
+      if (er.model.credits != null) {
+        modelSection.appendChild(
+          erMenuRow("Model cost", `${formatNumber(Number(er.model.credits))} credits / row`),
+        );
+      }
+      menu.appendChild(modelSection);
+    }
+
+    // Footer: Open in table (reuses the canvas navigation). Disabled when the
+    // card wasn't imported from a Clay table (no fieldId / tableId).
+    const canOpen = !!(er.fieldId && er.tableId);
+    const footer = document.createElement("div");
+    footer.className = "cb-table-view-er-menu-footer";
+    const openBtn = document.createElement("button");
+    openBtn.type = "button";
+    openBtn.className =
+      "cb-table-view-er-menu-open" + (canOpen ? "" : " cb-table-view-er-menu-open-disabled");
+    openBtn.innerHTML = tableSvg(13) + "<span>Open in table</span>";
+    if (canOpen) {
+      openBtn.addEventListener("click", (evt) => {
+        evt.stopPropagation();
+        closeErChipMenu();
+        const card = __cb.canvas?.getCardById?.(er.id);
+        if (card && typeof __cb.openCardInTable === "function") {
+          __cb.openCardInTable(card);
+        }
+      });
+    } else {
+      openBtn.disabled = true;
+      openBtn.title = "This enrichment wasn't imported from a Clay table";
+    }
+    footer.appendChild(openBtn);
+    menu.appendChild(footer);
+
+    document.body.appendChild(erChipMenuBackdrop);
+    document.body.appendChild(menu);
+    erChipMenuEl = menu;
+
+    // Position below the chip, left-aligned, clamped to the viewport. Flip
+    // above the chip when it would overflow the bottom edge.
+    const rect = anchorEl.getBoundingClientRect();
+    menu.style.position = "fixed";
+    menu.style.zIndex = "9999999";
+    menu.style.left = "0px";
+    menu.style.top = "0px";
+    const menuWidth = menu.offsetWidth;
+    const menuHeight = menu.offsetHeight;
+    const maxLeft = window.innerWidth - menuWidth - 8;
+    menu.style.left = `${Math.max(8, Math.min(rect.left, maxLeft))}px`;
+    let top = rect.bottom + 6;
+    if (top + menuHeight > window.innerHeight - 8) {
+      const above = rect.top - 6 - menuHeight;
+      top = above > 8 ? above : Math.max(8, window.innerHeight - menuHeight - 8);
+    }
+    menu.style.top = `${top}px`;
+
+    document.addEventListener("keydown", onErChipMenuKey);
   }
 
   // Group-section header row. For real cb-groups the label is an inline
@@ -3140,6 +3435,20 @@
     );
   }
 
+  // Stacked-layers glyph — the ER-chip logo for waterfall enrichments,
+  // matching the canvas waterfall card icon (cards.js WATERFALL_ICON_SVG)
+  // so the "stack of providers" reads the same across views.
+  function waterfallSvg(size) {
+    const s = String(size);
+    return (
+      `<svg xmlns="http://www.w3.org/2000/svg" width="${s}" height="${s}" viewBox="0 0 24 24" ` +
+      'fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" ' +
+      'stroke-linejoin="round" aria-hidden="true">' +
+      '<path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/>' +
+      '</svg>'
+    );
+  }
+
   function folderSvg(size) {
     const s = String(size);
     return (
@@ -3238,6 +3547,7 @@
       // drag indicators wouldn't make sense across a tear-down.
       cleanupDrag();
       closeContextMenu();
+      closeErChipMenu();
       selectedRowIds.clear();
       selectionAnchorId = null;
       visibleRowOrder = [];
@@ -3248,6 +3558,10 @@
     },
     refresh() {
       if (!hostEl) return;
+      // A render() rebuilds every row, so the chip that anchors an open
+      // details menu is about to be torn down — close it first so it doesn't
+      // hang detached over the table.
+      closeErChipMenu();
       // Skip the re-render while the user is mid-edit on a cell — re-rendering
       // would steal focus and drop their in-progress input. The blur handler
       // (which fires on commit) will trigger the next refresh via

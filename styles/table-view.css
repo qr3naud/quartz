@@ -418,6 +418,143 @@
   font-weight: 400;
 }
 
+/* ---- ER chip details menu (click-to-open popover) ---- */
+
+.cb-table-view-er-menu-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 9999998;
+}
+
+.cb-table-view-er-menu {
+  position: fixed;
+  z-index: 9999999;
+  width: 280px;
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  box-shadow: 0 10px 25px rgba(15, 23, 42, 0.15), 0 4px 10px rgba(15, 23, 42, 0.08);
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-family: inherit;
+}
+
+.cb-table-view-er-menu-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.cb-table-view-er-menu-header .cb-table-view-er-chip-icon {
+  width: 20px;
+  height: 20px;
+  color: #4338ca;
+}
+
+.cb-table-view-er-menu-header .cb-table-view-er-chip-icon-svg {
+  width: 16px;
+  height: 16px;
+}
+
+.cb-table-view-er-menu-title {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: #111827;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cb-table-view-er-menu-kind {
+  flex-shrink: 0;
+  padding: 2px 8px;
+  background: #eef2ff;
+  color: #4338ca;
+  border: 1px solid #e0e7ff;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.cb-table-view-er-menu-summary {
+  font-size: 12px;
+  color: #6b7280;
+  line-height: 1.4;
+}
+
+.cb-table-view-er-menu-section {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-top: 8px;
+  border-top: 1px solid #f1f5f9;
+}
+
+.cb-table-view-er-menu-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 12px;
+}
+
+.cb-table-view-er-menu-row-label {
+  color: #9ca3af;
+  flex-shrink: 0;
+}
+
+.cb-table-view-er-menu-row-value {
+  color: #1f2937;
+  font-weight: 500;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.cb-table-view-er-menu-footer {
+  padding-top: 8px;
+  border-top: 1px solid #f1f5f9;
+}
+
+.cb-table-view-er-menu-open {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  padding: 8px 12px;
+  background: #4338ca;
+  color: #ffffff;
+  border: none;
+  border-radius: 6px;
+  font-family: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.12s;
+}
+
+.cb-table-view-er-menu-open:hover {
+  background: #3730a3;
+}
+
+.cb-table-view-er-menu-open svg {
+  width: 13px;
+  height: 13px;
+}
+
+.cb-table-view-er-menu-open-disabled,
+.cb-table-view-er-menu-open-disabled:hover {
+  background: #e5e7eb;
+  color: #9ca3af;
+  cursor: not-allowed;
+}
+
 /* ============================================================================
  * Auto-rowspan merged cells (Link result + organic multi-DP clusters)
  * ========================================================================= */
@@ -604,7 +741,9 @@
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  padding: 3px 4px 3px 10px;
+  /* Left padding tightened from 10px: the trigger's logo now provides the
+     visual left inset. */
+  padding: 3px 4px 3px 5px;
   background: #eef2ff;
   color: #4338ca;
   border: 1px solid #e0e7ff;
@@ -612,14 +751,72 @@
   font-size: 12px;
   font-weight: 500;
   white-space: nowrap;
-  max-width: 280px;
+  max-width: 300px;
+}
+
+/* Icon + label region — an unstyled button that opens the details menu. */
+.cb-table-view-er-chip-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 252px;
+  margin: 0;
+  padding: 1px 2px;
+  background: transparent;
+  border: none;
+  border-radius: 999px;
+  color: inherit;
+  font: inherit;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.12s;
+}
+
+.cb-table-view-er-chip-trigger:hover {
+  background: rgba(0, 0, 0, 0.06);
+}
+
+.cb-table-view-er-chip-trigger:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 1px;
+}
+
+/* Provider / AI logo on the chip, mirroring the canvas card icon sizing. */
+.cb-table-view-er-chip-icon {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 3px;
+  overflow: hidden;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.cb-table-view-er-chip-icon-img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.cb-table-view-er-chip-icon-svg {
+  width: 14px;
+  height: 14px;
+}
+
+.cb-table-view-er-chip-icon-waterfall {
+  color: inherit;
 }
 
 .cb-table-view-er-chip-label {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  max-width: 240px;
+  max-width: 230px;
 }
 
 .cb-table-view-er-chip-waterfall {
