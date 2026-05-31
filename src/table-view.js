@@ -1296,7 +1296,7 @@
     const kind = isWaterfall
       ? "Waterfall"
       : isFunction
-        ? "Formula"
+        ? "Function"
         : isSource
           ? "Source"
           : isAi
@@ -3009,7 +3009,8 @@
     if (evt.key === "Escape") closeErChipMenu();
   }
 
-  function erMenuRow(labelText, valueText) {
+  // Value may be a string (plain text) or a DOM Node (icon pills/badges).
+  function erMenuRow(labelText, value) {
     const row = document.createElement("div");
     row.className = "cb-table-view-er-menu-row";
     const l = document.createElement("span");
@@ -3017,38 +3018,54 @@
     l.textContent = labelText;
     const v = document.createElement("span");
     v.className = "cb-table-view-er-menu-row-value";
-    v.textContent = valueText;
+    if (value instanceof Node) v.appendChild(value);
+    else v.textContent = value;
     row.appendChild(l);
     row.appendChild(v);
     return row;
   }
 
-  // One-line "what this is" summary, composed from available fields (there's
-  // no rich description on the catalog entry).
-  function erMenuSummaryText(er) {
-    if (er.isWaterfall) {
-      return er.providerChain ? `Waterfall: ${er.providerChain}` : "Waterfall enrichment";
-    }
-    if (er.isFunction) return "Run function (formula)";
-    if (er.isAi) {
-      const prov = er.model?.provider;
-      return prov ? `AI column \u00b7 ${prov}` : "AI column";
-    }
-    if (er.isSource) return er.packageName ? `Source \u00b7 ${er.packageName}` : "Source enrichment";
-    return er.packageName ? `Action \u00b7 ${er.packageName}` : "Enrichment";
-  }
-
-  function erMenuCostText(er) {
-    if (er.usePrivateKey) return "Private key (0 credits / row)";
+  // Builds the Cost value as Clay's segmented credit/action pill (matches the
+  // ActionExecutionBadge + CreditPriceBadge group in the column editor): a
+  // StarFour glyph for action executions (nightshade) and a Coin/Coins glyph
+  // for data credits (matcha). Falls back to plain text for the private-key
+  // and still-calculating states.
+  function buildErMenuCostNode(er) {
+    if (er.usePrivateKey) return document.createTextNode("Private key (0 / row)");
     const c = er.cost || {};
-    if (c.creditsUnknown) return "Calculating\u2026";
+    if (c.creditsUnknown) return document.createTextNode("Calculating\u2026");
     const credits = Number(c.credits) || 0;
     const actions = Number(c.actions) || 0;
-    const creditPart = `${formatNumber(credits)} credit${credits === 1 ? "" : "s"} / row`;
+
+    const pill = document.createElement("span");
+    pill.className = "cb-table-view-er-cost-pill";
+
     if (actions > 0) {
-      return `${creditPart} \u00b7 ${formatNumber(actions)} action${actions === 1 ? "" : "s"} / row`;
+      const seg = document.createElement("span");
+      seg.className = "cb-table-view-er-cost-seg cb-table-view-er-cost-actions";
+      seg.title = `${formatNumber(actions)} action${actions === 1 ? "" : "s"} / row`;
+      seg.innerHTML = starFourSvg(12) + `<span>${formatNumber(actions)}</span>`;
+      pill.appendChild(seg);
     }
-    return creditPart;
+
+    const credSeg = document.createElement("span");
+    credSeg.className = "cb-table-view-er-cost-seg cb-table-view-er-cost-credits";
+    credSeg.title = `${formatNumber(credits)} credit${credits === 1 ? "" : "s"} / row`;
+    const coin = Math.abs(credits) <= 1 ? coinSvg(12) : coinsSvg(12);
+    credSeg.innerHTML = coin + `<span>${formatNumber(credits)} / row</span>`;
+    pill.appendChild(credSeg);
+
+    return pill;
+  }
+
+  // The "cute little badge" — the same amber ×N pill the chips use, rendered
+  // read-only here (frequency is changed from the chip badge, not the menu).
+  function buildErMenuFrequencyNode(er) {
+    const badge = document.createElement("span");
+    badge.className = "cb-table-view-er-chip-freq cb-table-view-er-menu-freq";
+    badge.title = `Runs ${er.frequencyLabel || "annually"}`;
+    badge.textContent = "\u00d7" + (er.multiplier ?? 1);
+    return badge;
   }
 
   // Annualized per-row cost — only meaningful when the enrichment runs more
@@ -3097,22 +3114,11 @@
     header.appendChild(kindBadge);
     menu.appendChild(header);
 
-    // Summary line.
-    const summaryText = erMenuSummaryText(er);
-    if (summaryText) {
-      const summary = document.createElement("div");
-      summary.className = "cb-table-view-er-menu-summary";
-      summary.textContent = summaryText;
-      menu.appendChild(summary);
-    }
-
     // Cost + frequency section.
     const costSection = document.createElement("div");
     costSection.className = "cb-table-view-er-menu-section";
-    costSection.appendChild(erMenuRow("Cost", erMenuCostText(er)));
-    costSection.appendChild(
-      erMenuRow("Frequency", `${er.frequencyLabel} (\u00d7${er.multiplier ?? 1})`),
-    );
+    costSection.appendChild(erMenuRow("Cost", buildErMenuCostNode(er)));
+    costSection.appendChild(erMenuRow("Frequency", buildErMenuFrequencyNode(er)));
     const annual = erMenuAnnualText(er);
     if (annual) costSection.appendChild(erMenuRow("Per year", annual));
     menu.appendChild(costSection);
@@ -3558,6 +3564,35 @@
       '<line x1="3" y1="15" x2="21" y2="15"/>' +
       '<line x1="9" y1="3" x2="9" y2="21"/>' +
       '</svg>'
+    );
+  }
+
+  // Phosphor "StarFour" (regular) — action-execution glyph, mirroring Clay's
+  // ActionExecutionBadge. fill-based (viewBox 0 0 256 256), color set in CSS.
+  function starFourSvg(size) {
+    const s = String(size);
+    return (
+      `<svg xmlns="http://www.w3.org/2000/svg" width="${s}" height="${s}" viewBox="0 0 256 256" ` +
+      'fill="currentColor" aria-hidden="true"><path d="M229.5,113,166.06,89.94,143,26.5a16,16,0,0,0-30,0L89.94,89.94,26.5,113a16,16,0,0,0,0,30l63.44,23.07L113,229.5a16,16,0,0,0,30,0l23.07-63.44L229.5,143a16,16,0,0,0,0-30ZM157.08,152.3a8,8,0,0,0-4.78,4.78L128,223.9l-24.3-66.82a8,8,0,0,0-4.78-4.78L32.1,128l66.82-24.3a8,8,0,0,0,4.78-4.78L128,32.1l24.3,66.82a8,8,0,0,0,4.78,4.78L223.9,128Z"/></svg>'
+    );
+  }
+
+  // Phosphor "Coin" (regular) — single data-credit glyph (used for <= 1 credit),
+  // mirroring Clay's CreditPriceBadge.
+  function coinSvg(size) {
+    const s = String(size);
+    return (
+      `<svg xmlns="http://www.w3.org/2000/svg" width="${s}" height="${s}" viewBox="0 0 256 256" ` +
+      'fill="currentColor" aria-hidden="true"><path d="M207.58,63.84C186.85,53.48,159.33,48,128,48S69.15,53.48,48.42,63.84,16,88.78,16,104v48c0,15.22,11.82,29.85,32.42,40.16S96.67,208,128,208s58.85-5.48,79.58-15.84S240,167.22,240,152V104C240,88.78,228.18,74.15,207.58,63.84ZM128,64c62.64,0,96,23.23,96,40s-33.36,40-96,40-96-23.23-96-40S65.36,64,128,64Zm-8,95.86v32c-19-.62-35-3.42-48-7.49V153.05A203.43,203.43,0,0,0,120,159.86Zm16,0a203.43,203.43,0,0,0,48-6.81v31.31c-13,4.07-29,6.87-48,7.49ZM32,152V133.53a82.88,82.88,0,0,0,16.42,10.63c2.43,1.21,5,2.35,7.58,3.43V178C40.17,170.16,32,160.29,32,152Zm168,26V147.59c2.61-1.08,5.15-2.22,7.58-3.43A82.88,82.88,0,0,0,224,133.53V152C224,160.29,215.83,170.16,200,178Z"/></svg>'
+    );
+  }
+
+  // Phosphor "Coins" (regular) — stacked data-credit glyph (used for > 1 credit).
+  function coinsSvg(size) {
+    const s = String(size);
+    return (
+      `<svg xmlns="http://www.w3.org/2000/svg" width="${s}" height="${s}" viewBox="0 0 256 256" ` +
+      'fill="currentColor" aria-hidden="true"><path d="M184,89.57V84c0-25.08-37.83-44-88-44S8,58.92,8,84v40c0,20.89,26.25,37.49,64,42.46V172c0,25.08,37.83,44,88,44s88-18.92,88-44V132C248,111.3,222.58,94.68,184,89.57ZM232,132c0,13.22-30.79,28-72,28-3.73,0-7.43-.13-11.08-.37C170.49,151.77,184,139,184,124V105.74C213.87,110.19,232,122.27,232,132ZM72,150.25V126.46A183.74,183.74,0,0,0,96,128a183.74,183.74,0,0,0,24-1.54v23.79A163,163,0,0,1,96,152,163,163,0,0,1,72,150.25Zm96-40.32V124c0,8.39-12.41,17.4-32,22.87V123.5C148.91,120.37,159.84,115.71,168,109.93ZM96,56c41.21,0,72,14.78,72,28s-30.79,28-72,28S24,97.22,24,84,54.79,56,96,56ZM24,124V109.93c8.16,5.78,19.09,10.44,32,13.57v23.37C36.41,141.4,24,132.39,24,124Zm64,48v-4.17c2.63.1,5.29.17,8,.17,3.88,0,7.67-.13,11.39-.35A121.92,121.92,0,0,0,120,171.41v23.46C100.41,189.4,88,180.39,88,172Zm48,26.25V174.4a179.48,179.48,0,0,0,24,1.6,183.74,183.74,0,0,0,24-1.54v23.79a165.45,165.45,0,0,1-48,0Zm64-3.38V171.5c12.91-3.13,23.84-7.79,32-13.57V172C232,180.39,219.59,189.4,200,194.87Z"/></svg>'
     );
   }
 

@@ -1757,8 +1757,8 @@
     __cb.currentWorkspaceId = null;
   };
 
-  // Scrolls a column into view inside Clay's grid and pulses an outline on its
-  // header, without navigating. Shared by:
+  // Scrolls a column into view inside Clay's grid (no navigation, no flash).
+  // Shared by:
   //   1. src/table-focus.js — after a cross-table reload, replaying the
   //      `cb-focus-field` sentinel once the destination page mounts.
   //   2. __cb.openCardInTable's same-table soft path below — no reload needed.
@@ -1772,17 +1772,15 @@
     const HEADER_ID = `table-header-cell-${fieldId}`;
     const CONTAINER_ID = "grid-view-scroll-container";
     const PINNED_CONTAINER_ID = "table-header-pinned-fields-container";
-    const FLASH_CLASS = "cb-focus-flash";
-    const FLASH_DURATION_MS = 5000;
     const POST_MOUNT_DELAY_MS = 200;
     const SAFETY_TIMEOUT_MS = 10000;
 
-    function leftAlignAndFlash() {
+    function leftAlign() {
       const container = document.getElementById(CONTAINER_ID);
       const header = document.getElementById(HEADER_ID);
       if (!container || !header) return false;
       // Pinned (sticky) headers always sit in the pinned strip; scrolling
-      // won't move them, so flash only (mirrors Clay's own
+      // won't move them, so there's nothing to do (mirrors Clay's own
       // scrollTableHeaderCellIntoView pinned short-circuit).
       const isPinned = getComputedStyle(header).position === "sticky";
       if (!isPinned) {
@@ -1795,8 +1793,6 @@
           container.scrollTo({ left: target, behavior: "auto" });
         }
       }
-      header.classList.add(FLASH_CLASS);
-      setTimeout(() => header.classList.remove(FLASH_CLASS), FLASH_DURATION_MS);
       return true;
     }
 
@@ -1816,7 +1812,7 @@
       // scroll may straddle frames); 200ms clears it on every machine tested.
       setTimeout(() => {
         if (done) return;
-        if (leftAlignAndFlash()) finish();
+        if (leftAlign()) finish();
       }, POST_MOUNT_DELAY_MS);
     }
     observer = new MutationObserver(attempt);

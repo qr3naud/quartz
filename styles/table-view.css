@@ -490,7 +490,7 @@
   border-color: #d1fae5;
 }
 
-.cb-table-view-er-menu-kind-formula {
+.cb-table-view-er-menu-kind-function {
   background: #f5f3ff;
   color: #6d28d9;
   border-color: #ede9fe;
@@ -506,12 +506,6 @@
   background: #eff6ff;
   color: #1d4ed8;
   border-color: #dbeafe;
-}
-
-.cb-table-view-er-menu-summary {
-  font-size: 12px;
-  color: #6b7280;
-  line-height: 1.4;
 }
 
 .cb-table-view-er-menu-section {
@@ -540,6 +534,58 @@
   font-weight: 500;
   text-align: right;
   font-variant-numeric: tabular-nums;
+}
+
+/* Cost value pill — Clay's segmented credit/action badge group, rebuilt with
+   Phosphor StarFour (actions, nightshade) + Coin/Coins (credits, matcha). */
+.cb-table-view-er-cost-pill {
+  display: inline-flex;
+  align-items: stretch;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  overflow: hidden;
+  font-variant-numeric: tabular-nums;
+}
+
+.cb-table-view-er-cost-seg {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 7px;
+  font-size: 11.5px;
+  font-weight: 500;
+  color: #525a69;
+  background: #ffffff;
+  white-space: nowrap;
+}
+
+.cb-table-view-er-cost-seg + .cb-table-view-er-cost-seg {
+  border-left: 1px solid #e5e7eb;
+}
+
+.cb-table-view-er-cost-seg svg {
+  width: 12px;
+  height: 12px;
+  flex-shrink: 0;
+}
+
+.cb-table-view-er-cost-actions svg {
+  color: #717989;
+}
+
+.cb-table-view-er-cost-credits svg {
+  color: #0dac65;
+}
+
+/* Frequency value — the chip's amber ×N badge, read-only in the menu. */
+.cb-table-view-er-menu-freq {
+  cursor: default;
+}
+
+.cb-table-view-er-menu-freq:hover {
+  background: #ffffff;
+  color: #b45309;
+  border-color: #fde68a;
 }
 
 .cb-table-view-er-menu-footer {
