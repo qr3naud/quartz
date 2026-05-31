@@ -5,7 +5,13 @@
 
   let canvasArea, svgLayer, cardContainer;
   let panX = 0, panY = 0, scale = 1;
-  let cards = [], groups = [];
+  // Nodes are owned by the store (C3.2). `cards` is the store's LIVE array —
+  // shared by reference with __cb.model.getNodes() and the table view. It is
+  // never reassigned (would break the shared reference); all "replace the
+  // array" sites mutate it in place (length=0 + push, or splice). `groups`
+  // still lives here for now (relocates in a later slice).
+  const cards = __cb.model.getNodes();
+  let groups = [];
   // Per-imported-table metadata keyed by source tableId:
   //   { name, importColor, recordCount, importedAt }
   // Single source of truth for the table-view per-table headers (source row
@@ -129,7 +135,9 @@
         cbRef: () => __cb,
         cardsRef: () => cards,
         setCards: (next) => {
-          cards = next;
+          // In-place replace to preserve the shared store reference (C3.2).
+          cards.length = 0;
+          for (const c of next) cards.push(c);
         },
         groupsRef: () => groups,
         setGroups: (next) => {
@@ -826,7 +834,7 @@
     for (const g of groups) g.el.remove();
     if (selectionHintEl) selectionHintEl.classList.remove("cb-selection-hint-visible");
 
-    cards = [];
+    cards.length = 0; // in-place clear to keep the shared store reference (C3.2)
     groups = [];
     selectedCards.clear();
     selectedGroupId = null;
@@ -1881,7 +1889,7 @@
   }
 
   function destroy() {
-    cards = []; groups = []; selectedCards.clear(); selectedGroupId = null;
+    cards.length = 0; groups = []; selectedCards.clear(); selectedGroupId = null;
     dragState = panState = selBoxState = groupDragState = null;
     toolClickPending = null; activeTool = null;
     closeGroupColorMenu();

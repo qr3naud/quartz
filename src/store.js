@@ -24,6 +24,15 @@
 
   const listeners = new Set();
 
+  // Owned canonical state (C3.2+). The store physically owns the node array;
+  // the canvas and table read/write the SAME live instance via getNodes(). The
+  // array is never reassigned — only mutated in place — so all holders stay in
+  // sync. (groups + importedTables still facade to the canvas for now; they
+  // relocate in a later slice.)
+  const state = {
+    cards: [],
+  };
+
   function canvas() {
     return (window.__cb && window.__cb.canvas) || null;
   }
@@ -40,7 +49,10 @@
     // (x/y/clusterId for the canvas, tableOrder for the table). Consumers should
     // read `node.data` + `node.tableOrder`/`node.y`, NOT `node.clusterId`.
     getNodes() {
-      return call("getCards", []);
+      // Store-owned live array (C3.2). Read-only for consumers — mutate through
+      // the canvas card helpers / update(), never by reassigning or splicing
+      // the returned array directly.
+      return state.cards;
     },
     getNode(id) {
       return model.getNodes().find((n) => n && n.id === id) || null;
