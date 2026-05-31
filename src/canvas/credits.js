@@ -125,64 +125,61 @@
       }
     }
 
+    // ER lineage key, identical to the table view's: action field id for
+    // standalone / basic-group ERs, "wf:<groupCluster>" for waterfalls.
+    function erLineageKey(c) {
+      if (!c || !c.data || isNonErType(c.data.type)) return null;
+      return c.data.type === "waterfall"
+        ? (c.data.groupCluster != null ? `wf:${c.data.groupCluster}` : null)
+        : (c.data.fieldId ?? null);
+    }
+
     function updateDpCosts() {
-      const clusters = getClusterCardIds();
       const allCards = cardsRef();
-      const dpCostMap = new Map();
 
-      for (const cluster of clusters) {
-        const clusterCards = cluster
-          .map((id) => allCards.find((c) => c.id === id))
-          .filter(Boolean);
-        const erCards = clusterCards.filter((c) => !isNonErType(c.data.type));
-        const dpCards = clusterCards.filter((c) => c.data.type === "dp");
-        if (dpCards.length === 0) continue;
-
-        let totalCredits = 0;
-        let hasCredits = false;
-        for (const er of erCards) {
-          if (er.data.usePrivateKey) continue;
-          if (er.data.credits != null && er.data.credits > 0) {
-            totalCredits += er.data.credits;
-            hasCredits = true;
-          }
-        }
-
-        const perDpCost = totalCredits / dpCards.length;
-
-        for (const dp of dpCards) {
-          dpCostMap.set(dp.id, {
-            perDpCost,
-            hasCredits,
-            enrichmentCount: erCards.length,
-          });
-        }
+      // Match data points to their enrichment by LINEAGE
+      // (data.sourceEnrichmentFieldId), not canvas geometry — so the canvas
+      // "~N / row" / "Not connected" pill agrees with the lineage-driven table.
+      const erByKey = new Map();
+      for (const c of allCards) {
+        const key = erLineageKey(c);
+        if (key != null && !erByKey.has(key)) erByKey.set(key, c);
+      }
+      // Cost splits across the data points one enrichment returns.
+      const dpCountByKey = new Map();
+      for (const c of allCards) {
+        if (c.data.type !== "dp") continue;
+        const key = c.data.sourceEnrichmentFieldId ?? null;
+        if (key == null || !erByKey.has(key)) continue;
+        dpCountByKey.set(key, (dpCountByKey.get(key) || 0) + 1);
       }
 
       for (const card of allCards) {
         if (card.data.type !== "dp") continue;
-        const costEl = card.el.querySelector(".cb-dp-cost");
+        const costEl = card.el?.querySelector(".cb-dp-cost");
         if (!costEl) continue;
         const textSpan = costEl.querySelector("span");
         if (!textSpan) continue;
 
-        const info = dpCostMap.get(card.id);
-
-        if (!info || info.enrichmentCount === 0) {
+        const key = card.data.sourceEnrichmentFieldId ?? null;
+        const er = key != null ? erByKey.get(key) : null;
+        if (!er) {
           textSpan.textContent = "Not connected";
           costEl.classList.remove("cb-dp-cost-linked");
           continue;
         }
 
         costEl.classList.add("cb-dp-cost-linked");
-        if (info.hasCredits) {
-          const display =
-            info.perDpCost % 1 === 0
-              ? info.perDpCost
-              : info.perDpCost.toFixed(1);
+        const count = dpCountByKey.get(key) || 1;
+        const credits = er.data.usePrivateKey
+          ? 0
+          : (er.data.credits != null ? Number(er.data.credits) : 0);
+        if (credits > 0) {
+          const perDpCost = credits / count;
+          const display = perDpCost % 1 === 0 ? perDpCost : perDpCost.toFixed(1);
           textSpan.textContent = `~${display} / row`;
         } else {
-          textSpan.textContent = `${info.enrichmentCount} enrichment${info.enrichmentCount > 1 ? "s" : ""} linked`;
+          textSpan.textContent = "1 enrichment linked";
         }
       }
     }
