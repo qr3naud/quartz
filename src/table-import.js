@@ -359,11 +359,21 @@
         }
       }
 
-      // Basic fields (and any action field whose dataProfile lacks status
-      // counts) fall back to valueCount / sampleSize. With `full`'s
-      // sampleSize: 0 the profile spans every row, so empty cells in the
-      // column reduce fillRate accurately.
-      if (!stats.fillRate && dp) {
+      // DP (basic) columns: carry nullPercentage + totalRecords so the table
+      // view can compute actual fill as nonNull / ER coverage. NOTE: for basic
+      // columns the profile's valueCount equals sampleSize, so the old
+      // valueCount/sampleSize ratio was always 100% — nullPercentage is the only
+      // real per-column fill signal (fill% = 100 - nullPercentage). It's exact
+      // only at sampleSize 0 (the background full-profile fetch); the import's
+      // sampled value is a fallback shown if that fetch fails.
+      if (field.type !== "action" && dp && dp.nullPercentage != null) {
+        stats.nullPercentage = Number(dp.nullPercentage) || 0;
+        stats.totalRecords = Number(dp.totalRecords) || 0;
+        if (!stats.source) stats.source = "dataProfile";
+        hasData = true;
+      } else if (!stats.fillRate && dp) {
+        // Action field whose dataProfile lacked status counts — fall back to
+        // valueCount / sampleSize so it still shows something.
         const sampleSize = Number(dp.sampleSize) || 0;
         const valueCount = Number(dp.valueCount) || 0;
         if (sampleSize > 0) {
@@ -632,6 +642,13 @@
       // Marks source-type enrichments (vs actions) so the table view can color
       // their chip distinctly. Persists with the card.
       isSource: field?.type === "source",
+      // Projected coverage: how many rows this enrichment runs on. Defaults to
+      // the table's total rows; editable in the table view (Coverage column) and
+      // drives projected cost (credits/row x coverage). One ER -> many DPs all
+      // share this single value. coverageCustom tracks a manual override so a
+      // later Records change only re-defaults un-edited enrichments.
+      coverageRows: Number(__cb.recordsActual) > 0 ? Number(__cb.recordsActual) : null,
+      coverageCustom: false,
       modelOptions,
       selectedModel,
       requiresApiKey,
@@ -1917,6 +1934,9 @@
       // Resolve projected cost for "Run function" (subroutine) cards, whose
       // cost lives in the table they reference rather than the catalog.
       fetchSubroutineCostsInBackground(workspaceId, tableId);
+      // Accurate per-DP fill rate (full-table nullPercentage). The import's
+      // sampled profile is only ~50 rows, so actual fill needs sampleSize 0.
+      fetchFullProfileInBackground(workspaceId, tableId);
     }
 
     return importedAny;
@@ -2041,6 +2061,82 @@
     if (typeof __cb.canvas.refreshCreditTotal === "function") __cb.canvas.refreshCreditTotal();
     if (typeof __cb.canvas.updateGroupCredits === "function") __cb.canvas.updateGroupCredits();
     if (typeof __cb.canvas.notifyChange === "function") __cb.canvas.notifyChange();
+    if (__cb.tableView?.refresh) __cb.tableView.refresh();
+  }
+
+  // Background ACTUAL fill: the fast import profiles only a ~50-row sample, so
+  // per-DP nullPercentage (the fill signal) is approximate. Re-fetch /context at
+  // sampleSize 0 (full table) and stamp exact nullPercentage + totalRecords on
+  // each DP card so Actual fill rate is accurate. Coverage is left alone — its
+  // run-status counts are already full-table from the import. While this is in
+  // flight the table sits in __cb.fullProfilePending so the table view shows a
+  // spinner in the Fill column (Actual mode) instead of a stale value.
+  async function fetchFullProfileInBackground(workspaceId, tableId) {
+    if (!__cb.canvas) return;
+    __cb.fullProfilePending = __cb.fullProfilePending || new Set();
+    __cb.fullProfilePending.add(tableId);
+    if (__cb.tableView?.refresh) __cb.tableView.refresh();
+
+    let nullByFieldId = null;
+    try {
+      const res = await fetch(
+        `https://api.clay.com/v3/workspaces/${workspaceId}/tables/${tableId}/context`,
+        {
+          method: "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            formatAsXML: false,
+            contextDetailLevel: "medium",
+            getExampleRows: 0,
+            customOptions: {
+              includeCreditCosts: false,
+              includeStatusCounts: false,
+              includeDataProfiling: true,
+              sampleSize: 0,
+            },
+          }),
+        }
+      );
+      if (res.ok) {
+        const body = await res.json();
+        const fcs = body?.result?.fieldConfigurationsData?.fieldConfigs;
+        if (Array.isArray(fcs)) {
+          nullByFieldId = new Map();
+          for (const fc of fcs) {
+            const prof = fc?.dataProfile;
+            if (!fc?.id || !prof || prof.nullPercentage == null) continue;
+            nullByFieldId.set(fc.id, {
+              nullPercentage: Number(prof.nullPercentage) || 0,
+              totalRecords: Number(prof.totalRecords) || 0,
+            });
+          }
+        }
+      }
+    } catch (err) {
+      console.warn("[Clay Scoping] fetchFullProfileInBackground failed:", err);
+    }
+
+    __cb.fullProfilePending.delete(tableId);
+
+    let stamped = false;
+    if (nullByFieldId && nullByFieldId.size > 0) {
+      for (const card of __cb.canvas.getCards()) {
+        const d = card.data;
+        if (!d || d.tableId !== tableId || d.type !== "dp" || !d.fieldId) continue;
+        const np = nullByFieldId.get(d.fieldId);
+        if (!np) continue;
+        d.stats = {
+          ...(d.stats || {}),
+          nullPercentage: np.nullPercentage,
+          totalRecords: np.totalRecords,
+        };
+        stamped = true;
+      }
+    }
+    if (stamped && typeof __cb.canvas.notifyChange === "function") __cb.canvas.notifyChange();
+    // Always refresh so the Fill spinner clears (whether data arrived or the
+    // fetch failed — in which case the sampled fill is used as a fallback).
     if (__cb.tableView?.refresh) __cb.tableView.refresh();
   }
 

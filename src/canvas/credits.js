@@ -16,6 +16,16 @@
       return type === "dp" || type === "input" || type === "comment";
     }
 
+    // Per-ER coverage ratio: coverage / total-rows. Folded into the weighted
+    // per-row sums so the existing "× records" downstream yields credits ×
+    // coverage. Defaults to 1 (coverage == records) so unedited ERs behave
+    // exactly as before; lowering an ER's Coverage scales only its cost.
+    function coverageRatio(card, records) {
+      if (!records || records <= 0) return 1;
+      const cov = card.data.coverageRows != null ? Number(card.data.coverageRows) : records;
+      return Number.isFinite(cov) && cov >= 0 ? cov / records : 1;
+    }
+
     function notifyCreditTotal() {
       const cb = window.__cb;
       const isActual = cb.viewMode === "actual";
@@ -63,6 +73,7 @@
       const globalFreqId = cb.getCurrentFrequencyId
         ? cb.getCurrentFrequencyId()
         : cb.DEFAULT_FREQUENCY_ID;
+      const records = cb.getRecordsCount ? cb.getRecordsCount() : 0;
       for (const c of cardsRef()) {
         if (isNonErType(c.data.type)) continue;
         const credits = c.data.credits ?? 0;
@@ -73,12 +84,15 @@
         const mult = cb.getFrequencyMultiplier
           ? cb.getFrequencyMultiplier(freqId)
           : 1;
+        // Coverage scales the weighted (total) slots only — the per-row "Avg"
+        // boxes stay honest about a single execution.
+        const covMult = mult * coverageRatio(c, records);
         if (!c.data.usePrivateKey) {
           creditTotal += credits;
-          weightedCreditTotal += credits * mult;
+          weightedCreditTotal += credits * covMult;
         }
         actionExecTotal += actions;
-        weightedActionExecTotal += actions * mult;
+        weightedActionExecTotal += actions * covMult;
       }
       if (cb.updateCreditTotal) {
         cb.updateCreditTotal(
@@ -159,9 +173,15 @@
         const badge = g.el.querySelector(".cb-group-credits");
         if (!badge) continue;
         const members = cardsRef().filter((c) => g.cardIds.has(c.id));
+        const records = window.__cb.getRecordsCount ? window.__cb.getRecordsCount() : 0;
 
+        // `sum` stays the honest per-row figure (drives the "/ row" badge).
+        // `weightedSum` folds in each ER's coverage ratio so the group total
+        // (× records) reflects per-enrichment coverage overrides.
         let sum = 0;
         let actionSum = 0;
+        let weightedSum = 0;
+        let weightedActionSum = 0;
         let hasCredits = false;
         const countedErIds = new Set();
 
@@ -178,12 +198,15 @@
 
             for (const er of erCards) {
               countedErIds.add(er.id);
+              const cov = coverageRatio(er, records);
               if (!er.data.usePrivateKey && er.data.credits != null && er.data.credits > 0) {
                 sum += er.data.credits / dpCards.length;
+                weightedSum += (er.data.credits / dpCards.length) * cov;
                 hasCredits = true;
               }
               if (er.data.actionExecutions != null && er.data.actionExecutions > 0) {
                 actionSum += er.data.actionExecutions / dpCards.length;
+                weightedActionSum += (er.data.actionExecutions / dpCards.length) * cov;
               }
             }
             break;
@@ -193,12 +216,15 @@
         for (const c of members) {
           if (isNonErType(c.data.type)) continue;
           if (countedErIds.has(c.id)) continue;
+          const cov = coverageRatio(c, records);
           if (!c.data.usePrivateKey && c.data.credits != null && c.data.credits > 0) {
             sum += c.data.credits;
+            weightedSum += c.data.credits * cov;
             hasCredits = true;
           }
           if (c.data.actionExecutions != null && c.data.actionExecutions > 0) {
             actionSum += c.data.actionExecutions;
+            weightedActionSum += c.data.actionExecutions * cov;
           }
         }
 
@@ -211,14 +237,13 @@
         const display = sum % 1 === 0 ? sum.toString() : sum.toFixed(1);
 
         const cb = window.__cb;
-        const records = cb.getRecordsCount ? cb.getRecordsCount() : 0;
         const creditCost = cb.getCreditCost ? cb.getCreditCost() : 0;
         const actionCost = cb.getActionCost ? cb.getActionCost() : 0;
 
         let badgeText = `~${display} / row`;
         if (records > 0) {
-          const totalCredits = sum * records;
-          const totalActions = actionSum * records;
+          const totalCredits = weightedSum * records;
+          const totalActions = weightedActionSum * records;
           const totalDisplay = totalCredits % 1 === 0
             ? totalCredits.toLocaleString()
             : totalCredits.toLocaleString(undefined, { maximumFractionDigits: 1 });

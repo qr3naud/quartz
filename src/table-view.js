@@ -354,6 +354,137 @@
     };
   }
 
+  // Mode-aware coverage + fill descriptors for a row.
+  //   Coverage is per ENRICHMENT (erCard): projected = editable rows (default
+  //   total rows, drives cost); actual = real run attempts / total.
+  //   Fill is per DATA POINT (dpCard, optional): projected = editable %;
+  //   actual = nonNull(from nullPercentage) / ER attempts, with a loading flag
+  //   while the full-table profile is still being fetched.
+  function coverageFillFor(erCard, dpCard) {
+    const cb = window.__cb;
+    const actual = cb?.viewMode === "actual";
+    const totalRows = Number(cb?.getRecordsCount?.()) || Number(cb?.recordsActual) || 0;
+
+    let coverage;
+    if (actual) {
+      const cov = erCard?.data?.stats?.coverage;
+      coverage = cov && Number(cov.total) > 0
+        ? { mode: "actual", ran: Number(cov.ran) || 0, total: Number(cov.total) || 0 }
+        : { mode: "actual", ran: null, total: null };
+    } else {
+      const rows = erCard ? (erCard.data.coverageRows ?? totalRows) : totalRows;
+      coverage = { mode: "projected", rows, editable: !!erCard, erCardId: erCard ? erCard.id : null };
+    }
+
+    let fill = null;
+    if (dpCard) {
+      if (actual) {
+        if (cb?.fullProfilePending?.has?.(dpCard.data.tableId)) {
+          fill = { mode: "actual", loading: true };
+        } else {
+          const np = dpCard.data.stats?.nullPercentage;
+          const tot = Number(dpCard.data.stats?.totalRecords) || 0;
+          if (np != null && tot > 0) {
+            const nonNull = ((100 - Number(np)) / 100) * tot;
+            const ran = Number(erCard?.data?.stats?.coverage?.ran) || 0;
+            const denom = ran > 0 ? ran : tot;
+            fill = { mode: "actual", pct: Math.min(100, Math.max(0, Math.round((nonNull / denom) * 100))) };
+          } else {
+            fill = { mode: "actual", pct: null };
+          }
+        }
+      } else {
+        fill = { mode: "projected", pct: fillRatePct(dpCard.data.fillRate) };
+      }
+    }
+    return { coverage, fill };
+  }
+
+  // Writes the projected coverage onto an enrichment card. Coverage lives only
+  // on the ER, so this single write syncs every DP row the enrichment returns
+  // (and the shared projected cost) on the next refresh.
+  function setErCoverage(erCardId, value) {
+    const cb = window.__cb;
+    const er = (cb.canvas?.getCards?.() || []).find((c) => c.id === erCardId);
+    if (!er) return;
+    const n = Math.max(0, Math.round(Number(String(value).replace(/[^\d]/g, "")) || 0));
+    if (er.data.coverageRows === n && er.data.coverageCustom) return;
+    er.data.coverageRows = n;
+    er.data.coverageCustom = true;
+    cb.canvas?.refreshCreditTotal?.();
+    cb.canvas?.updateGroupCredits?.();
+    cb.canvas?.notifyChange?.();
+    cb.tableView?.refresh?.();
+  }
+
+  // Renders a Coverage <td> from a coverage descriptor (see coverageFillFor).
+  function buildCoverageCell(coverage) {
+    const td = document.createElement("td");
+    if (coverage && coverage.mode === "projected" && coverage.editable) {
+      td.className = "col-coverage";
+      const input = document.createElement("input");
+      input.type = "number";
+      input.min = "0";
+      input.step = "1";
+      input.className = "cb-table-view-cell-input cb-table-view-cell-input-num";
+      input.value = coverage.rows != null ? String(coverage.rows) : "";
+      input.title = "Rows this enrichment runs on (drives projected cost)";
+      input.addEventListener("mousedown", (e) => e.stopPropagation());
+      input.addEventListener("click", (e) => e.stopPropagation());
+      input.addEventListener("keydown", (e) => { if (e.key === "Enter") e.target.blur(); });
+      input.addEventListener("blur", () => setErCoverage(coverage.erCardId, input.value));
+      td.appendChild(input);
+    } else if (coverage && coverage.mode === "projected") {
+      td.className = "col-coverage cb-table-view-cell-readonly";
+      td.textContent = coverage.rows ? Number(coverage.rows).toLocaleString() : "\u2014";
+    } else if (coverage && coverage.mode === "actual" && coverage.total) {
+      td.className = "col-coverage cb-table-view-cell-readonly";
+      td.textContent = `${(coverage.ran || 0).toLocaleString()} / ${coverage.total.toLocaleString()}`;
+      td.title = `${Math.round(((coverage.ran || 0) / coverage.total) * 100)}% of rows attempted`;
+    } else {
+      td.className = "col-coverage cb-table-view-cell-muted";
+      td.textContent = "\u2014";
+    }
+    return td;
+  }
+
+  // Renders a Fill rate <td> from a fill descriptor (see coverageFillFor).
+  function buildFillCell(fill, cardId) {
+    const td = document.createElement("td");
+    if (fill && fill.mode === "projected") {
+      td.className = "col-fill";
+      const input = document.createElement("input");
+      input.type = "number";
+      input.min = "0";
+      input.max = "100";
+      input.step = "1";
+      input.className = "cb-table-view-cell-input cb-table-view-cell-input-num";
+      input.value = String(fill.pct);
+      input.addEventListener("mousedown", (e) => e.stopPropagation());
+      input.addEventListener("click", (e) => e.stopPropagation());
+      input.addEventListener("keydown", (e) => { if (e.key === "Enter") e.target.blur(); });
+      input.addEventListener("blur", () => commitFillRate(cardId, input.value));
+      const suffix = document.createElement("span");
+      suffix.className = "cb-table-view-cell-suffix";
+      suffix.textContent = "%";
+      td.appendChild(input);
+      td.appendChild(suffix);
+    } else if (fill && fill.loading) {
+      td.className = "col-fill cb-table-view-cell-muted";
+      const sp = document.createElement("span");
+      sp.className = "cb-table-view-fill-spinner";
+      sp.title = "Loading actual fill rate\u2026";
+      td.appendChild(sp);
+    } else if (fill && fill.pct != null) {
+      td.className = "col-fill cb-table-view-cell-readonly";
+      td.textContent = `${fill.pct}%`;
+    } else {
+      td.className = "col-fill cb-table-view-cell-muted";
+      td.textContent = "\u2014";
+    }
+    return td;
+  }
+
   function formatNumber(n) {
     if (!Number.isFinite(n)) return "0";
     return n % 1 === 0
@@ -558,6 +689,8 @@
     function buildDpRowFromCard(card) {
       const info = dpInfoMap.get(card.id);
       const ers = info ? info.ers : [];
+      const erKey = card.data.sourceEnrichmentFieldId ?? null;
+      const erCard = erKey != null ? erByKey.get(erKey) : null;
       return {
         kind: "dp",
         cardId: card.id,
@@ -565,6 +698,7 @@
         name: card.data.text || card.data.displayName || "",
         fillRatePct: fillRatePct(card.data.fillRate),
         coverage: card.data.stats?.coverage || null,
+        coverageFill: coverageFillFor(erCard, card),
         credits: info ? info.credits : 0,
         actions: info ? info.actions : 0,
         creditsUnknown: info ? !!info.creditsUnknown : false,
@@ -758,6 +892,8 @@
         credits,
         actions,
         creditsUnknown,
+        // Orphan ER rows show coverage (the ER's own), no DP fill.
+        coverageFill: coverageFillFor(sorted[0], null),
         ers: sorted.map((c) => buildErChipData(c)),
       };
     }
@@ -2423,17 +2559,10 @@
     dpCell.appendChild(dpInput);
     tr.appendChild(dpCell);
 
-    // Coverage + fill stay muted until the row promotes to a real DP —
-    // there's no card to write the value to yet.
-    const coverageCell = document.createElement("td");
-    coverageCell.className = "col-coverage cb-table-view-cell-muted";
-    coverageCell.textContent = "\u2014";
-    tr.appendChild(coverageCell);
-
-    const fillCell = document.createElement("td");
-    fillCell.className = "col-fill cb-table-view-cell-muted";
-    fillCell.textContent = "\u2014";
-    tr.appendChild(fillCell);
+    // Coverage = the ER's own coverage (editable in projected, run attempts in
+    // actual). Fill stays muted — there's no data point on this row yet.
+    tr.appendChild(buildCoverageCell(row.coverageFill?.coverage));
+    tr.appendChild(buildFillCell(null, row.cardId));
 
     const creditsCell = document.createElement("td");
     creditsCell.className = "col-credits cb-table-view-cell-readonly";
@@ -2586,41 +2715,14 @@
     dpCell.appendChild(dpInput);
     tr.appendChild(dpCell);
 
-    // Coverage = enrichment run attempts vs total rows (read-only). Comes
-    // from the run-status aggregation folded in at import time.
-    const coverageCell = document.createElement("td");
-    const cov = coverageInfo(row.coverage);
-    if (cov) {
-      coverageCell.className = "col-coverage cb-table-view-cell-readonly";
-      coverageCell.textContent = cov.ratio;
-      coverageCell.title = `${cov.pct}% of rows attempted`;
-    } else {
-      coverageCell.className = "col-coverage cb-table-view-cell-muted";
-      coverageCell.textContent = "\u2014";
-    }
-    tr.appendChild(coverageCell);
+    // Coverage (per enrichment): projected = editable rows (default total rows,
+    // drives cost); actual = real run attempts / total. Editing it from any one
+    // DP row writes the ER once, syncing every DP it returns.
+    tr.appendChild(buildCoverageCell(row.coverageFill?.coverage));
 
-    const fillCell = document.createElement("td");
-    fillCell.className = "col-fill";
-    const fillInput = document.createElement("input");
-    fillInput.type = "number";
-    fillInput.min = "0";
-    fillInput.max = "100";
-    fillInput.step = "1";
-    fillInput.className = "cb-table-view-cell-input cb-table-view-cell-input-num";
-    fillInput.value = String(row.fillRatePct);
-    fillInput.addEventListener("mousedown", (evt) => evt.stopPropagation());
-    fillInput.addEventListener("click", (evt) => evt.stopPropagation());
-    fillInput.addEventListener("keydown", (evt) => {
-      if (evt.key === "Enter") evt.target.blur();
-    });
-    fillInput.addEventListener("blur", () => commitFillRate(row.cardId, fillInput.value));
-    const fillSuffix = document.createElement("span");
-    fillSuffix.className = "cb-table-view-cell-suffix";
-    fillSuffix.textContent = "%";
-    fillCell.appendChild(fillInput);
-    fillCell.appendChild(fillSuffix);
-    tr.appendChild(fillCell);
+    // Fill rate (per DP): projected = editable %; actual = nonNull / ER coverage
+    // (read-only), spinner while the full profile loads.
+    tr.appendChild(buildFillCell(row.coverageFill?.fill, row.cardId));
 
     // Credits / actions / ERs collapse into the "first" row of a merge
     // run via rowspan. Followers ("skip") emit no <td> for these columns

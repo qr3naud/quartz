@@ -575,6 +575,22 @@
   font-weight: 500;
 }
 
+/* Actual fill rate is still loading the full-table profile. */
+.cb-table-view-fill-spinner {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border: 2px solid #d1d5db;
+  border-top-color: #6366f1;
+  border-radius: 50%;
+  animation: cb-table-view-spin 0.7s linear infinite;
+  vertical-align: middle;
+}
+
+@keyframes cb-table-view-spin {
+  to { transform: rotate(360deg); }
+}
+
 /* ---- ER chips ---- */
 
 .cb-table-view-er-chips {

@@ -1078,16 +1078,30 @@
       recordsInput.value = formatted;
       const diff = formatted.length - prevLen;
       recordsInput.setSelectionRange(caretPos + diff, caretPos + diff);
-      recalcTotal();
+      const recCount = parseRecordsValue();
+      // Records is the table's total rows AND the default coverage. Re-default
+      // coverage on every enrichment the user hasn't manually overridden so
+      // projected cost tracks the new total (custom coverage is preserved).
+      for (const c of (__cb.canvas?.getCards?.() || [])) {
+        const t = c.data?.type;
+        if (!c.data || t === "dp" || t === "input" || t === "comment") continue;
+        if (c.data.coverageCustom) continue;
+        c.data.coverageRows = recCount;
+      }
       // Keep unedited DP card fill rates in sync with the records count
       // (editable popover values stay locked once the user has touched them).
       if (__cb.canvas?.updateDefaultFillRates) {
-        __cb.canvas.updateDefaultFillRates(parseRecordsValue());
+        __cb.canvas.updateDefaultFillRates(recCount);
       }
+      // refreshCreditTotal recomputes the coverage-weighted totals (and calls
+      // recalcTotal internally); fall back to recalcTotal if it's unavailable.
+      if (__cb.canvas?.refreshCreditTotal) __cb.canvas.refreshCreditTotal();
+      else recalcTotal();
       if (__cb.canvas?.updateGroupCredits) {
         __cb.canvas.updateGroupCredits();
       }
       applyRecordsState();
+      if (__cb.tableView?.refresh) __cb.tableView.refresh();
     });
 
     // ---- Canvas area + toolbox ----
