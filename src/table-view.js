@@ -2833,7 +2833,15 @@
     // Projected/Actual columns it switches are part of this table. Built via
     // the overlay helper so the toggle logic stays in one place; rebuilt on
     // every render (setViewMode reflects the active half by query, not ref).
-    if (typeof __cb.buildViewModeToggle === "function") {
+    //
+    // Only meaningful once a table has been imported: "Actual" reads real
+    // spend that the import stamps onto the cards, so before that the toggle
+    // is noise. recordsActual is the canonical "an import happened" signal
+    // (null until prefillRecordsCount runs on import; restored per tab) — the
+    // same flag the Records box uses for its "actual / POC" state.
+    const importedYet =
+      typeof __cb.recordsActual === "number" && __cb.recordsActual > 0;
+    if (importedYet && typeof __cb.buildViewModeToggle === "function") {
       const viewToggle = __cb.buildViewModeToggle();
       viewToggle.classList.add("cb-table-view-mode-toggle");
       introActions.appendChild(viewToggle);
