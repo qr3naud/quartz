@@ -1086,6 +1086,10 @@
         importColor: opts?.importColor ?? null,
         stats,
         groupCluster: opts?.groupCluster ?? null,
+        // Free-text row note (table view). Stored on the row's primary card so
+        // it round-trips through persistence; rendered as a comment badge left
+        // of the enrichment pills.
+        note: opts?.note ?? null,
       };
       const card = {
         id,

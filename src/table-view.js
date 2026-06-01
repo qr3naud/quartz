@@ -83,6 +83,12 @@
   let contextMenuEl = null;
   let contextMenuBackdrop = null;
 
+  // Row note — body-level editor popover + hover preview, so neither is
+  // clipped by the table container's overflow. Single instance each.
+  let notePopoverEl = null;
+  let notePopoverBackdrop = null;
+  let notePreviewEl = null;
+
   // ER chip details menu — anchored popover opened by clicking an ER pill.
   // Single open instance at a time; lives at document.body level (like the
   // context menu) so it escapes the table's overflow clipping.
@@ -627,7 +633,7 @@
     }
     const thead = container.querySelector("thead");
     const headerH = thead ? thead.getBoundingClientRect().height : 0;
-    const margin = 8;
+    const margin = 1;
     const cRect = container.getBoundingClientRect();
     const rRect = row.getBoundingClientRect();
     const rowTop = rRect.top - cRect.top + container.scrollTop;
@@ -1683,6 +1689,120 @@
     if (__cb.saveTabs) __cb.saveTabs();
   }
 
+  // Per-row note commit. Writes the free-text note onto the row's primary
+  // card (DP card for DP rows, ER card for orphan-ER rows) so it round-trips
+  // through persistence. Empty text clears the note (drops the badge).
+  function commitNote(cardId, text) {
+    const canvas = __cb.canvas;
+    if (!canvas?.getCardById) return;
+    const card = canvas.getCardById(cardId);
+    if (!card) return;
+    const next = (text || "").trim();
+    const prev = (card.data.note || "").trim();
+    if (next === prev) return;
+    card.data.note = next || null;
+    __cb.model.update();
+    if (__cb.saveTabs) __cb.saveTabs();
+  }
+
+  // ---- Row note popover + hover preview ----
+
+  function hideNotePreview() {
+    if (notePreviewEl) { notePreviewEl.remove(); notePreviewEl = null; }
+  }
+
+  // Read-only hover preview of the note text, anchored above/below the badge.
+  // Body-appended (position: fixed) so the table's overflow doesn't clip it.
+  function showNotePreview(text, anchorEl) {
+    hideNotePreview();
+    const note = (text || "").trim();
+    if (!note || !anchorEl) return;
+    const box = document.createElement("div");
+    box.className = "cb-table-view-note-preview";
+    box.textContent = note;
+    document.body.appendChild(box);
+    notePreviewEl = box;
+    const aRect = anchorEl.getBoundingClientRect();
+    const bRect = box.getBoundingClientRect();
+    let left = Math.min(aRect.left, window.innerWidth - bRect.width - 8);
+    let top = aRect.bottom + 6;
+    if (top + bRect.height > window.innerHeight - 8) {
+      top = Math.max(8, aRect.top - 6 - bRect.height);
+    }
+    box.style.left = `${Math.max(8, left)}px`;
+    box.style.top = `${top}px`;
+  }
+
+  function closeNotePopover() {
+    if (notePopoverEl) { notePopoverEl.remove(); notePopoverEl = null; }
+    if (notePopoverBackdrop) { notePopoverBackdrop.remove(); notePopoverBackdrop = null; }
+  }
+
+  // Editor popover: a textarea prefilled with the current note. Enter commits,
+  // Shift+Enter inserts a newline, Escape cancels, outside-click commits.
+  function openNotePopover(cardId, anchorEl) {
+    closeNotePopover();
+    hideNotePreview();
+    closeContextMenu();
+    const card = __cb.canvas?.getCardById?.(cardId);
+    if (!card) return;
+
+    notePopoverBackdrop = document.createElement("div");
+    notePopoverBackdrop.className = "cb-table-view-note-backdrop";
+    notePopoverBackdrop.addEventListener("mousedown", (evt) => {
+      evt.stopPropagation();
+      // Commit on outside-click so a quick note isn't lost.
+      const ta = notePopoverEl?.querySelector("textarea");
+      if (ta) commitNote(cardId, ta.value);
+      closeNotePopover();
+    });
+
+    const pop = document.createElement("div");
+    pop.className = "cb-table-view-note-popover";
+    pop.addEventListener("mousedown", (evt) => evt.stopPropagation());
+
+    const ta = document.createElement("textarea");
+    ta.className = "cb-table-view-note-textarea";
+    ta.value = card.data.note || "";
+    ta.placeholder = "Leave a note\u2026";
+    ta.rows = 3;
+    ta.addEventListener("keydown", (evt) => {
+      if (evt.key === "Enter" && !evt.shiftKey) {
+        evt.preventDefault();
+        commitNote(cardId, ta.value);
+        closeNotePopover();
+      } else if (evt.key === "Escape") {
+        evt.preventDefault();
+        evt.stopPropagation();
+        closeNotePopover();
+      }
+    });
+    pop.appendChild(ta);
+
+    document.body.appendChild(notePopoverBackdrop);
+    document.body.appendChild(pop);
+    notePopoverEl = pop;
+
+    // Anchor below the badge/cell, clamped to the viewport (flip above when it
+    // would overflow the bottom).
+    pop.style.position = "fixed";
+    pop.style.zIndex = "9999999";
+    const aRect = (anchorEl || hostEl).getBoundingClientRect();
+    const pRect = pop.getBoundingClientRect();
+    let left = Math.min(aRect.left, window.innerWidth - pRect.width - 8);
+    let top = aRect.bottom + 6;
+    if (top + pRect.height > window.innerHeight - 8) {
+      top = Math.max(8, aRect.top - 6 - pRect.height);
+    }
+    pop.style.left = `${Math.max(8, left)}px`;
+    pop.style.top = `${top}px`;
+
+    ta.focus();
+    // Place the caret at the end rather than selecting everything, so typing
+    // appends to an existing note.
+    ta.setSelectionRange(ta.value.length, ta.value.length);
+  }
+
   // Per-ER frequency commit. Mirrors the canvas freqBadge callback
   // (cards.js ~line 837): we route through applyClusterFrequency so
   // every ER in the origin card's snap-cluster picks up the same
@@ -2544,6 +2664,21 @@
         label: "Insert enrichment below",
         action: () => startAddEnrichment(parseCardIdFromRowId(ctx.rowId)),
       });
+      // Per-row note — anchored to the row's enrichment cell so the editor
+      // opens next to where the badge lives.
+      const cardId = parseCardIdFromRowId(ctx.rowId);
+      if (cardId != null) {
+        const hasNote = !!(card?.data?.note || "").trim();
+        items.push({
+          label: hasNote ? "Edit note" : "Leave a note",
+          action: () => {
+            const anchor =
+              hostEl?.querySelector(`[data-row-id="${ctx.rowId}"] .col-ers`) ||
+              hostEl?.querySelector(`[data-row-id="${ctx.rowId}"]`);
+            openNotePopover(cardId, anchor);
+          },
+        });
+      }
     }
     return items;
   }
@@ -2609,6 +2744,56 @@
       setSelection([rowId], rowId);
     }
     openContextMenu(evt.clientX, evt.clientY, { rowId });
+  }
+
+  // Dropdown under the header "Add" button. Reuses the context-menu DOM +
+  // slots (so only one menu is open at a time and the existing Escape /
+  // outside-click teardown applies) but anchors below the button instead of
+  // at a cursor position.
+  function openAddMenu(anchorEl) {
+    closeContextMenu();
+    const items = [
+      { label: "Add data point", action: () => addDataPointInteractive() },
+      { label: "Add enrichment", action: () => startAddOrphanEnrichment() },
+    ];
+
+    contextMenuBackdrop = document.createElement("div");
+    contextMenuBackdrop.className = "cb-table-view-context-backdrop";
+    contextMenuBackdrop.addEventListener("mousedown", (evt) => {
+      evt.stopPropagation();
+      closeContextMenu();
+    });
+
+    contextMenuEl = document.createElement("div");
+    contextMenuEl.className = "cb-table-view-context-menu";
+    contextMenuEl.addEventListener("mousedown", (evt) => evt.stopPropagation());
+    for (const item of items) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "cb-table-view-context-menu-option";
+      const labelEl = document.createElement("div");
+      labelEl.className = "cb-table-view-context-menu-option-label";
+      labelEl.textContent = item.label;
+      btn.appendChild(labelEl);
+      btn.addEventListener("click", () => {
+        closeContextMenu();
+        item.action();
+      });
+      contextMenuEl.appendChild(btn);
+    }
+
+    document.body.appendChild(contextMenuBackdrop);
+    document.body.appendChild(contextMenuEl);
+    // Anchor below the button, left-aligned, clamped to the viewport.
+    const aRect = anchorEl.getBoundingClientRect();
+    const rect = contextMenuEl.getBoundingClientRect();
+    const left = Math.min(aRect.left, window.innerWidth - rect.width - 8);
+    let top = aRect.bottom + 6;
+    if (top + rect.height > window.innerHeight - 8) {
+      top = Math.max(8, aRect.top - 6 - rect.height);
+    }
+    contextMenuEl.style.left = `${Math.max(8, left)}px`;
+    contextMenuEl.style.top = `${top}px`;
   }
 
   // ---- Rendering ----
@@ -2691,24 +2876,19 @@
     scopeAudiencesBtn.addEventListener("click", () => startScope("audiences"));
     introActions.appendChild(scopeAudiencesBtn);
 
-    // "Add data point" lives here now that the sticky footer row is gone —
-    // creates an empty DP and opens its name for inline editing. The two
-    // granular "Add X" actions sit next to each other.
-    const addDpBtn = document.createElement("button");
-    addDpBtn.type = "button";
-    addDpBtn.className = "cb-table-view-add-er-btn";
-    addDpBtn.title = "Add a data point";
-    addDpBtn.innerHTML = plusSvg(12) + "<span>Add data point</span>";
-    addDpBtn.addEventListener("click", () => addDataPointInteractive());
-    introActions.appendChild(addDpBtn);
-
-    const addOrphanErBtn = document.createElement("button");
-    addOrphanErBtn.type = "button";
-    addOrphanErBtn.className = "cb-table-view-add-er-btn";
-    addOrphanErBtn.title = "Add an enrichment without attaching it to a data point";
-    addOrphanErBtn.innerHTML = plusSvg(12) + "<span>Add enrichment</span>";
-    addOrphanErBtn.addEventListener("click", () => startAddOrphanEnrichment());
-    introActions.appendChild(addOrphanErBtn);
+    // Single "Add" control — opens a dropdown with the two granular add
+    // actions (data point / enrichment) so the header stays compact now that
+    // the sticky footer row is gone.
+    const addBtn = document.createElement("button");
+    addBtn.type = "button";
+    addBtn.className = "cb-table-view-add-er-btn";
+    addBtn.title = "Add a data point or enrichment";
+    addBtn.innerHTML = plusSvg(12) + "<span>Add</span>" + chevronDownSvg(12);
+    addBtn.addEventListener("click", (evt) => {
+      evt.stopPropagation();
+      openAddMenu(addBtn);
+    });
+    introActions.appendChild(addBtn);
     intro.appendChild(introActions);
 
     wrap.appendChild(intro);
@@ -3280,6 +3460,10 @@
     ersCell.className = "col-ers";
     const chipsWrap = document.createElement("div");
     chipsWrap.className = "cb-table-view-er-chips";
+    const orphanNote = getCardForRowId(primaryCardId)?.data?.note;
+    if (orphanNote && orphanNote.trim()) {
+      chipsWrap.appendChild(buildNoteBadge(primaryCardId, orphanNote));
+    }
     // Removable chip: the only way to delete an unattached enrichment,
     // since orphan-ER rows have no row-level × (the row goes away with
     // the ER itself). For Link-merged multi-chip rows, removing one
@@ -3473,6 +3657,10 @@
       if (mergeSpan > 1) ersCell.rowSpan = mergeSpan;
       const chipsWrap = document.createElement("div");
       chipsWrap.className = "cb-table-view-er-chips";
+      const dpNote = getCardForRowId(row.cardId)?.data?.note;
+      if (dpNote && dpNote.trim()) {
+        chipsWrap.appendChild(buildNoteBadge(row.cardId, dpNote));
+      }
       for (const er of row.ers) {
         chipsWrap.appendChild(buildErChipEl(er, /* removable */ true));
       }
@@ -3510,6 +3698,27 @@
     tr.appendChild(endCell);
 
     return tr;
+  }
+
+  // Yellow comment badge shown to the left of the ER pills when the row's
+  // primary card carries a note. Hover previews the note text; click opens the
+  // editor. `cardId` is the row's primary card id (DP or orphan ER).
+  function buildNoteBadge(cardId, note) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "cb-table-view-note-badge";
+    btn.title = "Note (click to edit)";
+    btn.setAttribute("aria-label", "Row note");
+    btn.innerHTML = noteSvg(12);
+    btn.addEventListener("mousedown", (evt) => evt.stopPropagation());
+    btn.addEventListener("mouseenter", () => showNotePreview(note, btn));
+    btn.addEventListener("mouseleave", () => hideNotePreview());
+    btn.addEventListener("click", (evt) => {
+      evt.stopPropagation();
+      hideNotePreview();
+      openNotePopover(cardId, btn);
+    });
+    return btn;
   }
 
   function buildErChipEl(er, removable) {
@@ -4164,6 +4373,17 @@
     );
   }
 
+  // Filled comment / speech-bubble glyph for the row-note badge.
+  function noteSvg(size) {
+    const s = String(size);
+    return (
+      `<svg xmlns="http://www.w3.org/2000/svg" width="${s}" height="${s}" viewBox="0 0 24 24" ` +
+      'fill="currentColor" aria-hidden="true">' +
+      '<path d="M4 3h16a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H8l-4 4V5a2 2 0 0 1 2-2z"/>' +
+      '</svg>'
+    );
+  }
+
   function plusSvg(size) {
     const s = String(size);
     return (
@@ -4417,6 +4637,8 @@
       cleanupDrag();
       closeContextMenu();
       closeErChipMenu();
+      closeNotePopover();
+      hideNotePreview();
       selectedRowIds.clear();
       selectionAnchorId = null;
       visibleRowOrder = [];
