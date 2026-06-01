@@ -103,6 +103,14 @@
   let notePopoverBackdrop = null;
   let notePreviewEl = null;
 
+  // Run-share popover (the % badge on a multi-ER DP chip). Body-level so it
+  // escapes the table's overflow clipping.
+  let erShareMenuEl = null;
+  let erShareMenuBackdrop = null;
+  // One-shot marker: the DP whose primary ER was just promoted via "+", so the
+  // next render plays the pop+reorder animation on its #1 chip exactly once.
+  let justPromotedDpId = null;
+
   // ER chip details menu — anchored popover opened by clicking an ER pill.
   // Single open instance at a time; lives at document.body level (like the
   // context menu) so it escapes the table's overflow clipping.
@@ -275,21 +283,23 @@
       : (card.data.fieldId ?? null);
   }
 
-  // Enrichment cards a data point points at via lineage.
+  // Enrichment cards a data point points at via lineage (one or more).
   function erCardsForDp(dpCard) {
-    const key = dpCard?.data?.sourceEnrichmentFieldId ?? null;
-    if (key == null) return [];
+    const keys = __cb.dpErKeys(dpCard);
+    if (keys.length === 0) return [];
+    const keySet = new Set(keys);
     return __cb.model.getNodes().filter(
-      (c) => isErType(c.data?.type) && lineageKeyOf(c) === key,
+      (c) => isErType(c.data?.type) && keySet.has(lineageKeyOf(c)),
     );
   }
 
-  // Data point cards that point at a given enrichment via lineage.
+  // Data point cards that point at a given enrichment via lineage (a DP counts
+  // if the ER's key is anywhere in the DP's link set).
   function dpCardsForEr(erCard) {
     const key = lineageKeyOf(erCard);
     if (key == null) return [];
     return __cb.model.getNodes().filter(
-      (c) => c.data?.type === "dp" && (c.data.sourceEnrichmentFieldId ?? null) === key,
+      (c) => c.data?.type === "dp" && __cb.dpErKeys(c).includes(key),
     );
   }
 
@@ -997,6 +1007,7 @@
     // orphan-ER section below); the rest fall through to orphan rows.
     const dpInfoMap = new Map();
     const claimedErIds = new Set();
+    const actualMode = window.__cb?.viewMode === "actual";
 
     // Enrichment cards keyed the way DPs reference them: action field id for
     // standalone / basic-group ERs, "wf:<groupId>" for waterfall cards.
@@ -1009,36 +1020,91 @@
       if (key != null && !erByKey.has(key)) erByKey.set(key, c);
     }
 
+    // Measured "rows this ER ran on" — actual cells, falling back to coverage
+    // attempts. Drives the actual-mode run-share (how often a non-primary ER
+    // actually ran vs the widest ER in the DP's set).
+    function erRanCount(er) {
+      const d = er.data || {};
+      const cells = Number(d.stats?.spend?.cellCount) || 0;
+      if (cells > 0) return cells;
+      return Number(d.stats?.coverage?.ran) || 0;
+    }
+
+    // A DP can reference MULTIPLE enrichments (OR/waterfall or AND/sum chain).
+    // Bucket each DP under EVERY ER key it links, so per-ER cost still splits
+    // across all the DPs that key feeds — lineage-global, across groups/tables.
+    const dpKeysById = new Map();
     const dpsByEnrichmentKey = new Map();
     for (const c of allCards) {
       if (c.data.type !== "dp") continue;
-      const key = c.data.sourceEnrichmentFieldId ?? null;
-      if (key == null || !erByKey.has(key)) {
+      const keys = __cb.dpErKeys(c).filter((k) => erByKey.has(k));
+      if (keys.length === 0) {
         // Unmatched data point (manual column, source-derived, or its
         // enrichment isn't in view) -> renders as "Not connected".
         dpInfoMap.set(c.id, { credits: 0, actions: 0, ers: [], enrichmentCount: 0 });
         continue;
       }
-      if (!dpsByEnrichmentKey.has(key)) dpsByEnrichmentKey.set(key, []);
-      dpsByEnrichmentKey.get(key).push(c);
+      dpKeysById.set(c.id, { card: c, keys });
+      for (const key of keys) {
+        if (!dpsByEnrichmentKey.has(key)) dpsByEnrichmentKey.set(key, []);
+        dpsByEnrichmentKey.get(key).push(c);
+      }
     }
 
+    // Per-key per-DP cost = ER credits / (# DPs that key feeds). Each linked ER
+    // is "claimed" so it never also renders as an orphan row.
+    const perDpByKey = new Map();
     for (const [key, dpCards] of dpsByEnrichmentKey) {
       const er = erByKey.get(key);
       claimedErIds.add(er.id);
       const { credits, actions, creditsUnknown } = erPerRowCost(er);
-      const perDpCredits = dpCards.length > 0 ? credits / dpCards.length : 0;
-      const perDpActions = dpCards.length > 0 ? actions / dpCards.length : 0;
-      const erList = [buildErChipData(er)];
-      for (const dp of dpCards) {
-        dpInfoMap.set(dp.id, {
-          credits: perDpCredits,
-          actions: perDpActions,
-          creditsUnknown,
-          ers: erList,
-          enrichmentCount: 1,
-        });
+      const n = dpCards.length || 1;
+      perDpByKey.set(key, {
+        perDpCredits: credits / n,
+        perDpActions: actions / n,
+        creditsUnknown,
+      });
+    }
+
+    // Resolve each DP's per-ER run-share, then accumulate its chips + weighted
+    // cost. Projected: stored share (dpErShare) else the primary-weighted
+    // default split (60/40). Actual: measured ran_i / widest-ran (primary 1.0).
+    // DP credits = Σ share_i × (ER credits / #DPs).
+    for (const [dpId, { card: dpCard, keys }] of dpKeysById) {
+      const n = keys.length;
+      const multiEr = n > 1;
+      let maxRan = 0;
+      if (actualMode && multiEr) {
+        for (const key of keys) maxRan = Math.max(maxRan, erRanCount(erByKey.get(key)));
       }
+      const ers = [];
+      let credits = 0;
+      let actions = 0;
+      let creditsUnknown = false;
+      for (let i = 0; i < n; i++) {
+        const key = keys[i];
+        const er = erByKey.get(key);
+        let share;
+        if (!multiEr) {
+          share = 1;
+        } else if (actualMode) {
+          share = maxRan > 0 ? Math.min(1, erRanCount(er) / maxRan) : (i === 0 ? 1 : 0);
+        } else {
+          const stored = __cb.dpErShare(dpCard, key);
+          share = stored != null ? stored : __cb.defaultErShare(i, n);
+        }
+        const pk = perDpByKey.get(key);
+        credits += share * pk.perDpCredits;
+        actions += share * pk.perDpActions;
+        if (pk.creditsUnknown) creditsUnknown = true;
+        ers.push(buildErChipData(er, {
+          runShare: share,
+          isPrimary: i === 0,
+          dpCardId: dpId,
+          multiEr,
+        }));
+      }
+      dpInfoMap.set(dpId, { credits, actions, creditsUnknown, ers, enrichmentCount: n });
     }
 
     // Real cb-groups (Shift+Enter / POC importer / table-view Group
@@ -1137,8 +1203,20 @@
     function buildDpRowFromCard(card) {
       const info = dpInfoMap.get(card.id);
       const ers = info ? info.ers : [];
-      const erKey = card.data.sourceEnrichmentFieldId ?? null;
-      const erCard = erKey != null ? erByKey.get(erKey) : null;
+      // Coverage = the WIDEST linked ER (max coverage). For a DP fed by an
+      // always-run primary + a fallback/ancestor, the primary is widest, so
+      // coverage reflects "rows the data point is attempted on." Editing it
+      // targets that widest ER.
+      const linkedKeys = __cb.dpErKeys(card).filter((k) => erByKey.has(k));
+      let erCard = null;
+      let widest = -1;
+      for (const k of linkedKeys) {
+        const e = erByKey.get(k);
+        const cov = actualMode
+          ? erRanCount(e)
+          : Number(e.data.coverageRows ?? Infinity);
+        if (cov > widest) { widest = cov; erCard = e; }
+      }
       return {
         kind: "dp",
         cardId: card.id,
@@ -1588,7 +1666,7 @@
     return { credits, actions, creditsUnknown };
   }
 
-  function buildErChipData(er) {
+  function buildErChipData(er, opts) {
     const d = er.data || {};
     const isWaterfall = d.type === "waterfall";
     const providerChain = isWaterfall
@@ -1648,10 +1726,33 @@
       model,
       // Per-row cost (view-mode-aware) for the details menu.
       cost: erPerRowCost(er),
+      // Measured per-row spend (credits + action executions) from the import's
+      // background spend fetch — shown as a separate "Actual" row in the details
+      // menu so reps see real cost alongside the projected estimate.
+      actualSpend: (d.stats?.spend && Number(d.stats.spend.cellCount) > 0)
+        ? {
+            credits: (Number(d.stats.spend.credits) || 0) / Number(d.stats.spend.cellCount),
+            actions: (Number(d.stats.spend.actionExecutions) || 0) / Number(d.stats.spend.cellCount),
+          }
+        : null,
+      // Run-total inputs for the details-menu "Total" rows. Projected total =
+      // per-row × records × coverage × frequency; actual total = measured spend.
+      records: Number(cb?.getRecordsCount?.()) || 0,
+      coverageRows: d.coverageRows != null ? Number(d.coverageRows) : null,
+      spendTotal: d.stats?.spend
+        ? {
+            credits: Number(d.stats.spend.credits) || 0,
+            actions: Number(d.stats.spend.actionExecutions) || 0,
+          }
+        : null,
       usePrivateKey: !!d.usePrivateKey,
       frequencyId,
       frequencyLabel,
       multiplier,
+      // True when the user pinned a per-ER frequency override. The chip only
+      // shows the ×N badge in that case; otherwise frequency lives in the
+      // details menu (it inherits the global default).
+      frequencyCustom: !!d.frequencyCustom,
       // Navigation back to the source Clay column ("Find in table"). Present
       // only on imported cards; gates the menu footer action.
       fieldId: d.fieldId || null,
@@ -1660,6 +1761,14 @@
       // Subroutine ("Run function") cards reference a "main function" table.
       // Gates the function-only "Open function" footer action.
       referencedTableId: d.referencedTableId || null,
+      // Multi-ER lineage context (only set when this chip belongs to a DP row):
+      // the per-(DP,ER) run-share, whether it's the primary (#1), and the host
+      // DP card so the % pill can read/write the share on the right edge.
+      runShare: opts && opts.runShare != null ? opts.runShare : null,
+      isPrimary: opts ? !!opts.isPrimary : false,
+      dpCardId: opts && opts.dpCardId != null ? opts.dpCardId : null,
+      // True when the DP links 2+ ERs — the chip shows its run-share badge.
+      multiEr: opts ? !!opts.multiEr : false,
     };
   }
 
@@ -1845,6 +1954,152 @@
     if (canvas.updateGroupCredits) canvas.updateGroupCredits();
     __cb.model.update();
     if (__cb.saveTabs) __cb.saveTabs();
+  }
+
+  // ---- Run-share (multi-ER) mutations + popover --------------------------
+
+  // Freeze a DP's effective shares into stored values so editing one ER's share
+  // doesn't drop the others back to their implicit defaults.
+  function materializeDpShares(dp) {
+    if (dp.data.sourceEnrichmentShares) return;
+    const keys = __cb.dpErKeys(dp);
+    for (let i = 0; i < keys.length; i++) {
+      __cb.setDpErShare(dp, keys[i], __cb.defaultErShare(i, keys.length));
+    }
+  }
+
+  function lineageKeyForCardId(cardId) {
+    const er = __cb.canvas?.getCardById?.(cardId);
+    if (!er) return null;
+    return __cb.canvas.erLineageKeyOf ? __cb.canvas.erLineageKeyOf(er) : lineageKeyOf(er);
+  }
+
+  // Write one ER's run-share (percentage 0..N) on a DP. Values can exceed 100%
+  // in aggregate — that IS the AND/sum semantic.
+  function commitDpShare(dpCardId, erCardId, pct) {
+    const dp = __cb.canvas?.getCardById?.(dpCardId);
+    const key = lineageKeyForCardId(erCardId);
+    if (!dp || key == null) return;
+    materializeDpShares(dp);
+    __cb.setDpErShare(dp, key, Math.max(0, Number(pct) || 0) / 100);
+    __cb.model.update();
+    if (__cb.saveTabs) __cb.saveTabs();
+  }
+
+  // "+" / sum: promote this ER to primary (#1) at 100%, keep the others as
+  // independent additive shares. Total then exceeds 100% = "summed X% of time".
+  function promoteErToPrimarySum(dpCardId, erCardId) {
+    const dp = __cb.canvas?.getCardById?.(dpCardId);
+    const key = lineageKeyForCardId(erCardId);
+    if (!dp || key == null) return;
+    const keys = __cb.dpErKeys(dp);
+    if (!keys.includes(key)) return;
+    const prev = {};
+    for (let i = 0; i < keys.length; i++) {
+      prev[keys[i]] = __cb.dpErShare(dp, keys[i]) ?? __cb.defaultErShare(i, keys.length);
+    }
+    const reordered = [key, ...keys.filter((k) => k !== key)];
+    __cb.setDpErKeys(dp, reordered);
+    __cb.setDpErShare(dp, key, 1);
+    for (const k of reordered) {
+      if (k === key) continue;
+      __cb.setDpErShare(dp, k, prev[k] ?? __cb.defaultErShare(1, reordered.length));
+    }
+    justPromotedDpId = dpCardId;
+    __cb.model.update();
+    if (__cb.saveTabs) __cb.saveTabs();
+  }
+
+  // Reset to the OR/split model: clear stored shares so the primary-weighted
+  // default (summing to 100%) applies again.
+  function resetDpSharesToSplit(dpCardId) {
+    const dp = __cb.canvas?.getCardById?.(dpCardId);
+    if (!dp) return;
+    if (dp.data.sourceEnrichmentShares) delete dp.data.sourceEnrichmentShares;
+    __cb.model.update();
+    if (__cb.saveTabs) __cb.saveTabs();
+  }
+
+  function closeErShareMenu() {
+    if (erShareMenuEl) { erShareMenuEl.remove(); erShareMenuEl = null; }
+    if (erShareMenuBackdrop) { erShareMenuBackdrop.remove(); erShareMenuBackdrop = null; }
+  }
+
+  // Small popover anchored to a chip's % badge: edit this ER's run-share, and
+  // (for a non-primary ER) promote it to an AND/sum primary, or reset to split.
+  function openErShareMenu(er, anchorEl) {
+    closeErShareMenu();
+    erShareMenuBackdrop = document.createElement("div");
+    erShareMenuBackdrop.className = "cb-table-view-note-backdrop";
+    erShareMenuBackdrop.addEventListener("mousedown", (evt) => {
+      evt.stopPropagation();
+      closeErShareMenu();
+    });
+
+    const pop = document.createElement("div");
+    pop.className = "cb-table-view-share-popover";
+    pop.addEventListener("mousedown", (evt) => evt.stopPropagation());
+
+    const title = document.createElement("div");
+    title.className = "cb-table-view-share-title";
+    title.textContent = er.isPrimary ? "Primary \u2014 run-share" : "Run-share";
+    pop.appendChild(title);
+
+    const row = document.createElement("div");
+    row.className = "cb-table-view-share-row";
+    const input = document.createElement("input");
+    input.type = "number";
+    input.min = "0";
+    input.max = "1000";
+    input.className = "cb-table-view-share-input";
+    input.value = String(Math.round((er.runShare ?? 0) * 100));
+    const pctLabel = document.createElement("span");
+    pctLabel.textContent = "% of rows";
+    const commit = () => {
+      commitDpShare(er.dpCardId, er.id, input.value);
+      closeErShareMenu();
+    };
+    input.addEventListener("keydown", (evt) => {
+      if (evt.key === "Enter") { evt.preventDefault(); commit(); }
+      else if (evt.key === "Escape") { evt.preventDefault(); closeErShareMenu(); }
+    });
+    input.addEventListener("blur", commit);
+    row.appendChild(input);
+    row.appendChild(pctLabel);
+    pop.appendChild(row);
+
+    if (!er.isPrimary) {
+      const sumBtn = document.createElement("button");
+      sumBtn.type = "button";
+      sumBtn.className = "cb-table-view-share-action";
+      sumBtn.innerHTML = plusSvg(11) + "<span>Sum with primary (make #1)</span>";
+      sumBtn.addEventListener("click", (evt) => {
+        evt.stopPropagation();
+        promoteErToPrimarySum(er.dpCardId, er.id);
+        closeErShareMenu();
+      });
+      pop.appendChild(sumBtn);
+    }
+
+    const splitBtn = document.createElement("button");
+    splitBtn.type = "button";
+    splitBtn.className = "cb-table-view-share-action";
+    splitBtn.textContent = "Reset to split (100% total)";
+    splitBtn.addEventListener("click", (evt) => {
+      evt.stopPropagation();
+      resetDpSharesToSplit(er.dpCardId);
+      closeErShareMenu();
+    });
+    pop.appendChild(splitBtn);
+
+    document.body.appendChild(erShareMenuBackdrop);
+    document.body.appendChild(pop);
+    erShareMenuEl = pop;
+    pop.style.position = "fixed";
+    pop.style.zIndex = "9999999";
+    __cb.placePopover?.(pop, anchorEl || hostEl, { gap: 6, align: "left" });
+    input.focus();
+    input.select();
   }
 
   // Table-view-safe model switch for AI columns. Mirrors the canvas applyModel
@@ -2096,6 +2351,23 @@
     // Fallback for older canvas builds without an exposed removeCard.
     const del = card.el?.querySelector(".cb-card-delete");
     if (del) del.click();
+  }
+
+  // Detach one enrichment from a data point (remove just that lineage key +
+  // its run-share), leaving the ER card on the canvas. This is the chip-×
+  // behavior on a DP row — distinct from removeCardById, which deletes the ER
+  // card entirely (the chip-× behavior on an orphan-ER row).
+  function detachErFromDp(dpCardId, erCardId) {
+    const canvas = __cb.canvas;
+    const dp = canvas?.getCardById?.(dpCardId);
+    const er = canvas?.getCardById?.(erCardId);
+    if (!dp || !er) return;
+    const key = canvas.erLineageKeyOf ? canvas.erLineageKeyOf(er) : lineageKeyOf(er);
+    if (key == null) return;
+    __cb.setDpErKeys(dp, __cb.dpErKeys(dp).filter((k) => k !== key));
+    if (__cb.setDpErShare) __cb.setDpErShare(dp, key, null);
+    __cb.model.update();
+    if (__cb.saveTabs) __cb.saveTabs();
   }
 
   function startAddDataPoint(text) {
@@ -3420,6 +3692,9 @@
     // Re-apply search highlights against the freshly-built rows. No scroll —
     // a background model update shouldn't yank the user's scroll position.
     if (searchQuery.trim()) applySearchHighlight({ scroll: false });
+    // The promote-to-primary pop animation is one-shot: clear the marker after
+    // the render that consumed it so later renders don't replay it.
+    justPromotedDpId = null;
   }
 
   // Re-render with the given DP row's name as a focused input (the rename
@@ -3829,13 +4104,17 @@
     });
     if (!newDp) return;
 
-    // Lineage link (Phase 2.c). The table view matches DP -> ER by
-    // `sourceEnrichmentFieldId`, NOT by cluster, so a cluster-only attach
-    // would leave the freshly-named DP as a separate "Not connected" row.
-    // Stamp the new DP's lineage to the anchor ER's key via the canvas's
-    // shared writer (synthesizes a stable local key for picker-authored ERs).
-    const erKey = __cb.canvas?.ensureErLineageKey?.(anchor) ?? null;
-    if (erKey != null) newDp.data.sourceEnrichmentFieldId = erKey;
+    // Lineage link (Phase 2.c). The table view matches DP -> ER by lineage
+    // keys, NOT by cluster, so a cluster-only attach would leave the freshly-
+    // named DP as a separate "Not connected" row. Stamp the new DP with EVERY
+    // ER key in the attached cluster (synthesizing stable local keys for
+    // picker-authored ERs) so it reads as their shared output.
+    const erKeys = erCardIds
+      .map((id) => canvas.getCardById?.(id))
+      .filter(Boolean)
+      .map((er) => canvas.ensureErLineageKey?.(er))
+      .filter((k) => k != null);
+    if (erKeys.length > 0) __cb.setDpErKeys(newDp, erKeys);
 
     // Lay out the cluster so canvas-mode geometry matches the new
     // membership (DP on the LEFT of the ER column). Same bucketing
@@ -4020,6 +4299,10 @@
     // Uniform classic-white pill for every kind — the enrichment kind is
     // surfaced in the details-menu badge, not the pill color.
     chip.className = "cb-table-view-er-chip";
+    // One-shot pop animation when this chip was just promoted to #1 via "+".
+    if (er.isPrimary && er.dpCardId != null && er.dpCardId === justPromotedDpId) {
+      chip.classList.add("cb-chip-just-primary");
+    }
     chip.title =
       er.isWaterfall && er.providerChain
         ? `${er.name} \u2014 ${er.providerChain}`
@@ -4045,38 +4328,72 @@
     });
     chip.appendChild(trigger);
 
-    // Per-ER frequency badge — same "×N" affordance as the canvas
-    // freqBadge (cards.js ~line 822). Clicking opens the shared
-    // frequency picker; the pick routes through commitFrequency →
-    // applyClusterFrequency so the rest of the cluster's ERs stay in
-    // sync, mirroring canvas behavior. mousedown stopPropagation
-    // keeps the click from triggering row selection / row drag.
-    const freqBtn = document.createElement("button");
-    freqBtn.type = "button";
-    freqBtn.className = "cb-table-view-er-chip-freq";
-    freqBtn.title = `Runs ${er.frequencyLabel || "annually"} \u2014 click to change`;
-    freqBtn.textContent = "\u00d7" + (er.multiplier ?? 1);
-    freqBtn.addEventListener("mousedown", (evt) => evt.stopPropagation());
-    freqBtn.addEventListener("click", (evt) => {
-      evt.stopPropagation();
-      const cb = window.__cb;
-      if (!cb?.showFrequencyPicker) return;
-      cb.showFrequencyPicker(freqBtn, er.frequencyId, (picked) => {
-        commitFrequency(er.id, picked);
+    // Run-share % badge — only on a data point row that links 2+ ERs. Shows
+    // the fraction of rows this ER runs (drives the weighted per-row cost).
+    // Clicking opens the share popover (split vs sum + editable %). Hidden in
+    // Actual mode for the primary (always 100%); secondary shows measured %.
+    if (er.multiEr && er.runShare != null && er.dpCardId != null) {
+      const actual = window.__cb?.viewMode === "actual";
+      const shareBtn = document.createElement("button");
+      shareBtn.type = "button";
+      shareBtn.className = "cb-table-view-er-chip-share";
+      if (er.isPrimary) shareBtn.classList.add("cb-table-view-er-chip-share-primary");
+      const pct = Math.round(er.runShare * 100);
+      shareBtn.textContent = pct + "%";
+      shareBtn.title = actual
+        ? `Ran on ~${pct}% of rows`
+        : "Run-share \u2014 click to edit (split vs sum)";
+      shareBtn.addEventListener("mousedown", (evt) => evt.stopPropagation());
+      shareBtn.addEventListener("click", (evt) => {
+        evt.stopPropagation();
+        if (actual) return; // measured, read-only
+        openErShareMenu(er, shareBtn);
       });
-    });
-    chip.appendChild(freqBtn);
+      chip.appendChild(shareBtn);
+    }
+
+    // Per-ER frequency badge — same "×N" affordance as the canvas freqBadge
+    // (cards.js ~line 822). Only rendered when the user pinned a per-ER
+    // override (frequencyCustom); otherwise frequency lives in the details
+    // menu and inherits the global default. Clicking opens the shared picker.
+    if (er.frequencyCustom) {
+      const freqBtn = document.createElement("button");
+      freqBtn.type = "button";
+      freqBtn.className = "cb-table-view-er-chip-freq";
+      freqBtn.title = `Runs ${er.frequencyLabel || "annually"} \u2014 click to change`;
+      freqBtn.textContent = "\u00d7" + (er.multiplier ?? 1);
+      freqBtn.addEventListener("mousedown", (evt) => evt.stopPropagation());
+      freqBtn.addEventListener("click", (evt) => {
+        evt.stopPropagation();
+        const cb = window.__cb;
+        if (!cb?.showFrequencyPicker) return;
+        cb.showFrequencyPicker(freqBtn, er.frequencyId, (picked) => {
+          commitFrequency(er.id, picked);
+        });
+      });
+      chip.appendChild(freqBtn);
+    }
 
     if (removable) {
       const x = document.createElement("button");
       x.type = "button";
       x.className = "cb-table-view-er-chip-remove";
-      x.title = "Remove this enrichment from the canvas";
-      x.setAttribute("aria-label", "Remove enrichment");
+      // On a data point row, the × DETACHES this enrichment from the DP (the ER
+      // card stays). On an orphan-ER row (no dpCardId) it deletes the ER card.
+      const onDpRow = er.dpCardId != null;
+      x.title = onDpRow
+        ? "Detach this enrichment from the data point"
+        : "Remove this enrichment from the canvas";
+      x.setAttribute("aria-label", onDpRow ? "Detach enrichment" : "Remove enrichment");
       x.innerHTML = xSvg(10);
+      x.addEventListener("mousedown", (evt) => evt.stopPropagation());
       x.addEventListener("click", (evt) => {
         evt.stopPropagation();
-        removeCardById(er.id);
+        if (onDpRow) {
+          detachErFromDp(er.dpCardId, er.id);
+        } else {
+          removeCardById(er.id);
+        }
       });
       chip.appendChild(x);
     }
@@ -4221,6 +4538,70 @@
     return pill;
   }
 
+  // Read-only "Total" cost node (run total over all records) — StarFour + Coin
+  // pair. `which` = "projected" (per-row × records × coverage × frequency) or
+  // "actual" (measured spend totals). Returns null when not computable.
+  function buildErMenuTotalNode(er, which) {
+    const records = Number(er.records) || 0;
+    let credits, actions;
+    if (which === "actual") {
+      if (!er.spendTotal) return null;
+      credits = Number(er.spendTotal.credits) || 0;
+      actions = Number(er.spendTotal.actions) || 0;
+    } else {
+      if (!records || (er.cost && er.cost.creditsUnknown)) return null;
+      const cov = er.coverageRows != null && records > 0
+        ? Math.min(1, er.coverageRows / records)
+        : 1;
+      const mult = er.multiplier ?? 1;
+      const perCr = er.usePrivateKey ? 0 : (Number(er.cost?.credits) || 0);
+      const perAct = Number(er.cost?.actions) || 0;
+      credits = perCr * records * cov * mult;
+      actions = perAct * records * cov * mult;
+    }
+    if (credits <= 0 && actions <= 0) return null;
+    const pill = document.createElement("span");
+    pill.className = "cb-table-view-er-cost-pill";
+    if (actions > 0) {
+      const seg = document.createElement("span");
+      seg.className = "cb-table-view-er-cost-seg cb-table-view-er-cost-actions";
+      seg.title = `${formatNumber(actions)} action${actions === 1 ? "" : "s"} total`;
+      seg.innerHTML = starFourSvg(12) + `<span>${formatNumber(Math.round(actions))}</span>`;
+      pill.appendChild(seg);
+    }
+    const credSeg = document.createElement("span");
+    credSeg.className = "cb-table-view-er-cost-seg cb-table-view-er-cost-credits";
+    credSeg.title = `${formatNumber(credits)} credits total`;
+    const coin = Math.abs(credits) <= 1 ? coinSvg(12) : coinsSvg(12);
+    credSeg.innerHTML = coin + `<span>${formatNumber(Math.round(credits))}</span>`;
+    pill.appendChild(credSeg);
+    return pill;
+  }
+
+  // Read-only "Actual" cost node from measured spend — the StarFour (actions) +
+  // Coin (credits) icon pair, mirroring buildErMenuCostNode but non-editable.
+  function buildErMenuActualNode(er) {
+    const sp = er.actualSpend || {};
+    const actions = Number(sp.actions) || 0;
+    const credits = Number(sp.credits) || 0;
+    const pill = document.createElement("span");
+    pill.className = "cb-table-view-er-cost-pill";
+    if (actions > 0) {
+      const seg = document.createElement("span");
+      seg.className = "cb-table-view-er-cost-seg cb-table-view-er-cost-actions";
+      seg.title = `${formatNumber(actions)} action${actions === 1 ? "" : "s"} / row (measured)`;
+      seg.innerHTML = starFourSvg(12) + `<span>${formatNumber(actions)}</span>`;
+      pill.appendChild(seg);
+    }
+    const credSeg = document.createElement("span");
+    credSeg.className = "cb-table-view-er-cost-seg cb-table-view-er-cost-credits";
+    credSeg.title = `${formatNumber(credits)} credit${credits === 1 ? "" : "s"} / row (measured)`;
+    const coin = Math.abs(credits) <= 1 ? coinSvg(12) : coinsSvg(12);
+    credSeg.innerHTML = coin + `<span>${formatNumber(credits)} / row</span>`;
+    pill.appendChild(credSeg);
+    return pill;
+  }
+
   // The "cute little badge" — the same amber ×N pill the chips use, editable:
   // clicking opens the shared frequency picker and commits through the same
   // path as the chip badge (commitFrequency → applyClusterFrequency).
@@ -4305,12 +4686,23 @@
     const costSection = document.createElement("div");
     costSection.className = "cb-table-view-er-menu-section";
     costSection.appendChild(erMenuRow("Cost", buildErMenuCostNode(er)));
+    // Show measured spend as its own row when we're in Projected mode (in
+    // Actual mode the Cost row already reflects it). Lets reps compare the
+    // estimate against what the POC actually billed.
+    if (er.actualSpend && window.__cb?.viewMode !== "actual") {
+      costSection.appendChild(erMenuRow("Actual", buildErMenuActualNode(er)));
+    }
     costSection.appendChild(erMenuRow("Frequency", buildErMenuFrequencyNode(er)));
     if (er.isAi && er.model) {
       costSection.appendChild(erMenuRow("Model", buildErMenuModelNode(er)));
     }
     const annual = erMenuAnnualText(er);
     if (annual) costSection.appendChild(erMenuRow("Per year", annual));
+    // Run totals over all records — projected (estimate) and actual (measured).
+    const totalProj = buildErMenuTotalNode(er, "projected");
+    if (totalProj) costSection.appendChild(erMenuRow("Total (proj.)", totalProj));
+    const totalActual = buildErMenuTotalNode(er, "actual");
+    if (totalActual) costSection.appendChild(erMenuRow("Total (actual)", totalActual));
     menu.appendChild(costSection);
 
     // Footer: "Find in table" scrolls the source column into view (reuses the

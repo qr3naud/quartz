@@ -1270,10 +1270,14 @@
     for (const bg of decision.basicGroups || []) {
       for (const f of bg.erFields || []) push(f, bg.name || "Group", "\u2014");
     }
-    // Data points (lineage) — each shows the enrichment it was extracted from.
+    // Data points (lineage) — each shows the enrichment(s) it derives from. A
+    // DP can resolve to multiple ancestors (chain/fallback); join their names.
     for (const dp of decision.dataPoints || []) {
+      const keys = Array.isArray(dp.sourceEnrichmentFieldIds) && dp.sourceEnrichmentFieldIds.length
+        ? dp.sourceEnrichmentFieldIds
+        : (dp.sourceEnrichmentFieldId != null ? [dp.sourceEnrichmentFieldId] : []);
       const sourceName =
-        enrichmentNameByKey.get(dp.sourceEnrichmentFieldId) || dp.sourceEnrichmentFieldId || "\u2014";
+        keys.map((k) => enrichmentNameByKey.get(k) || k).join(" + ") || "\u2014";
       push({ id: dp.id, name: dp.name, type: "data point" }, "Data point", sourceName);
     }
     return rows;

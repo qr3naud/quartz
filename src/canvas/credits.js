@@ -144,14 +144,27 @@
         const key = erLineageKey(c);
         if (key != null && !erByKey.has(key)) erByKey.set(key, c);
       }
+      const cb = window.__cb;
       const dpCountByKey = new Map();
       for (const c of allCards) {
         if (c.data.type !== "dp") continue;
-        const key = c.data.sourceEnrichmentFieldId ?? null;
-        if (key == null || !erByKey.has(key)) continue;
-        dpCountByKey.set(key, (dpCountByKey.get(key) || 0) + 1);
+        // A DP can feed off multiple ERs — count it under each linked key so
+        // every ER's cost still splits across all the DPs it feeds.
+        for (const key of cb.dpErKeys(c)) {
+          if (!erByKey.has(key)) continue;
+          dpCountByKey.set(key, (dpCountByKey.get(key) || 0) + 1);
+        }
       }
       return { erByKey, dpCountByKey };
+    }
+
+    // Projected run-share for a DP's linked ER (mirrors table-view): stored
+    // override, else the primary-weighted default split (1.0 for a lone ER).
+    function dpShareFor(card, key, idx, n) {
+      const cb = window.__cb;
+      if (n <= 1) return 1;
+      const stored = cb.dpErShare ? cb.dpErShare(card, key) : null;
+      return stored != null ? stored : (cb.defaultErShare ? cb.defaultErShare(idx, n) : 1 / n);
     }
 
     function updateDpCosts() {
@@ -169,25 +182,30 @@
         const textSpan = costEl.querySelector("span");
         if (!textSpan) continue;
 
-        const key = card.data.sourceEnrichmentFieldId ?? null;
-        const er = key != null ? erByKey.get(key) : null;
-        if (!er) {
+        const cb = window.__cb;
+        const keys = cb.dpErKeys(card).filter((k) => erByKey.has(k));
+        if (keys.length === 0) {
           textSpan.textContent = "Not connected";
           costEl.classList.remove("cb-dp-cost-linked");
           continue;
         }
 
         costEl.classList.add("cb-dp-cost-linked");
-        const count = dpCountByKey.get(key) || 1;
-        const credits = er.data.usePrivateKey
-          ? 0
-          : (er.data.credits != null ? Number(er.data.credits) : 0);
-        if (credits > 0) {
-          const perDpCost = credits / count;
+        // DP cost = Σ share_i × (ER credits / # DPs that ER feeds).
+        let perDpCost = 0;
+        for (let i = 0; i < keys.length; i++) {
+          const er = erByKey.get(keys[i]);
+          const count = dpCountByKey.get(keys[i]) || 1;
+          const credits = er.data.usePrivateKey
+            ? 0
+            : (er.data.credits != null ? Number(er.data.credits) : 0);
+          perDpCost += dpShareFor(card, keys[i], i, keys.length) * (credits / count);
+        }
+        if (perDpCost > 0) {
           const display = perDpCost % 1 === 0 ? perDpCost : perDpCost.toFixed(1);
           textSpan.textContent = `~${display} / row`;
         } else {
-          textSpan.textContent = "1 enrichment linked";
+          textSpan.textContent = keys.length > 1 ? `${keys.length} enrichments linked` : "1 enrichment linked";
         }
       }
     }
@@ -219,23 +237,25 @@
         let weightedActionSum = 0;
         let hasCredits = false;
 
-        // Data point members contribute their per-DP share of the source ER's
+        // Data point members contribute their per-DP share of each source ER's
         // cost — the exact figure updateDpCosts renders on the canvas pill.
         for (const c of members) {
           if (c.data.type !== "dp") continue;
-          const key = c.data.sourceEnrichmentFieldId ?? null;
-          const er = key != null ? erByKey.get(key) : null;
-          if (!er) continue;
-          const count = dpCountByKey.get(key) || 1;
-          const cov = coverageRatio(er, records);
-          if (!er.data.usePrivateKey && er.data.credits != null && er.data.credits > 0) {
-            sum += er.data.credits / count;
-            weightedSum += (er.data.credits / count) * cov;
-            hasCredits = true;
-          }
-          if (er.data.actionExecutions != null && er.data.actionExecutions > 0) {
-            actionSum += er.data.actionExecutions / count;
-            weightedActionSum += (er.data.actionExecutions / count) * cov;
+          const keys = window.__cb.dpErKeys(c).filter((k) => erByKey.has(k));
+          for (let i = 0; i < keys.length; i++) {
+            const er = erByKey.get(keys[i]);
+            const count = dpCountByKey.get(keys[i]) || 1;
+            const cov = coverageRatio(er, records);
+            const share = dpShareFor(c, keys[i], i, keys.length);
+            if (!er.data.usePrivateKey && er.data.credits != null && er.data.credits > 0) {
+              sum += share * (er.data.credits / count);
+              weightedSum += share * (er.data.credits / count) * cov;
+              hasCredits = true;
+            }
+            if (er.data.actionExecutions != null && er.data.actionExecutions > 0) {
+              actionSum += share * (er.data.actionExecutions / count);
+              weightedActionSum += share * (er.data.actionExecutions / count) * cov;
+            }
           }
         }
 

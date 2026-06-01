@@ -302,6 +302,112 @@
       return name.includes("use ai") || name.includes("claygent");
     },
 
+    // ---- Multi-ER lineage accessors -----------------------------------------
+    // A data point can derive from MORE than one enrichment (a fallback/OR
+    // waterfall, or an AND/sum chain where an upstream ancestor feeds the
+    // column that produces it). The ordered key list lives on
+    // `data.sourceEnrichmentFieldIds` (index 0 = primary, runs first/always);
+    // the legacy scalar `data.sourceEnrichmentFieldId` is kept in sync (= the
+    // primary) so pre-migration readers and persisted blobs keep working.
+    //
+    // Run-share (0..1) per ER key lives on `data.sourceEnrichmentShares`
+    // (keyed by ER key). It weights the projected per-row cost
+    // (cost = Σ share_i × creditsPerRow_i). Shares summing to 100% = OR/split;
+    // a primary at 100% + additive others (>100% total) = AND/sum. Absent =
+    // use the mode default (even-ish split in projected; measured cells in
+    // actual). The default primary weight for the 2-ER split is 0.6 / 0.4.
+    DEFAULT_PRIMARY_SHARE: 0.6,
+
+    dpErKeys(card) {
+      const d = card && card.data;
+      if (!d) return [];
+      const arr = Array.isArray(d.sourceEnrichmentFieldIds)
+        ? d.sourceEnrichmentFieldIds
+        : null;
+      const raw = arr && arr.length
+        ? arr
+        : (d.sourceEnrichmentFieldId != null ? [d.sourceEnrichmentFieldId] : []);
+      const seen = new Set();
+      const out = [];
+      for (const k of raw) {
+        if (k == null) continue;
+        const s = String(k);
+        if (seen.has(s)) continue;
+        seen.add(s);
+        out.push(s);
+      }
+      return out;
+    },
+
+    // Write the ordered key set. Collapses to the scalar form for the common
+    // single-ER case (smaller blobs, back-compat) and mirrors the primary onto
+    // the scalar otherwise. Prunes stale run-share entries.
+    setDpErKeys(card, keys) {
+      const d = card && card.data;
+      if (!d) return;
+      const seen = new Set();
+      const out = [];
+      for (const k of keys || []) {
+        if (k == null) continue;
+        const s = String(k);
+        if (seen.has(s)) continue;
+        seen.add(s);
+        out.push(s);
+      }
+      if (out.length === 0) {
+        delete d.sourceEnrichmentFieldIds;
+        d.sourceEnrichmentFieldId = null;
+      } else if (out.length === 1) {
+        delete d.sourceEnrichmentFieldIds;
+        d.sourceEnrichmentFieldId = out[0];
+      } else {
+        d.sourceEnrichmentFieldIds = out;
+        d.sourceEnrichmentFieldId = out[0];
+      }
+      if (d.sourceEnrichmentShares) {
+        for (const k of Object.keys(d.sourceEnrichmentShares)) {
+          if (!seen.has(k)) delete d.sourceEnrichmentShares[k];
+        }
+        if (Object.keys(d.sourceEnrichmentShares).length === 0) {
+          delete d.sourceEnrichmentShares;
+        }
+      }
+    },
+
+    // Stored projected run-share for one (DP, ER) edge, or null when unset.
+    dpErShare(card, key) {
+      const m = card && card.data && card.data.sourceEnrichmentShares;
+      if (!m || key == null) return null;
+      const v = m[String(key)];
+      return typeof v === "number" && isFinite(v) ? v : null;
+    },
+
+    setDpErShare(card, key, share) {
+      const d = card && card.data;
+      if (!d || key == null) return;
+      const s = String(key);
+      if (share == null) {
+        if (d.sourceEnrichmentShares) {
+          delete d.sourceEnrichmentShares[s];
+          if (Object.keys(d.sourceEnrichmentShares).length === 0) {
+            delete d.sourceEnrichmentShares;
+          }
+        }
+        return;
+      }
+      if (!d.sourceEnrichmentShares) d.sourceEnrichmentShares = {};
+      d.sourceEnrichmentShares[s] = Math.max(0, Number(share) || 0);
+    },
+
+    // Default projected run-share for the ER at `index` of `n` linked ERs,
+    // used when the DP has no stored shares. Primary-weighted 60/40 for two;
+    // generalizes for N>2 (primary 0.6, the rest split 0.4 evenly).
+    defaultErShare(index, n) {
+      if (!n || n <= 1) return 1;
+      if (index === 0) return window.__cb.DEFAULT_PRIMARY_SHARE;
+      return (1 - window.__cb.DEFAULT_PRIMARY_SHARE) / (n - 1);
+    },
+
     getModelOptions() {
       const cb = window.__cb;
       return DEFAULT_AI_MODELS.map(m => ({

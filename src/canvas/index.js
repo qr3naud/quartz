@@ -463,28 +463,34 @@
       c && c.data && c.data.type !== "dp" && c.data.type !== "input" && c.data.type !== "comment";
     const linkedErs = list.filter(isErCard);
     const linkedDps = list.filter((c) => c && c.data && c.data.type === "dp");
-    if (linkedErs.length === 1 && linkedDps.length > 0) {
-      // Explicit ER + DP(s): every linked DP points at that enrichment.
-      // ensureErLineageKey synthesizes + persists a stable key for canvas /
-      // picker-authored ERs that carry no Clay fieldId, so a manual link in
-      // the table view (or canvas Enter) actually attaches the DP in the
-      // lineage-driven model instead of leaving it stranded.
-      const erKey = ensureErLineageKey(linkedErs[0]);
-      if (erKey != null) {
-        for (const dp of linkedDps) dp.data.sourceEnrichmentFieldId = erKey;
+    if (linkedErs.length >= 1 && linkedDps.length > 0) {
+      // Explicit ER(s) + DP(s): every linked DP gains EVERY selected ER's key,
+      // UNIONed with its existing links — so a data point can derive from more
+      // than one enrichment. ensureErLineageKey synthesizes + persists a stable
+      // key for canvas / picker-authored ERs that carry no Clay fieldId. New
+      // links default to the OR/split share model (no stored share -> the
+      // primary-weighted default); the table view's "+" promotes one ER to an
+      // AND/sum primary.
+      const erKeys = linkedErs
+        .map((er) => ensureErLineageKey(er))
+        .filter((k) => k != null);
+      if (erKeys.length > 0) {
+        for (const dp of linkedDps) {
+          __cb.setDpErKeys(dp, [...__cb.dpErKeys(dp), ...erKeys]);
+        }
       }
     } else if (linkedErs.length === 0 && linkedDps.length >= 2) {
       // DP-only link — the table-view "Link N data points" path, where each
       // DP's enrichment is an inline chip rather than a selected card. Make
-      // the DPs share ONE source enrichment so they read as that
-      // enrichment's outputs and its per-row cost splits across them. Adopt
-      // the first existing lineage key in the selection; if none of the DPs
-      // carries one there's no enrichment to share, so the link is a no-op in
-      // the lineage model (the caller gates the menu on the same condition).
+      // the DPs share the FIRST existing lineage key (as primary) while keeping
+      // each DP's own extra links. If none carries one there's nothing to
+      // share, so the link is a no-op in the lineage model.
       const sharedKey =
-        linkedDps.map((dp) => dp.data.sourceEnrichmentFieldId).find((k) => k != null) ?? null;
+        linkedDps.map((dp) => __cb.dpErKeys(dp)[0]).find((k) => k != null) ?? null;
       if (sharedKey != null) {
-        for (const dp of linkedDps) dp.data.sourceEnrichmentFieldId = sharedKey;
+        for (const dp of linkedDps) {
+          __cb.setDpErKeys(dp, [sharedKey, ...__cb.dpErKeys(dp)]);
+        }
       }
     }
 

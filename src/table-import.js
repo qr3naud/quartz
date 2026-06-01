@@ -772,8 +772,13 @@
   // interleaving concern across a multi-table import.
   let currentImportTags = { tableName: null, importColor: null };
 
-  function addDpCard(field, x, y, stats, groupCluster, tableId, viewId, sourceEnrichmentFieldId) {
-    return __cb.canvas.addDataPointCard(field.name, {
+  // `sourceEnrichmentKeys` may be a single key (string) or a curated array
+  // (primary first + any rescued astray ancestors — see the astray-rescue pass
+  // in buildImportDecisionSet). index 0 = the DP's nearest billable ancestor;
+  // any extra keys are upstream ERs that would otherwise be stranded, so they
+  // ride along as AND/sum links (each runs to produce the DP -> share 100%).
+  function addDpCard(field, x, y, stats, groupCluster, tableId, viewId, sourceEnrichmentKeys) {
+    const card = __cb.canvas.addDataPointCard(field.name, {
       x,
       y,
       stats: stats || null,
@@ -783,8 +788,22 @@
       viewId: viewId ?? null,
       tableName: currentImportTags.tableName,
       importColor: currentImportTags.importColor,
-      sourceEnrichmentFieldId: sourceEnrichmentFieldId ?? null,
     });
+    if (card) {
+      const keys = Array.isArray(sourceEnrichmentKeys)
+        ? sourceEnrichmentKeys.filter((k) => k != null)
+        : (sourceEnrichmentKeys != null ? [sourceEnrichmentKeys] : []);
+      if (keys.length > 0) {
+        // Leave run-shares UNSET — most rescued multi-ER DPs are fallback merges
+        // (try-first/try-second), so the table's defaults are the right read:
+        // projected = primary-weighted split (sums to ~100%, one runs per row),
+        // actual = each ER's MEASURED run-share (cellCount / widest). Forcing
+        // every share to 100% would overstate a fallback. Users can switch a
+        // genuine AND/chain to sum via the chip's "+".
+        __cb.setDpErKeys(card, keys);
+      }
+    }
+    return card;
   }
 
   function addInputCardFromField(field, x, y, tableId, viewId) {
@@ -1102,43 +1121,84 @@
       if (mergeId) waterfallGroupByFieldId.set(mergeId, groupId);
     }
 
-    // First {{fieldId}} reference in a formula — the extracted column's parent
-    // when the API didn't serialize extractedField / inputFieldIds.
-    const FORMULA_PARENT_RE = /\{\{\s*([a-zA-Z0-9_-]+)\s*\}\}/;
-    function parseFormulaParent(formulaText) {
-      if (typeof formulaText !== "string") return null;
-      const m = formulaText.match(FORMULA_PARENT_RE);
-      return m ? m[1] : null;
+    // {{fieldId}} references in a formula — the extracted column's parent(s).
+    // A plain extracted column has one; a MERGE column (special formula, e.g.
+    // "try Validate Input Domain first, then Validate Claygent Domain") coalesces
+    // SEVERAL, so we parse them all so the merge DP links to every ER it merges.
+    const FORMULA_PARENT_RE = /\{\{\s*([a-zA-Z0-9_-]+)\s*\}\}/g;
+    function parseFormulaParents(formulaText) {
+      const ids = [];
+      if (typeof formulaText !== "string") return ids;
+      let m;
+      FORMULA_PARENT_RE.lastIndex = 0;
+      while ((m = FORMULA_PARENT_RE.exec(formulaText)) !== null) {
+        if (m[1]) ids.push(m[1]);
+      }
+      return ids;
     }
 
-    function resolveEnrichmentKey(fieldId, seen) {
-      if (!fieldId) return null;
-      seen = seen || new Set();
-      if (seen.has(fieldId)) return null;
-      seen.add(fieldId);
-      const wfGroup = waterfallGroupByFieldId.get(fieldId);
-      if (wfGroup) return `wf:${wfGroup}`;
-      const field = fieldById[fieldId];
-      if (!field) return null;
-      // Actions and sources are enrichments — but only billable ones count as a
-      // DP's source. A column extracted from a free action/source (e.g. a free
-      // CSV source) resolves to null = "unmatched", so it isn't imported as a
-      // data point and no free chip is shown.
-      if (field.type === "action") return fieldIsBillable(field) ? fieldId : null;
-      if (field.type === "source") return fieldIsBillable(field) ? fieldId : null;
-      // basic / formula column: walk to the field it was extracted from.
-      const parentId =
-        field.extractedField?.fieldIdExtractedFrom ??
-        field.inputFieldIds?.[0] ??
-        parseFormulaParent(field.typeSettings?.formulaText);
-      if (!parentId) return null;
-      return resolveEnrichmentKey(parentId, seen);
+    // Resolve ALL billable enrichment ancestors of a column, nearest-first. A
+    // data point can derive from a chain: e.g. "final email" (basic) is
+    // extracted from a cheap AI column whose INPUT was an expensive enrichment.
+    // We record the nearest billable ancestor (the AI column = primary) AND keep
+    // walking through that action's inputs to capture the upstream ER too, so
+    // both are linked + costed. Free (0-credit/0-action) ancestors are skipped
+    // (noise reduction — formatting helpers etc. don't matter for scoping).
+    function resolveEnrichmentKeys(fieldId) {
+      const out = [];
+      const seenKeys = new Set();
+      const visited = new Set();
+      const addKey = (k) => {
+        if (k != null && !seenKeys.has(k)) { seenKeys.add(k); out.push(k); }
+      };
+      function walk(fid) {
+        if (!fid || visited.has(fid)) return;
+        visited.add(fid);
+        const wfGroup = waterfallGroupByFieldId.get(fid);
+        if (wfGroup) { addKey(`wf:${wfGroup}`); return; }
+        const field = fieldById[fid];
+        if (!field) return;
+        if (field.type === "action" || field.type === "source") {
+          if (fieldIsBillable(field)) addKey(fid);
+          // Continue through this action's inputs to reach upstream ancestors
+          // (the expensive ER feeding a cheap AI column). A free action still
+          // forwards its inputs so a billable ancestor behind it is captured.
+          const refs = field.typeSettings?.inputsBinding
+            ? extractInputFieldRefs(field.typeSettings.inputsBinding)
+            : null;
+          if (refs) for (const r of refs) walk(r);
+          if (Array.isArray(field.inputFieldIds)) for (const r of field.inputFieldIds) walk(r);
+          return;
+        }
+        // basic / formula column: walk to EVERY field it derives from. A merge
+        // column references multiple sources (try-first / try-second fallback),
+        // so we follow all of them — not just the first — so each merged ER is
+        // captured (then the astray-rescue attaches the non-primary ones).
+        const parents = new Set();
+        if (field.extractedField?.fieldIdExtractedFrom) {
+          parents.add(field.extractedField.fieldIdExtractedFrom);
+        }
+        if (Array.isArray(field.inputFieldIds)) {
+          for (const id of field.inputFieldIds) parents.add(id);
+        }
+        for (const id of parseFormulaParents(field.typeSettings?.formulaText)) parents.add(id);
+        if (field.typeSettings?.inputsBinding) {
+          for (const id of extractInputFieldRefs(field.typeSettings.inputsBinding)) parents.add(id);
+        }
+        for (const id of parents) walk(id);
+      }
+      walk(fieldId);
+      return out;
     }
 
     // Every visible basic data point that resolves to an enrichment (excludes
     // leaf inputs). dpEnrichmentKeyById is the per-DP lineage link the import
     // stamps onto cards; dataPointFields is the full set to import.
-    const dpEnrichmentKeyById = new Map();
+    // chainKeysById maps each DP field id -> its FULL transitive billable
+    // ancestor chain (nearest/primary first). Used for promotion + the
+    // astray-rescue pass; the final per-DP link set (dpEnrichmentKeyById) is
+    // derived from it further below.
+    const chainKeysById = new Map();
     const dataPointFields = [];
     for (const f of table?.fields ?? []) {
       if (!visibleFieldIds.has(f.id)) continue;
@@ -1146,9 +1206,9 @@
       // not actions or sources — see isBasicField above.
       if (!isBasicField(f)) continue;
       if (leafInputFieldIds.has(f.id)) continue;
-      const key = resolveEnrichmentKey(f.id);
-      if (!key) continue;
-      dpEnrichmentKeyById.set(f.id, key);
+      const keys = resolveEnrichmentKeys(f.id);
+      if (!keys.length) continue;
+      chainKeysById.set(f.id, keys);
       dataPointFields.push(f);
     }
 
@@ -1162,16 +1222,116 @@
       ...standaloneFields.map((f) => f.id),
       ...basicGroups.flatMap((g) => g.erFields.map((f) => f.id)),
     ]);
+    // Promote EVERY billable ancestor (primary + upstream chain) a visible DP
+    // references, not just the nearest one — otherwise the expensive upstream
+    // ER renders "Not connected" and its cost silently vanishes.
     const promotedErFields = [];
     const promotedSeen = new Set();
-    for (const key of dpEnrichmentKeyById.values()) {
-      if (!key || typeof key !== "string" || key.startsWith("wf:")) continue;
-      if (importedErIds.has(key) || promotedSeen.has(key)) continue;
-      const f = fieldById[key];
-      if (!f || (f.type !== "action" && f.type !== "source")) continue;
-      if (!fieldIsBillable(f)) continue;
-      promotedSeen.add(key);
-      promotedErFields.push(f);
+    for (const keys of chainKeysById.values()) {
+      for (const key of keys) {
+        if (!key || typeof key !== "string" || key.startsWith("wf:")) continue;
+        if (importedErIds.has(key) || promotedSeen.has(key)) continue;
+        const f = fieldById[key];
+        if (!f || (f.type !== "action" && f.type !== "source")) continue;
+        if (!fieldIsBillable(f)) continue;
+        promotedSeen.add(key);
+        promotedErFields.push(f);
+      }
+    }
+
+    // ---- Astray-ER rescue -----------------------------------------------------
+    // Each DP links to its NEAREST billable ancestor only (chain[0]) — auto-
+    // linking the whole transitive chain over-links interconnected tables. An
+    // imported enrichment that NO DP claims as its nearest is "astray" (it would
+    // render as an orphan row). Re-attach each astray ER to its NEAREST
+    // DOWNSTREAM data point(s) — a forward walk through consumers that stops at
+    // the first DP layer — so e.g. a merge column ("try Validate Input Domain,
+    // then Validate Claygent Domain") picks up every validation ER it merges,
+    // while a validation ER reused deep in the graph attaches only to the column
+    // that directly merges it, not to every transitive descendant. A truly
+    // standalone ER (no downstream DP) legitimately stays its own row.
+    const importedErKeys = new Set();
+    for (const w of waterfalls) importedErKeys.add(`wf:${w.groupId}`);
+    for (const f of standaloneFields) importedErKeys.add(f.id);
+    for (const g of basicGroups) for (const f of g.erFields) importedErKeys.add(f.id);
+    for (const f of promotedErFields) importedErKeys.add(f.id);
+
+    const nearestKeys = new Set();
+    for (const chain of chainKeysById.values()) {
+      if (chain[0] != null) nearestKeys.add(chain[0]);
+    }
+    const astrayKeys = [...importedErKeys].filter((k) => !nearestKeys.has(k));
+
+    // Forward consumer index: field id -> fields that DIRECTLY reference it.
+    function directRefsOf(field) {
+      const refs = new Set();
+      if (!field) return refs;
+      if (field.extractedField?.fieldIdExtractedFrom) refs.add(field.extractedField.fieldIdExtractedFrom);
+      if (Array.isArray(field.inputFieldIds)) for (const id of field.inputFieldIds) refs.add(id);
+      for (const id of parseFormulaParents(field.typeSettings?.formulaText)) refs.add(id);
+      if (field.typeSettings?.inputsBinding) {
+        for (const id of extractInputFieldRefs(field.typeSettings.inputsBinding)) refs.add(id);
+      }
+      return refs;
+    }
+    const consumersByRef = new Map();
+    for (const f of table?.fields ?? []) {
+      for (const r of directRefsOf(f)) {
+        if (!consumersByRef.has(r)) consumersByRef.set(r, new Set());
+        consumersByRef.get(r).add(f.id);
+      }
+    }
+    const dpFieldIdSet = new Set(dataPointFields.map((f) => f.id));
+
+    // The field ids a key points at (a waterfall key spans its step/merge fields).
+    function sourceFieldIdsForKey(key) {
+      if (typeof key === "string" && key.startsWith("wf:")) {
+        const g = fieldGroupMap[key.slice(3)];
+        const ids = [];
+        const mid = g?.groupDetails?.mergeField?.fieldId;
+        if (mid) ids.push(mid);
+        for (const s of g?.groupDetails?.sequenceSteps ?? []) if (s.fieldId) ids.push(s.fieldId);
+        return ids;
+      }
+      return [key];
+    }
+
+    // BFS forward to the first DP layer.
+    function nearestDownstreamDps(key) {
+      const targets = new Set();
+      const seen = new Set();
+      const queue = sourceFieldIdsForKey(key);
+      for (const s of queue) seen.add(s);
+      while (queue.length) {
+        const cur = queue.shift();
+        const consumers = consumersByRef.get(cur);
+        if (!consumers) continue;
+        for (const c of consumers) {
+          if (seen.has(c)) continue;
+          seen.add(c);
+          if (dpFieldIdSet.has(c)) targets.add(c); // first DP on this path — stop
+          else queue.push(c);
+        }
+      }
+      return targets;
+    }
+
+    const attachByDp = new Map();
+    for (const key of astrayKeys) {
+      for (const dpId of nearestDownstreamDps(key)) {
+        if (!attachByDp.has(dpId)) attachByDp.set(dpId, []);
+        attachByDp.get(dpId).push(key);
+      }
+    }
+
+    // Final per-DP link set: nearest ancestor + any astray ER whose nearest
+    // downstream DP is this one. dpEnrichmentKeyById is the source of truth the
+    // card stamping + public shape both read.
+    const dpEnrichmentKeyById = new Map();
+    for (const [fid, chain] of chainKeysById) {
+      const nearest = chain[0];
+      const extra = (attachByDp.get(fid) || []).filter((k) => k !== nearest);
+      dpEnrichmentKeyById.set(fid, [...new Set([nearest, ...extra])]);
     }
 
     // ---- JSON-safe public shape ----
@@ -1236,13 +1396,18 @@
       // Enrichments rescued because a visible data point points at them even
       // though their own column is hidden.
       promotedErFields: promotedErFields.map(trimField),
-      // Lineage (Phase 1): each visible data point + the enrichment it was
-      // extracted from. The source of truth for DP<->ER matching.
-      dataPoints: dataPointFields.map((f) => ({
-        id: f.id,
-        name: f.name,
-        sourceEnrichmentFieldId: dpEnrichmentKeyById.get(f.id) ?? null,
-      })),
+      // Lineage: each visible data point + the enrichment(s) it derives from.
+      // `sourceEnrichmentFieldIds` is the ordered ancestor chain (primary
+      // first); `sourceEnrichmentFieldId` keeps the primary for back-compat.
+      dataPoints: dataPointFields.map((f) => {
+        const keys = dpEnrichmentKeyById.get(f.id) ?? [];
+        return {
+          id: f.id,
+          name: f.name,
+          sourceEnrichmentFieldId: keys[0] ?? null,
+          sourceEnrichmentFieldIds: keys.slice(),
+        };
+      }),
       joined: Object.fromEntries(statsByFieldId),
     };
 

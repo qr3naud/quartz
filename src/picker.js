@@ -1048,7 +1048,13 @@
         ? __cb.canvas.ensureErLineageKey(addedCards[0])
         : null;
       if (erKey != null) {
-        target.data.sourceEnrichmentFieldId = erKey;
+        // Union, not overwrite — a data point can link multiple enrichments,
+        // so "+ Add enrichment" adds to whatever it already references.
+        if (__cb.setDpErKeys) {
+          __cb.setDpErKeys(target, [...__cb.dpErKeys(target), erKey]);
+        } else {
+          target.data.sourceEnrichmentFieldId = erKey;
+        }
         // addCard already fired a notifyChange before the lineage was set, so
         // the first table render saw the ER as orphan. Re-notify + persist so
         // the row picks up the freshly-stamped link.
