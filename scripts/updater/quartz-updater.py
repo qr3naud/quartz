@@ -109,6 +109,42 @@ def do_status():
     }
 
 
+def _parse_log(ref_range, limit=None):
+    # %H hash, %cs committer date (YYYY-MM-DD), %s subject; \x1f separates
+    # fields, newline separates commits.
+    args = ["log", "--pretty=format:%H%x1f%cs%x1f%s"]
+    if limit is not None:
+        args += ["-n", str(limit)]
+    args.append(ref_range)
+    result = git(*args)
+    commits = []
+    if result.returncode != 0:
+        return commits
+    for line in result.stdout.split("\n"):
+        if not line.strip():
+            continue
+        parts = line.split("\x1f")
+        if len(parts) >= 3:
+            commits.append({"hash": parts[0], "date": parts[1], "subject": parts[2]})
+    return commits
+
+
+def do_log():
+    fetched = git("fetch", "--quiet")
+    if fetched.returncode != 0:
+        return {"ok": False, "error": "git fetch failed", "detail": fetched.stderr.strip()}
+    counted = git("rev-list", "--count", "HEAD..@{u}")
+    behind = int(counted.stdout.strip()) if counted.returncode == 0 and counted.stdout.strip().isdigit() else 0
+    return {
+        "ok": True,
+        "behind": behind,
+        "currentVersion": local_version(),
+        "latestVersion": version_at("@{u}") or local_version(),
+        "incoming": _parse_log("HEAD..@{u}"),
+        "recent": _parse_log("@{u}", limit=15),
+    }
+
+
 def do_pull(force=False):
     before = local_version()
     before_head = git("rev-parse", "HEAD").stdout.strip()
@@ -151,6 +187,8 @@ def main():
     try:
         if cmd == "status":
             send_message(do_status())
+        elif cmd == "log":
+            send_message(do_log())
         elif cmd == "pull":
             send_message(do_pull(force=False))
         elif cmd == "forcePull":

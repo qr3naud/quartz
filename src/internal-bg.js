@@ -407,6 +407,10 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     quartzCheckStatus().then(sendResponse);
     return true;
   }
+  if (msg.type === "cb:update:log") {
+    quartzNative("log").then(sendResponse);
+    return true;
+  }
   if (msg.type === "cb:update:pull") {
     quartzRunPull("pull").then(sendResponse);
     return true;

@@ -1,0 +1,236 @@
+/* ============================================================================
+ * Update history modal
+ *
+ * Centered modal opened from the overlay More menu's "Update" row. Shows the
+ * version timeline (commits from the native git host) with an "Update now"
+ * action. Visual idiom matches the POC importer modal (indigo accents, soft
+ * shadows, rounded corners); z-indexes sit above the canvas overlay.
+ * ========================================================================= */
+
+.cb-update-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.45);
+  z-index: 2147483640;
+  animation: cb-update-fade-in 0.12s ease-out;
+}
+
+.cb-update-modal {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: min(540px, calc(100vw - 32px));
+  max-height: calc(100vh - 64px);
+  background: #ffffff;
+  border-radius: 12px;
+  box-shadow: 0 24px 48px -12px rgba(15, 23, 42, 0.3),
+    0 8px 16px -4px rgba(15, 23, 42, 0.12);
+  z-index: 2147483641;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  animation: cb-update-pop-in 0.16s ease-out;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+  color: #1f2937;
+}
+
+@keyframes cb-update-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes cb-update-pop-in {
+  from { opacity: 0; transform: translate(-50%, -48%); }
+  to { opacity: 1; transform: translate(-50%, -50%); }
+}
+
+/* ---- Header ---- */
+
+.cb-update-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 18px 22px 12px;
+  border-bottom: 1px solid #f1f5f9;
+}
+
+.cb-update-title {
+  font-size: 16px;
+  font-weight: 700;
+  color: #111827;
+}
+
+.cb-update-version {
+  font-size: 12px;
+  font-weight: 600;
+  color: #6b7280;
+}
+
+/* ---- Status line ---- */
+
+.cb-update-status {
+  padding: 10px 22px;
+  font-size: 13px;
+  font-weight: 600;
+  border-bottom: 1px solid #f1f5f9;
+}
+
+.cb-update-status-loading { color: #6b7280; }
+.cb-update-status-ok { color: #15803d; }
+.cb-update-status-available { color: #b42318; }
+.cb-update-status-error { color: #b42318; }
+
+/* ---- Body / timeline ---- */
+
+.cb-update-body {
+  padding: 8px 22px 14px;
+  overflow-y: auto;
+  flex: 1;
+  min-height: 80px;
+}
+
+.cb-update-section-label {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #9ca3af;
+  margin: 14px 0 6px;
+}
+
+.cb-update-section-label:first-child {
+  margin-top: 6px;
+}
+
+.cb-update-item {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 0;
+  border-bottom: 1px solid #f8fafc;
+}
+
+.cb-update-item-main {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  flex: 1;
+}
+
+.cb-update-item-new .cb-update-msg {
+  font-weight: 600;
+  color: #111827;
+}
+
+.cb-update-badge {
+  flex-shrink: 0;
+  display: inline-block;
+  padding: 1px 7px;
+  font-size: 11px;
+  font-weight: 700;
+  border-radius: 9px;
+  background: #eef2ff;
+  color: #4f46e5;
+}
+
+.cb-update-item-new .cb-update-badge {
+  background: #fee2e2;
+  color: #b42318;
+}
+
+.cb-update-msg {
+  font-size: 13px;
+  line-height: 1.4;
+  color: #374151;
+  overflow-wrap: anywhere;
+}
+
+.cb-update-date {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: #9ca3af;
+  white-space: nowrap;
+  padding-top: 2px;
+}
+
+.cb-update-empty {
+  padding: 16px 0;
+  font-size: 13px;
+  color: #6b7280;
+}
+
+.cb-update-code {
+  display: block;
+  margin-top: 8px;
+  padding: 10px 12px;
+  background: #0f172a;
+  color: #e2e8f0;
+  border-radius: 8px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  user-select: all;
+  overflow-wrap: anywhere;
+}
+
+/* ---- Spinner ---- */
+
+.cb-update-spinner {
+  width: 22px;
+  height: 22px;
+  margin: 24px auto;
+  border: 3px solid #e5e7eb;
+  border-top-color: #6366f1;
+  border-radius: 50%;
+  animation: cb-update-spin 0.7s linear infinite;
+}
+
+@keyframes cb-update-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* ---- Footer ---- */
+
+.cb-update-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 22px;
+  border-top: 1px solid #f1f5f9;
+}
+
+.cb-update-btn {
+  padding: 8px 16px;
+  font-size: 13px;
+  font-weight: 600;
+  border-radius: 8px;
+  border: 1px solid #e5e7eb;
+  background: #ffffff;
+  color: #374151;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.cb-update-btn:hover {
+  background: #f9fafb;
+}
+
+.cb-update-btn-primary {
+  background: #6366f1;
+  border-color: #6366f1;
+  color: #ffffff;
+}
+
+.cb-update-btn-primary:hover {
+  background: #4f46e5;
+}
+
+.cb-update-btn-primary:disabled {
+  background: #c7d2fe;
+  border-color: #c7d2fe;
+  cursor: default;
+}

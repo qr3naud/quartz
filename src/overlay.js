@@ -264,34 +264,12 @@
       renderUpdateState((res.behind || 0) > 0, res.latestVersion);
       if (__cb.refreshMoreDot) __cb.refreshMoreDot();
     });
-    let updateBusy = false;
+    // Opens the center modal (src/update-modal.js) with the version timeline +
+    // an "Update now" action, instead of pulling inline from the menu.
     updateItem.addEventListener("click", (evt) => {
       evt.stopPropagation();
-      if (updateBusy) return;
-      updateBusy = true;
-      updateItem.classList.remove("cb-more-menu-option-active");
-      updateStateEl.textContent = "Updating\u2026";
-      chrome.runtime.sendMessage({ type: "cb:update:pull" }, (res) => {
-        // On a successful update the extension reloads and this context is
-        // torn down — we only reach here for no-op / error outcomes.
-        const lastErr = chrome.runtime.lastError;
-        updateBusy = false;
-        if (lastErr || !res || res.ok === false) {
-          if (res && res.error === "host-missing") {
-            updateStateEl.textContent = "Setup needed";
-            updateItem.title =
-              "One-time setup needed: run scripts/install-updater.sh from the cloned repo to enable one-click updates";
-          } else if (res && res.error === "ff-only") {
-            updateStateEl.textContent = "Conflict";
-            updateItem.title =
-              "Local changes block the update. In Terminal: cd <repo> && git fetch && git reset --hard @{u}";
-          } else {
-            updateStateEl.textContent = "Failed";
-          }
-        } else if (res.ok && !res.updated) {
-          updateStateEl.textContent = "Up to date";
-        }
-      });
+      closeMoreMenu();
+      if (__cb.openUpdateModal) __cb.openUpdateModal();
     });
     moreMenuEl.appendChild(updateItem);
 
