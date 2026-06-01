@@ -180,16 +180,10 @@
   text-align: center;
 }
 
-.cb-update-group-new {
-  flex-shrink: 0;
-  padding: 1px 7px;
-  font-size: 10px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
-  border-radius: 9px;
-  background: #fee2e2;
-  color: #b42318;
+/* Amber count pill for groups that contain incoming commits. */
+.cb-update-group-count-new {
+  background: #fef3c7;
+  color: #b45309;
 }
 
 .cb-update-children {
@@ -249,9 +243,16 @@
   white-space: nowrap;
 }
 
-.cb-update-item-new .cb-update-badge {
-  background: #fee2e2;
-  color: #b42318;
+/* Incoming commit: amber. */
+.cb-update-badge-new {
+  background: #fef3c7;
+  color: #b45309;
+}
+
+/* Installed-latest commit when up to date: green. */
+.cb-update-badge-current {
+  background: #dcfce7;
+  color: #15803d;
 }
 
 .cb-update-empty {

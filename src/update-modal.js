@@ -76,15 +76,10 @@
     labelEl.textContent = label;
     header.appendChild(labelEl);
 
-    if (isNew) {
-      const dot = document.createElement("span");
-      dot.className = "cb-update-group-new";
-      dot.textContent = "new";
-      header.appendChild(dot);
-    }
-
+    // Groups containing incoming commits get an amber count pill (no separate
+    // "new" tag).
     const countEl = document.createElement("span");
-    countEl.className = "cb-update-group-count";
+    countEl.className = "cb-update-group-count" + (isNew ? " cb-update-group-count-new" : "");
     countEl.textContent = String(count);
     header.appendChild(countEl);
 
@@ -115,7 +110,15 @@
     date.textContent = commit.date || "";
 
     const badge = document.createElement("span");
-    badge.className = "cb-update-badge";
+    // Badge color: amber for incoming commits, green for the installed-latest
+    // commit when up to date, indigo otherwise.
+    const variantClass =
+      commit.badgeVariant === "new"
+        ? " cb-update-badge-new"
+        : commit.badgeVariant === "current"
+          ? " cb-update-badge-current"
+          : "";
+    badge.className = "cb-update-badge" + variantClass;
     badge.textContent = commit.version ? "v" + commit.version.raw : "\u2014";
 
     row.appendChild(msg);
@@ -138,6 +141,14 @@
       if (seen.has(c.hash)) continue;
       seen.add(c.hash);
       commits.push({ ...c, isNew: newHashes.has(c.hash), version: parseVersion(c.subject) });
+    }
+
+    // Badge variant per commit: "new" (amber) for incoming; "current" (green)
+    // for the latest installed commit when up to date; otherwise default.
+    const behind = incoming.length > 0;
+    const latestHash = commits.length ? commits[0].hash : null;
+    for (const c of commits) {
+      c.badgeVariant = c.isNew ? "new" : (!behind && c.hash === latestHash ? "current" : "default");
     }
 
     // Group: major -> minor -> commits[]. Unversioned commits go to "other".
