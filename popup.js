@@ -283,7 +283,7 @@
             textEl.textContent = "One-time setup needed";
             btn.textContent = "Copy setup command";
             btn.onclick = () => {
-              const cmd = "bash ~/Downloads/Quartz/scripts/install-updater.sh";
+              const cmd = "bash ~/Quartz/scripts/install-updater.sh";
               if (navigator.clipboard) navigator.clipboard.writeText(cmd).catch(() => {});
               btn.textContent = "Copied ✓";
             };

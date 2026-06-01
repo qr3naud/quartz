@@ -6,7 +6,7 @@
 # every Chromium-family browser found on this Mac, so the extension's in-browser
 # "Update" button can run `git pull` for you. Run this once after cloning:
 #
-#   bash ~/Downloads/Quartz/scripts/install-updater.sh
+#   bash ~/Quartz/scripts/install-updater.sh
 #
 # Safe to re-run (it just rewrites the host manifest). The repo path is detected
 # from this script's own location, so it works wherever you cloned Quartz.
@@ -26,9 +26,14 @@ if [ ! -f "$HOST_PATH" ]; then
 fi
 chmod +x "$HOST_PATH"
 
-if ! command -v python3 >/dev/null 2>&1; then
+if ! command -v python3 >/dev/null 2>&1 && [ ! -x /usr/bin/python3 ]; then
   echo "WARNING: python3 not found. Install Apple's tools first: xcode-select --install" >&2
 fi
+
+# If the repo was downloaded as a ZIP (rather than git-cloned), macOS flags the
+# files with a quarantine attribute and Chrome's hardened runtime refuses to
+# launch them. Strip it so the host can run. Harmless on git clones.
+xattr -dr com.apple.quarantine "$REPO_ROOT/scripts" >/dev/null 2>&1 || true
 
 # The native-host manifest. allowed_origins pins the extension to the ID
 # derived from the public "key" in manifest.json, so this is stable across
@@ -73,6 +78,11 @@ if [ "$installed" -eq 0 ]; then
   echo "ERROR: no Chromium-family browsers found under $SUPPORT" >&2
   exit 1
 fi
+
+# Warm up the host once so macOS performs its first-run security check now
+# (the very first launch from a sandboxed app can be killed). The host reads
+# stdin and exits on EOF, so feeding it /dev/null returns immediately.
+"$HOST_PATH" </dev/null >/dev/null 2>&1 || true
 
 echo ""
 echo "Done - one-click updates enabled for $installed browser profile(s)."
