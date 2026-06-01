@@ -91,25 +91,37 @@
     return true;
   }
 
+  // Auto-open the canvas when we arrive on a workbook with the "sticky open"
+  // flag set (clicking a Quartz from the home tab sets it, see src/home.js) or
+  // the "#cb-open" hash. Decoupled from toolbar discovery so it also fires on
+  // the Overview/flow view, which has no native toolbar. openCanvas waits for
+  // the JWT itself, so this opens as soon as auth is ready. Guarded against a
+  // double-open while the (async) open is still in flight.
+  let autoOpenInFlight = false;
+  function maybeAutoOpen() {
+    if (autoOpenInFlight || __cb.overlayEl) return;
+    const ids = __cb.parseIdsFromUrl();
+    if (!ids) return;
+    const openFlagSet = localStorage.getItem(`cb-open-${ids.workbookId}`);
+    // Always consume the hash (side effect: strips it) so it doesn't linger.
+    const openFromHash = consumeOpenHash();
+    if (!openFlagSet && !openFromHash) return;
+    autoOpenInFlight = true;
+    __cb.loadTabs()
+      .then(store => {
+        __cb.tabStore = store;
+        return __cb.openCanvas([]);
+      })
+      .finally(() => {
+        autoOpenInFlight = false;
+      });
+  }
+
   function tryInjectIntoToolbar() {
     const toolbar = __cb.findToolbar();
     if (toolbar && !toolbar.hasAttribute(__cb.INJECTED_ATTR)) {
       toolbar.setAttribute(__cb.INJECTED_ATTR, "true");
       toolbar.prepend(buildButton());
-
-      const ids = __cb.parseIdsFromUrl();
-      const openFlagSet = ids && localStorage.getItem(`cb-open-${ids.workbookId}`);
-      const openFromHash = consumeOpenHash();
-      if (ids && (openFlagSet || openFromHash)) {
-        // We don't await here because tryInjectIntoToolbar is called from a
-        // MutationObserver and shouldn't block. loadTabs caches to localStorage
-        // anyway so subsequent loads are instant.
-        __cb.loadTabs().then(store => {
-          __cb.tabStore = store;
-          __cb.openCanvas([]);
-        });
-      }
-
       return true;
     }
     return false;
@@ -173,6 +185,11 @@
   }
 
   function startObserver() {
+    // Auto-open the canvas if we arrived with the sticky-open flag set (e.g.
+    // by clicking a Quartz from the home tab) — independent of whether this
+    // page exposes a native toolbar.
+    maybeAutoOpen();
+
     if (tryInjectIntoToolbar()) return;
 
     // The flow/overview view never gets a native toolbar, so surface the Quartz
