@@ -333,9 +333,12 @@
     btn.onclick = () => runUpdate("cb:update:pull");
 
     // Instant pill + banner from the SW's cached status, then a live re-check
-    // that is the source of truth.
+    // that is the source of truth. The live result is authoritative: guard so
+    // a late-resolving (stale) cache read can't override it.
+    let liveResolved = false;
     try {
       chrome.storage.local.get("quartzUpdateInfo", (r) => {
+        if (liveResolved) return;
         const info = r && r.quartzUpdateInfo;
         if (info) {
           setVersionPill(info.behind ? "behind" : "ok");
@@ -344,6 +347,7 @@
       });
     } catch {}
     chrome.runtime.sendMessage({ type: "cb:update:status" }, (res) => {
+      liveResolved = true;
       if (chrome.runtime.lastError || !res || !res.ok) {
         setVersionPill("loading"); // unconfirmed (e.g. helper not installed)
         showBanner(null);
