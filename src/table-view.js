@@ -2847,27 +2847,10 @@
       introActions.appendChild(viewToggle);
     }
 
-    // "Upload POC" sits to the LEFT of "Add enrichment" so the rep's eye
-    // lands on the import option first when they're starting fresh — POC
-    // import is the bulk-action shortcut, "Add enrichment" is the granular
-    // follow-up. uploadSvg is a stylized cloud-upload icon distinct from
-    // the plus glyph used for additive actions.
-    const uploadPocBtn = document.createElement("button");
-    uploadPocBtn.type = "button";
-    uploadPocBtn.className = "cb-table-view-add-er-btn cb-table-view-upload-poc-btn";
-    uploadPocBtn.title = "Import data points from a POC overview document";
-    uploadPocBtn.innerHTML = uploadSvg(13) + "<span>Upload POC</span>";
-    uploadPocBtn.addEventListener("click", () => {
-      if (typeof __cb.startPocImport === "function") {
-        __cb.startPocImport(uploadPocBtn);
-      } else {
-        console.error("[Clay Scoping] POC import module not loaded.");
-      }
-    });
-    introActions.appendChild(uploadPocBtn);
-
-    // "Scope Ads" / "Scope Audiences" sit between the POC import and the
-    // granular "Add enrichment" action as scoping quick-starts.
+    // "Scope Ads" / "Scope Audiences" lead the action row as scoping
+    // quick-starts. ("Upload POC" used to sit to their left; it now lives in
+    // the topbar overflow ("more") menu — see __cb.openMoreMenu in
+    // src/overlay.js — so the header stays compact.)
     const scopeAdsBtn = document.createElement("button");
     scopeAdsBtn.type = "button";
     scopeAdsBtn.className = "cb-table-view-add-er-btn";
@@ -2956,7 +2939,7 @@
       const td = document.createElement("td");
       td.colSpan = headers.length;
       td.textContent =
-        "No data points yet. Use \u201cUpload POC\u201d to import from a doc, or \u201c+ Add data point\u201d / \u201cAdd enrichment\u201d above to get started.";
+        "No data points yet. Use \u201cUpload POC\u201d from the \u22ee menu to import from a doc, or \u201c+ Add data point\u201d / \u201cAdd enrichment\u201d above to get started.";
       empty.appendChild(td);
       tbody.appendChild(empty);
     } else {
@@ -4426,19 +4409,6 @@
       'stroke-linejoin="round" aria-hidden="true">' +
       '<circle cx="12" cy="12" r="9"/>' +
       '<circle cx="12" cy="12" r="4"/>' +
-      '</svg>'
-    );
-  }
-
-  function uploadSvg(size) {
-    const s = String(size);
-    return (
-      `<svg xmlns="http://www.w3.org/2000/svg" width="${s}" height="${s}" viewBox="0 0 24 24" ` +
-      'fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" ' +
-      'stroke-linejoin="round" aria-hidden="true">' +
-      '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>' +
-      '<polyline points="17 8 12 3 7 8"/>' +
-      '<line x1="12" y1="3" x2="12" y2="15"/>' +
       '</svg>'
     );
   }

@@ -262,20 +262,6 @@
   color: #111827;
 }
 
-/* "Upload POC" gets a slightly stronger indigo treatment so it reads as the
-   primary bulk-import shortcut against the secondary "Add enrichment". */
-.cb-table-view-upload-poc-btn {
-  background: #eef2ff;
-  border-color: #c7d2fe;
-  color: #4338ca;
-}
-
-.cb-table-view-upload-poc-btn:hover {
-  background: #e0e7ff;
-  border-color: #a5b4fc;
-  color: #3730a3;
-}
-
 /* ---- Table container + table ---- */
 
 .cb-table-view-table-container {

@@ -273,6 +273,52 @@
 
     popoverEl.appendChild(footer);
 
+    // Shortcut for reps who already have a finished POC doc (generated
+    // earlier, or shared by someone else) — paste the link to skip the
+    // 5-10 minute Dust run and jump straight to the done state. Same
+    // collapsed toggle + manual-entry form the error state uses, funneling
+    // through the same saveManualDocLink() so persistence + the "done"
+    // render are identical.
+    const manualToggle = document.createElement("button");
+    manualToggle.type = "button";
+    manualToggle.className = "cb-dust-poc-link-btn";
+    manualToggle.textContent = "Already have the POC link? Paste it here";
+
+    const manualForm = document.createElement("div");
+    manualForm.className = "cb-dust-poc-manual";
+    manualForm.style.display = "none";
+
+    const manualInput = document.createElement("input");
+    manualInput.type = "url";
+    manualInput.className = "cb-dust-poc-input";
+    manualInput.placeholder = "Paste Google Doc link";
+    manualInput.autocomplete = "off";
+
+    const manualSave = document.createElement("button");
+    manualSave.type = "button";
+    manualSave.className = "cb-dust-poc-btn cb-dust-poc-btn-primary";
+    manualSave.textContent = "Save";
+    manualSave.addEventListener("click", () => saveManualDocLink(manualInput.value));
+
+    manualInput.addEventListener("keydown", (evt) => {
+      if (evt.key === "Enter") {
+        evt.preventDefault();
+        saveManualDocLink(manualInput.value);
+      }
+    });
+
+    manualForm.appendChild(manualInput);
+    manualForm.appendChild(manualSave);
+
+    manualToggle.addEventListener("click", () => {
+      manualToggle.style.display = "none";
+      manualForm.style.display = "flex";
+      manualInput.focus();
+    });
+
+    popoverEl.appendChild(manualToggle);
+    popoverEl.appendChild(manualForm);
+
     setTimeout(() => input.focus(), 0);
   }
 
