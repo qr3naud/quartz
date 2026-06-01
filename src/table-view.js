@@ -3447,7 +3447,7 @@
     if (er.isWaterfall) {
       const providersBtn = document.createElement("button");
       providersBtn.type = "button";
-      providersBtn.className = "cb-table-view-er-menu-open";
+      providersBtn.className = "cb-table-view-er-menu-open cb-table-view-er-menu-providers";
       providersBtn.innerHTML = waterfallSvg(13) + "<span>View providers</span>";
       providersBtn.addEventListener("click", (evt) => {
         evt.stopPropagation();
@@ -3494,7 +3494,10 @@
     if (erChipMenuPos) positionErMenu(erChipMenuPos.left, erChipMenuPos.top);
   }
 
-  function openErChipMenu(er, anchorEl) {
+  // `fixedPos` ({ left, top }) re-opens the menu at saved viewport coords
+  // instead of anchoring to a chip — used when re-opening after the waterfall
+  // "+" picker hand-off, where the original chip node has been re-rendered.
+  function openErChipMenu(er, anchorEl, fixedPos = null) {
     closeErChipMenu();
     closeContextMenu();
 
@@ -3527,13 +3530,17 @@
     menu.style.zIndex = "9999999";
     menu.style.left = "0px";
     menu.style.top = "0px";
-    const rect = anchorEl.getBoundingClientRect();
-    let preferredTop = rect.bottom + 6;
-    if (preferredTop + menu.offsetHeight > window.innerHeight - 8) {
-      const above = rect.top - 6 - menu.offsetHeight;
-      if (above > 8) preferredTop = above;
+    if (fixedPos) {
+      erChipMenuPos = { left: fixedPos.left, top: fixedPos.top };
+    } else {
+      const rect = anchorEl.getBoundingClientRect();
+      let preferredTop = rect.bottom + 6;
+      if (preferredTop + menu.offsetHeight > window.innerHeight - 8) {
+        const above = rect.top - 6 - menu.offsetHeight;
+        if (above > 8) preferredTop = above;
+      }
+      erChipMenuPos = { left: rect.left, top: preferredTop };
     }
-    erChipMenuPos = { left: rect.left, top: preferredTop };
     positionErMenu(erChipMenuPos.left, erChipMenuPos.top);
 
     document.addEventListener("keydown", onErChipMenuKey);
@@ -3990,6 +3997,26 @@
   // ---- Public API ----
 
   __cb.tableView = {
+    // Close the ER details menu (used by the waterfall "+" hand-off so the menu
+    // doesn't sit in front of the enrichment picker).
+    closeErMenu() {
+      closeErChipMenu();
+    },
+    // Re-open the ER details menu for a card at a saved viewport position, then
+    // open the provider-chain popover beside it. Called by picker.js after the
+    // waterfall "+" pick so the user lands back where they were. Returns false
+    // when the table isn't mounted or the card is gone.
+    reopenErMenuWithProviders(cardId, pos) {
+      if (!hostEl) return false;
+      const card = __cb.canvas?.getCardById?.(cardId);
+      if (!card) return false;
+      openErChipMenu(buildErChipData(card), null, pos);
+      const btn = erChipMenuEl?.querySelector(".cb-table-view-er-menu-providers");
+      if (btn && __cb.showProviderChain) {
+        __cb.showProviderChain(card, btn, { besideEl: erChipMenuEl });
+      }
+      return true;
+    },
     mount(host) {
       hostEl = host;
       render();

@@ -937,6 +937,16 @@
     selectedEnrichments.clear();
     closePicker();
     cleanupPicker();
+    // If the user bailed out of the waterfall "+" flow, bring back the details
+    // menu + provider popover they left (no providers added). cancelPicker is
+    // terminal — it never falls through to finishPicker — so clearing the
+    // routing flags here is safe.
+    const reopen = __cb._waterfallPickReopen;
+    __cb._waterfallPickReopen = null;
+    __cb.addToWaterfallCardId = null;
+    if (reopen && __cb.tableView?.reopenErMenuWithProviders) {
+      __cb.tableView.reopenErMenuWithProviders(reopen.cardId, reopen.pos);
+    }
   }
 
   const CARD_W = 220;
@@ -1104,15 +1114,23 @@
             }
           }
           if (__cb.recomputeWaterfallCardData) __cb.recomputeWaterfallCardData(target.data);
+          // refreshWaterfallCardDom calls model.update(), which synchronously
+          // re-renders the table view (when mounted) with the new provider.
           if (__cb.refreshWaterfallCardDom) __cb.refreshWaterfallCardDom(target);
 
-          // Re-anchor the popover to the (refreshed) badge so the user can
-          // see the new providers immediately. The badge element id is
-          // stable (created during the original addCard render), so a
-          // simple querySelector is enough.
-          const anchor = target.el?.querySelector(".cb-card-badge-providers");
-          if (anchor && __cb.showProviderChain) {
-            __cb.showProviderChain(target, anchor);
+          // Table view: re-open the details menu + provider popover where they
+          // were (the "+" handler stashed the menu position). Canvas: re-anchor
+          // the popover to the (refreshed) badge so the new providers show
+          // immediately — the badge element is created during addCard render.
+          const reopen = __cb._waterfallPickReopen;
+          __cb._waterfallPickReopen = null;
+          if (reopen && __cb.tableView?.reopenErMenuWithProviders) {
+            __cb.tableView.reopenErMenuWithProviders(reopen.cardId, reopen.pos);
+          } else {
+            const anchor = target.el?.querySelector(".cb-card-badge-providers");
+            if (anchor && __cb.showProviderChain) {
+              __cb.showProviderChain(target, anchor);
+            }
           }
         }
         return;

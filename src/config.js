@@ -143,6 +143,11 @@
     // canvas cards). Read + cleared inside picker.js's finishPicker.
     // Toggled by the "+" button inside showProviderChain.
     addToWaterfallCardId: null,
+    // Table-view-only companion to addToWaterfallCardId: { cardId, pos }
+    // captured when the "+" button is clicked from the ER details menu, so
+    // finishPicker / cancelPicker can re-open the menu + provider popover where
+    // they were. Null in the canvas context (badge re-anchor handles that).
+    _waterfallPickReopen: null,
     tabStore: null,
     canvas: null,
 
@@ -555,8 +560,24 @@
           // finishPicker reads `addToWaterfallCardId` and pushes the
           // picked enrichments into our providers[] (recomputing avg/max
           // along the way) instead of creating new canvas cards. Then it
-          // re-opens this popover anchored to the same badge.
+          // re-opens this popover (and, in table view, the details menu).
           window.__cb.addToWaterfallCardId = card.id;
+          // Table view opens this popover beside the ER details menu
+          // (opts.besideEl). Capture its viewport position so finishPicker can
+          // re-open the menu + popover exactly where they were, and close the
+          // menu now so it doesn't sit in front of the picker.
+          const besideEl = opts.besideEl;
+          if (besideEl && besideEl.isConnected) {
+            const r = besideEl.getBoundingClientRect();
+            window.__cb._waterfallPickReopen = {
+              cardId: card.id,
+              pos: { left: r.left, top: r.top },
+            };
+            window.__cb.tableView?.closeErMenu?.();
+          } else {
+            // Canvas context — keep the existing re-anchor-to-badge behavior.
+            window.__cb._waterfallPickReopen = null;
+          }
           window.__cb.closeProviderChain();
           if (typeof window.__cb.startPickerMode === "function") {
             window.__cb.startPickerMode();
