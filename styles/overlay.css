@@ -527,6 +527,12 @@
   color: #92400e;
 }
 
+/* "Up to date" pill on the Update row reads green. */
+.cb-more-menu-state.cb-update-state-ok {
+  background: #dcfce7;
+  color: #15803d;
+}
+
 /* Projected / Actual segmented control. Two pill buttons share a rounded
    container with a single border so they read as one segmented control
    rather than two unrelated buttons. The active half gets a filled

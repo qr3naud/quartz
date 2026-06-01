@@ -121,10 +121,13 @@
     const updateStateEl = updateItem.querySelector(".cb-update-state");
     const renderUpdateState = (behind, latestVersion) => {
       if (behind) {
+        // Amber pill via .cb-more-menu-option-active .cb-more-menu-state.
         updateItem.classList.add("cb-more-menu-option-active");
+        updateStateEl.classList.remove("cb-update-state-ok");
         updateStateEl.textContent = latestVersion ? `v${latestVersion}` : "Available";
       } else {
         updateItem.classList.remove("cb-more-menu-option-active");
+        updateStateEl.classList.add("cb-update-state-ok");
         updateStateEl.textContent = "Up to date";
       }
     };
