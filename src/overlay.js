@@ -67,6 +67,17 @@
     '<path d="M4 17h16"/>' +
     '</svg>';
 
+  // Circular-arrows "refresh" glyph for the Update row — reads as "pull the
+  // latest version". Same visual family as the other menu icons.
+  const UPDATE_ICON_SVG =
+    '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" ' +
+    'fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" ' +
+    'stroke-linejoin="round" aria-hidden="true">' +
+    '<polyline points="23 4 23 10 17 10"/>' +
+    '<polyline points="1 20 1 14 7 14"/>' +
+    '<path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>' +
+    '</svg>';
+
   let moreMenuEl = null;
   let moreMenuBackdrop = null;
 
@@ -216,6 +227,63 @@
       moreMenuEl.appendChild(inspectItem);
     }
 
+    // Update — pulls the latest extension code from GitHub via the native
+    // updater helper (the service worker bridges the message, since content
+    // scripts can't use native messaging) and reloads. Available to everyone.
+    // The state pill is populated async from the status the SW caches in
+    // chrome.storage. We intentionally keep the menu open on click so the
+    // user sees progress/errors; on success the page reloads anyway.
+    const updateItem = document.createElement("button");
+    updateItem.type = "button";
+    updateItem.className = "cb-export-menu-option cb-more-menu-option";
+    updateItem.title = "Pull the latest version of the extension and reload";
+    updateItem.innerHTML =
+      `<span class="cb-more-menu-icon">${UPDATE_ICON_SVG}</span>` +
+      `<span class="cb-more-menu-label">Update</span>` +
+      `<span class="cb-more-menu-state cb-update-state"></span>`;
+    const updateStateEl = updateItem.querySelector(".cb-update-state");
+    try {
+      chrome.storage.local.get("quartzUpdateInfo", (r) => {
+        const info = r && r.quartzUpdateInfo;
+        if (info && info.behind) {
+          updateItem.classList.add("cb-more-menu-option-active");
+          updateStateEl.textContent = info.latestVersion ? `v${info.latestVersion}` : "Available";
+        } else if (info) {
+          updateStateEl.textContent = "Up to date";
+        }
+      });
+    } catch {}
+    let updateBusy = false;
+    updateItem.addEventListener("click", (evt) => {
+      evt.stopPropagation();
+      if (updateBusy) return;
+      updateBusy = true;
+      updateItem.classList.remove("cb-more-menu-option-active");
+      updateStateEl.textContent = "Updating\u2026";
+      chrome.runtime.sendMessage({ type: "cb:update:pull" }, (res) => {
+        // On a successful update the extension reloads and this context is
+        // torn down — we only reach here for no-op / error outcomes.
+        const lastErr = chrome.runtime.lastError;
+        updateBusy = false;
+        if (lastErr || !res || res.ok === false) {
+          if (res && res.error === "host-missing") {
+            updateStateEl.textContent = "Setup needed";
+            updateItem.title =
+              "One-time setup needed: run scripts/install-updater.sh from the cloned repo to enable one-click updates";
+          } else if (res && res.error === "ff-only") {
+            updateStateEl.textContent = "Conflict";
+            updateItem.title =
+              "Local changes block the update. In Terminal: cd <repo> && git fetch && git reset --hard @{u}";
+          } else {
+            updateStateEl.textContent = "Failed";
+          }
+        } else if (res.ok && !res.updated) {
+          updateStateEl.textContent = "Up to date";
+        }
+      });
+    });
+    moreMenuEl.appendChild(updateItem);
+
     document.body.appendChild(moreMenuBackdrop);
     document.body.appendChild(moreMenuEl);
 
@@ -364,6 +432,34 @@
       evt.stopPropagation();
       if (__cb.openMoreMenu) __cb.openMoreMenu(moreBtn);
     });
+
+    // "Update available" dot — a secondary cue mirroring the toolbar-icon
+    // badge so users notice the Update row without opening the menu. Toggled
+    // from the status the service worker caches in chrome.storage; kept fresh
+    // via a single storage.onChanged listener (re-pointed each canvas open).
+    moreBtn.style.position = "relative";
+    const moreDot = document.createElement("span");
+    moreDot.className = "cb-toolbar-more-dot";
+    moreDot.style.cssText =
+      "position:absolute;top:3px;right:3px;width:7px;height:7px;border-radius:50%;" +
+      "background:#E5484D;box-shadow:0 0 0 1.5px rgba(255,255,255,0.9);display:none;";
+    moreBtn.appendChild(moreDot);
+    __cb.refreshMoreDot = function refreshMoreDot() {
+      try {
+        chrome.storage.local.get("quartzUpdateInfo", (r) => {
+          moreDot.style.display = r && r.quartzUpdateInfo && r.quartzUpdateInfo.behind ? "block" : "none";
+        });
+      } catch {}
+    };
+    __cb.refreshMoreDot();
+    if (chrome.storage && chrome.storage.onChanged && !__cb.__quartzCueWired) {
+      __cb.__quartzCueWired = true;
+      chrome.storage.onChanged.addListener((changes, area) => {
+        if (area === "local" && changes.quartzUpdateInfo && __cb.refreshMoreDot) {
+          __cb.refreshMoreDot();
+        }
+      });
+    }
 
     // Canvas / Tables view switching lives inside the overflow ("more")
     // menu — see the View row in __cb.openMoreMenu above. The toolbar

@@ -247,7 +247,83 @@
     }
   }
 
+  /**
+   * Wires the "Update available" banner. The background service worker checks
+   * (via the native updater helper) whether the cloned repo is behind origin
+   * and caches the result in chrome.storage; we read that cache for an instant
+   * banner, then trigger a fresh status check. Clicking "Update now" asks the
+   * SW to run `git pull` — on success the extension reloads and this popup
+   * closes; we only handle the no-op / error outcomes here.
+   */
+  function initUpdate() {
+    const box = document.getElementById("cb-popup-update");
+    const textEl = document.getElementById("cb-popup-update-text");
+    const btn = document.getElementById("cb-popup-update-btn");
+    if (!box || !textEl || !btn) return;
+
+    function showBanner(info) {
+      if (!info || !info.behind) {
+        box.hidden = true;
+        return;
+      }
+      textEl.textContent = info.latestVersion
+        ? `Update available → v${info.latestVersion}`
+        : "Update available";
+      box.hidden = false;
+    }
+
+    function runUpdate(type) {
+      btn.disabled = true;
+      textEl.textContent = "Updating…";
+      chrome.runtime.sendMessage({ type }, (res) => {
+        const lastErr = chrome.runtime.lastError;
+        if (lastErr || !res || res.ok === false) {
+          btn.disabled = false;
+          if (res && res.error === "host-missing") {
+            textEl.textContent = "One-time setup needed";
+            btn.textContent = "Copy setup command";
+            btn.onclick = () => {
+              const cmd = "bash ~/Downloads/Quartz/scripts/install-updater.sh";
+              if (navigator.clipboard) navigator.clipboard.writeText(cmd).catch(() => {});
+              btn.textContent = "Copied ✓";
+            };
+          } else if (res && res.error === "ff-only") {
+            textEl.textContent = "Local changes block update";
+            btn.textContent = "Force update";
+            btn.onclick = () => {
+              if (window.confirm("Discard local changes and update to the latest version?")) {
+                runUpdate("cb:update:forcePull");
+              }
+            };
+          } else {
+            textEl.textContent = "Update failed";
+            btn.textContent = "Retry";
+          }
+        } else if (res.ok && !res.updated) {
+          textEl.textContent = "You're on the latest version";
+          btn.hidden = true;
+        }
+        // res.ok && res.updated -> extension reloads, popup closes.
+      });
+    }
+
+    btn.onclick = () => runUpdate("cb:update:pull");
+
+    // Instant banner from the SW's cached status, then a live re-check.
+    try {
+      chrome.storage.local.get("quartzUpdateInfo", (r) => showBanner(r && r.quartzUpdateInfo));
+    } catch {}
+    chrome.runtime.sendMessage({ type: "cb:update:status" }, (res) => {
+      if (chrome.runtime.lastError) return; // helper not installed — stay quiet
+      if (res && res.ok) {
+        showBanner({ behind: (res.behind || 0) > 0, latestVersion: res.latestVersion });
+      }
+    });
+  }
+
   async function init() {
+    initUpdate();
+
     if (!supa) {
       showStatus("Supabase client failed to load.", true);
       return;

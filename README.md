@@ -14,17 +14,17 @@ A Chrome extension that adds a visual scoping canvas to Clay workbooks for plann
 
 ## Install
 
-*One-time, ~2 minutes per machine. From then on you only run the [Update](#update) step.*
+*One-time, ~3 minutes per machine. After this, updating is a single click — no Terminal.*
 
 ### 1. Clone the repo
 
 Open the **Terminal** app (on macOS: press `Cmd + Space`, type "Terminal", press Enter), then paste this command and press Enter:
 
 ```bash
-git clone https://github.com/qr3naud/scoping.git ~/Downloads/clay-scoping-extension
+git clone https://github.com/qr3naud/scoping.git ~/Downloads/Quartz
 ```
 
-This creates a folder called `clay-scoping-extension` inside your **Downloads** folder and downloads the latest version of the extension into it.
+This creates a folder called `Quartz` inside your **Downloads** folder and downloads the latest version of the extension into it.
 
 > **Heads-up:** don't delete this folder when you clean out Downloads — the extension reads from it every time Chrome starts. If you ever do delete it by accident, just re-run the clone command above.
 
@@ -35,11 +35,21 @@ This creates a folder called `clay-scoping-extension` inside your **Downloads** 
 1. Open a new Chrome tab and go to [`chrome://extensions`](chrome://extensions)
 2. Toggle **Developer mode** on — it's the switch in the top-right corner of the page
 3. Click **Load unpacked** (button on the left)
-4. In the file picker, go to your **Downloads** folder and select `clay-scoping-extension`, then click **Select** / **Open**
+4. In the file picker, go to your **Downloads** folder and select `Quartz`, then click **Select** / **Open**
 
 You should now see a card titled **Clay Scoping Tool** in the extensions list.
 
-### 3. Confirm it works
+### 3. Enable one-click updates
+
+This registers a tiny helper so the **Update** button inside the extension can pull new versions for you. Run it once in Terminal:
+
+```bash
+bash ~/Downloads/Quartz/scripts/install-updater.sh
+```
+
+Then go back to [`chrome://extensions`](chrome://extensions) and click the **circular refresh icon** on the **Clay Scoping Tool** card once, so the new permissions take effect.
+
+### 4. Confirm it works
 
 Open any Clay workbook (e.g. `https://app.clay.com/workspaces/...`). You should see a **GTME View** button in the workbook toolbar. Click it to open the canvas.
 
@@ -49,19 +59,34 @@ If you don't see the button, reload the Clay tab. Still missing? See [Troublesho
 
 ## Update
 
-*Run this whenever you want the latest version — usually when something new has shipped and you want to pick it up.*
+Once one-click updates are enabled (Install step 3), you don't need Terminal anymore.
 
-```bash
-cd ~/Downloads/clay-scoping-extension && git pull
-```
+**When an update is available**, the extension's toolbar icon shows a red badge and flips upside-down. To update:
 
-Then in Chrome:
+- Click the **extension icon** (top-right of Chrome) and hit **Update now**, **or**
+- Open the canvas on any Clay workbook → **More** menu (`⋯`) → **Update**.
 
-1. Go to [`chrome://extensions`](chrome://extensions)
-2. Find the **Clay Scoping Tool** card and click the **circular refresh icon** on it
-3. Reload any open Clay tabs so they pick up the new code
+The extension pulls the latest version, reloads itself, and refreshes your open Clay tabs automatically.
 
-That's it.
+> **Manual fallback** (if you skipped step 3 or the helper isn't working):
+>
+> ```bash
+> cd ~/Downloads/Quartz && git pull
+> ```
+>
+> Then go to [`chrome://extensions`](chrome://extensions), click the refresh icon on the **Clay Scoping Tool** card, and reload your Clay tabs.
+
+---
+
+## Already installed before one-click updates?
+
+The extension's ID is now pinned (so the updater helper can talk to it). If you installed an older version, do this once:
+
+1. Pull the latest: `cd ~/Downloads/Quartz && git pull` (or re-clone per Install step 1 if your folder is still named `clay-scoping-extension`).
+2. At [`chrome://extensions`](chrome://extensions), **Remove** the old **Clay Scoping Tool** card, then **Load unpacked** the `Quartz` folder again.
+3. Run Install step 3 to enable one-click updates.
+
+Your canvases are safe — they live in the cloud, not in the extension.
 
 ---
 
@@ -79,11 +104,11 @@ xcode-select --install
 
 Wait for it to finish, then re-run the clone command.
 
-**`git pull` says "merge conflict" or "your local changes would be overwritten"**
-This means files in your `clay-scoping-extension` folder have been modified locally (you probably don't want to keep those changes — you just want the latest version from GitHub). Reset to the remote version:
+**The Update button says "Local changes block update" / "Conflict"**
+This means files in your `Quartz` folder have been modified locally (you probably don't want to keep those changes — you just want the latest version from GitHub). Use **Force update** in the popup, or reset manually:
 
 ```bash
-cd ~/Downloads/clay-scoping-extension && git fetch origin && git reset --hard origin/main
+cd ~/Downloads/Quartz && git fetch origin && git reset --hard origin/main
 ```
 
 > **Warning:** this throws away any local edits in that folder. That's almost always what you want for an extension you're just using (not developing).

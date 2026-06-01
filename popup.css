@@ -95,6 +95,51 @@ body {
   font-size: 12px;
 }
 
+/* "Update available" banner — only shown when the background check found the
+   cloned repo is behind origin. Mirrors the loud toolbar-icon cue with a red
+   accent so it's hard to miss when the user clicks the badged icon. */
+.cb-popup-update {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  background: #fff4f4;
+  border-bottom: 1px solid var(--cb-border);
+}
+
+.cb-popup-update-text {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: #b42318;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cb-popup-update-btn {
+  flex-shrink: 0;
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  border-radius: 6px;
+  border: none;
+  background: #e5484d;
+  color: #ffffff;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.cb-popup-update-btn:hover {
+  background: #c93b40;
+}
+
+.cb-popup-update-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
 .cb-popup-status {
   padding: 16px;
   color: var(--cb-fg-muted);

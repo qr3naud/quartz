@@ -12,3 +12,11 @@ _metadata/
 # Per-machine; never check it in. supabase/config.toml and supabase/functions/
 # + supabase/migrations/ are the only things from supabase/ that belong in git.
 supabase/.temp/
+
+# Private RSA key that pins the extension ID via manifest "key". Only the
+# public half lives in manifest.json; this private half stays off GitHub.
+scripts/updater/quartz-key.pem
+
+# Python bytecode cache from running/compiling the updater host locally.
+__pycache__/
+*.pyc

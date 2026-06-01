@@ -300,3 +300,164 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     return true;
   }
 });
+
+// ---------------------------------------------------------------------------
+// Quartz one-click updater
+//
+// Content scripts can't use chrome.runtime.sendNativeMessage, so both update
+// entry points — the popup "Update now" CTA and the overlay "More > Update"
+// row — message the service worker, which owns everything: talking to the
+// native host (scripts/updater/quartz-updater.py, registered by
+// scripts/install-updater.sh), the toolbar "update available" cue (red badge +
+// upside-down icon), reloading the extension to pick up the pulled files, and
+// reloading open Clay tabs afterwards.
+// ---------------------------------------------------------------------------
+
+const QUARTZ_HOST = "com.quartz.updater";
+const QUARTZ_ALARM = "quartzUpdateCheck";
+const QUARTZ_ICON = {
+  16: "icons/icon-16.png", 32: "icons/icon-32.png",
+  48: "icons/icon-48.png", 128: "icons/icon-128.png",
+};
+const QUARTZ_ICON_UPDATE = {
+  16: "icons/icon-16-update.png", 32: "icons/icon-32-update.png",
+  48: "icons/icon-48-update.png", 128: "icons/icon-128-update.png",
+};
+
+/** Promisified sendNativeMessage. Resolves {ok:false, error:"host-missing"}
+ *  when the helper isn't installed (so the UI can show the one-time setup
+ *  hint) instead of rejecting. */
+function quartzNative(cmd) {
+  return new Promise((resolve) => {
+    try {
+      chrome.runtime.sendNativeMessage(QUARTZ_HOST, { cmd }, (res) => {
+        if (chrome.runtime.lastError) {
+          resolve({ ok: false, error: "host-missing", detail: chrome.runtime.lastError.message });
+        } else {
+          resolve(res || { ok: false, error: "no-response" });
+        }
+      });
+    } catch (err) {
+      resolve({ ok: false, error: "host-missing", detail: String(err) });
+    }
+  });
+}
+
+/** Sets (or clears) the "update available" cue on the toolbar icon: a red
+ *  badge, an upside-down icon variant, and a descriptive tooltip. */
+async function quartzSetCue(behind, latestVersion) {
+  try {
+    await chrome.action.setIcon({ path: behind ? QUARTZ_ICON_UPDATE : QUARTZ_ICON });
+    await chrome.action.setBadgeText({ text: behind ? "\u2191" : "" });
+    if (behind) {
+      await chrome.action.setBadgeBackgroundColor({ color: "#E5484D" });
+      if (chrome.action.setBadgeTextColor) {
+        await chrome.action.setBadgeTextColor({ color: "#FFFFFF" });
+      }
+    }
+    await chrome.action.setTitle({
+      title: behind ? `Quartz \u2014 update available (v${latestVersion || "?"})` : "My Canvases",
+    });
+  } catch (err) {
+    console.warn("[Quartz] setCue failed:", err);
+  }
+}
+
+/** Asks the helper whether the repo is behind origin, caches the result for
+ *  the popup/overlay, and refreshes the toolbar cue. */
+async function quartzCheckStatus() {
+  const res = await quartzNative("status");
+  if (res && res.ok) {
+    const behind = (res.behind || 0) > 0;
+    await chrome.storage.local.set({
+      quartzUpdateInfo: {
+        behind,
+        latestVersion: res.latestVersion,
+        currentVersion: res.currentVersion,
+        checkedAt: Date.now(),
+      },
+    });
+    await quartzSetCue(behind, res.latestVersion);
+  }
+  return res;
+}
+
+/** Runs pull/forcePull. If files changed, reloads the extension so Chrome
+ *  loads the new code from disk; the onInstalled handler below then reloads
+ *  open Clay tabs. Returns the helper's result (best-effort — the reload may
+ *  tear down the message channel before the caller reads it). */
+async function quartzRunPull(cmd) {
+  const res = await quartzNative(cmd);
+  if (res && res.ok && res.updated) {
+    await chrome.storage.local.set({ quartzPendingReload: true });
+    await quartzSetCue(false);
+    chrome.runtime.reload();
+  } else if (res && res.ok) {
+    await chrome.storage.local.set({
+      quartzUpdateInfo: { behind: false, latestVersion: res.toVersion, checkedAt: Date.now() },
+    });
+    await quartzSetCue(false);
+  }
+  return res;
+}
+
+chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  if (!msg || typeof msg.type !== "string") return;
+  if (msg.type === "cb:update:status") {
+    quartzCheckStatus().then(sendResponse);
+    return true;
+  }
+  if (msg.type === "cb:update:pull") {
+    quartzRunPull("pull").then(sendResponse);
+    return true;
+  }
+  if (msg.type === "cb:update:forcePull") {
+    quartzRunPull("forcePull").then(sendResponse);
+    return true;
+  }
+});
+
+// Restore the cue from the last known status whenever the SW spins up (no
+// network) — keeps the badge visible across browser restarts until the next
+// scheduled check refreshes it.
+chrome.storage.local
+  .get("quartzUpdateInfo")
+  .then(({ quartzUpdateInfo }) => {
+    if (quartzUpdateInfo) quartzSetCue(!!quartzUpdateInfo.behind, quartzUpdateInfo.latestVersion);
+  })
+  .catch(() => {});
+
+// Periodic background check so the toolbar cue appears without user action.
+chrome.runtime.onInstalled.addListener((details) => {
+  chrome.alarms.create(QUARTZ_ALARM, { periodInMinutes: 180, delayInMinutes: 1 });
+  if (details.reason === "install") quartzCheckStatus();
+});
+chrome.runtime.onStartup.addListener(() => {
+  chrome.alarms.create(QUARTZ_ALARM, { periodInMinutes: 180, delayInMinutes: 1 });
+});
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name === QUARTZ_ALARM) quartzCheckStatus();
+});
+
+// chrome.runtime.reload() on an unpacked extension fires onInstalled with
+// reason "update". When we set quartzPendingReload before reloading, reload
+// open Clay tabs here so they pick up the freshly pulled content scripts.
+chrome.runtime.onInstalled.addListener(async ({ reason }) => {
+  if (reason !== "update") return;
+  let pending;
+  try {
+    ({ quartzPendingReload: pending } = await chrome.storage.local.get("quartzPendingReload"));
+  } catch {
+    return;
+  }
+  if (!pending) return;
+  await chrome.storage.local.remove("quartzPendingReload");
+  try {
+    const tabs = await chrome.tabs.query({ url: "https://app.clay.com/*" });
+    for (const t of tabs) {
+      if (t.id != null) chrome.tabs.reload(t.id);
+    }
+  } catch (err) {
+    console.warn("[Quartz] tab reload after update failed:", err);
+  }
+});
