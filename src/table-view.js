@@ -54,6 +54,22 @@
   // range selection and drag drop-target resolution.
   let visibleRowOrder = [];
 
+  // ---- Inline search state ----
+  //
+  // A collapsed search affordance sits next to the collaborators widget in the
+  // table header. It opens on click or Cmd/Ctrl+F, then does a live
+  // case-insensitive substring match over DP names, ER chip labels, and group
+  // header names. Matching rows get a gentle highlight; the active match is
+  // scrolled into view. All state lives at module scope because render()
+  // rebuilds the DOM from scratch — applySearchHighlight() re-runs after each
+  // render so highlights survive re-renders (mirrors applySelectionClasses()).
+  let searchOpen = false;
+  let searchQuery = "";
+  // Ordered list of matching row ids (strings, matching data-row-id) and the
+  // index of the currently-active match for Enter / Shift+Enter cycling.
+  let searchMatchIds = [];
+  let searchActiveIdx = 0;
+
   // Drag-and-drop reorder. dragState is non-null only while the user is
   // actively dragging. dragInProgress also gates refresh() so a canvas
   // change mid-drag doesn't tear down the dragged row's DOM.
@@ -360,7 +376,23 @@
   }
 
   function onDocKeyDown(evt) {
+    // Cmd/Ctrl+F opens the inline search and suppresses the browser's native
+    // find bar — only while the table view is mounted, so we don't hijack
+    // find on the rest of the Clay page.
+    if ((evt.metaKey || evt.ctrlKey) && !evt.altKey && (evt.key === "f" || evt.key === "F")) {
+      if (!hostEl) return;
+      evt.preventDefault();
+      evt.stopPropagation();
+      openSearch();
+      return;
+    }
     if (evt.key !== "Escape") return;
+    // Search closes first so Esc dismisses the bar before clearing selection.
+    if (searchOpen) {
+      closeSearch();
+      evt.preventDefault();
+      return;
+    }
     if (dragState) {
       cancelDrag();
       evt.preventDefault();
@@ -375,6 +407,208 @@
       clearSelection();
       evt.preventDefault();
     }
+  }
+
+  // ---- Inline search ----
+
+  // Builds the collapsed search control mounted next to the collaborators
+  // widget. State is baked in from module scope so the control rebuilds in the
+  // correct open/closed state on every render().
+  function buildSearchControl() {
+    const wrap = document.createElement("div");
+    wrap.className = "cb-table-view-search";
+    if (searchOpen) wrap.classList.add("cb-table-view-search-open");
+
+    const toggle = document.createElement("button");
+    toggle.type = "button";
+    toggle.className = "cb-table-view-search-toggle";
+    toggle.title = "Search data points and enrichments (\u2318F)";
+    toggle.setAttribute("aria-label", "Search the table");
+    toggle.innerHTML = searchSvg(15);
+    toggle.addEventListener("mousedown", (e) => e.stopPropagation());
+    toggle.addEventListener("click", (e) => {
+      e.stopPropagation();
+      if (searchOpen) closeSearch();
+      else openSearch();
+    });
+    wrap.appendChild(toggle);
+
+    const field = document.createElement("div");
+    field.className = "cb-table-view-search-field";
+    // Keep clicks inside the field from bubbling to the row / document
+    // handlers (which would clear selection or start a drag).
+    field.addEventListener("mousedown", (e) => e.stopPropagation());
+    field.addEventListener("click", (e) => e.stopPropagation());
+
+    const input = document.createElement("input");
+    input.type = "text";
+    input.className = "cb-table-view-search-input";
+    input.placeholder = "Search the table\u2026";
+    input.value = searchQuery;
+    input.addEventListener("input", () => {
+      searchQuery = input.value;
+      searchActiveIdx = 0;
+      applySearchHighlight({ scroll: true });
+    });
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        gotoMatch(e.shiftKey ? -1 : 1);
+      } else if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopPropagation();
+        closeSearch();
+      }
+    });
+    field.appendChild(input);
+
+    const count = document.createElement("span");
+    count.className = "cb-table-view-search-count";
+    field.appendChild(count);
+
+    const clearBtn = document.createElement("button");
+    clearBtn.type = "button";
+    clearBtn.className = "cb-table-view-search-clear";
+    clearBtn.title = "Close search";
+    clearBtn.setAttribute("aria-label", "Close search");
+    clearBtn.innerHTML = xSvg(12);
+    clearBtn.addEventListener("mousedown", (e) => e.stopPropagation());
+    clearBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      closeSearch();
+    });
+    field.appendChild(clearBtn);
+
+    wrap.appendChild(field);
+    return wrap;
+  }
+
+  // Focuses the search input within the currently-mounted control, if any.
+  function focusSearchInput() {
+    if (!hostEl) return;
+    const input = hostEl.querySelector(".cb-table-view-search-input");
+    if (input) {
+      input.focus();
+      input.select();
+    }
+  }
+
+  function openSearch() {
+    if (!hostEl) return;
+    searchOpen = true;
+    const wrap = hostEl.querySelector(".cb-table-view-search");
+    if (wrap) {
+      // Expand the existing control in place — avoids a full render() so the
+      // focus lands cleanly and the open animation runs.
+      wrap.classList.add("cb-table-view-search-open");
+      focusSearchInput();
+      applySearchHighlight({ scroll: true });
+    } else {
+      // Control not in the DOM yet (shouldn't normally happen) — rebuild,
+      // then focus once the new DOM is in place.
+      render();
+      focusSearchInput();
+    }
+  }
+
+  function closeSearch() {
+    searchOpen = false;
+    searchQuery = "";
+    searchMatchIds = [];
+    searchActiveIdx = 0;
+    if (!hostEl) return;
+    const wrap = hostEl.querySelector(".cb-table-view-search");
+    if (wrap) wrap.classList.remove("cb-table-view-search-open");
+    const input = hostEl.querySelector(".cb-table-view-search-input");
+    if (input) input.value = "";
+    clearSearchHighlight();
+    updateSearchCount();
+  }
+
+  function clearSearchHighlight() {
+    if (!hostEl) return;
+    const marked = hostEl.querySelectorAll(
+      ".cb-table-view-row-search-match, .cb-table-view-row-search-active",
+    );
+    for (const el of marked) {
+      el.classList.remove("cb-table-view-row-search-match");
+      el.classList.remove("cb-table-view-row-search-active");
+    }
+  }
+
+  function updateSearchCount() {
+    if (!hostEl) return;
+    const countEl = hostEl.querySelector(".cb-table-view-search-count");
+    if (!countEl) return;
+    if (!searchQuery.trim() || searchMatchIds.length === 0) {
+      countEl.textContent = searchQuery.trim() ? "0/0" : "";
+    } else {
+      countEl.textContent = `${searchActiveIdx + 1}/${searchMatchIds.length}`;
+    }
+  }
+
+  // Reads the searchable text for one body row: the DP name, every ER chip
+  // label, and the group header label. Lowercased for case-insensitive match.
+  function rowSearchText(tr) {
+    const parts = [];
+    const dpName = tr.querySelector(".cb-table-view-dp-name");
+    if (dpName) parts.push(dpName.textContent || "");
+    const groupLabel = tr.querySelector(".cb-table-view-group-row-label");
+    if (groupLabel) parts.push(groupLabel.textContent || "");
+    const chipLabels = tr.querySelectorAll(".cb-table-view-er-chip-label");
+    for (const c of chipLabels) parts.push(c.textContent || "");
+    return parts.join(" \u0001 ").toLowerCase();
+  }
+
+  // Highlights every row whose searchable text contains the query, tracks the
+  // ordered match list, and (optionally) scrolls the active match into view.
+  function applySearchHighlight(opts = {}) {
+    if (!hostEl) return;
+    clearSearchHighlight();
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) {
+      searchMatchIds = [];
+      searchActiveIdx = 0;
+      updateSearchCount();
+      return;
+    }
+    const rows = hostEl.querySelectorAll("tbody tr[data-row-id]");
+    const matchIds = [];
+    for (const tr of rows) {
+      if (rowSearchText(tr).includes(q)) {
+        tr.classList.add("cb-table-view-row-search-match");
+        matchIds.push(tr.getAttribute("data-row-id"));
+      }
+    }
+    searchMatchIds = matchIds;
+    if (searchActiveIdx >= matchIds.length) searchActiveIdx = 0;
+    markActiveMatch(opts.scroll === true);
+    updateSearchCount();
+  }
+
+  // Applies the "active" class to the current match and optionally scrolls it
+  // into view. No-op when there are no matches.
+  function markActiveMatch(scroll) {
+    if (!hostEl) return;
+    const prev = hostEl.querySelector(".cb-table-view-row-search-active");
+    if (prev) prev.classList.remove("cb-table-view-row-search-active");
+    if (searchMatchIds.length === 0) return;
+    const id = searchMatchIds[searchActiveIdx];
+    const row = hostEl.querySelector(`tbody tr[data-row-id="${id}"]`);
+    if (!row) return;
+    row.classList.add("cb-table-view-row-search-active");
+    if (scroll) {
+      row.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    }
+  }
+
+  // Advances the active match by delta (wrapping) and scrolls to it.
+  function gotoMatch(delta) {
+    if (searchMatchIds.length === 0) return;
+    const n = searchMatchIds.length;
+    searchActiveIdx = ((searchActiveIdx + delta) % n + n) % n;
+    markActiveMatch(true);
+    updateSearchCount();
   }
 
   // Sentinel key for the "Unattached enrichments" pseudo-section at the
@@ -2363,6 +2597,10 @@
     if (typeof __cb.mountCollaboratorsWidget === "function") {
       __cb.mountCollaboratorsWidget(introLead, { inline: true });
     }
+    // Collapsed search affordance — sits to the right of the collaborators
+    // pill, expands inline on click or Cmd/Ctrl+F. State is module-scoped so
+    // applySearchHighlight() (end of render) restores highlights afterwards.
+    introLead.appendChild(buildSearchControl());
 
     const introActions = document.createElement("div");
     introActions.className = "cb-table-view-intro-actions";
@@ -2684,6 +2922,9 @@
       }
       pendingRenameCardId = null;
     }
+    // Re-apply search highlights against the freshly-built rows. No scroll —
+    // a background model update shouldn't yank the user's scroll position.
+    if (searchQuery.trim()) applySearchHighlight({ scroll: false });
   }
 
   // Re-render with the given DP row's name as a focused input (the rename
@@ -3913,6 +4154,18 @@
     return tr;
   }
 
+  function searchSvg(size) {
+    const s = String(size);
+    return (
+      `<svg xmlns="http://www.w3.org/2000/svg" width="${s}" height="${s}" viewBox="0 0 24 24" ` +
+      'fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" ' +
+      'stroke-linejoin="round" aria-hidden="true">' +
+      '<circle cx="11" cy="11" r="7"/>' +
+      '<line x1="21" y1="21" x2="16.5" y2="16.5"/>' +
+      '</svg>'
+    );
+  }
+
   function plusSvg(size) {
     const s = String(size);
     return (
@@ -4171,6 +4424,10 @@
       visibleRowOrder = [];
       pendingFocusGroupId = null;
       pendingRenameCardId = null;
+      searchOpen = false;
+      searchQuery = "";
+      searchMatchIds = [];
+      searchActiveIdx = 0;
       if (hostEl) hostEl.innerHTML = "";
       hostEl = null;
       tableEl = null;

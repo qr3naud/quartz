@@ -80,12 +80,142 @@
   color: #111827;
 }
 
-/* Left lead slot — hosts the inline collaborators presence widget. min-height
-   keeps the row stable when the widget is empty (before contributors load). */
+/* Left lead slot — hosts the inline collaborators presence widget + the
+   collapsed search control. min-height keeps the row stable when the widget is
+   empty (before contributors load). */
 .cb-table-view-intro-lead {
   display: flex;
   align-items: center;
+  gap: 8px;
   min-height: 32px;
+}
+
+/* ---- Inline search ---- */
+
+.cb-table-view-search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Circular collapsed trigger — mirrors the secondary action-button palette
+   (.cb-table-view-add-er-btn) but as a 32px circle. */
+.cb-table-view-search-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  flex: none;
+  padding: 0;
+  background: #ffffff;
+  border: 1px solid #d1d5db;
+  border-radius: 50%;
+  color: #374151;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
+}
+
+.cb-table-view-search-toggle:hover {
+  background: #f9fafb;
+  border-color: #9ca3af;
+  color: #111827;
+}
+
+/* Highlight the trigger while the field is open so it reads as active. */
+.cb-table-view-search-open .cb-table-view-search-toggle {
+  background: #eef2ff;
+  border-color: #c7d2fe;
+  color: #4338ca;
+}
+
+/* Collapsed by default; animates open by growing width + fading in. The
+   children are clipped while collapsed so they don't catch clicks. */
+.cb-table-view-search-field {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 0;
+  opacity: 0;
+  overflow: hidden;
+  pointer-events: none;
+  transition: width 0.18s ease, opacity 0.18s ease;
+}
+
+.cb-table-view-search-open .cb-table-view-search-field {
+  width: 240px;
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.cb-table-view-search-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 32px;
+  padding: 0 8px;
+  background: #ffffff;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  color: #111827;
+  font-size: 13px;
+  outline: none;
+  transition: border-color 0.12s, box-shadow 0.12s;
+}
+
+.cb-table-view-search-input:focus {
+  border-color: #a5b4fc;
+  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.18);
+}
+
+.cb-table-view-search-input::placeholder {
+  color: #9ca3af;
+}
+
+.cb-table-view-search-count {
+  flex: none;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: #6b7280;
+  white-space: nowrap;
+}
+
+.cb-table-view-search-clear {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  flex: none;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  color: #9ca3af;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+
+.cb-table-view-search-clear:hover {
+  background: #f3f4f6;
+  color: #374151;
+}
+
+/* Gentle highlight for rows that match the query, plus a slightly stronger
+   tint + left accent for the currently-focused match. !important matches the
+   selection-row convention (line ~398) so the tint reliably wins over the
+   tr:hover wash and zebra striping. Transitions keep the highlight from
+   snapping on as the user types. */
+.cb-table-view-row-search-match > td {
+  background: #fffbeb !important;
+  transition: background 0.12s ease;
+}
+
+.cb-table-view-row-search-active > td {
+  background: #fef3c7 !important;
+}
+
+.cb-table-view-row-search-active > td:first-child {
+  box-shadow: inset 3px 0 0 0 #f59e0b;
 }
 
 .cb-table-view-intro-actions {
