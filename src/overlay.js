@@ -106,6 +106,46 @@
     moreMenuEl.className = "cb-export-menu cb-more-menu";
     moreMenuEl.addEventListener("mousedown", (evt) => evt.stopPropagation());
 
+    // Update — leads the menu. Opens the center modal (src/update-modal.js)
+    // with the version timeline + an "Update now" action. The state pill is
+    // seeded from the cached status, then refreshed live so it never disagrees
+    // with the popup / toolbar cue.
+    const updateItem = document.createElement("button");
+    updateItem.type = "button";
+    updateItem.className = "cb-export-menu-option cb-more-menu-option";
+    updateItem.title = "See what's new and update the extension";
+    updateItem.innerHTML =
+      `<span class="cb-more-menu-icon">${UPDATE_ICON_SVG}</span>` +
+      `<span class="cb-more-menu-label">Update</span>` +
+      `<span class="cb-more-menu-state cb-update-state"></span>`;
+    const updateStateEl = updateItem.querySelector(".cb-update-state");
+    const renderUpdateState = (behind, latestVersion) => {
+      if (behind) {
+        updateItem.classList.add("cb-more-menu-option-active");
+        updateStateEl.textContent = latestVersion ? `v${latestVersion}` : "Available";
+      } else {
+        updateItem.classList.remove("cb-more-menu-option-active");
+        updateStateEl.textContent = "Up to date";
+      }
+    };
+    try {
+      chrome.storage.local.get("quartzUpdateInfo", (r) => {
+        const info = r && r.quartzUpdateInfo;
+        if (info) renderUpdateState(!!info.behind, info.latestVersion);
+      });
+    } catch {}
+    chrome.runtime.sendMessage({ type: "cb:update:status" }, (res) => {
+      if (chrome.runtime.lastError || !res || !res.ok) return; // leave seeded state
+      renderUpdateState((res.behind || 0) > 0, res.latestVersion);
+      if (__cb.refreshMoreDot) __cb.refreshMoreDot();
+    });
+    updateItem.addEventListener("click", (evt) => {
+      evt.stopPropagation();
+      closeMoreMenu();
+      if (__cb.openUpdateModal) __cb.openUpdateModal();
+    });
+    moreMenuEl.appendChild(updateItem);
+
     // View (Canvas / Tables) — leads the menu since "what am I looking at"
     // is the most fundamental choice. State pill shows the current view
     // name; clicking flips to the other and closes the menu, mirroring
@@ -226,52 +266,6 @@
       });
       moreMenuEl.appendChild(inspectItem);
     }
-
-    // Update — pulls the latest extension code from GitHub via the native
-    // updater helper (the service worker bridges the message, since content
-    // scripts can't use native messaging) and reloads. Available to everyone.
-    // The state pill is populated async from the status the SW caches in
-    // chrome.storage. We intentionally keep the menu open on click so the
-    // user sees progress/errors; on success the page reloads anyway.
-    const updateItem = document.createElement("button");
-    updateItem.type = "button";
-    updateItem.className = "cb-export-menu-option cb-more-menu-option";
-    updateItem.title = "Pull the latest version of the extension and reload";
-    updateItem.innerHTML =
-      `<span class="cb-more-menu-icon">${UPDATE_ICON_SVG}</span>` +
-      `<span class="cb-more-menu-label">Update</span>` +
-      `<span class="cb-more-menu-state cb-update-state"></span>`;
-    const updateStateEl = updateItem.querySelector(".cb-update-state");
-    const renderUpdateState = (behind, latestVersion) => {
-      if (behind) {
-        updateItem.classList.add("cb-more-menu-option-active");
-        updateStateEl.textContent = latestVersion ? `v${latestVersion}` : "Available";
-      } else {
-        updateItem.classList.remove("cb-more-menu-option-active");
-        updateStateEl.textContent = "Up to date";
-      }
-    };
-    // Seed instantly from the cached status, then refresh live so the menu
-    // never disagrees with the popup / toolbar cue.
-    try {
-      chrome.storage.local.get("quartzUpdateInfo", (r) => {
-        const info = r && r.quartzUpdateInfo;
-        if (info) renderUpdateState(!!info.behind, info.latestVersion);
-      });
-    } catch {}
-    chrome.runtime.sendMessage({ type: "cb:update:status" }, (res) => {
-      if (chrome.runtime.lastError || !res || !res.ok) return; // leave seeded state
-      renderUpdateState((res.behind || 0) > 0, res.latestVersion);
-      if (__cb.refreshMoreDot) __cb.refreshMoreDot();
-    });
-    // Opens the center modal (src/update-modal.js) with the version timeline +
-    // an "Update now" action, instead of pulling inline from the menu.
-    updateItem.addEventListener("click", (evt) => {
-      evt.stopPropagation();
-      closeMoreMenu();
-      if (__cb.openUpdateModal) __cb.openUpdateModal();
-    });
-    moreMenuEl.appendChild(updateItem);
 
     document.body.appendChild(moreMenuBackdrop);
     document.body.appendChild(moreMenuEl);

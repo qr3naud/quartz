@@ -20,8 +20,8 @@
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%);
-  width: min(540px, calc(100vw - 32px));
-  max-height: calc(100vh - 64px);
+  width: min(760px, calc(100vw - 32px));
+  max-height: calc(100vh - 48px);
   background: #ffffff;
   border-radius: 12px;
   box-shadow: 0 24px 48px -12px rgba(15, 23, 42, 0.3),
@@ -83,43 +83,123 @@
 .cb-update-status-available { color: #b42318; }
 .cb-update-status-error { color: #b42318; }
 
-/* ---- Body / timeline ---- */
+/* ---- Body / version tree ---- */
 
 .cb-update-body {
-  padding: 8px 22px 14px;
+  padding: 6px 16px 14px;
   overflow-y: auto;
   flex: 1;
-  min-height: 80px;
+  min-height: 140px;
 }
 
-.cb-update-section-label {
+/* Collapsible groups: major (Version 3) > minor (v3.66) > commit rows. */
+
+.cb-update-group-major {
+  border-bottom: 1px solid #f1f5f9;
+}
+
+.cb-update-group-major:last-child {
+  border-bottom: none;
+}
+
+.cb-update-group-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 6px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-family: inherit;
+  text-align: left;
+  color: #111827;
+  border-radius: 8px;
+}
+
+.cb-update-group-header:hover {
+  background: #f8fafc;
+}
+
+.cb-update-chevron {
+  flex-shrink: 0;
+  color: #9ca3af;
+  transition: transform 0.12s ease;
+}
+
+.cb-update-group:not(.cb-update-collapsed) > .cb-update-group-header .cb-update-chevron {
+  transform: rotate(90deg);
+}
+
+.cb-update-group-label {
+  flex: 1;
+  min-width: 0;
+}
+
+.cb-update-group-major > .cb-update-group-header .cb-update-group-label {
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.cb-update-group-minor > .cb-update-group-header .cb-update-group-label {
+  font-size: 12px;
+  font-weight: 700;
+  color: #4f46e5;
+}
+
+.cb-update-group-count {
+  flex-shrink: 0;
+  min-width: 22px;
+  padding: 1px 7px;
   font-size: 11px;
+  font-weight: 600;
+  border-radius: 9px;
+  background: #f1f5f9;
+  color: #6b7280;
+  text-align: center;
+}
+
+.cb-update-group-new {
+  flex-shrink: 0;
+  padding: 1px 7px;
+  font-size: 10px;
   font-weight: 700;
   text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: #9ca3af;
-  margin: 14px 0 6px;
+  letter-spacing: 0.03em;
+  border-radius: 9px;
+  background: #fee2e2;
+  color: #b42318;
 }
 
-.cb-update-section-label:first-child {
-  margin-top: 6px;
+.cb-update-children {
+  padding-left: 18px;
 }
+
+.cb-update-group.cb-update-collapsed > .cb-update-children {
+  display: none;
+}
+
+/* ---- Commit rows ---- */
 
 .cb-update-item {
   display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 10px;
-  padding: 8px 0;
-  border-bottom: 1px solid #f8fafc;
+  align-items: baseline;
+  gap: 12px;
+  padding: 6px 6px 6px 8px;
+  border-radius: 8px;
 }
 
-.cb-update-item-main {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  min-width: 0;
+.cb-update-item:hover {
+  background: #f8fafc;
+}
+
+.cb-update-msg {
   flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  line-height: 1.4;
+  color: #374151;
+  overflow-wrap: anywhere;
 }
 
 .cb-update-item-new .cb-update-msg {
@@ -127,15 +207,25 @@
   color: #111827;
 }
 
+.cb-update-date {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: #9ca3af;
+  white-space: nowrap;
+}
+
+/* Version pill — last element in the row, so every pill's right edge lines up
+   on the modal's right margin regardless of nesting depth or message length. */
 .cb-update-badge {
   flex-shrink: 0;
   display: inline-block;
-  padding: 1px 7px;
+  padding: 1px 8px;
   font-size: 11px;
   font-weight: 700;
   border-radius: 9px;
   background: #eef2ff;
   color: #4f46e5;
+  white-space: nowrap;
 }
 
 .cb-update-item-new .cb-update-badge {
@@ -143,23 +233,8 @@
   color: #b42318;
 }
 
-.cb-update-msg {
-  font-size: 13px;
-  line-height: 1.4;
-  color: #374151;
-  overflow-wrap: anywhere;
-}
-
-.cb-update-date {
-  flex-shrink: 0;
-  font-size: 11px;
-  color: #9ca3af;
-  white-space: nowrap;
-  padding-top: 2px;
-}
-
 .cb-update-empty {
-  padding: 16px 0;
+  padding: 16px 6px;
   font-size: 13px;
   color: #6b7280;
 }

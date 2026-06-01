@@ -44,31 +44,83 @@
     return { version: null, message: subject || "" };
   }
 
-  function commitRow(commit, isNew) {
-    const { version, message } = splitVersion(commit.subject);
-    const row = document.createElement("div");
-    row.className = "cb-update-item" + (isNew ? " cb-update-item-new" : "");
+  /** Parses major/minor/patch from a trailing "(vX[.Y[.Z]])" in the subject. */
+  function parseVersion(subject) {
+    const m = /\(v(\d+)(?:\.(\d+))?(?:\.(\d+))?\)\s*$/.exec(subject || "");
+    if (!m) return null;
+    const major = parseInt(m[1], 10);
+    const minor = m[2] != null ? parseInt(m[2], 10) : 0;
+    const patch = m[3] != null ? parseInt(m[3], 10) : 0;
+    const raw = m[1] + (m[2] != null ? "." + m[2] : "") + (m[3] != null ? "." + m[3] : "");
+    return { major, minor, patch, raw };
+  }
 
-    const left = document.createElement("div");
-    left.className = "cb-update-item-main";
+  const CHEVRON_SVG =
+    '<svg class="cb-update-chevron" width="12" height="12" viewBox="0 0 24 24" ' +
+    'fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" ' +
+    'stroke-linejoin="round" aria-hidden="true"><polyline points="9 6 15 12 9 18"/></svg>';
 
-    if (version) {
-      const badge = document.createElement("span");
-      badge.className = "cb-update-badge";
-      badge.textContent = "v" + version;
-      left.appendChild(badge);
+  /** A collapsible group node. Returns { wrap, childrenEl } and toggles a
+   *  collapsed class on click of the header. */
+  function makeGroup(level, label, count, isNew, collapsed) {
+    const wrap = document.createElement("div");
+    wrap.className = "cb-update-group cb-update-group-" + level + (collapsed ? " cb-update-collapsed" : "");
+
+    const header = document.createElement("button");
+    header.type = "button";
+    header.className = "cb-update-group-header";
+    header.innerHTML = CHEVRON_SVG;
+
+    const labelEl = document.createElement("span");
+    labelEl.className = "cb-update-group-label";
+    labelEl.textContent = label;
+    header.appendChild(labelEl);
+
+    if (isNew) {
+      const dot = document.createElement("span");
+      dot.className = "cb-update-group-new";
+      dot.textContent = "new";
+      header.appendChild(dot);
     }
+
+    const countEl = document.createElement("span");
+    countEl.className = "cb-update-group-count";
+    countEl.textContent = String(count);
+    header.appendChild(countEl);
+
+    const childrenEl = document.createElement("div");
+    childrenEl.className = "cb-update-children";
+
+    header.addEventListener("click", (evt) => {
+      evt.stopPropagation();
+      wrap.classList.toggle("cb-update-collapsed");
+    });
+
+    wrap.appendChild(header);
+    wrap.appendChild(childrenEl);
+    return { wrap, childrenEl };
+  }
+
+  function makeCommitRow(commit) {
+    const { message } = splitVersion(commit.subject);
+    const row = document.createElement("div");
+    row.className = "cb-update-item" + (commit.isNew ? " cb-update-item-new" : "");
+
     const msg = document.createElement("span");
     msg.className = "cb-update-msg";
     msg.textContent = message || commit.subject || "(no message)";
-    left.appendChild(msg);
 
     const date = document.createElement("span");
     date.className = "cb-update-date";
     date.textContent = commit.date || "";
 
-    row.appendChild(left);
+    const badge = document.createElement("span");
+    badge.className = "cb-update-badge";
+    badge.textContent = commit.version ? "v" + commit.version.raw : "\u2014";
+
+    row.appendChild(msg);
     row.appendChild(date);
+    row.appendChild(badge);
     return row;
   }
 
@@ -77,29 +129,76 @@
 
     const incoming = Array.isArray(data.incoming) ? data.incoming : [];
     const recent = Array.isArray(data.recent) ? data.recent : [];
+    const newHashes = new Set(incoming.map((c) => c.hash));
 
-    if (incoming.length) {
-      const label = document.createElement("div");
-      label.className = "cb-update-section-label";
-      label.textContent = "New in this update";
-      bodyEl.appendChild(label);
-      for (const c of incoming) bodyEl.appendChild(commitRow(c, true));
+    // Merge incoming + recent (incoming first), dedupe by hash, parse versions.
+    const seen = new Set();
+    const commits = [];
+    for (const c of incoming.concat(recent)) {
+      if (seen.has(c.hash)) continue;
+      seen.add(c.hash);
+      commits.push({ ...c, isNew: newHashes.has(c.hash), version: parseVersion(c.subject) });
     }
 
-    const label2 = document.createElement("div");
-    label2.className = "cb-update-section-label";
-    label2.textContent = incoming.length ? "Earlier" : "Recent history";
-    bodyEl.appendChild(label2);
+    // Group: major -> minor -> commits[]. Unversioned commits go to "other".
+    const majors = new Map(); // major(number) -> Map<minor, commit[]>
+    const other = [];
+    for (const c of commits) {
+      if (!c.version) { other.push(c); continue; }
+      if (!majors.has(c.version.major)) majors.set(c.version.major, new Map());
+      const minors = majors.get(c.version.major);
+      if (!minors.has(c.version.minor)) minors.set(c.version.minor, []);
+      minors.get(c.version.minor).push(c);
+    }
 
-    const incomingHashes = new Set(incoming.map((c) => c.hash));
-    const earlier = recent.filter((c) => !incomingHashes.has(c.hash));
-    if (earlier.length) {
-      for (const c of earlier) bodyEl.appendChild(commitRow(c, false));
-    } else if (!incoming.length) {
+    if (!commits.length) {
       const empty = document.createElement("div");
       empty.className = "cb-update-empty";
       empty.textContent = "No commit history available.";
       bodyEl.appendChild(empty);
+      return;
+    }
+
+    const sortedMajors = [...majors.keys()].sort((a, b) => b - a);
+    let firstMajor = true;
+    for (const major of sortedMajors) {
+      const minors = majors.get(major);
+      const majorCommits = [...minors.values()].flat();
+      const majorHasNew = majorCommits.some((c) => c.isNew);
+      // Expand the newest major (or any major with incoming commits).
+      const { wrap: majorWrap, childrenEl: majorChildren } = makeGroup(
+        "major",
+        "Version " + major,
+        majorCommits.length,
+        majorHasNew,
+        !(firstMajor || majorHasNew),
+      );
+      bodyEl.appendChild(majorWrap);
+
+      const sortedMinors = [...minors.keys()].sort((a, b) => b - a);
+      let firstMinor = true;
+      for (const minor of sortedMinors) {
+        const rows = minors.get(minor).sort((a, b) => (b.version.patch - a.version.patch));
+        const minorHasNew = rows.some((c) => c.isNew);
+        const { wrap: minorWrap, childrenEl: minorChildren } = makeGroup(
+          "minor",
+          "v" + major + "." + minor,
+          rows.length,
+          minorHasNew,
+          // Expand the newest minor of the newest major, or any with new commits.
+          !((firstMajor && firstMinor) || minorHasNew),
+        );
+        for (const c of rows) minorChildren.appendChild(makeCommitRow(c));
+        majorChildren.appendChild(minorWrap);
+        firstMinor = false;
+      }
+      firstMajor = false;
+    }
+
+    if (other.length) {
+      const { wrap, childrenEl } = makeGroup("major", "Other changes", other.length, false, true);
+      for (const c of other) childrenEl.appendChild(makeCommitRow(c));
+      bodyEl.appendChild(wrap);
     }
   }
 
