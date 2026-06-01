@@ -105,7 +105,7 @@
     return { wrap, childrenEl };
   }
 
-  function makeCommitRow(commit) {
+  function makeCommitRow(commit, inRecent) {
     const { message } = splitVersion(commit.subject);
     const row = document.createElement("div");
     row.className = "cb-update-item" + (commit.isNew ? " cb-update-item-new" : "");
@@ -120,13 +120,16 @@
 
     const badge = document.createElement("span");
     // Badge color: amber for incoming commits, green for the installed-latest
-    // commit when up to date, indigo otherwise.
+    // commit when up to date, indigo for other commits in the most recent
+    // subgroup, grey for everything in the older (grey) subgroups.
     const variantClass =
       commit.badgeVariant === "new"
         ? " cb-update-badge-new"
         : commit.badgeVariant === "current"
           ? " cb-update-badge-current"
-          : "";
+          : inRecent
+            ? " cb-update-badge-recent"
+            : "";
     badge.className = "cb-update-badge" + variantClass;
     badge.textContent = commit.version ? "v" + commit.version.raw : "\u2014";
 
@@ -212,7 +215,7 @@
           // Expand the newest minor of the newest major, or any with new commits.
           !(isMostRecent || minorHasNew),
         );
-        for (const c of rows) minorChildren.appendChild(makeCommitRow(c));
+        for (const c of rows) minorChildren.appendChild(makeCommitRow(c, isMostRecent));
         majorChildren.appendChild(minorWrap);
         firstMinor = false;
       }

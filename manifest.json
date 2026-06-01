@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Clay Scoping Tool",
-  "version": "3.67.9",
+  "version": "3.67.10",
   "description": "Visual scoping canvas for Clay enrichment workflows",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAll7zuEecsPxoH53n1pr1tGjpLSgtnys/afm+mNlvx+l85KcpZEV7l9TbOFShkH0njrYmt9jZQww/htYLpYJ5Bs52MiiHsuuAaVBoxZUsgmJVy0OvQvhM2pwVBwszI3g1ZSGgB9uAu+a9+EoEofSgY0MjjQOAKdNWfs9TjA99PdEhL0JLlwpp5TYnYbvPCKB9zE1RbGp5ErR2LP+YvO2FG2zTJAV1r9npYKoFwGCVp47lx04coTvZHnu52kYV3mGQl7trE43KJF6IXEmsqjkWbQZ5WzrSVCM/eJA6T3mbq3vpjqfFu6+aYFHoOcfNnOpHB9NPrk1OYe5bVjueSIOxuwIDAQAB",
   "permissions": ["activeTab", "cookies", "nativeMessaging", "storage", "alarms"],

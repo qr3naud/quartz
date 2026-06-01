@@ -282,6 +282,12 @@
   white-space: nowrap;
 }
 
+/* Other commits in the most recent subgroup: indigo. */
+.cb-update-badge-recent {
+  background: #eef2ff;
+  color: #4f46e5;
+}
+
 /* Incoming commit: amber. */
 .cb-update-badge-new {
   background: #fef3c7;
