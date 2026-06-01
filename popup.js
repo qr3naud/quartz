@@ -14,7 +14,6 @@
   const supa = window.cbSupabase;
   const statusEl = document.getElementById("cb-popup-status");
   const listEl = document.getElementById("cb-popup-list");
-  const currentBtn = document.getElementById("cb-popup-current");
   const userNameEl = document.getElementById("cb-popup-user-name");
   const userAvatarEl = document.getElementById("cb-popup-user-avatar");
 
@@ -57,9 +56,14 @@
     el.textContent = "";
     if (profilePicture) {
       el.style.backgroundImage = `url("${profilePicture}")`;
+      // White fill behind the image so transparent logos don't show the
+      // indigo initial-fallback color through their cut-out areas.
+      el.style.backgroundColor = "#ffffff";
       return;
     }
-    // Fallback: show first letter of name in a colored circle.
+    // Fallback: show first letter of name on the colored circle (revert any
+    // inline white fill so the white initial stays legible).
+    el.style.backgroundColor = "";
     el.textContent = (name || "?").trim().charAt(0);
   }
 
@@ -367,17 +371,11 @@
       return;
     }
 
-    // Wire up the "Open canvas for current workbook" button. Visible only when
-    // the active tab is already on a Clay workbook.
+    // The active tab (if it's a Clay workbook) only drives the "Current" badge
+    // on the matching list row now.
     chrome.tabs.query({ active: true, currentWindow: true }, async (tabs) => {
       const tab = tabs[0];
       const currentIds = parseClayUrl(tab?.url);
-      if (currentIds) {
-        currentBtn.hidden = false;
-        currentBtn.addEventListener("click", () =>
-          openCanvas(currentIds.workspaceId, currentIds.workbookId),
-        );
-      }
 
       const user = await fetchCurrentUser();
       if (!user) {
