@@ -334,7 +334,8 @@
   justify-content: flex-end;
   gap: 8px;
   padding: 12px 22px;
-  border-top: 1px solid #f1f5f9;
+  background: #f9fafb;
+  border-top: 1px solid #e5e7eb;
 }
 
 .cb-update-btn {
