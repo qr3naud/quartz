@@ -454,6 +454,20 @@
       if (e.key === "Enter") {
         e.preventDefault();
         gotoMatch(e.shiftKey ? -1 : 1);
+      } else if (
+        searchMatchIds.length > 0 &&
+        (e.key === "ArrowDown" || e.key === "ArrowRight")
+      ) {
+        // Arrow navigation only kicks in once there are matches — otherwise
+        // the arrows keep their normal text-cursor behavior in the input.
+        e.preventDefault();
+        gotoMatch(1);
+      } else if (
+        searchMatchIds.length > 0 &&
+        (e.key === "ArrowUp" || e.key === "ArrowLeft")
+      ) {
+        e.preventDefault();
+        gotoMatch(-1);
       } else if (e.key === "Escape") {
         e.preventDefault();
         e.stopPropagation();
@@ -597,8 +611,33 @@
     const row = hostEl.querySelector(`tbody tr[data-row-id="${id}"]`);
     if (!row) return;
     row.classList.add("cb-table-view-row-search-active");
-    if (scroll) {
+    if (scroll) scrollRowIntoView(row);
+  }
+
+  // Scrolls a row into the table viewport while accounting for the sticky
+  // <thead> (top: 0) — a plain scrollIntoView({ block: "nearest" }) would
+  // leave the row tucked partially under the sticky header. Only scrolls when
+  // the row is actually outside the visible band so an in-view active match
+  // doesn't jump.
+  function scrollRowIntoView(row) {
+    const container = hostEl && hostEl.querySelector(".cb-table-view-table-container");
+    if (!container) {
       row.scrollIntoView({ block: "nearest", behavior: "smooth" });
+      return;
+    }
+    const thead = container.querySelector("thead");
+    const headerH = thead ? thead.getBoundingClientRect().height : 0;
+    const margin = 8;
+    const cRect = container.getBoundingClientRect();
+    const rRect = row.getBoundingClientRect();
+    const rowTop = rRect.top - cRect.top + container.scrollTop;
+    const rowBottom = rowTop + rRect.height;
+    const viewTop = container.scrollTop + headerH;
+    const viewBottom = container.scrollTop + container.clientHeight;
+    if (rowTop < viewTop) {
+      container.scrollTo({ top: Math.max(0, rowTop - headerH - margin), behavior: "smooth" });
+    } else if (rowBottom > viewBottom) {
+      container.scrollTo({ top: rowBottom - container.clientHeight + margin, behavior: "smooth" });
     }
   }
 
@@ -1941,16 +1980,13 @@
     return card;
   }
 
-  // Right-click "Insert below" — column-aware. Over the ER column it opens
-  // the enrichment picker (a new enrichment linked to this row's data point);
-  // anywhere else it inserts a new data point directly under the row.
-  function insertBelow(ctx) {
-    if (!ctx) return;
-    if (ctx.col === "er") {
-      startAddEnrichment(parseCardIdFromRowId(ctx.rowId));
-    } else {
-      insertDataPointBelow(ctx.rowId);
-    }
+  // Header "Add data point" action: create an empty DP and immediately open
+  // its name for inline editing (the footer row used to do this inline).
+  function addDataPointInteractive() {
+    const card = startAddDataPoint("");
+    if (!card) return;
+    pendingRenameCardId = card.id;
+    render();
   }
 
   // Create a new data point and slot it immediately after `targetRowId`
@@ -2448,12 +2484,12 @@
   //
   // The menu adapts to the selection and the column the user right-clicked
   // in, and only ever shows applicable actions (no greyed-out entries):
-  //   - single data point row → Rename + Insert below
-  //   - single orphan enrichment row → Insert below
+  //   - single data point row → Rename + Insert data point/enrichment below
+  //   - single orphan enrichment row → Insert data point/enrichment below
   //   - 2+ card rows → Group (and Link when the selection can share an
   //     enrichment)
-  // `ctx` carries { rowId, col } from onRowContextMenu so Insert below can
-  // branch on the column (ER column opens the picker; DP column adds a DP).
+  // `ctx` carries { rowId } from onRowContextMenu identifying the right-
+  // clicked row both insert actions anchor to.
 
   function buildContextItems(ctx) {
     const cardIds = getCardRowsInSelection();
@@ -2492,14 +2528,22 @@
       return items;
     }
 
-    // Single row. Rename applies only to data points; Insert below applies
-    // to any card row (column-aware).
+    // Single row. Rename applies only to data points; both insert actions are
+    // always offered so the user can grow the table by either kind directly
+    // from the row (replaces the old column-aware "Insert below" + footer).
     if (ctx?.rowId != null) {
       const card = getCardForRowId(ctx.rowId);
       if (card?.data?.type === "dp") {
         items.push({ label: "Rename", action: () => startInlineRename(ctx.rowId) });
       }
-      items.push({ label: "Insert below", action: () => insertBelow(ctx) });
+      items.push({
+        label: "Insert data point below",
+        action: () => insertDataPointBelow(ctx.rowId),
+      });
+      items.push({
+        label: "Insert enrichment below",
+        action: () => startAddEnrichment(parseCardIdFromRowId(ctx.rowId)),
+      });
     }
     return items;
   }
@@ -2564,13 +2608,7 @@
     if (!selectedRowIds.has(rowId)) {
       setSelection([rowId], rowId);
     }
-    // Which column the cursor is over decides what "Insert below" does.
-    const col = evt.target.closest(".col-ers")
-      ? "er"
-      : evt.target.closest(".col-dp")
-        ? "dp"
-        : "other";
-    openContextMenu(evt.clientX, evt.clientY, { rowId, col });
+    openContextMenu(evt.clientX, evt.clientY, { rowId });
   }
 
   // ---- Rendering ----
@@ -2653,6 +2691,17 @@
     scopeAudiencesBtn.addEventListener("click", () => startScope("audiences"));
     introActions.appendChild(scopeAudiencesBtn);
 
+    // "Add data point" lives here now that the sticky footer row is gone —
+    // creates an empty DP and opens its name for inline editing. The two
+    // granular "Add X" actions sit next to each other.
+    const addDpBtn = document.createElement("button");
+    addDpBtn.type = "button";
+    addDpBtn.className = "cb-table-view-add-er-btn";
+    addDpBtn.title = "Add a data point";
+    addDpBtn.innerHTML = plusSvg(12) + "<span>Add data point</span>";
+    addDpBtn.addEventListener("click", () => addDataPointInteractive());
+    introActions.appendChild(addDpBtn);
+
     const addOrphanErBtn = document.createElement("button");
     addOrphanErBtn.type = "button";
     addOrphanErBtn.className = "cb-table-view-add-er-btn";
@@ -2719,7 +2768,7 @@
       const td = document.createElement("td");
       td.colSpan = headers.length;
       td.textContent =
-        "No data points yet. Click \u201cUpload POC\u201d to import from a doc, \u201c+ Add data point\u201d below, or \u201cAdd enrichment\u201d above to get started.";
+        "No data points yet. Use \u201cUpload POC\u201d to import from a doc, or \u201c+ Add data point\u201d / \u201cAdd enrichment\u201d above to get started.";
       empty.appendChild(td);
       tbody.appendChild(empty);
     } else {
@@ -2887,8 +2936,6 @@
         }
       }
     }
-
-    tbody.appendChild(buildAddDpRow(headers.length));
 
     table.appendChild(tbody);
     tableContainer.appendChild(table);
@@ -4102,55 +4149,6 @@
       }
     });
 
-    return tr;
-  }
-
-  function buildAddDpRow(colSpan) {
-    const tr = document.createElement("tr");
-    tr.className = "cb-table-view-add-dp-row";
-    const td = document.createElement("td");
-    td.colSpan = colSpan;
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.className = "cb-table-view-add-dp-btn";
-    btn.innerHTML = plusSvg(12) + "<span>Add data point</span>";
-    btn.addEventListener("click", () => {
-      // Render an inline input in place of the button so the user can type
-      // immediately without a modal. On Enter we create the canvas card and
-      // re-render, which puts the new row into the table. On blur with empty
-      // text we drop the input and restore the button.
-      td.innerHTML = "";
-      const input = document.createElement("input");
-      input.type = "text";
-      input.className = "cb-table-view-add-dp-input";
-      input.placeholder = "Type data point name and press Enter\u2026";
-      td.appendChild(input);
-      input.focus();
-      let committed = false;
-      input.addEventListener("keydown", (evt) => {
-        if (evt.key === "Enter") {
-          evt.preventDefault();
-          commit();
-        } else if (evt.key === "Escape") {
-          evt.preventDefault();
-          render();
-        }
-      });
-      input.addEventListener("blur", () => {
-        if (!committed) commit();
-      });
-      function commit() {
-        if (committed) return;
-        committed = true;
-        const text = input.value.trim();
-        if (text.length > 0) {
-          startAddDataPoint(text);
-        }
-        render();
-      }
-    });
-    td.appendChild(btn);
-    tr.appendChild(td);
     return tr;
   }
 

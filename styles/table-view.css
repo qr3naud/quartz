@@ -164,7 +164,6 @@
 
 .cb-table-view-search-input:focus {
   border-color: #a5b4fc;
-  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.18);
 }
 
 .cb-table-view-search-input::placeholder {
@@ -1544,63 +1543,7 @@
   color: #6b7280;
 }
 
-/* ---- Add data point footer row ---- */
-
-.cb-table-view-add-dp-row td {
-  padding: 0 !important;
-  border-top: 1px solid #e5e7eb;
-  background: #f9fafb;
-  /* Pin to the bottom of the scroll viewport so "+ Add data point" is always
-     reachable, even on long tables. Opaque bg covers rows scrolling under it. */
-  position: sticky;
-  bottom: 0;
-  z-index: 3;
-}
-
-.cb-table-view-add-dp-btn {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  width: 100%;
-  padding: 12px 14px;
-  background: transparent;
-  border: none;
-  color: #6366f1;
-  font-size: 13px;
-  font-weight: 500;
-  text-align: left;
-  cursor: pointer;
-  transition: background 0.12s, color 0.12s;
-}
-
-.cb-table-view-add-dp-btn:hover {
-  background: #eef2ff;
-  color: #4338ca;
-}
-
-.cb-table-view-add-dp-input {
-  width: 100%;
-  padding: 12px 14px;
-  background: #ffffff;
-  border: none;
-  border-top: 2px solid #6366f1;
-  font-family: inherit;
-  font-size: 13px;
-  color: #111827;
-  box-sizing: border-box;
-}
-
-.cb-table-view-add-dp-input:focus {
-  outline: none;
-  background: #ffffff;
-}
-
 /* ---- Empty state ---- */
-/* Match the Add data point footer row's content height exactly so the
-   "No data points yet…" message and the "+ Add data point" button form a
-   visually balanced two-row stack instead of a tiny line + a fat button.
-   Padding mirrors .cb-table-view-add-dp-btn (12px 14px), font-size matches
-   too — that puts both rows at the same intrinsic line-box height. */
 .cb-table-view-empty-row td {
   padding: 12px 14px !important;
   text-align: center;
