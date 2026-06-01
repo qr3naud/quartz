@@ -2021,8 +2021,12 @@
   }
 
   function closeErShareMenu() {
-    if (erShareMenuEl) { erShareMenuEl.remove(); erShareMenuEl = null; }
-    if (erShareMenuBackdrop) { erShareMenuBackdrop.remove(); erShareMenuBackdrop = null; }
+    // Defensive: blur + Enter can both fire commit -> closeErShareMenu, and a
+    // commit re-render can detach the nodes first, so guard the removals.
+    try { if (erShareMenuEl) erShareMenuEl.remove(); } catch (e) { /* already detached */ }
+    try { if (erShareMenuBackdrop) erShareMenuBackdrop.remove(); } catch (e) { /* already detached */ }
+    erShareMenuEl = null;
+    erShareMenuBackdrop = null;
   }
 
   // Small popover anchored to a chip's % badge: edit this ER's run-share, and
@@ -2055,13 +2059,16 @@
     input.value = String(Math.round((er.runShare ?? 0) * 100));
     const pctLabel = document.createElement("span");
     pctLabel.textContent = "% of rows";
+    let committed = false;
     const commit = () => {
+      if (committed) return; // blur + Enter can both fire — commit once
+      committed = true;
       commitDpShare(er.dpCardId, er.id, input.value);
       closeErShareMenu();
     };
     input.addEventListener("keydown", (evt) => {
       if (evt.key === "Enter") { evt.preventDefault(); commit(); }
-      else if (evt.key === "Escape") { evt.preventDefault(); closeErShareMenu(); }
+      else if (evt.key === "Escape") { evt.preventDefault(); committed = true; closeErShareMenu(); }
     });
     input.addEventListener("blur", commit);
     row.appendChild(input);

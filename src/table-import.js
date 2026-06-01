@@ -273,6 +273,20 @@
   // Returns a stat block matching the rest of buildStatsByFieldId's output
   // shape, or null when there's no usable data on this field.
   // ---------------------------------------------------------------------------
+  // Statuses where the enrichment never actually EXECUTED on the row (no API
+  // call, no credits) — so they must be peeled out of the coverage numerator:
+  //   - ERROR_RUN_CONDITION_NOT_MET — the run-condition formula was false. The
+  //     server buckets this into successCount (isStatusTreatedAsSuccess), so we
+  //     subtract it from success.
+  //   - ERROR_MISSING_INPUT ("Missing input") / ERROR_BLANK_TOKEN ("Some inputs
+  //     missing") — the action's required input was empty, so it was skipped.
+  //     These land in errorCount, so we subtract them from error.
+  // Without peeling the input-missing ones, a fallback/second-tier enrichment
+  // that's skipped on most rows reads as 100% coverage (verified: "Validate
+  // Claygent Domain" showed 650/650 while most cells said "Missing input").
+  const COND_SKIP_STATUS = "ERROR_RUN_CONDITION_NOT_MET";
+  const INPUT_MISSING_STATUSES = new Set(["ERROR_MISSING_INPUT", "ERROR_BLANK_TOKEN"]);
+
   function deriveActionStatsFromDataProfile(dp) {
     if (!dp) return null;
     const success = Number(dp.successCount) || 0;
@@ -280,23 +294,25 @@
     const inProgress = Number(dp.inProgressCount) || 0;
     const total = Number(dp.totalRecords) || 0;
 
-    let condNotMet = 0;
+    let condNotMet = 0;     // not-run rows the server counted as success
+    let inputMissing = 0;   // not-run rows the server counted as error
     if (Array.isArray(dp.statusBreakdown)) {
       for (const entry of dp.statusBreakdown) {
-        if (entry?.status === "ERROR_RUN_CONDITION_NOT_MET") {
-          condNotMet += Number(entry.count) || 0;
-        }
+        const c = Number(entry?.count) || 0;
+        if (entry?.status === COND_SKIP_STATUS) condNotMet += c;
+        else if (INPUT_MISSING_STATUSES.has(entry?.status)) inputMissing += c;
       }
     }
 
     const adjustedSuccess = Math.max(0, success - condNotMet);
-    const ran = adjustedSuccess + error + inProgress;
+    const adjustedError = Math.max(0, error - inputMissing);
+    const ran = adjustedSuccess + adjustedError + inProgress;
 
     if (ran <= 0 || total <= 0) return null;
     return {
       coverage: { ran, total },
       fillRate: { success: adjustedSuccess, ran },
-      condNotMet,
+      condNotMet: condNotMet + inputMissing,
     };
   }
 

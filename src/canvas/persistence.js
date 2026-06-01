@@ -147,6 +147,11 @@
             tableId: cs.data.tableId,
             viewId: cs.data.viewId,
             sourceEnrichmentFieldId: cs.data.sourceEnrichmentFieldId,
+            // Multi-ER lineage + run-shares — restore verbatim so a DP linked to
+            // several enrichments keeps its chips, % badges, and grouping across
+            // reload / tab switch / realtime sync.
+            sourceEnrichmentFieldIds: cs.data.sourceEnrichmentFieldIds,
+            sourceEnrichmentShares: cs.data.sourceEnrichmentShares,
             note: cs.data.note,
           });
         }

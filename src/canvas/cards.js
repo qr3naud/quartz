@@ -1073,6 +1073,17 @@
         // enrichments + shares cost by this field, independent of canvas
         // clusters/geometry. Null for manual / unmatched data points.
         sourceEnrichmentFieldId: opts?.sourceEnrichmentFieldId ?? null,
+        // Multi-ER lineage: the full ordered key set (index 0 = primary) when a
+        // DP derives from more than one enrichment, plus the per-key run-share
+        // map. Only persisted/restored when present so single-ER cards stay
+        // compact. Restored verbatim so the chips + % badges + grouping survive
+        // reload (the scalar above is kept in sync as the primary).
+        ...(Array.isArray(opts?.sourceEnrichmentFieldIds) && opts.sourceEnrichmentFieldIds.length > 1
+          ? { sourceEnrichmentFieldIds: opts.sourceEnrichmentFieldIds.slice() }
+          : {}),
+        ...(opts?.sourceEnrichmentShares && typeof opts.sourceEnrichmentShares === "object"
+          ? { sourceEnrichmentShares: { ...opts.sourceEnrichmentShares } }
+          : {}),
         // Source-table presentation tags (set by the Import Clay Table flow).
         // tableName labels the per-table section; importColor cycles per
         // distinct imported table so the table view renders each as its own
