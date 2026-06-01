@@ -35,12 +35,43 @@
   // application-level errors that a retry won't fix.
   const WRITE_RETRY_DELAYS_MS = [400, 1200, 3600];
 
-  // Resolves a Bearer token for the Authorization header. In the content
-  // script context, __cb.getSupabaseJwt() is available and asynchronously
-  // fetches/refreshes the Clay-user JWT. In the popup context (which loads
-  // this file without the rest of the __cb namespace) we fall back to the
-  // anon key, which is enough to read public-no-RLS data and harmless
-  // against RLS-gated rows (it gets no rows back).
+  // Popup / extension-page JWT cache. The popup loads this file without the
+  // rest of the __cb namespace, so it can't use __cb.getSupabaseJwt(). Instead
+  // it asks the service worker to mint a JWT (cb:auth:mint) — the same path
+  // src/auth.js uses — and caches it for the (short) life of the popup.
+  let popupJwt = null;
+  let popupJwtExpiresAt = 0;
+  const POPUP_JWT_REFRESH_WINDOW_MS = 5 * 60 * 1000;
+
+  /** Asks the service worker to read the Clay cookie and exchange it for a
+   *  per-user, workspace-scoped JWT. Resolves the mint payload or null. */
+  function mintViaServiceWorker() {
+    return new Promise((resolve) => {
+      try {
+        chrome.runtime.sendMessage({ type: "cb:auth:mint" }, (resp) => {
+          if (chrome.runtime.lastError || !resp || resp.ok !== true) {
+            resolve(null);
+            return;
+          }
+          resolve(resp.payload || null);
+        });
+      } catch {
+        resolve(null);
+      }
+    });
+  }
+
+  /** Resets the popup JWT cache so the next request re-mints (used on 401). */
+  function clearPopupJwt() {
+    popupJwt = null;
+    popupJwtExpiresAt = 0;
+  }
+
+  // Resolves a Bearer token for the Authorization header.
+  // - Content-script context: __cb.getSupabaseJwt() fetches/refreshes the JWT.
+  // - Popup/extension context: mint via the service worker (cb:auth:mint).
+  // Falls back to the anon publishable key only when neither path yields a JWT
+  // (the anon role is RLS-revoked, so it simply returns no rows).
   async function resolveBearer() {
     if (typeof window !== "undefined" && window.__cb && typeof window.__cb.getSupabaseJwt === "function") {
       try {
@@ -48,6 +79,18 @@
         if (jwt) return jwt;
       } catch (err) {
         console.warn("[Clay Scoping] failed to resolve Supabase JWT, falling back to anon:", err?.message || err);
+      }
+      return SUPABASE_ANON_KEY;
+    }
+    if (typeof chrome !== "undefined" && chrome.runtime && typeof chrome.runtime.sendMessage === "function") {
+      if (popupJwt && popupJwtExpiresAt - Date.now() > POPUP_JWT_REFRESH_WINDOW_MS) {
+        return popupJwt;
+      }
+      const payload = await mintViaServiceWorker();
+      if (payload && payload.jwt) {
+        popupJwt = payload.jwt;
+        popupJwtExpiresAt = typeof payload.expiresAt === "number" ? payload.expiresAt : 0;
+        return popupJwt;
       }
     }
     return SUPABASE_ANON_KEY;
@@ -97,8 +140,11 @@
           // 401 means the JWT is stale or invalid — drop the cached copy so
           // the next call mints a fresh one. We don't retry inline because
           // the caller should decide whether to surface the error.
-          if (res.status === 401 && typeof window !== "undefined" && window.__cb?.clearSupabaseJwt) {
-            window.__cb.clearSupabaseJwt();
+          if (res.status === 401) {
+            if (typeof window !== "undefined" && window.__cb?.clearSupabaseJwt) {
+              window.__cb.clearSupabaseJwt();
+            }
+            clearPopupJwt();
           }
           const text = await res.text().catch(() => "");
           // 42501 = Postgres RLS rejection. Almost always means the cached JWT
