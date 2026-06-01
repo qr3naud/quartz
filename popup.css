@@ -27,7 +27,8 @@ body {
     sans-serif;
   font-size: 13px;
   color: var(--cb-fg);
-  background: var(--cb-bg);
+  /* Transparent so the rounded popup corners aren't framed by a white box. */
+  background: transparent;
 }
 
 .cb-popup {
@@ -35,6 +36,9 @@ body {
   max-height: 540px;
   display: flex;
   flex-direction: column;
+  background: var(--cb-bg);
+  border-radius: 12px;
+  overflow: hidden;
 }
 
 .cb-popup-header {
@@ -62,10 +66,56 @@ body {
   text-overflow: ellipsis;
 }
 
-.cb-popup-user-sub {
-  font-size: 11px;
-  color: var(--cb-fg-muted);
-  margin-top: 2px;
+/* Quartz brand bar — mirrors the update modal header: wordmark + GitHub link
+   on the left, a green/amber version pill on the right. */
+.cb-popup-brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--cb-border);
+}
+
+.cb-popup-brand-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: #111827;
+}
+
+.cb-popup-gh {
+  display: inline-flex;
+  align-items: center;
+  color: #9ca3af;
+  text-decoration: none;
+  transition: color 0.12s ease;
+}
+
+.cb-popup-gh:hover {
+  color: #111827;
+}
+
+.cb-popup-version {
+  margin-left: auto;
+  font-size: 13px;
+  font-weight: 700;
+  padding: 3px 11px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.cb-popup-version-ok {
+  background: #dcfce7;
+  color: #15803d;
+}
+
+.cb-popup-version-behind {
+  background: #fef3c7;
+  color: #b45309;
+}
+
+.cb-popup-version-loading {
+  background: #f1f5f9;
+  color: #6b7280;
 }
 
 /* Reusable avatar element. Two sizes: default (24px, rows) and sm (32px, header). */
@@ -95,15 +145,14 @@ body {
   font-size: 12px;
 }
 
-/* "Update available" banner — only shown when the background check found the
-   cloned repo is behind origin. Mirrors the loud toolbar-icon cue with a red
-   accent so it's hard to miss when the user clicks the badged icon. */
+/* "Update available" banner — only shown when the repo is behind origin.
+   Amber, matching the update modal's "update available" language. */
 .cb-popup-update {
   display: flex;
   align-items: center;
   gap: 8px;
   padding: 10px 16px;
-  background: #fff4f4;
+  background: #fffbeb;
   border-bottom: 1px solid var(--cb-border);
 }
 
@@ -112,7 +161,7 @@ body {
   min-width: 0;
   font-size: 12px;
   font-weight: 600;
-  color: #b42318;
+  color: #b45309;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -125,14 +174,14 @@ body {
   font-weight: 600;
   border-radius: 6px;
   border: none;
-  background: #e5484d;
+  background: #d97706;
   color: #ffffff;
   cursor: pointer;
   font-family: inherit;
 }
 
 .cb-popup-update-btn:hover {
-  background: #c93b40;
+  background: #b45309;
 }
 
 .cb-popup-update-btn:disabled {

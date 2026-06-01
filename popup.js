@@ -126,62 +126,42 @@
     }
   }
 
-  /** Returns contributor rows with embedded canvas metadata AND user info
-   *  for the last editor. Sorted by most-recently accessed first.
-   *
-   *  When `workspaceId` is supplied (the active Chrome tab is on a Clay
-   *  workspace URL), results are filtered to that workspace via an inner
-   *  join on `canvases.workspace_id`. This is the UX boundary that keeps
-   *  a customer in workspace X from seeing canvases owned by workspace Y
-   *  in the popup list — see the workspace-partition note in the build
-   *  spec for why this is currently client-side only.
-   */
-  async function fetchCanvases(userId, workspaceId) {
-    // PostgREST resource embedding:
-    // - canvases!inner(...) pulls workspace_id + workbook_name AND lets us
-    //   filter on `canvases.workspace_id=eq.<id>`. The !inner hint forces
-    //   PostgREST to drop contributor rows whose embedded canvas falls
-    //   outside the workspace filter (without it, rows with a non-matching
-    //   canvas would come back with `canvases: null` and we'd have to
-    //   filter client-side).
-    // - editor names/avatars are resolved in a second query
-    //   (fetchUsersByIds) because canvases.updated_by isn't a formal FK.
-    const query = {
-      user_id: `eq.${userId}`,
-      select: "workbook_id,last_accessed_at,canvases!inner(workspace_id,workbook_name,updated_at,updated_by)",
-      order: "last_accessed_at.desc",
-      limit: "50",
-    };
-    if (workspaceId) {
-      query["canvases.workspace_id"] = `eq.${workspaceId}`;
-    }
-    return supa.supabaseFetch("canvas_contributors", "GET", { query });
+  /** Returns the user's contributor rows with embedded canvas metadata,
+   *  across all their workspaces (RLS scopes to workspaces they belong to).
+   *  Sorted by most-recently accessed first. */
+  async function fetchCanvases(userId) {
+    return supa.supabaseFetch("canvas_contributors", "GET", {
+      query: {
+        user_id: `eq.${userId}`,
+        select: "workbook_id,last_accessed_at,canvases!inner(workspace_id,workbook_name,updated_at)",
+        order: "last_accessed_at.desc",
+        limit: "50",
+      },
+    });
   }
 
-  /**
-   * Given a list of user ids, fetches name + profile_picture for each.
-   * Returns a Map<id, { name, profile_picture }>.
-   *
-   * We do this as a separate query (rather than a PostgREST embed) because
-   * `canvases.updated_by` is not a formal foreign key (it can contain
-   * "unknown" when a save happens before the user fetch resolves).
-   */
-  async function fetchUsersByIds(ids) {
-    const byId = new Map();
-    const filtered = [...new Set(ids)].filter(id => id && id !== "unknown");
-    if (filtered.length === 0) return byId;
+  // Workspace name + avatar lookups (Clay API), cached for the popup session.
+  const workspaceMetaCache = new Map();
+
+  /** Fetches a workspace's display name + avatar from Clay. Best-effort:
+   *  on any failure returns a generic name with no avatar. */
+  async function fetchWorkspaceMeta(workspaceId) {
+    if (!workspaceId) return { name: "Workspace", avatarUrl: null };
+    if (workspaceMetaCache.has(workspaceId)) return workspaceMetaCache.get(workspaceId);
+    let meta = { name: "Workspace", avatarUrl: null };
     try {
-      const rows = await supa.supabaseFetch("users", "GET", {
-        query: {
-          id: `in.(${filtered.join(",")})`,
-          select: "id,name,profile_picture",
-        },
+      const res = await fetch(`https://api.clay.com/v3/workspaces/${workspaceId}`, {
+        credentials: "include",
       });
-      for (const row of rows || []) byId.set(row.id, row);
+      if (res.ok) {
+        const data = await res.json();
+        meta = { name: data?.name || "Workspace", avatarUrl: data?.icon?.url || null };
+      }
     } catch (err) {
-      console.warn("[Clay Scoping Popup] users lookup failed:", err);
+      console.warn("[Quartz Popup] workspace meta fetch failed:", err);
     }
-    return byId;
+    workspaceMetaCache.set(workspaceId, meta);
+    return meta;
   }
 
   function formatRelative(isoDate) {
@@ -216,21 +196,11 @@
     });
   }
 
-  function renderList(rows, currentIds, usersById, currentUserId) {
+  function renderList(rows, currentIds, wsMetaById) {
     listEl.innerHTML = "";
 
     if (!rows || rows.length === 0) {
-      if (!currentIds) {
-        // No active Clay tab. Without a workspace we deliberately skip the
-        // fetch (see init below) and tell the user how to populate the list.
-        showStatus("Open a Clay workbook to see your canvases here.");
-      } else {
-        // Neutral wording: the popup runs in extension context with no access
-        // to the content script's __cb namespace, so we can't ask
-        // hasFeature("internal_branding") whether the toolbar button reads
-        // "Quartz" or "Scoping". "Canvas button" is correct for both.
-        showStatus("No saved canvases yet. Open the canvas button on a workbook to start.");
-      }
+      showStatus("No canvases yet. Open Quartz on a workbook to start one.");
       return;
     }
 
@@ -241,12 +211,12 @@
       const li = document.createElement("li");
       li.className = "cb-popup-item";
 
-      const editorId = row.canvases?.updated_by;
-      const editor = editorId ? usersById.get(editorId) : null;
+      const workspaceId = row.canvases?.workspace_id;
+      const ws = (workspaceId && wsMetaById.get(workspaceId)) || { name: "Workspace", avatarUrl: null };
 
       const avatar = document.createElement("div");
       avatar.className = "cb-popup-avatar";
-      renderAvatar(avatar, editor?.profile_picture, editor?.name || editorId);
+      renderAvatar(avatar, ws.avatarUrl, ws.name);
 
       const body = document.createElement("div");
       body.className = "cb-popup-item-body";
@@ -265,10 +235,8 @@
 
       const meta = document.createElement("div");
       meta.className = "cb-popup-item-meta";
-      const editorLabel = editor?.name
-        ? (editorId === currentUserId ? "you" : editor.name)
-        : editorId || "unknown";
-      meta.textContent = `Last edited ${formatRelative(row.canvases?.updated_at || row.last_accessed_at)} by ${editorLabel}`;
+      const edited = formatRelative(row.canvases?.updated_at || row.last_accessed_at);
+      meta.textContent = `${ws.name} · edited ${edited}`;
 
       body.appendChild(title);
       body.appendChild(meta);
@@ -276,7 +244,6 @@
       li.appendChild(avatar);
       li.appendChild(body);
 
-      const workspaceId = row.canvases?.workspace_id;
       if (workspaceId) {
         li.addEventListener("click", () => openCanvas(workspaceId, row.workbook_id));
       } else {
@@ -301,7 +268,18 @@
     const box = document.getElementById("cb-popup-update");
     const textEl = document.getElementById("cb-popup-update-text");
     const btn = document.getElementById("cb-popup-update-btn");
-    if (!box || !textEl || !btn) return;
+    const versionEl = document.getElementById("cb-popup-version");
+    if (!box || !textEl || !btn || !versionEl) return;
+
+    const currentVersion =
+      (chrome.runtime.getManifest && chrome.runtime.getManifest().version) || "";
+
+    // The version pill mirrors the update modal: green up to date, amber
+    // behind, grey while unconfirmed.
+    function setVersionPill(state) {
+      versionEl.textContent = currentVersion ? `v${currentVersion}` : "";
+      versionEl.className = "cb-popup-version cb-popup-version-" + state;
+    }
 
     function showBanner(info) {
       if (!info || !info.behind) {
@@ -319,8 +297,12 @@
       textEl.textContent = "Updating…";
       chrome.runtime.sendMessage({ type }, (res) => {
         const lastErr = chrome.runtime.lastError;
-        if (lastErr || !res || res.ok === false) {
-          btn.disabled = false;
+        // Success: the service worker reloads the extension (which closes this
+        // popup). A closed channel / updated:true means the reload is underway
+        // — stay on "Updating…", never flash an error. Same as the modal.
+        if (lastErr || (res && res.ok && res.updated)) return;
+        btn.disabled = false;
+        if (!res || res.ok === false) {
           if (res && res.error === "host-missing") {
             textEl.textContent = "One-time setup needed";
             btn.textContent = "Copy setup command";
@@ -345,26 +327,31 @@
           textEl.textContent = "You're on the latest version";
           btn.hidden = true;
         }
-        // res.ok && res.updated -> extension reloads, popup closes.
       });
     }
 
     btn.onclick = () => runUpdate("cb:update:pull");
 
-    // Instant banner from the SW's cached status, then a live re-check that is
-    // the source of truth. If the live check can't be confirmed (helper not
-    // installed, host error) or reports up-to-date, hide the banner — never
-    // leave a stale "Update available" claim, which is what caused the popup
-    // and the overlay to disagree.
+    // Instant pill + banner from the SW's cached status, then a live re-check
+    // that is the source of truth.
     try {
-      chrome.storage.local.get("quartzUpdateInfo", (r) => showBanner(r && r.quartzUpdateInfo));
+      chrome.storage.local.get("quartzUpdateInfo", (r) => {
+        const info = r && r.quartzUpdateInfo;
+        if (info) {
+          setVersionPill(info.behind ? "behind" : "ok");
+          showBanner(info);
+        }
+      });
     } catch {}
     chrome.runtime.sendMessage({ type: "cb:update:status" }, (res) => {
       if (chrome.runtime.lastError || !res || !res.ok) {
-        showBanner(null); // unconfirmed -> don't claim an update is available
+        setVersionPill("loading"); // unconfirmed (e.g. helper not installed)
+        showBanner(null);
         return;
       }
-      showBanner({ behind: (res.behind || 0) > 0, latestVersion: res.latestVersion });
+      const behind = (res.behind || 0) > 0;
+      setVersionPill(behind ? "behind" : "ok");
+      showBanner({ behind, latestVersion: res.latestVersion });
     });
   }
 
@@ -402,26 +389,18 @@
       userNameEl.textContent = user.name || "Clay user";
       renderAvatar(userAvatarEl, user.profilePicture, user.name);
 
-      // The popup runs in the extension's own context, so the "current
-      // workspace" comes from the active Chrome tab (parseClayUrl above).
-      // When the user opens the popup on a non-Clay page, we have no
-      // workspace context — skip the fetch and let renderList show the
-      // "Open a Clay workbook" empty state. This is the partition that
-      // keeps customers from seeing cross-workspace canvases in the list.
-      if (!currentIds) {
-        renderList([], null, new Map(), user.id);
-        return;
-      }
-
       try {
-        const rows = await fetchCanvases(user.id, currentIds.workspaceId);
-        // Collect the set of user ids we'll need avatars/names for, then
-        // fetch them in one round-trip.
-        const editorIds = (rows || [])
-          .map(r => r.canvases?.updated_by)
-          .filter(Boolean);
-        const usersById = await fetchUsersByIds(editorIds);
-        renderList(rows, currentIds, usersById, user.id);
+        // All of the user's canvases across every workspace they belong to
+        // (RLS scopes the rows to those workspaces). Each row is labeled with
+        // its own workspace's name + avatar, fetched from Clay and cached.
+        const rows = await fetchCanvases(user.id);
+        const wsIds = [
+          ...new Set((rows || []).map(r => r.canvases?.workspace_id).filter(Boolean)),
+        ];
+        const metas = await Promise.all(wsIds.map(id => fetchWorkspaceMeta(id)));
+        const wsMetaById = new Map();
+        wsIds.forEach((id, i) => wsMetaById.set(id, metas[i]));
+        renderList(rows, currentIds, wsMetaById);
       } catch (err) {
         console.error("[Clay Scoping Popup] fetchCanvases failed:", err);
         showStatus("Couldn't load canvases from the server.", true);
