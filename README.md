@@ -16,21 +16,34 @@ A Chrome extension that adds a visual scoping canvas to Clay workbooks for plann
 
 *One-time, ~3 minutes per machine. After this, updating is a single click — no Terminal.*
 
-### 1. Clone the repo
+### 1. Run the one-line installer
 
 Open the **Terminal** app (on macOS: press `Cmd + Space`, type "Terminal", press Enter), then paste this command and press Enter:
 
 ```bash
-git clone https://github.com/qr3naud/quartz.git ~/Quartz
+curl -fsSL https://raw.githubusercontent.com/qr3naud/quartz/main/scripts/bootstrap.sh | bash
 ```
 
-This creates a folder called `Quartz` in your **home folder** and downloads the latest version of the extension into it.
+That single line does everything for you, no matter what you have installed: it finds (or installs) a working `git`, downloads the extension into `~/Quartz`, and turns on one-click updates. When it finishes it prints the Chrome steps below.
 
-> **Important — don't use Downloads, Desktop, or Documents.** macOS protects those folders, and Chrome can't run the one-click updater from them (you'd be stuck on "Setup needed"). Your home folder (`~/Quartz`) works. If you previously cloned into `~/Downloads`, move it: `mv ~/Downloads/Quartz ~/Quartz` and re-load it in Chrome.
+> **If a macOS popup asks you to install developer tools:** that means you have no working `git` yet. Click **Install**, wait for it to finish (a few minutes), then **paste the same command again**. (It's safe to re-run any time.)
 
-> **Heads-up:** don't delete this folder — the extension reads from it every time Chrome starts. If you ever do delete it by accident, just re-run the clone command above.
+> **Important — it installs to your home folder (`~/Quartz`), on purpose.** macOS protects Downloads, Desktop, and Documents, and Chrome can't run the one-click updater from those. Don't move or delete the `Quartz` folder — the extension reads from it every time Chrome starts. If you ever delete it by accident, just re-run the line above.
 
-> **First time using `git`?** macOS will prompt you to install the **Xcode Command Line Tools** the first time you run a `git` command. Click **Install** in the popup and wait for it to finish (a few minutes), then re-run the command above.
+<details>
+<summary>Prefer to run the steps manually?</summary>
+
+```bash
+# 1. Download into your home folder
+git clone https://github.com/qr3naud/quartz.git ~/Quartz
+
+# 2. Enable one-click updates
+bash ~/Quartz/scripts/install-updater.sh
+```
+
+If `git` is missing or broken (e.g. `git: 'remote-https' is not a git command`), see [Troubleshooting](#troubleshooting) — or just use the one-line installer above, which handles it automatically.
+
+</details>
 
 ### 2. Load it into Chrome
 
@@ -39,19 +52,9 @@ This creates a folder called `Quartz` in your **home folder** and downloads the 
 3. Click **Load unpacked** (button on the left)
 4. In the file picker, select the `Quartz` folder in your home folder, then click **Select** / **Open**
 
-You should now see a card titled **Quartz** in the extensions list.
+You should now see a card titled **Quartz** in the extensions list. (One-click updates were already enabled by the installer in step 1 — if you used the manual fallback instead, run `bash ~/Quartz/scripts/install-updater.sh` now and reload the card once.)
 
-### 3. Enable one-click updates
-
-This registers a tiny helper so the **Update** button inside the extension can pull new versions for you. Run it once in Terminal:
-
-```bash
-bash ~/Quartz/scripts/install-updater.sh
-```
-
-Then go back to [`chrome://extensions`](chrome://extensions) and click the **circular refresh icon** on the **Quartz** card once, so the new permissions take effect.
-
-### 4. Confirm it works
+### 3. Confirm it works
 
 Open any Clay workbook (e.g. `https://app.clay.com/workspaces/...`). You should see a **Quartz** button in the workbook toolbar. Click it to open the canvas.
 
@@ -63,7 +66,7 @@ If you don't see the button, reload the Clay tab. Still missing? See [Troublesho
 
 ## Update
 
-Once one-click updates are enabled (Install step 3), you don't need Terminal anymore.
+Once one-click updates are enabled (the installer in Install step 1 does this), you don't need Terminal anymore.
 
 **When an update is available**, the extension's toolbar icon shows a red badge and flips upside-down. To update:
 
@@ -72,7 +75,7 @@ Once one-click updates are enabled (Install step 3), you don't need Terminal any
 
 The extension pulls the latest version, reloads itself, and refreshes your open Clay tabs automatically.
 
-> **Manual fallback** (if you skipped step 3 or the helper isn't working):
+> **Manual fallback** (if the one-click helper isn't working):
 >
 > ```bash
 > cd ~/Quartz && git pull
@@ -89,7 +92,7 @@ The extension's ID is now pinned (so the updater helper can talk to it), and it 
 1. Move it out of Downloads (one-time): `mv ~/Downloads/Quartz ~/Quartz` — or, if your folder is still named `clay-scoping-extension`, re-clone per Install step 1.
 2. Pull the latest: `cd ~/Quartz && git pull`.
 3. At [`chrome://extensions`](chrome://extensions), **Remove** the old **Quartz** card, then **Load unpacked** the `~/Quartz` folder.
-4. Run Install step 3 to enable one-click updates.
+4. Run the one-line installer from Install step 1 to enable one-click updates (it's safe to re-run).
 
 Your canvases are safe — they live in the cloud, not in the extension.
 
@@ -101,13 +104,16 @@ Your canvases are safe — they live in the cloud, not in the extension.
 Reload the Clay tab first. If it's still missing, go to [`chrome://extensions`](chrome://extensions), click the refresh icon on the **Quartz** card, then reload Clay again.
 
 **Terminal says `git: command not found`**
-You need Apple's developer tools. Run this in Terminal and click **Install** in the popup:
+You need Apple's developer tools. The one-line installer (Install step 1) does this for you. To do it by hand, run this and click **Install** in the popup:
 
 ```bash
 xcode-select --install
 ```
 
-Wait for it to finish, then re-run the clone command.
+Wait for it to finish, then re-run the installer.
+
+**Terminal says `git: 'remote-https' is not a git command` (or `templates not found in //share/git-core/templates`)**
+Your `git` itself is broken — usually a stray copy from conda/Miniconda or an old Homebrew install that sits ahead of Apple's working `git` on your `PATH`. **Just use the one-line installer in [Install step 1](#1-run-the-one-line-installer)** — it automatically detects the broken `git`, skips it, and uses Apple's working one instead. (If you must clone by hand, run it as `/usr/bin/git clone https://github.com/qr3naud/quartz.git ~/Quartz` to force the good copy.)
 
 **The Update button says "Local changes block update" / "Conflict"**
 This means files in your `Quartz` folder have been modified locally (you probably don't want to keep those changes — you just want the latest version from GitHub). Use **Force update** in the popup, or reset manually:

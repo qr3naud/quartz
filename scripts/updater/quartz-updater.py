@@ -29,26 +29,61 @@ from shutil import which
 # scripts/updater/quartz-updater.py -> repo root is two levels up.
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
 
+# A broken git install can leak a bad GIT_EXEC_PATH / GIT_TEMPLATE_DIR into the
+# environment, which then poisons even a good git. Run git without them.
+GIT_ENV = {k: v for k, v in os.environ.items() if k not in ("GIT_EXEC_PATH", "GIT_TEMPLATE_DIR")}
+
+
+def _git_usable(path):
+    """A git is usable only if it runs AND ships the https remote helper.
+
+    A broken/foreign git (e.g. from conda/Miniconda or a stale Homebrew) is
+    missing git-remote-https and fails every https fetch with
+    "git: 'remote-https' is not a git command" - exactly the breakage we must
+    route around, so we require the helper to be present."""
+    if not path:
+        return False
+    if not (os.path.isabs(path) and os.path.exists(path)) and which(path) is None:
+        return False
+    try:
+        ver = subprocess.run([path, "--version"], capture_output=True, text=True,
+                             timeout=10, env=GIT_ENV)
+        if ver.returncode != 0:
+            return False
+        ep = subprocess.run([path, "--exec-path"], capture_output=True, text=True,
+                            timeout=10, env=GIT_ENV)
+        exec_path = ep.stdout.strip()
+        return bool(exec_path) and os.path.exists(os.path.join(exec_path, "git-remote-https"))
+    except Exception:
+        return False
+
 
 def find_git():
     """Chrome launches native hosts with a minimal PATH, so probe known
-    locations rather than relying on `git` being resolvable."""
+    locations rather than relying on `git` being resolvable. Prefer a git that
+    actually ships the https remote helper, so a broken/foreign git on PATH
+    can't break the in-browser Update button."""
+    candidates = ["/usr/bin/git", "/opt/homebrew/bin/git", "/usr/local/bin/git"]
     found = which("git")
-    candidates = [found] if found else []
-    candidates += ["/opt/homebrew/bin/git", "/usr/local/bin/git", "/usr/bin/git"]
-    for candidate in candidates:
-        if candidate and os.path.exists(candidate):
-            return candidate
+    if found:
+        candidates.append(found)
     try:
         out = subprocess.run(
             ["/usr/bin/xcrun", "--find", "git"],
             capture_output=True, text=True, timeout=10,
         )
         if out.returncode == 0 and out.stdout.strip():
-            return out.stdout.strip()
+            candidates.append(out.stdout.strip())
     except Exception:
         pass
-    return "git"
+    for candidate in candidates:
+        if _git_usable(candidate):
+            return candidate
+    # Nothing validated; fall back to the first that at least exists, then PATH.
+    for candidate in candidates:
+        if candidate and os.path.exists(candidate):
+            return candidate
+    return found or "git"
 
 
 GIT = find_git()
@@ -73,7 +108,7 @@ def send_message(obj):
 def git(*args, timeout=120):
     return subprocess.run(
         [GIT, "-C", REPO_ROOT, *args],
-        capture_output=True, text=True, timeout=timeout,
+        capture_output=True, text=True, timeout=timeout, env=GIT_ENV,
     )
 
 
