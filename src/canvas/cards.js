@@ -214,7 +214,8 @@
           card.data.usePrivateKey = false;
           if (card.data._originalCredits != null) {
             card.data.credits = card.data._originalCredits;
-            card.data.creditText = `~${card.data._originalCredits} / row`;
+            const t = card.data.isAi ? window.__cb.aiTilde(card.data.selectedModel) : "~";
+            card.data.creditText = `${t}${card.data._originalCredits} / row`;
           }
           renderCreditMode();
         } else {
@@ -809,7 +810,8 @@
           costBadge.className = "cb-card-badge cb-card-badge-credit" + (canToggleKey ? " cb-card-badge-toggleable" : "");
           costBadge.innerHTML = CREDIT_SVG;
           const cText = document.createElement("span");
-          cText.textContent = data.creditText || (data.credits != null ? `~${data.credits} / row` : "");
+          const t = data.isAi ? window.__cb.aiTilde(data.selectedModel) : "~";
+          cText.textContent = data.creditText || (data.credits != null ? `${t}${data.credits} / row` : "");
           costBadge.appendChild(cText);
         }
 

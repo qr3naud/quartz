@@ -1006,8 +1006,10 @@
       menu.appendChild(help);
 
       const perRow = perRowDollarCost();
-      const isActual = __cb.viewMode === "actual";
-      const canDerive = !isActual && perRow > 0;
+      // Records drive the total in BOTH modes — Actual measures spend/row and
+      // still multiplies by Records — so back-calculating Records from a target
+      // total works identically. Gate only on having a non-zero per-row cost.
+      const canDerive = perRow > 0;
 
       if (canDerive) {
         help.textContent =
@@ -1049,9 +1051,8 @@
         setTimeout(() => { input.focus(); input.select(); }, 0);
       } else {
         help.classList.add("cb-total-cost-editor-help-muted");
-        help.textContent = isActual
-          ? "Switch to Projected mode to set a target total cost \u2014 Actual totals come from real billed spend."
-          : "Add at least one enrichment with a non-zero cost per row before setting a target total cost.";
+        help.textContent =
+          "Add at least one enrichment with a non-zero cost per row before setting a target total cost.";
       }
 
       document.body.appendChild(backdrop);

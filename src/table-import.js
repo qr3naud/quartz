@@ -646,7 +646,10 @@
       actionExecutions: planAwareActionExecutions(info),
       iconUrl,
       iconSvgHtml: null,
-      creditText: credits != null ? `~${credits} / row` : null,
+      creditText:
+        credits != null
+          ? `${ai ? __cb.aiTilde(selectedModel) : "~"}${credits} / row`
+          : null,
       badges: [],
       isAi: ai,
       // Marks source-type enrichments (vs actions) so the table view can color

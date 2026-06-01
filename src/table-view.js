@@ -1304,7 +1304,7 @@
     let model = null;
     if (isAi && Array.isArray(d.modelOptions) && d.modelOptions.length > 0) {
       const sel = d.modelOptions.find((m) => m.id === d.selectedModel) || d.modelOptions[0];
-      if (sel) model = { name: sel.name, provider: sel.provider, credits: sel.credits };
+      if (sel) model = { id: sel.id, name: sel.name, provider: sel.provider, credits: sel.credits };
     }
 
     // One-word kind label; precedence mirrors the chip color precedence in
@@ -1439,7 +1439,8 @@
       d._originalCredits = model.credits;
     } else {
       d.credits = model.credits;
-      d.creditText = model.credits != null ? `~${model.credits} / row` : null;
+      d.creditText =
+        model.credits != null ? `${window.__cb.aiTilde(model.id)}${model.credits} / row` : null;
     }
     const provIcon = model.provider && window.__cb.AI_PROVIDER_ICONS
       ? window.__cb.AI_PROVIDER_ICONS[model.provider]
@@ -1500,14 +1501,16 @@
       chevron.innerHTML =
         '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" ' +
         'fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" ' +
-        'stroke-linejoin="round"><polyline points="9 6 15 12 9 18"/></svg>';
-      row.appendChild(label);
+        'stroke-linejoin="round"><polyline points="15 6 9 12 15 18"/></svg>';
+      // Submenu flies out to the LEFT, so the chevron leads (points left).
       row.appendChild(chevron);
+      row.appendChild(label);
 
       const sub = document.createElement("div");
       sub.className = "cb-model-submenu";
       const subInner = document.createElement("div");
       subInner.className = "cb-model-submenu-inner";
+      row.addEventListener("mouseenter", () => window.__cb.clampSubmenu?.(sub));
       for (const model of models) {
         const opt = document.createElement("button");
         opt.type = "button";
@@ -1518,7 +1521,8 @@
         nameSpan.textContent = model.name;
         const costSpan = document.createElement("span");
         costSpan.className = "cb-model-option-cost";
-        costSpan.textContent = model.credits != null ? `~${model.credits} / row` : "";
+        costSpan.textContent =
+          model.credits != null ? `${window.__cb.aiTilde(model.id)}${model.credits} / row` : "";
         opt.appendChild(nameSpan);
         opt.appendChild(costSpan);
         opt.addEventListener("click", (e) => {
@@ -1539,11 +1543,10 @@
     document.body.appendChild(picker);
     erMenuModelPickerEl = picker;
 
-    // Clamp to the viewport, and flip the provider submenus leftward when the
-    // picker sits too close to the right edge (otherwise the fly-out — Claude
-    // models + pricing — would be clipped).
-    const pos = window.__cb.placePopover?.(picker, anchorEl, { gap: 4 });
-    if (pos?.flipSubmenuLeft) picker.classList.add("cb-model-picker-flip-left");
+    // Clamp the picker to the viewport. Provider submenus always fly out to the
+    // LEFT (see pickers.css + builder above), so there's no right-edge flip to
+    // compute — clampSubmenu handles vertical overflow on hover.
+    window.__cb.placePopover?.(picker, anchorEl, { gap: 4 });
   }
 
   // Table-view-safe private-key toggle. Mirrors the canvas credit pill's
@@ -1564,7 +1567,8 @@
       d.usePrivateKey = false;
       if (d._originalCredits != null) {
         d.credits = d._originalCredits;
-        d.creditText = `~${d._originalCredits} / row`;
+        const t = d.isAi ? window.__cb.aiTilde(d.selectedModel) : "~";
+        d.creditText = `${t}${d._originalCredits} / row`;
       }
     }
     if (canvas.refreshCreditTotal) canvas.refreshCreditTotal();
@@ -3276,9 +3280,13 @@
       credSeg.innerHTML = KEY_TOGGLE_KEY_SVG + "<span>Private key</span>";
     } else {
       const credits = Number(c.credits) || 0;
-      credSeg.title = `${formatNumber(credits)} credit${credits === 1 ? "" : "s"} / row \u2014 click to change`;
+      // Variable-priced AI models are estimates, so prefix "~" to match the
+      // model picker; fixed-price models and non-AI enrichments show the exact
+      // figure without it.
+      const tilde = er.isAi && __cb.isVariableModelId(er.model?.id) ? "~" : "";
+      credSeg.title = `${tilde}${formatNumber(credits)} credit${credits === 1 ? "" : "s"} / row \u2014 click to change`;
       const coin = Math.abs(credits) <= 1 ? coinSvg(12) : coinsSvg(12);
-      credSeg.innerHTML = coin + `<span>${formatNumber(credits)} / row</span>`;
+      credSeg.innerHTML = coin + `<span>${tilde}${formatNumber(credits)} / row</span>`;
     }
 
     // Resolved cost → the credit segment toggles private key on click, exactly
@@ -3445,7 +3453,9 @@
         evt.stopPropagation();
         const card = __cb.canvas?.getCardById?.(er.id);
         if (card && typeof __cb.showProviderChain === "function") {
-          __cb.showProviderChain(card, providersBtn);
+          // besideEl = the details menu, so the popover sits next to it instead
+          // of covering it.
+          __cb.showProviderChain(card, providersBtn, { besideEl: erChipMenuEl });
         }
       });
       footer.appendChild(providersBtn);

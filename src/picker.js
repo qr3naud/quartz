@@ -801,7 +801,7 @@
       const model = modelOptions?.find(m => m.id === selectedModel);
       if (model?.credits != null) {
         resolvedCredits = model.credits;
-        resolvedCreditText = `~${model.credits} / row`;
+        resolvedCreditText = `${__cb.aiTilde(selectedModel)}${model.credits} / row`;
       }
       if (model?.provider && __cb.AI_PROVIDER_ICONS?.[model.provider]) {
         resolvedIconUrl = __cb.AI_PROVIDER_ICONS[model.provider];

@@ -41,16 +41,17 @@
     function applyModel(card, model) {
       card.data.selectedModel = model.id;
 
+      const tilde = window.__cb.aiTilde(model.id);
       if (card.data.usePrivateKey) {
         card.data._originalCredits = model.credits;
       } else {
         card.data.credits = model.credits;
-        card.data.creditText = model.credits != null ? `~${model.credits} / row` : null;
+        card.data.creditText = model.credits != null ? `${tilde}${model.credits} / row` : null;
 
         const creditEl = card.el.querySelector(".cb-card-badge-credit");
         if (creditEl) {
           const textSpan = creditEl.querySelector("span");
-          if (textSpan) textSpan.textContent = card.data.creditText || `~${card.data.credits} / row`;
+          if (textSpan) textSpan.textContent = card.data.creditText || `${tilde}${card.data.credits} / row`;
         }
       }
 
@@ -118,15 +119,17 @@
         const chevron = document.createElement("span");
         chevron.className = "cb-model-provider-chevron";
         chevron.innerHTML =
-          '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 6 15 12 9 18"/></svg>';
+          '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 6 9 12 15 18"/></svg>';
 
-        row.appendChild(label);
+        // Submenu flies out to the LEFT, so the chevron leads (points left).
         row.appendChild(chevron);
+        row.appendChild(label);
 
         const sub = document.createElement("div");
         sub.className = "cb-model-submenu";
         const subInner = document.createElement("div");
         subInner.className = "cb-model-submenu-inner";
+        row.addEventListener("mouseenter", () => window.__cb.clampSubmenu?.(sub));
 
         for (const model of models) {
           const opt = document.createElement("button");
@@ -140,7 +143,8 @@
 
           const costSpan = document.createElement("span");
           costSpan.className = "cb-model-option-cost";
-          costSpan.textContent = model.credits != null ? `~${model.credits} / row` : "";
+          costSpan.textContent =
+            model.credits != null ? `${window.__cb.aiTilde(model.id)}${model.credits} / row` : "";
 
           opt.appendChild(nameSpan);
           opt.appendChild(costSpan);

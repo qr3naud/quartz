@@ -494,19 +494,22 @@
   color: #4338ca;
 }
 
-/* ---------- Submenu (flies out to the right) ---------- */
+/* ---------- Submenu (flies out to the LEFT) ---------- */
 
 .cb-model-submenu {
   display: none;
   position: absolute;
   top: -4px;
-  left: 100%;
-  padding-left: 4px;
+  left: auto;
+  right: 100%;
+  padding-right: 4px;
   z-index: 1;
 }
 
 .cb-model-submenu-inner {
   min-width: 200px;
+  max-height: 70vh;
+  overflow-y: auto;
   background: #ffffff;
   border: 1px solid #e5e7eb;
   border-radius: 8px;
@@ -516,16 +519,6 @@
 
 .cb-model-provider-row:hover>.cb-model-submenu {
   display: block;
-}
-
-/* When the picker is anchored near the viewport's right edge, fly the provider
-   submenus out to the LEFT instead so they stay on-screen. Toggled by
-   __cb.placePopover via the cb-model-picker-flip-left class on the picker. */
-.cb-model-picker-flip-left .cb-model-submenu {
-  left: auto;
-  right: 100%;
-  padding-left: 0;
-  padding-right: 4px;
 }
 
 /* ---------- Model options (shared between flat & grouped) ---------- */

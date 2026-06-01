@@ -257,6 +257,27 @@
       return { left, top, flipSubmenuLeft: left + ew + submenuWidth > vw - margin };
     },
 
+    // Keep a model-picker provider submenu on-screen vertically. Submenus are
+    // absolutely positioned off a provider row (CSS `top: -4px`); a row near the
+    // viewport bottom would otherwise let the fly-out (e.g. the long OpenAI
+    // list) spill past the bottom edge. Called on the row's `mouseenter`, once
+    // the `:hover` rule has made the submenu measurable: shift it up by the
+    // overflow, clamped so the top never crosses the margin (the inner's
+    // `max-height`/scroll covers anything still too tall). `el` is the
+    // `.cb-model-submenu` wrapper.
+    clampSubmenu(el) {
+      if (!el) return;
+      const inner = el.querySelector(".cb-model-submenu-inner") || el;
+      el.style.top = "";
+      const margin = 8;
+      const vh = window.innerHeight;
+      const rect = inner.getBoundingClientRect();
+      let shift = 0;
+      if (rect.bottom > vh - margin) shift = rect.bottom - (vh - margin);
+      if (rect.top - shift < margin) shift = rect.top - margin;
+      if (shift > 0) el.style.top = `${-4 - shift}px`;
+    },
+
     stringToColor(str) {
       const palette = [
         "#6366f1", "#ec4899", "#f59e0b", "#10b981", "#3b82f6",
@@ -282,6 +303,21 @@
         ...m,
         credits: cb.livePricingByModel[m.id] ?? m.credits,
       }));
+    },
+
+    // A model is "variable priced" iff its credit cost is computed live from the
+    // workspace's centsPerCredit (the modern Claygent path) — those models show
+    // up in livePricingByModel because /v3/model-pricing/.../base-costs only
+    // returns variable-priced models. Fixed-priced models are absent and keep
+    // their hardcoded DEFAULT_AI_MODELS estimate. We prefix the cost with "~"
+    // only for variable models, since the fixed ones are exact list prices.
+    isVariableModelId(modelId) {
+      const cb = window.__cb;
+      return !!modelId && cb.livePricingByModel?.[modelId] != null;
+    },
+
+    aiTilde(modelId) {
+      return window.__cb.isVariableModelId(modelId) ? "~" : "";
     },
 
     DEFAULT_AI_MODEL: "clay-argon",
@@ -384,7 +420,7 @@
     // badge text / +N / cluster credit total all stay in sync. The
     // popover itself re-renders in place (rebuildPanel) so positions
     // and focused inputs settle without flicker.
-    showProviderChain(card, anchorEl) {
+    showProviderChain(card, anchorEl, opts = {}) {
       window.__cb.closeProviderChain();
 
       const data = card?.data;
@@ -1235,7 +1271,27 @@
       panel.style.zIndex = "9999999";
       panel.style.maxHeight = (window.innerHeight - 16) + "px";
       panel.style.overflowY = "auto";
-      if (typeof window.__cb.placePopover === "function") {
+
+      const besideRect = opts.besideEl?.getBoundingClientRect?.();
+      if (besideRect) {
+        // Sit BESIDE the given element (the ER details menu) so the popover
+        // never covers it. Prefer whichever side has room — right, else left —
+        // and top-align with the menu, clamped to the viewport.
+        const gap = 8;
+        const pw = panel.offsetWidth || 320;
+        const ph = panel.offsetHeight || 0;
+        const vw = window.innerWidth;
+        const vh = window.innerHeight;
+        const roomRight = vw - besideRect.right - gap;
+        const roomLeft = besideRect.left - gap;
+        let left;
+        if (roomRight >= pw) left = besideRect.right + gap;
+        else if (roomLeft >= pw) left = besideRect.left - gap - pw;
+        else left = roomRight >= roomLeft ? Math.max(8, vw - pw - 8) : 8;
+        const top = Math.max(8, Math.min(besideRect.top, vh - ph - 8));
+        panel.style.left = `${left}px`;
+        panel.style.top = `${top}px`;
+      } else if (typeof window.__cb.placePopover === "function") {
         window.__cb.placePopover(panel, anchorEl, { gap: 6, align: "right" });
       } else {
         const rect = anchorEl.getBoundingClientRect();
