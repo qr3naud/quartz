@@ -413,6 +413,19 @@
           __cb.model.update();
         }
       }
+      // Soft-fade the freshly mounted body in on a tab/view switch. One-shot
+      // (remove + reflow + re-add restarts the keyframe each switch), so plain
+      // table refreshes — which don't go through setBrainstormView — never
+      // flicker. Covers both the table host and the canvas area.
+      const fadeTarget =
+        next === "table"
+          ? __cb.overlayEl?.querySelector(".cb-table-view-area")
+          : mainArea;
+      if (fadeTarget) {
+        fadeTarget.classList.remove("cb-view-fade-in");
+        void fadeTarget.offsetWidth;
+        fadeTarget.classList.add("cb-view-fade-in");
+      }
       if (prev !== next && __cb.debouncedSave) __cb.debouncedSave();
     };
 
@@ -587,11 +600,19 @@
           );
       }
       if (__cb.tabStore) __cb.tabStore.viewMode = next;
-      // Re-run credit math so the summary boxes flip immediately.
-      if (__cb.canvas?.refreshCreditTotal) {
-        __cb.canvas.refreshCreditTotal();
-      } else {
-        recalcTotal();
+      // Re-run credit math so the summary boxes flip immediately. Flag the
+      // refresh so the headline numbers count up/down to their new values
+      // (setSummaryNumber reads this synchronously); cleared right after so
+      // ordinary recalcs stay instant.
+      __cb._animateSummary = true;
+      try {
+        if (__cb.canvas?.refreshCreditTotal) {
+          __cb.canvas.refreshCreditTotal();
+        } else {
+          recalcTotal();
+        }
+      } finally {
+        __cb._animateSummary = false;
       }
       if (__cb.canvas?.updateGroupCredits) __cb.canvas.updateGroupCredits();
       // The table view's per-row Credits / Actions columns are view-mode-aware
@@ -881,10 +902,24 @@
       }
     });
 
+    // The three cost cards live inside a grid wrapper so the disclosure can
+    // animate open/closed in BOTH axes (width + height) via the CSS
+    // grid-template 0fr<->1fr trick — the cards are taller than the other
+    // summary boxes, so revealing them grows the whole bar; animating the
+    // wrapper height lets every (stretched) box grow smoothly instead of
+    // snapping. The inner clips with overflow:hidden so content is wiped in,
+    // not squished.
+    const pricingCards = document.createElement("div");
+    pricingCards.className = "cb-pricing-cards";
+    const pricingCardsInner = document.createElement("div");
+    pricingCardsInner.className = "cb-pricing-cards-inner";
+    pricingCardsInner.appendChild(creditCostBox);
+    pricingCardsInner.appendChild(actionCostBox);
+    pricingCardsInner.appendChild(totalDollarBox);
+    pricingCards.appendChild(pricingCardsInner);
+
     pricingGroup.appendChild(pricingToggleBox);
-    pricingGroup.appendChild(creditCostBox);
-    pricingGroup.appendChild(actionCostBox);
-    pricingGroup.appendChild(totalDollarBox);
+    pricingGroup.appendChild(pricingCards);
 
     summaryBar.appendChild(creditsBox);
     summaryBar.appendChild(actionsBox);
@@ -973,6 +1008,42 @@
       return "$" + Math.round(n).toLocaleString();
     }
 
+    // Animate a summary number from its previous value up/down to `value` when
+    // a mode switch is in flight (__cb._animateSummary); otherwise set it
+    // instantly. The last numeric value is cached on the element so the tween
+    // runs from the real number rather than a parsed/formatted string. Frequent
+    // callers (records typing, edits) leave the flag unset, so only the
+    // Projected/Actual flip animates.
+    function setSummaryNumber(el, value, format) {
+      const from = typeof el._cbNum === "number" ? el._cbNum : value;
+      el._cbNum = value;
+      const reduce =
+        window.matchMedia &&
+        window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      if (el._cbTween) {
+        cancelAnimationFrame(el._cbTween);
+        el._cbTween = null;
+      }
+      if (!__cb._animateSummary || reduce || from === value) {
+        el.textContent = format(value);
+        return;
+      }
+      const start = performance.now();
+      const dur = 420;
+      const ease = (t) => 1 - Math.pow(1 - t, 3);
+      const tick = (now) => {
+        const t = Math.min(1, (now - start) / dur);
+        el.textContent = format(from + (value - from) * ease(t));
+        if (t < 1) {
+          el._cbTween = requestAnimationFrame(tick);
+        } else {
+          el._cbTween = null;
+          el.textContent = format(value);
+        }
+      };
+      el._cbTween = requestAnimationFrame(tick);
+    }
+
     function recalcTotal() {
       const records = parseRecordsValue();
       // Total = frequency-weighted per-row × records in BOTH modes.
@@ -986,14 +1057,15 @@
       // Totals are whole-number figures in the summary bar — at scoping
       // volumes the fractional tail (e.g. 15,458.4) is noise. The per-row
       // "Avg" boxes keep their decimals via formatNumber.
-      totalValue.textContent = Math.round(totalCredits).toLocaleString();
-      totalActionsValue.textContent = Math.round(totalActions).toLocaleString();
+      const roundComma = (n) => Math.round(n).toLocaleString();
+      setSummaryNumber(totalValue, totalCredits, roundComma);
+      setSummaryNumber(totalActionsValue, totalActions, roundComma);
 
       const creditDollars = totalCredits * creditCost;
       const actionDollars = totalActions * actionCost;
-      creditDollarValue.textContent = formatDollar(creditDollars);
-      actionDollarValue.textContent = formatDollar(actionDollars);
-      totalDollarValue.textContent = formatDollarRounded(creditDollars + actionDollars);
+      setSummaryNumber(creditDollarValue, creditDollars, formatDollar);
+      setSummaryNumber(actionDollarValue, actionDollars, formatDollar);
+      setSummaryNumber(totalDollarValue, creditDollars + actionDollars, formatDollarRounded);
     }
 
     function commitPricingInput(input, setter) {
@@ -1150,8 +1222,8 @@
       currentActionsPerRow = actionsPerRow;
       currentWeightedCreditsPerRow = weightedCreditsPerRow ?? creditsPerRow;
       currentWeightedActionsPerRow = weightedActionsPerRow ?? actionsPerRow;
-      creditsValue.textContent = formatNumber(creditsPerRow);
-      actionsValue.textContent = formatNumber(actionsPerRow);
+      setSummaryNumber(creditsValue, creditsPerRow, formatNumber);
+      setSummaryNumber(actionsValue, actionsPerRow, formatNumber);
       recalcTotal();
     };
 
