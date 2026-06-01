@@ -273,22 +273,28 @@
   // bar. Called after popover edits so the badge / +N / cluster credit
   // total reflect the new numbers without rebuilding the whole card.
   __cb.refreshWaterfallCardDom = function refreshWaterfallCardDom(card) {
-    if (!card?.el || card.data?.type !== "waterfall") return;
+    if (card?.data?.type !== "waterfall") return;
     const data = card.data;
 
-    // Credit pill (.cb-card-badge-credit > span). The credit pill is
-    // rebuilt by addCard's renderCreditMode helper from data.creditText
-    // each render, but since we don't re-mount the card we update the
-    // text node directly.
-    const creditEl = card.el.querySelector(".cb-card-badge-credit span");
-    if (creditEl) {
-      creditEl.textContent = data.creditText || (data.credits != null ? `~${data.credits} / row` : "");
-    }
+    // Canvas DOM writes only apply when the card is mounted (the canvas is
+    // lazy / inactive in table view, where card.el is null). The persistence
+    // tail below still runs so a table-view edit (provider reorder/add via the
+    // details-menu "View providers" popover) saves + re-renders the table.
+    if (card.el) {
+      // Credit pill (.cb-card-badge-credit > span). The credit pill is
+      // rebuilt by addCard's renderCreditMode helper from data.creditText
+      // each render, but since we don't re-mount the card we update the
+      // text node directly.
+      const creditEl = card.el.querySelector(".cb-card-badge-credit span");
+      if (creditEl) {
+        creditEl.textContent = data.creditText || (data.credits != null ? `~${data.credits} / row` : "");
+      }
 
-    // +N count.
-    const countEl = card.el.querySelector(".cb-card-badge-providers-count");
-    if (countEl) {
-      countEl.textContent = `+${(data.providers || []).length}`;
+      // +N count.
+      const countEl = card.el.querySelector(".cb-card-badge-providers-count");
+      if (countEl) {
+        countEl.textContent = `+${(data.providers || []).length}`;
+      }
     }
 
     // Re-run summary-bar / per-cluster math so totals reflect the change.

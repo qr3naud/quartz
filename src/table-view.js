@@ -3433,6 +3433,24 @@
       footer.appendChild(openFnBtn);
     }
 
+    // Waterfalls get "View providers" — opens the same provider-chain popover
+    // as the canvas "+N" badge (reorder / add / per-step costs / validation).
+    // The details menu stays open underneath; the popover anchors to the button.
+    if (er.isWaterfall) {
+      const providersBtn = document.createElement("button");
+      providersBtn.type = "button";
+      providersBtn.className = "cb-table-view-er-menu-open";
+      providersBtn.innerHTML = waterfallSvg(13) + "<span>View providers</span>";
+      providersBtn.addEventListener("click", (evt) => {
+        evt.stopPropagation();
+        const card = __cb.canvas?.getCardById?.(er.id);
+        if (card && typeof __cb.showProviderChain === "function") {
+          __cb.showProviderChain(card, providersBtn);
+        }
+      });
+      footer.appendChild(providersBtn);
+    }
+
     menu.appendChild(footer);
   }
 
@@ -3455,7 +3473,8 @@
   // open so its in-menu anchor isn't torn out from under it.
   function refreshOpenErMenu() {
     if (!erChipMenuEl || erChipMenuCardId == null) return;
-    if (erMenuModelPickerEl || erMenuKeyToggleEl || window.__cb._freqPickerEl) return;
+    if (erMenuModelPickerEl || erMenuKeyToggleEl || window.__cb._freqPickerEl
+        || window.__cb._providerChainEl) return;
     const card = __cb.canvas?.getCardById?.(erChipMenuCardId);
     if (!card) { closeErChipMenu(); return; }
     renderErMenuBody(erChipMenuEl, buildErChipData(card));

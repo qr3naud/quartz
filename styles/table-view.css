@@ -458,6 +458,13 @@
   height: 16px;
 }
 
+/* Waterfall glyph is a plain currentColor line icon (no brand logo), so it
+   reads as dark text in the pill. Keep it dark in the menu header too instead
+   of inheriting the header's indigo icon color. */
+.cb-table-view-er-menu-header .cb-table-view-er-chip-icon.cb-table-view-er-chip-icon-waterfall {
+  color: #111827;
+}
+
 .cb-table-view-er-menu-title {
   flex: 1;
   min-width: 0;
@@ -659,19 +666,27 @@
 .cb-table-view-er-menu-open {
   display: flex;
   flex: 1 1 0;
+  min-width: 0;
   align-items: center;
   justify-content: center;
   gap: 6px;
-  padding: 7px 12px;
+  padding: 7px 10px;
   background: #eef2ff;
   border: 1px solid #c7d2fe;
   border-radius: 8px;
   color: #4338ca;
   font-family: inherit;
-  font-size: 13px;
+  /* Sized down + nowrap so two-word labels ("Open function") stay on one
+     line in the split (two-button) layout. */
+  font-size: 12px;
   font-weight: 500;
+  white-space: nowrap;
   cursor: pointer;
   transition: background 0.12s, border-color 0.12s, color 0.12s;
+}
+
+.cb-table-view-er-menu-open svg {
+  flex-shrink: 0;
 }
 
 .cb-table-view-er-menu-open:hover {
