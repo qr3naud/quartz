@@ -1199,7 +1199,7 @@
   // with the target ids — that way one code path owns group lifecycle,
   // theming, credit recompute, and undo bookkeeping.
   function groupCardsByIds(cardIds, label, opts) {
-    if (!Array.isArray(cardIds) || cardIds.length < 2) return;
+    if (!Array.isArray(cardIds) || cardIds.length < (opts?.allowSingle ? 1 : 2)) return;
     for (const id of selectedCards) {
       cards.find((c) => c.id === id)?.el?.classList.remove("cb-card-selected");
     }
@@ -1216,6 +1216,10 @@
 
   function disbandGroup(id) {
     getGroupLifecycleHelpers().disbandGroup(id);
+  }
+
+  function moveCardsToGroup(cardIds, targetGroupId) {
+    getGroupLifecycleHelpers().moveCardsToGroup(cardIds, targetGroupId);
   }
 
   function updateGroupBounds() {
@@ -1846,6 +1850,7 @@
   const api = {
     addCard, addDataPointCard, addInputCard, addCommentCard, groupSelectedCards,
     groupCardsByIds,
+    moveCardsToGroup,
     // Live snapshot of cb-groups (the labeled card containers Shift+Enter
     // creates). Read-only consumers — currently the table view, which
     // renders group-titled sections — should treat the returned objects

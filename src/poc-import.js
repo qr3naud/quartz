@@ -368,12 +368,14 @@
         if (card?.id != null) stampedIds.push(card.id);
       }
 
-      // Wrap them in a labeled group container. groupCardsByIds requires
-      // ≥2 cards — single-DP buckets fall through ungrouped (they show up
-      // as flat rows in the table view, which is the right call when
-      // there's only one DP to title anyway).
+      // Wrap them in a labeled super-group container. Each Use Case becomes a
+      // top-level green super-group (forceSuper) so the hierarchy reads the
+      // same in the table and on the canvas. groupCardsByIds requires ≥2
+      // cards — single-DP buckets fall through ungrouped (they show up as flat
+      // rows in the table view, which is the right call when there's only one
+      // DP to title anyway).
       if (stampedIds.length >= 2 && typeof canvas.groupCardsByIds === "function") {
-        canvas.groupCardsByIds(stampedIds, bucket.title);
+        canvas.groupCardsByIds(stampedIds, bucket.title, { forceSuper: true });
       }
 
       const rowCount = Math.max(1, Math.ceil(bucket.dataPoints.length / COLS));

@@ -90,6 +90,54 @@
   min-height: 32px;
 }
 
+/* ---- Collapse / expand all groups ---- */
+
+.cb-table-view-group-toggles {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Circular icon buttons matching the search toggle (.cb-table-view-search-toggle). */
+.cb-table-view-group-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  flex: none;
+  padding: 0;
+  background: #ffffff;
+  border: 1px solid #d1d5db;
+  border-radius: 50%;
+  color: #374151;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
+}
+
+.cb-table-view-group-toggle:hover {
+  background: #f9fafb;
+  border-color: #9ca3af;
+  color: #111827;
+}
+
+/* Quick press animation replayed on every click (the icon nudges + settles). */
+.cb-table-view-group-toggle-anim svg {
+  animation: cb-group-toggle-pop 0.22s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@keyframes cb-group-toggle-pop {
+  0% { transform: scale(1); }
+  45% { transform: scale(0.8); }
+  100% { transform: scale(1); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cb-table-view-group-toggle-anim svg {
+    animation: none;
+  }
+}
+
 /* ---- Inline search ---- */
 
 .cb-table-view-search {
@@ -1410,76 +1458,14 @@
   color: #064e3b;
 }
 
-/* ==========================================================================
-   PER-TABLE COLOR BLOCKS (Import Clay Table)
-   Each imported table renders as a top-level colored block. The color id
-   (violet / teal / blue / amber / rose) mirrors the canvas GROUP_COLOR_OPTIONS
-   palette and is stamped as data-group-color on the table header, its
-   sub-group headers, and every body row in the block. Color tokens are
-   declared once per id, then consumed by the shared rules below so a table's
-   header, sub-headers, and rows all read as one color.
-   ========================================================================== */
-
-[data-group-color="violet"] {
-  --tv-accent: #7c3aed; --tv-strong: #a78bfa; --tv-label: #4c1d95;
-  --tv-head-bg: #f5f3ff; --tv-head-bg-hover: #ede9fe; --tv-head-border: #ddd6fe;
-  --tv-badge-bg: #ede9fe; --tv-badge-border: #ddd6fe;
-}
-[data-group-color="teal"] {
-  --tv-accent: #0d9488; --tv-strong: #5eead4; --tv-label: #115e59;
-  --tv-head-bg: #f0fdfa; --tv-head-bg-hover: #ccfbf1; --tv-head-border: #99f6e4;
-  --tv-badge-bg: #ccfbf1; --tv-badge-border: #99f6e4;
-}
-[data-group-color="blue"] {
-  --tv-accent: #2563eb; --tv-strong: #60a5fa; --tv-label: #1e3a8a;
-  --tv-head-bg: #eff6ff; --tv-head-bg-hover: #dbeafe; --tv-head-border: #bfdbfe;
-  --tv-badge-bg: #dbeafe; --tv-badge-border: #bfdbfe;
-}
-[data-group-color="amber"] {
-  --tv-accent: #b45309; --tv-strong: #fbbf24; --tv-label: #78350f;
-  --tv-head-bg: #fffbeb; --tv-head-bg-hover: #fef3c7; --tv-head-border: #fde68a;
-  --tv-badge-bg: #fef3c7; --tv-badge-border: #fde68a;
-}
-[data-group-color="rose"] {
-  --tv-accent: #e11d48; --tv-strong: #fb7185; --tv-label: #881337;
-  --tv-head-bg: #fff1f2; --tv-head-bg-hover: #ffe4e6; --tv-head-border: #fecdd3;
-  --tv-badge-bg: #ffe4e6; --tv-badge-border: #fecdd3;
-}
-
-/* Header rows (table header + sub-group headers) — override the default
-   indigo / super-group green palettes. !important matches the existing
-   hover rules above and beats the more-specific super-group base rule. */
-.cb-table-view-group-row[data-group-color] td {
-  background: var(--tv-head-bg) !important;
-  border-top-color: var(--tv-head-border) !important;
-  border-bottom-color: var(--tv-head-border) !important;
-}
-.cb-table-view-group-row[data-group-color]:hover td {
-  background: var(--tv-head-bg-hover) !important;
-}
-.cb-table-view-group-row[data-group-color] .cb-table-view-group-row-icon,
-.cb-table-view-group-row[data-group-color] .cb-table-view-group-row-chevron {
-  color: var(--tv-accent);
-}
-.cb-table-view-group-row[data-group-color] .cb-table-view-group-row-label {
-  color: var(--tv-label);
-}
-.cb-table-view-group-row[data-group-color] .cb-table-view-group-row-count {
-  background: var(--tv-badge-bg);
-  border-color: var(--tv-badge-border);
-  color: var(--tv-label);
-}
-
-/* The table-level header (depth 0) reads a touch heavier than its
-   sub-group headers so the block hierarchy is clear. */
-.cb-table-view-table-row[data-group-color] .cb-table-view-group-row-label {
+/* Imported tables (Import Clay Table) render as top-level green super-group
+   blocks — they carry data-group-level="1" so the super-group green palette
+   above styles their header. The per-table violet/teal/blue/amber/rose palette
+   was retired in favor of one consistent green hierarchy. The table-level
+   header (depth 0) reads a touch heavier than its sub-group headers so the
+   block hierarchy stays clear. */
+.cb-table-view-table-row .cb-table-view-group-row-label {
   font-weight: 700;
-}
-
-/* Colored left band runs down every row in a table's block (header +
-   sub-headers + body rows), tying them together as one source table. */
-.cb-table-view-table tbody tr[data-group-color] td:first-child {
-  border-left: 3px solid var(--tv-strong);
 }
 
 .cb-table-view-group-row-count {

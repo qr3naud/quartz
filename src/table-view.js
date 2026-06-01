@@ -54,6 +54,16 @@
   // range selection and drag drop-target resolution.
   let visibleRowOrder = [];
 
+  // Built fresh on every render() — collapsible section keys split by tier so
+  // the two-step "collapse" can close small (inner / sub-group) sections first
+  // and only close the large (top-level block) sections on a second press.
+  //   - renderedTopKeys: imported-table blocks, top-level group sections,
+  //     "Other", orphan.
+  //   - renderedInnerKeys: table sub-groups + canvas inner child sections.
+  // Cmd+E (expand all) clears collapsedGroups entirely.
+  let renderedTopKeys = new Set();
+  let renderedInnerKeys = new Set();
+
   // ---- Inline search state ----
   //
   // A collapsed search affordance sits next to the collaborators widget in the
@@ -402,6 +412,17 @@
       openSearch();
       return;
     }
+    // Cmd/Ctrl+E expands every group; Cmd/Ctrl+Shift+E collapses (two-step:
+    // small/inner sections first, then the large/top-level blocks). Mirrors the
+    // Cmd+F gating so it only fires while the table is mounted.
+    if ((evt.metaKey || evt.ctrlKey) && !evt.altKey && (evt.key === "e" || evt.key === "E")) {
+      if (!hostEl) return;
+      evt.preventDefault();
+      evt.stopPropagation();
+      if (evt.shiftKey) collapseGroupsStep();
+      else expandAllGroups();
+      return;
+    }
     if (evt.key !== "Escape") return;
     // Search closes first so Esc dismisses the bar before clearing selection.
     if (searchOpen) {
@@ -423,6 +444,77 @@
       clearSelection();
       evt.preventDefault();
     }
+  }
+
+  // ---- Expand / collapse all groups ----
+
+  // Expand every section (Cmd+E and the expand button).
+  function expandAllGroups() {
+    collapsedGroups.clear();
+    render();
+  }
+
+  // Two-step collapse (Cmd+Shift+E and the collapse button): if any small/inner
+  // section is still open, collapse all of those first; once every inner is
+  // closed, a second press collapses the large/top-level blocks too.
+  function collapseGroupsStep() {
+    const innerOpen = [...renderedInnerKeys].some((k) => !collapsedGroups.has(k));
+    if (innerOpen) {
+      for (const k of renderedInnerKeys) collapsedGroups.add(k);
+    } else {
+      for (const k of renderedTopKeys) collapsedGroups.add(k);
+    }
+    render();
+  }
+
+  // Two circular icon buttons (collapse + expand) mounted left of the search
+  // control. Styling mirrors the search toggle; each gives a quick press
+  // animation on click. Wired to the same logic as Cmd+Shift+E / Cmd+E.
+  function buildGroupToggleControls() {
+    const wrap = document.createElement("div");
+    wrap.className = "cb-table-view-group-toggles";
+
+    const mkBtn = (cls, title, aria, svg, onClick) => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = `cb-table-view-group-toggle ${cls}`;
+      btn.title = title;
+      btn.setAttribute("aria-label", aria);
+      btn.innerHTML = svg;
+      btn.addEventListener("mousedown", (e) => e.stopPropagation());
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        // Replay the press animation on every click (not just the first).
+        btn.classList.remove("cb-table-view-group-toggle-anim");
+        void btn.offsetWidth;
+        btn.classList.add("cb-table-view-group-toggle-anim");
+        onClick();
+      });
+      btn.addEventListener("animationend", () =>
+        btn.classList.remove("cb-table-view-group-toggle-anim"),
+      );
+      return btn;
+    };
+
+    wrap.appendChild(
+      mkBtn(
+        "cb-table-view-group-toggle-collapse",
+        "Collapse groups (\u2318\u21E7E)",
+        "Collapse groups",
+        collapseAllSvg(15),
+        collapseGroupsStep,
+      ),
+    );
+    wrap.appendChild(
+      mkBtn(
+        "cb-table-view-group-toggle-expand",
+        "Expand all groups (\u2318E)",
+        "Expand all groups",
+        expandAllSvg(15),
+        expandAllGroups,
+      ),
+    );
+    return wrap;
   }
 
   // ---- Inline search ----
@@ -2268,6 +2360,138 @@
     __cb.model.update();
   }
 
+  // ---- Move into group (Add to group / Remove from group / New group) ----
+  //
+  // Re-parent a row's whole block (the DP plus its lineage enrichments) into a
+  // different cb-group, out of all groups, or into a brand-new group. Group
+  // membership is a canvas construct (card.groupId), so these flow through the
+  // canvas helpers and the table re-derives its sections from the new state.
+
+  // Commit any in-progress cell edit before mutating, mirroring groupSelected —
+  // the refresh that follows would otherwise be suppressed mid-typing.
+  function blurActiveCellInput() {
+    const active = document.activeElement;
+    if (active && active.tagName === "INPUT" && hostEl?.contains(active)) {
+      active.blur();
+    }
+  }
+
+  // Give the block one shared tableOrder past the global max so it lands at the
+  // bottom of whatever destination section it joins (each section sorts by
+  // tableOrder, so a global-max value is >= any in-section value). Used for
+  // moves into any group type (real cb-group or comment cluster).
+  function setBlockTableOrderGlobalBottom(blockCardIds) {
+    const canvas = __cb.canvas;
+    if (!canvas?.getCardById) return;
+    let maxOrder = -Infinity;
+    for (const node of (__cb.model?.getNodes?.() || [])) {
+      const o = typeof node.tableOrder === "number" ? node.tableOrder : null;
+      if (o != null && o > maxOrder) maxOrder = o;
+    }
+    const next = maxOrder === -Infinity ? 0 : maxOrder + 1;
+    for (const id of blockCardIds) {
+      const c = canvas.getCardById(id);
+      if (c) c.tableOrder = next;
+    }
+  }
+
+  // Every group a row can move into, recognized from BOTH grouping mechanisms
+  // the table renders: real cb-groups (card.groupId — POC use cases, canvas
+  // Group action) AND comment-cluster "basic groups" (card.data.groupCluster —
+  // Clay-table imports + legacy POC). Returned as { kind, id, label } so the
+  // menu can list them and the move action can apply the right membership.
+  function movableGroupTargets() {
+    const out = [];
+    for (const g of (__cb.model?.getGroups?.() || [])) {
+      out.push({
+        kind: "group",
+        id: g.id,
+        label: (g.label && g.label.trim()) ? g.label.trim() : "Untitled group",
+      });
+    }
+    const seen = new Set();
+    for (const node of (__cb.model?.getNodes?.() || [])) {
+      if (node.data?.type !== "comment") continue;
+      const cid = node.data.groupCluster;
+      if (cid == null || seen.has(cid)) continue;
+      const text = (node.data.text || node.data.displayName || "").trim();
+      if (!text) continue;
+      seen.add(cid);
+      out.push({ kind: "cluster", id: cid, label: text });
+    }
+    return out;
+  }
+
+  // The group a card currently belongs to, across both mechanisms.
+  function currentMembership(card) {
+    if (card?.groupId != null) return { kind: "group", id: card.groupId };
+    if (card?.data?.groupCluster != null) {
+      return { kind: "cluster", id: card.data.groupCluster };
+    }
+    return { kind: "none" };
+  }
+
+  // Re-parent a block of cards into a target — a real cb-group ({kind:"group"}),
+  // a comment cluster ({kind:"cluster"}), or out of all groups ({kind:"none"}).
+  // Real-group membership flows through the canvas helper; comment-cluster
+  // membership is a data tag the table buckets by. We always clear the OTHER
+  // mechanism so a card never double-buckets. Shared by the menu + cross-group
+  // drag.
+  function applyMembershipToBlock(blockIds, target) {
+    const canvas = __cb.canvas;
+    if (!canvas?.moveCardsToGroup || !blockIds || blockIds.length === 0) return;
+    setBlockTableOrderGlobalBottom(blockIds);
+    const setClusterOnDps = (clusterId) => {
+      for (const id of blockIds) {
+        const c = canvas.getCardById?.(id);
+        // Only DP cards carry the bucketing tag; ERs follow as lineage chips.
+        if (c?.data?.type === "dp") c.data.groupCluster = clusterId;
+      }
+    };
+    if (target.kind === "group") {
+      setClusterOnDps(null);
+      canvas.moveCardsToGroup(blockIds, target.id);
+    } else if (target.kind === "cluster") {
+      canvas.moveCardsToGroup(blockIds, null);
+      setClusterOnDps(target.id);
+    } else {
+      setClusterOnDps(null);
+      canvas.moveCardsToGroup(blockIds, null);
+    }
+    // moveCardsToGroup → notifyChange already refreshes the table; persist too.
+    __cb.model.update();
+  }
+
+  function applyGroupMembership(rowId, target) {
+    blurActiveCellInput();
+    applyMembershipToBlock(getBlockCardIdsForRow(rowId), target);
+    if (__cb.tableView?.refresh) __cb.tableView.refresh();
+  }
+
+  function newGroupFromRow(rowId) {
+    const canvas = __cb.canvas;
+    if (!canvas?.groupCardsByIds) return;
+    blurActiveCellInput();
+    const blockIds = getBlockCardIdsForRow(rowId);
+    if (blockIds.length === 0) return;
+    // A new real cb-group supersedes any comment-cluster tag on the DP(s).
+    for (const id of blockIds) {
+      const c = canvas.getCardById?.(id);
+      if (c?.data?.type === "dp") c.data.groupCluster = null;
+    }
+    const beforeIds = new Set((canvas.getGroups?.() || []).map((g) => g.id));
+    // allowSingle: a lone DP (no linked enrichments) can still start a group.
+    canvas.groupCardsByIds(blockIds, "", { skipFocus: true, allowSingle: true });
+    const newGroup = (canvas.getGroups?.() || []).find((g) => !beforeIds.has(g.id));
+    if (newGroup) {
+      // Focus the new section's label input on the next render so the user can
+      // name it immediately (mirrors groupSelected).
+      pendingFocusGroupId = `g-${newGroup.id}`;
+      clearSelection();
+      if (__cb.tableView?.refresh) __cb.tableView.refresh();
+    }
+  }
+
   // ---- Drag-and-reorder ----
   //
   // The "block" being dragged is the natural unit of the row:
@@ -2320,13 +2544,24 @@
     // Swallow the click that fires at the end of this drag gesture.
     suppressNextRowClick = true;
     dragInProgress = true;
+    // Source group of a row block (the DP's groupId) — drives whether a drop
+    // into another section is a same-group reorder or a cross-group move.
+    let sourceGroupId = null;
+    if (blockKind === "row") {
+      const primary = __cb.canvas?.getCardById?.(cardIds[0]);
+      sourceGroupId = primary?.groupId ?? null;
+    }
     dragState = {
       blockKind,
       blockKey,
       cardIds,
+      sourceGroupId,
       startY: evt.clientY,
       hoverRowId: null,
       dropPosition: null,
+      // When set on drop, the block is re-parented into this group (or null to
+      // ungroup) instead of being reordered within its current section.
+      moveToGroupId: undefined,
     };
     // Visual cue on the source row(s).
     if (hostEl) {
@@ -2345,47 +2580,92 @@
     document.addEventListener("mouseup", dragUpHandler);
   }
 
+  // Resolve which real cb-group a hovered row represents as a drop target for a
+  // cross-group MOVE. Returns { groupId } where groupId is a real canvas group
+  // id or null (the ungrouped "Other" area), or null when the hovered row isn't
+  // a valid group-move destination (table blocks, orphan-ER section, etc.).
+  function resolveRowDropTarget(hoverRowId) {
+    const card = getCardForRowId(hoverRowId);
+    if (card) {
+      // Dropping onto another row joins that row's group (null = ungrouped).
+      return { groupId: card.groupId ?? null };
+    }
+    // A real cb-group header carries the numeric group id as its data-row-id.
+    const gid = Number(hoverRowId);
+    if (Number.isFinite(gid) && (__cb.canvas?.getGroups?.() || []).some((g) => g.id === gid)) {
+      return { groupId: gid };
+    }
+    // The "Other" header is the ungroup target.
+    if (hoverRowId === OTHER_SECTION_KEY) return { groupId: null };
+    return null;
+  }
+
+  function clearDropTarget() {
+    hideDropIndicator();
+    dragState.hoverRowId = null;
+    dragState.dropPosition = null;
+    dragState.moveToGroupId = undefined;
+  }
+
   function onDragMove(evt) {
     if (!dragState || !hostEl) return;
     const target = evt.target instanceof Element
       ? evt.target.closest("[data-row-id]")
       : null;
     if (!target) {
-      hideDropIndicator();
-      dragState.hoverRowId = null;
-      dragState.dropPosition = null;
+      clearDropTarget();
       return;
     }
     const hoverRowId = target.getAttribute("data-row-id");
     // Block dropping onto the dragged block itself.
     if (isOwnBlock(hoverRowId)) {
-      hideDropIndicator();
-      dragState.hoverRowId = null;
-      dragState.dropPosition = null;
-      return;
-    }
-    // Restrict to same section (group block of the hover target must
-    // match the dragged block's section).
-    if (!isSameSection(hoverRowId)) {
-      hideDropIndicator();
-      dragState.hoverRowId = null;
-      dragState.dropPosition = null;
+      clearDropTarget();
       return;
     }
     const rect = target.getBoundingClientRect();
     const above = evt.clientY < rect.top + rect.height / 2;
     const dropPosition = above ? "above" : "below";
-    // Don't hint (or allow) a drop that would leave the block exactly where it
-    // is — i.e. the slot immediately adjacent to its current position.
-    const plan = computeDropInsert(hoverRowId, dropPosition);
-    if (!plan || plan.insertIdx === plan.draggedIdx) {
-      hideDropIndicator();
-      dragState.hoverRowId = null;
-      dragState.dropPosition = null;
+
+    // Group-header drags only reorder among same-section siblings (no
+    // cross-group nesting). Keep the original same-section reorder behavior.
+    if (dragState.blockKind === "group") {
+      if (!isSameSection(hoverRowId)) { clearDropTarget(); return; }
+      const plan = computeDropInsert(hoverRowId, dropPosition);
+      if (!plan || plan.insertIdx === plan.draggedIdx) { clearDropTarget(); return; }
+      dragState.hoverRowId = hoverRowId;
+      dragState.dropPosition = dropPosition;
+      dragState.moveToGroupId = undefined;
+      showDropIndicator(target, above);
       return;
     }
+
+    // Row drags: decide reorder vs cross-group move from the hovered row.
+    const dropTarget = resolveRowDropTarget(hoverRowId);
+    const sameGroup =
+      dropTarget != null && (dropTarget.groupId ?? null) === (dragState.sourceGroupId ?? null);
+
+    if (sameGroup) {
+      // Same group → pure reorder, and only within the same rendered section.
+      if (!isSameSection(hoverRowId)) { clearDropTarget(); return; }
+      const plan = computeDropInsert(hoverRowId, dropPosition);
+      if (!plan || plan.insertIdx === plan.draggedIdx) { clearDropTarget(); return; }
+      dragState.hoverRowId = hoverRowId;
+      dragState.dropPosition = dropPosition;
+      dragState.moveToGroupId = undefined;
+      showDropIndicator(target, above);
+      return;
+    }
+
+    if (dropTarget == null) {
+      // Not a valid group-move destination (table block, orphan section...).
+      clearDropTarget();
+      return;
+    }
+
+    // Cross-group move: re-parent the block into the hovered row's group.
     dragState.hoverRowId = hoverRowId;
     dragState.dropPosition = dropPosition;
+    dragState.moveToGroupId = dropTarget.groupId; // may be null (ungroup)
     showDropIndicator(target, above);
   }
 
@@ -2394,19 +2674,23 @@
       cleanupDrag();
       return;
     }
-    const { hoverRowId, dropPosition } = dragState;
-    // Lower the dragInProgress gate BEFORE performDrop runs. performDrop
-    // mutates card.y values and calls canvas.notifyChange, which fires
+    const { hoverRowId, dropPosition, moveToGroupId, cardIds } = dragState;
+    // Lower the dragInProgress gate BEFORE the mutation runs. performDrop /
+    // moveCardsToGroup call canvas.notifyChange, which fires
     // onCanvasStateChange → tableView.refresh synchronously. The refresh
-    // short-circuits when `dragInProgress` is true (so the dragged row's
-    // DOM doesn't get torn down mid-gesture). If we don't release the
-    // gate here, the post-drop refresh is suppressed and the table view
-    // keeps showing the pre-drop row order even though the underlying
-    // card.y values reflect the new arrangement. cleanupDrag below
-    // re-sets it to false (idempotent) and clears the rest of the
-    // transient drag state.
+    // short-circuits when `dragInProgress` is true (so the dragged row's DOM
+    // doesn't get torn down mid-gesture). If we don't release the gate here,
+    // the post-drop refresh is suppressed and the table keeps showing the
+    // pre-drop order. cleanupDrag below re-sets it to false (idempotent).
     dragInProgress = false;
-    if (hoverRowId && dropPosition) {
+    if (moveToGroupId !== undefined) {
+      // Cross-group move (moveToGroupId may be null = ungroup). Routed through
+      // applyMembershipToBlock so any comment-cluster tag is cleared too.
+      applyMembershipToBlock(
+        cardIds,
+        moveToGroupId == null ? { kind: "none" } : { kind: "group", id: moveToGroupId },
+      );
+    } else if (hoverRowId && dropPosition) {
       performDrop(hoverRowId, dropPosition);
     }
     cleanupDrag();
@@ -2690,6 +2974,28 @@
       const card = getCardForRowId(ctx.rowId);
       if (card?.data?.type === "dp") {
         items.push({ label: "Rename", action: () => startInlineRename(ctx.rowId) });
+        // Add-to-group: move this data point (and its enrichments) into another
+        // group, out of its current group, or into a brand-new one. Recognizes
+        // both real cb-groups and comment-cluster basic groups (Clay-table
+        // imports), and skips the group the row is already in.
+        const membership = currentMembership(card);
+        for (const g of movableGroupTargets()) {
+          if (g.kind === membership.kind && g.id === membership.id) continue;
+          items.push({
+            label: `Move to: ${g.label}`,
+            action: () => applyGroupMembership(ctx.rowId, { kind: g.kind, id: g.id }),
+          });
+        }
+        if (membership.kind !== "none") {
+          items.push({
+            label: "Remove from group",
+            action: () => applyGroupMembership(ctx.rowId, { kind: "none" }),
+          });
+        }
+        items.push({
+          label: "New group\u2026",
+          action: () => newGroupFromRow(ctx.rowId),
+        });
       }
       items.push({
         label: "Insert data point below",
@@ -2855,6 +3161,10 @@
     if (typeof __cb.mountCollaboratorsWidget === "function") {
       __cb.mountCollaboratorsWidget(introLead, { inline: true });
     }
+    // Collapse / expand-all group controls, sitting just left of the search
+    // affordance. Wired to the same two-step collapse / expand-all behavior as
+    // Cmd+Shift+E / Cmd+E.
+    introLead.appendChild(buildGroupToggleControls());
     // Collapsed search affordance — sits to the right of the collaborators
     // pill, expands inline on click or Cmd/Ctrl+F. State is module-scoped so
     // applySearchHighlight() (end of render) restores highlights afterwards.
@@ -2966,6 +3276,9 @@
     // as we append rows so shift+click range select uses the same order
     // the user sees on screen.
     visibleRowOrder = [];
+    // Reset the collapsible-section key tiers; repopulated as headers append.
+    renderedTopKeys = new Set();
+    renderedInnerKeys = new Set();
 
     if (orphanErRows.length === 0 && totalDpCount === 0) {
       const empty = document.createElement("tr");
@@ -2978,25 +3291,22 @@
       tbody.appendChild(empty);
     } else {
       // ---- Imported tables (Import Clay Table) ----
-      // Each imported table renders as its own top-level colored block at the
-      // very top: a table header, the table's loose DP / orphan-ER rows, then
-      // its basic-group sub-sections (depth 1). Every row + sub-header carries
-      // the table's data-group-color so the block reads as one color.
+      // Each imported table renders as its own top-level green super-group
+      // block at the very top: a table header, then its basic-group
+      // sub-sections (depth 1), then the table's loose / ungrouped rows at
+      // the BOTTOM of the block (so grouped data points read first).
       for (const tg of (tableGroups || [])) {
-        const color = tg.importColor || null;
-        // Stamp the table color on a freshly-built row and append it.
-        const appendColored = (rowEl, rowId) => {
-          if (color) rowEl.setAttribute("data-group-color", color);
+        const appendRow = (rowEl, rowId) => {
           tbody.appendChild(rowEl);
           if (rowId != null) visibleRowOrder.push(String(rowId));
         };
-        const emitColoredRows = (rows, sectionTag) => {
+        const emitRows = (rows, sectionTag) => {
           annotateMergeRuns(rows.filter((r) => r.kind === "dp"));
           for (const row of rows) {
             const rowEl = row.kind === "orphan-er"
               ? buildOrphanDpStyleRow(row, sectionTag)
               : buildDpRow(row, sectionTag);
-            appendColored(rowEl, row.cardId);
+            appendRow(rowEl, row.cardId);
           }
         };
 
@@ -3012,45 +3322,31 @@
         };
         const tableCollapsed = collapsedGroups.has(tg.key);
         const header = buildGroupHeaderRow(tableSection, headers.length, tableCollapsed, 0, {
-          color,
           isTable: true,
           recordCount: tg.recordCount,
           importedAt: tg.importedAt,
         });
         tbody.appendChild(header);
         visibleRowOrder.push(tg.key);
+        renderedTopKeys.add(tg.key);
         if (tableCollapsed) continue;
 
-        // Direct rows (inputs, merge DPs, waterfalls, standalone ERs).
-        emitColoredRows(tg.rows, `table:${tg.key}`);
-
-        // Basic-group sub-sections, indented at depth 1, same color.
+        // Basic-group sub-sections first, indented at depth 1.
         for (const sub of tg.sections) {
           const subCollapsed = collapsedGroups.has(sub.groupId);
-          const subHeader = buildGroupHeaderRow(sub, headers.length, subCollapsed, 1, { color });
+          const subHeader = buildGroupHeaderRow(sub, headers.length, subCollapsed, 1);
           tbody.appendChild(subHeader);
           visibleRowOrder.push(sub.groupId);
+          renderedInnerKeys.add(sub.groupId);
           if (subCollapsed) continue;
-          emitColoredRows(sub.rows, `section:${sub.groupId}`);
+          emitRows(sub.rows, `section:${sub.groupId}`);
         }
+
+        // Then the table's loose / ungrouped rows (inputs, merge DPs,
+        // waterfalls, standalone ERs) at the bottom of the block.
+        emitRows(tg.rows, `table:${tg.key}`);
       }
 
-      // Unattached enrichments live under their own yellow header section
-      // at the top — visually parallel to the purple Use Case / group
-      // sections below. Each row inside looks like a regular DP row, with
-      // an editable name input that, when committed, creates a new DP
-      // adjacent to the ER (forming a snap-cluster) so the row promotes
-      // itself to a connected DP row on the next render.
-      if (orphanErRows.length > 0) {
-        const orphansCollapsed = collapsedGroups.has(ORPHAN_SECTION_KEY);
-        tbody.appendChild(buildOrphanGroupHeaderRow(orphanErRows, headers.length, orphansCollapsed));
-        if (!orphansCollapsed) {
-          for (const row of orphanErRows) {
-            tbody.appendChild(buildOrphanDpStyleRow(row, "orphan"));
-            visibleRowOrder.push(String(row.cardId));
-          }
-        }
-      }
       // Group sections render as a header row spanning all columns,
       // followed by the cluster's rows (unless collapsed). Within each
       // section we run rowspan-merge annotation so contiguous DPs that
@@ -3101,6 +3397,7 @@
           buildGroupHeaderRow(section, headers.length, isCollapsed, 0),
         );
         visibleRowOrder.push(section.groupId);
+        renderedTopKeys.add(section.groupId);
         if (isCollapsed) continue;
         // Direct rows on the top-level header (DPs whose groupId is
         // this section's id but no inner claimed them, plus standalone
@@ -3115,6 +3412,7 @@
             buildGroupHeaderRow(child, headers.length, childCollapsed, 1),
           );
           visibleRowOrder.push(child.groupId);
+          renderedInnerKeys.add(child.groupId);
           if (childCollapsed) continue;
           emitSectionRows(child, `section:${child.groupId}`);
         }
@@ -3123,7 +3421,8 @@
       // at least one real cb-group section above — without that, flat
       // rows are the only DPs and don't need a header. With groups, the
       // wrapper makes it visually clear which DPs are ungrouped vs.
-      // belonging to a use case.
+      // belonging to a use case. Ungrouped data points sit below every
+      // group section.
       const showOtherHeader = groupSections.length > 0 && dpRows.length > 0;
       const otherCollapsed =
         showOtherHeader && collapsedGroups.has(OTHER_SECTION_KEY);
@@ -3132,12 +3431,31 @@
           buildOtherHeaderRow(dpRows.length, headers.length, otherCollapsed),
         );
         visibleRowOrder.push(OTHER_SECTION_KEY);
+        renderedTopKeys.add(OTHER_SECTION_KEY);
       }
       if (!otherCollapsed) {
         annotateMergeRuns(dpRows);
         for (const row of dpRows) {
           tbody.appendChild(buildDpRow(row, "flat"));
           visibleRowOrder.push(String(row.cardId));
+        }
+      }
+
+      // Unattached enrichments (ERs with no DP) live under their own yellow
+      // header at the very bottom — below every grouped section AND the
+      // ungrouped "Other" data points. Each row looks like a regular DP row
+      // with an editable name input that, when committed, creates a new DP
+      // adjacent to the ER (forming a snap-cluster) so the row promotes
+      // itself to a connected DP row on the next render.
+      if (orphanErRows.length > 0) {
+        const orphansCollapsed = collapsedGroups.has(ORPHAN_SECTION_KEY);
+        tbody.appendChild(buildOrphanGroupHeaderRow(orphanErRows, headers.length, orphansCollapsed));
+        renderedTopKeys.add(ORPHAN_SECTION_KEY);
+        if (!orphansCollapsed) {
+          for (const row of orphanErRows) {
+            tbody.appendChild(buildOrphanDpStyleRow(row, "orphan"));
+            visibleRowOrder.push(String(row.cardId));
+          }
         }
       }
     }
@@ -4415,6 +4733,32 @@
       'stroke-linejoin="round" aria-hidden="true">' +
       '<circle cx="11" cy="11" r="7"/>' +
       '<line x1="21" y1="21" x2="16.5" y2="16.5"/>' +
+      '</svg>'
+    );
+  }
+
+  // Collapse-all glyph — two chevrons pointing inward (toward a center line).
+  function collapseAllSvg(size) {
+    const s = String(size);
+    return (
+      `<svg xmlns="http://www.w3.org/2000/svg" width="${s}" height="${s}" viewBox="0 0 24 24" ` +
+      'fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" ' +
+      'stroke-linejoin="round" aria-hidden="true">' +
+      '<polyline points="7 5 12 10 17 5"/>' +
+      '<polyline points="7 19 12 14 17 19"/>' +
+      '</svg>'
+    );
+  }
+
+  // Expand-all glyph — two chevrons pointing outward (away from center).
+  function expandAllSvg(size) {
+    const s = String(size);
+    return (
+      `<svg xmlns="http://www.w3.org/2000/svg" width="${s}" height="${s}" viewBox="0 0 24 24" ` +
+      'fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" ' +
+      'stroke-linejoin="round" aria-hidden="true">' +
+      '<polyline points="7 10 12 5 17 10"/>' +
+      '<polyline points="7 14 12 19 17 14"/>' +
       '</svg>'
     );
   }

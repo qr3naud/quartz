@@ -200,7 +200,8 @@
     function groupSelectedCards(initialLabel, opts) {
       const skipFocus = !!opts?.skipFocus;
       const selectedCards = selectedCardsRef();
-      if (selectedCards.size < 2) return;
+      const minCards = opts?.allowSingle ? 1 : 2;
+      if (selectedCards.size < minCards) return;
 
       const allInGroups = [...selectedCards].every((cid) => {
         const c = cardsRef().find((cc) => cc.id === cid);
@@ -211,7 +212,10 @@
         const c = cardsRef().find((cc) => cc.id === cid);
         if (c?.groupId != null) touchedGroupIds.add(c.groupId);
       }
-      const isSuper = allInGroups && touchedGroupIds.size >= 2;
+      // forceSuper lets callers (POC import) create a top-level super-group
+      // directly from loose cards — each Use Case becomes a green super-group
+      // even though it isn't a "group of groups" in the auto-detected sense.
+      const isSuper = !!opts?.forceSuper || (allInGroups && touchedGroupIds.size >= 2);
 
       if (!isSuper) {
         for (const cid of selectedCards) {
@@ -290,6 +294,70 @@
       if (!initialLabel && !skipFocus) requestAnimationFrame(() => label.focus());
     }
 
+    // Move a set of cards into an existing group (or out of all groups when
+    // targetGroupId is null). Drives the table view's "Add to group" / "Remove
+    // from group" actions and cross-group drag. Unlike groupSelectedCards (which
+    // creates a NEW group), this re-parents cards into an EXISTING group,
+    // repositions them so the group's derived bounds enclose them, and disbands
+    // any source group that drops below the 2-member minimum.
+    function moveCardsToGroup(cardIds, targetGroupId) {
+      const ids = (cardIds || []).map(Number).filter((n) => Number.isFinite(n));
+      if (ids.length === 0) return;
+      const idSet = new Set(ids);
+      const target = targetGroupId == null
+        ? null
+        : groupsRef().find((g) => g.id === targetGroupId);
+      if (targetGroupId != null && !target) return;
+
+      // Re-parent: pull each card out of its current group and into the target.
+      const touchedOld = new Set();
+      for (const id of ids) {
+        const card = cardsRef().find((c) => c.id === id);
+        if (!card) continue;
+        if (card.groupId != null && card.groupId !== targetGroupId) {
+          const old = groupsRef().find((g) => g.id === card.groupId);
+          if (old) { old.cardIds.delete(id); touchedOld.add(old.id); }
+        }
+        card.groupId = targetGroupId;
+        if (target) target.cardIds.add(id);
+      }
+
+      // Stack the moved cards just below the target group's existing members so
+      // updateGroupBounds draws a box that encloses them (otherwise a far-away
+      // member balloons the group box). Skipped when ungrouping (target null) —
+      // the card keeps its spot and the old box just shrinks.
+      if (target) {
+        const members = cardsRef().filter(
+          (c) => target.cardIds.has(c.id) && !idSet.has(c.id),
+        );
+        let baseX = 0;
+        let baseY = 0;
+        if (members.length) {
+          baseX = Math.min(...members.map((c) => getCardRect(c).x));
+          baseY = Math.max(...members.map((c) => getCardRect(c).y + getCardRect(c).h)) + 16;
+        }
+        let i = 0;
+        for (const id of ids) {
+          const card = cardsRef().find((c) => c.id === id);
+          if (!card) continue;
+          card.x = baseX;
+          card.y = baseY + i * (getCardRect(card).h + 16);
+          if (card.el) card.el.style.transform = `translate(${card.x}px, ${card.y}px)`;
+          i++;
+        }
+      }
+
+      // Disband any source group that fell below the 2-member minimum.
+      for (const gid of touchedOld) {
+        const g = groupsRef().find((gg) => gg.id === gid);
+        if (g && g.cardIds.size < 2) disbandGroup(gid);
+      }
+
+      updateGroupBounds();
+      updateGroupCredits();
+      notifyChange();
+    }
+
     function restoreGroup(gs) {
       const isSuper = gs.level === 1;
       const el = document.createElement("div");
@@ -340,6 +408,7 @@
     return {
       createGroupLabel,
       groupSelectedCards,
+      moveCardsToGroup,
       disbandGroup,
       updateGroupBounds,
       startGroupDrag,
