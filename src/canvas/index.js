@@ -11,7 +11,11 @@
   // array" sites mutate it in place (length=0 + push, or splice). `groups`
   // still lives here for now (relocates in a later slice).
   const cards = __cb.model.getNodes();
-  let groups = [];
+  // Groups are owned by the store too (pure data: id/label/level/color/parentId).
+  // `groups` is the store's LIVE array — shared by reference, never reassigned;
+  // all "replace" sites go through __cb.model.setGroups (in-place). The group
+  // DOM elements live in a canvas-owned map inside the group lifecycle helpers.
+  const groups = __cb.model.getGroups();
   // Per-imported-table metadata keyed by source tableId:
   //   { name, importColor, recordCount, importedAt }
   // Single source of truth for the table-view per-table headers (source row
@@ -95,9 +99,9 @@
       __groupLifecycle = __cbCanvasModules.createGroupLifecycleHelpers({
         cardsRef: () => cards,
         groupsRef: () => groups,
-        setGroups: (next) => {
-          groups = next;
-        },
+        setGroups: (next) => __cb.model.setGroups(next),
+        cardsInGroup: (id, opts) => __cb.model.cardsInGroup(id, opts),
+        isGroupEmpty: (id) => __cb.model.isGroupEmpty(id),
         selectedCardsRef: () => selectedCards,
         clearSelection,
         cardContainerRef: () => cardContainer,
@@ -137,9 +141,8 @@
           for (const c of next) cards.push(c);
         },
         groupsRef: () => groups,
-        setGroups: (next) => {
-          groups = next;
-        },
+        setGroups: (next) => __cb.model.setGroups(next),
+        pruneEmptyGroups: () => getGroupLifecycleHelpers().pruneEmptyGroups(),
         selectedCardsRef: () => selectedCards,
         getGroupColorMenuGroupId: () => groupColorMenuGroupId,
         closeGroupColorMenu,
@@ -723,16 +726,24 @@
 
     // Null-safe on card.el: with lazy DOM (C2.2) cards can be data-only when
     // clearCanvas runs (undo/redo restore, or re-restore in a table-view tab).
-    // Groups stay eager, so g.el always exists.
     for (const c of cards) c.el?.remove();
-    for (const g of groups) g.el.remove();
+    // Group DOM lives in the lifecycle helper's el map; clear it there.
+    getGroupLifecycleHelpers().clearGroupEls();
     if (selectionHintEl) selectionHintEl.classList.remove("cb-selection-hint-visible");
 
     cards.length = 0; // in-place clear to keep the shared store reference (C3.2)
-    groups = [];
+    __cb.model.setGroups([]); // in-place clear of the store-owned groups array
     selectedCards.clear();
     selectedGroupId = null;
     nextCardId = nextGroupId = nextClusterId = 1;
+  }
+
+  // Sync the group DOM to the store's groups array (create/update/remove els),
+  // then re-derive bounds + credit badges. Called after restore + on hydrate.
+  function renderGroups() {
+    getGroupLifecycleHelpers().renderGroups();
+    updateGroupBounds();
+    updateGroupCredits();
   }
 
   function undo() {
@@ -753,6 +764,9 @@
     const { view: _v, ...stateToRestore } = cloned;
     getPersistenceHelpers().restore(stateToRestore);
     __cb.model.setRestoring(false);
+    // Rebuild group DOM from the restored store groups (membership = restored
+    // card.groupId). clearCanvas wiped the el map above.
+    renderGroups();
     // Visuals-only: the undo snapshot already carries the relational
     // cluster model, so re-running snap-reconcile would only risk
     // clobbering saved membership. See refreshClusterVisuals comment.
@@ -772,6 +786,7 @@
     const { view: _v, ...stateToRestore } = cloned;
     getPersistenceHelpers().restore(stateToRestore);
     __cb.model.setRestoring(false);
+    renderGroups();
     refreshClusterVisuals();
     notifyCreditTotal();
     if (__cb.onCanvasStateChange) __cb.onCanvasStateChange();
@@ -809,8 +824,8 @@
     return __groupThemes.getGroupTheme(group);
   }
 
-  function applyGroupTheme(group) {
-    __groupThemes.applyGroupTheme(group);
+  function applyGroupTheme(group, el) {
+    __groupThemes.applyGroupTheme(group, el);
   }
 
   function closeGroupColorMenu() {
@@ -892,6 +907,8 @@
         groupsRef: () => groups,
         getCardById,
         getClusters,
+        getGroupEl: (id) => getGroupLifecycleHelpers().getGroupEl(id),
+        cardsInGroup: (id, opts) => __cb.model.cardsInGroup(id, opts),
       });
     }
     return __credits.notifyCreditTotal();
@@ -903,13 +920,11 @@
   function selectGroup(id) {
     clearSelection();
     selectedGroupId = id;
-    const g = groups.find((gg) => gg.id === id);
-    if (g) g.el.classList.add("cb-group-selected");
+    getGroupLifecycleHelpers().getGroupEl(id)?.classList.add("cb-group-selected");
   }
   function clearGroupSelection() {
     if (selectedGroupId != null) {
-      const g = groups.find((gg) => gg.id === selectedGroupId);
-      if (g) g.el.classList.remove("cb-group-selected");
+      getGroupLifecycleHelpers().getGroupEl(selectedGroupId)?.classList.remove("cb-group-selected");
       selectedGroupId = null;
     }
   }
@@ -1157,6 +1172,8 @@
         groupsRef: () => groups,
         getCardById,
         getClusters,
+        getGroupEl: (id) => getGroupLifecycleHelpers().getGroupEl(id),
+        cardsInGroup: (id, opts) => __cb.model.cardsInGroup(id, opts),
       });
     }
     return __credits.updateDpCosts();
@@ -1233,6 +1250,8 @@
         groupsRef: () => groups,
         getCardById,
         getClusters,
+        getGroupEl: (id) => getGroupLifecycleHelpers().getGroupEl(id),
+        cardsInGroup: (id, opts) => __cb.model.cardsInGroup(id, opts),
       });
     }
     return __credits.updateGroupCredits();
@@ -1734,6 +1753,9 @@
       domHydrated = opts.mountDom;
     }
     getPersistenceHelpers().restore(state);
+    // Build group DOM from the freshly restored store groups (membership comes
+    // from each card's restored groupId; els are reconciled from the data).
+    renderGroups();
     // Visuals-only after restore: the saved state already carries the
     // relational cluster model (or has just been backfilled from snap
     // by persistence). Running a full snap-reconcile here would
@@ -1759,6 +1781,8 @@
     domHydrated = true;
     const helpers = getCardHelpers();
     for (const c of cards) helpers.mountCardElForType(c);
+    // Ensure group els exist + are positioned against the now-mounted cards.
+    renderGroups();
     refreshClusters({ dragCardIds: new Set() });
     // Lineage grouping override (C2.4): after the geometry baseline, fold each
     // ER together with its extracted DPs so the canvas matches the table.
@@ -1795,7 +1819,8 @@
   }
 
   function destroy() {
-    cards.length = 0; groups = []; selectedCards.clear(); selectedGroupId = null;
+    getGroupLifecycleHelpers().clearGroupEls();
+    cards.length = 0; __cb.model.setGroups([]); selectedCards.clear(); selectedGroupId = null;
     dragState = panState = selBoxState = groupDragState = null;
     toolClickPending = null; activeTool = null;
     closeGroupColorMenu();
@@ -1860,8 +1885,9 @@
     getGroups: () => groups.map((g) => ({
       id: g.id,
       level: g.level,
-      cardIds: Array.from(g.cardIds),
-      label: g.el?.querySelector(".cb-group-label")?.value || "",
+      color: g.color ?? null,
+      parentId: g.parentId ?? null,
+      label: g.label || "",
     })),
     destroy, serialize, restore, setActiveTool, getActiveTool,
     // Lazy canvas DOM (C2.2). hydrateCanvasDom mounts every card element on

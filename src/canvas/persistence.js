@@ -88,12 +88,14 @@
           clusterId: c.clusterId ?? null,
           tableOrder: c.tableOrder ?? null,
         })),
+        // Groups are pure data now: membership is each card's `groupId`
+        // (serialized above) and nesting is `parentId`. No cardIds, no DOM read.
         groups: groupsRef().map((g) => ({
           id: g.id,
-          cardIds: [...g.cardIds],
-          label: g.el.querySelector(".cb-group-label")?.value || "",
+          label: g.label || "",
           level: g.level || 0,
           color: g.color || null,
+          parentId: g.parentId ?? null,
         })),
         view: { panX: pan.panX, panY: pan.panY, scale: pan.scale },
         nextCardId: nextIds.nextCardId,
@@ -179,7 +181,50 @@
           tableOrder: cs.tableOrder,
         });
       }
-      for (const gs of state.groups || []) {
+      // Membership is card.groupId now — apply the serialized groupId onto the
+      // freshly built cards (the add* helpers create them ungrouped).
+      const liveById = new Map(cardsRef().map((c) => [c.id, c]));
+      for (const cs of state.cards || []) {
+        const c = liveById.get(cs.id);
+        if (c) c.groupId = cs.groupId ?? null;
+      }
+
+      // Groups. New blobs carry `parentId` (and no `cardIds`). Legacy blobs
+      // carry `cardIds` (the membership union) and no `parentId` — reconstruct
+      // the parentId hierarchy + the most-specific card.groupId from those sets
+      // so old saves migrate cleanly into the card.groupId + parentId model.
+      const rawGroups = state.groups || [];
+      const legacy =
+        rawGroups.length > 0 &&
+        rawGroups.every((g) => g.parentId === undefined) &&
+        rawGroups.some((g) => Array.isArray(g.cardIds));
+      if (legacy) {
+        const sets = rawGroups.map((g) => ({
+          g,
+          set: new Set(g.cardIds || []),
+          size: (g.cardIds || []).length,
+        }));
+        // Most-specific (smallest) group containing a card becomes its groupId.
+        for (const c of cardsRef()) {
+          let best = null;
+          for (const s of sets) {
+            if (s.set.has(c.id) && (!best || s.size < best.size)) best = s;
+          }
+          if (best) c.groupId = best.g.id;
+        }
+        // parentId = the smallest OTHER group strictly containing this set.
+        for (const s of sets) {
+          let parent = null;
+          for (const t of sets) {
+            if (t === s) continue;
+            if (s.size < t.size && [...s.set].every((id) => t.set.has(id))) {
+              if (!parent || t.size < parent.size) parent = t;
+            }
+          }
+          s.g.parentId = parent ? parent.g.id : null;
+        }
+      }
+      for (const gs of rawGroups) {
         restoreGroup(gs);
       }
       setNextIds({

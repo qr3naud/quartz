@@ -91,6 +91,7 @@
       setCards,
       groupsRef,
       setGroups,
+      pruneEmptyGroups,
       selectedCardsRef,
       getGroupColorMenuGroupId,
       closeGroupColorMenu,
@@ -992,16 +993,10 @@
         card.el?.remove();
         setCards(cardsRef().filter((c) => c.id !== id));
         selectedCardsRef().delete(id);
-        for (const g of groupsRef()) g.cardIds.delete(id);
-        setGroups(
-          groupsRef().filter((g) => {
-            if (g.cardIds.size < 2) {
-              g.el.remove();
-              return false;
-            }
-            return true;
-          })
-        );
+        // Membership is card.groupId (single source) — removing the card drops
+        // it from any group automatically. Prune groups that are now empty
+        // (no direct members + no children), which also removes their els.
+        if (pruneEmptyGroups) pruneEmptyGroups();
         if (getGroupColorMenuGroupId() != null && !groupsRef().some((g) => g.id === getGroupColorMenuGroupId())) {
           closeGroupColorMenu();
         }

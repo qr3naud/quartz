@@ -18,17 +18,19 @@
       return group.level === 1 ? GROUP_COLOR_OPTIONS[1] : GROUP_COLOR_OPTIONS[0];
     }
 
-    function applyGroupTheme(group) {
+    // el is passed explicitly now that group DOM elements live in a
+    // canvas-owned map (the store group object is pure data, no `.el`).
+    function applyGroupTheme(group, el) {
       const theme = getGroupTheme(group);
-      if (!group?.el || !theme) return;
-      group.el.style.setProperty("--cb-group-border", theme.border);
-      group.el.style.setProperty("--cb-group-bg", theme.bg);
-      group.el.style.setProperty("--cb-group-header-border", theme.headerBorder);
-      group.el.style.setProperty("--cb-group-label-color", theme.labelColor);
-      group.el.style.setProperty("--cb-group-label-placeholder", theme.placeholder);
-      group.el.style.setProperty("--cb-group-delete-color", theme.deleteColor);
-      group.el.style.setProperty("--cb-group-delete-hover-bg", theme.deleteHoverBg);
-      group.el.style.setProperty("--cb-group-delete-hover-color", theme.deleteHoverColor);
+      if (!el || !theme) return;
+      el.style.setProperty("--cb-group-border", theme.border);
+      el.style.setProperty("--cb-group-bg", theme.bg);
+      el.style.setProperty("--cb-group-header-border", theme.headerBorder);
+      el.style.setProperty("--cb-group-label-color", theme.labelColor);
+      el.style.setProperty("--cb-group-label-placeholder", theme.placeholder);
+      el.style.setProperty("--cb-group-delete-color", theme.deleteColor);
+      el.style.setProperty("--cb-group-delete-hover-bg", theme.deleteHoverBg);
+      el.style.setProperty("--cb-group-delete-hover-color", theme.deleteHoverColor);
     }
 
     return { GROUP_COLOR_OPTIONS, getGroupTheme, applyGroupTheme };
@@ -39,6 +41,8 @@
       cardsRef,
       groupsRef,
       setGroups,
+      cardsInGroup,
+      isGroupEmpty,
       selectedCardsRef,
       clearSelection,
       cardContainerRef,
@@ -56,6 +60,20 @@
       setGroupColorMenuGroupId,
     } = deps;
 
+    // Group DOM elements live here, keyed by group id — NOT on the store group
+    // objects (which are pure data). renderGroups() is the single reconciler
+    // that syncs this map to the store's groups array.
+    const groupEls = new Map();
+
+    function getGroupEl(id) {
+      return groupEls.get(id) || null;
+    }
+
+    function clearGroupEls() {
+      for (const [, el] of groupEls) el.remove();
+      groupEls.clear();
+    }
+
     function closeGroupColorMenu() {
       if (getGroupColorMenuEl()) {
         getGroupColorMenuEl().remove();
@@ -64,7 +82,76 @@
       }
     }
 
-    function createGroupLabel(initialValue) {
+    // Build the .cb-group element for a (data-only) group. Listeners close over
+    // the group object's id; live data is read from the store on each event.
+    function buildGroupEl(group) {
+      const el = document.createElement("div");
+      el.className = "cb-group";
+      if (group.level === 1) el.classList.add("cb-group-super");
+      el.setAttribute("data-group-id", String(group.id));
+      const header = document.createElement("div");
+      header.className = "cb-group-header";
+      const { wrap: labelWrap, label } = createGroupLabel(group, group.label || "");
+      const creditsBadge = document.createElement("span");
+      creditsBadge.className = "cb-group-credits";
+      const delBtn = document.createElement("button");
+      delBtn.className = "cb-group-delete";
+      delBtn.innerHTML = "&#x2715;";
+      header.appendChild(labelWrap);
+      header.appendChild(creditsBadge);
+      header.appendChild(delBtn);
+      el.appendChild(header);
+      delBtn.addEventListener("click", (evt) => {
+        evt.stopPropagation();
+        disbandGroup(group.id);
+      });
+      el.addEventListener("mousedown", (evt) => {
+        if (evt.button !== 0) return;
+        if (evt.target === label) return;
+        closeGroupColorMenu();
+        evt.stopPropagation();
+        startGroupDrag(group, evt);
+      });
+      el.addEventListener("contextmenu", (evt) => {
+        evt.preventDefault();
+        evt.stopPropagation();
+        openGroupColorMenu(group, evt);
+      });
+      return el;
+    }
+
+    // Reconcile the el map to the store's groups: create missing els, drop
+    // orphaned ones, and sync label / super-class / theme. Bounds are applied
+    // by updateGroupBounds (callers run it right after).
+    function renderGroups() {
+      const groups = groupsRef();
+      const seen = new Set();
+      for (const g of groups) {
+        seen.add(g.id);
+        let el = groupEls.get(g.id);
+        if (!el) {
+          el = buildGroupEl(g);
+          groupEls.set(g.id, el);
+          cardContainerRef().insertBefore(el, cardContainerRef().firstChild);
+        }
+        el.classList.toggle("cb-group-super", g.level === 1);
+        const input = el.querySelector(".cb-group-label");
+        if (input && document.activeElement !== input && input.value !== (g.label || "")) {
+          input.value = g.label || "";
+          const mirror = el.querySelector(".cb-group-label-mirror");
+          if (mirror) mirror.textContent = input.value || input.placeholder;
+        }
+        applyGroupTheme(g, el);
+      }
+      for (const [id, el] of groupEls) {
+        if (!seen.has(id)) {
+          el.remove();
+          groupEls.delete(id);
+        }
+      }
+    }
+
+    function createGroupLabel(group, initialValue) {
       const wrap = document.createElement("span");
       wrap.className = "cb-group-label-wrap";
       const mirror = document.createElement("span");
@@ -83,6 +170,8 @@
 
       label.addEventListener("input", () => {
         sync();
+        // The label is data now — write it back to the store group object.
+        if (group) group.label = label.value;
         updateGroupBounds();
         notifyChange();
       });
@@ -97,18 +186,45 @@
       return { wrap, label };
     }
 
+    // Remove groups that have no direct member cards AND no child groups.
+    // Iterates so a chain (inner emptied -> its super becomes childless) fully
+    // collapses. Replaces the old "disband when membership drops below 2".
+    function pruneEmptyGroups() {
+      let removed = true;
+      while (removed) {
+        removed = false;
+        const groups = groupsRef();
+        const dead = groups.find((g) => isGroupEmpty(g.id));
+        if (dead) {
+          if (getGroupColorMenuGroupId() === dead.id) closeGroupColorMenu();
+          setGroups(groups.filter((g) => g.id !== dead.id));
+          const el = groupEls.get(dead.id);
+          if (el) { el.remove(); groupEls.delete(dead.id); }
+          removed = true;
+        }
+      }
+    }
+
     function disbandGroup(id) {
       if (getGroupColorMenuGroupId() === id) closeGroupColorMenu();
-      const g = groupsRef().find((gg) => gg.id === id);
+      const groups = groupsRef();
+      const g = groups.find((gg) => gg.id === id);
       if (!g) return;
-      for (const cid of g.cardIds) {
-        const c = cardsRef().find((cc) => cc.id === cid);
-        if (!c) continue;
-        const inner = groupsRef().find((gg) => gg.id !== id && gg.cardIds.has(cid));
-        c.groupId = inner ? inner.id : null;
+      const newParent = g.parentId ?? null;
+      // Direct member cards move up to this group's parent (or ungroup).
+      for (const c of cardsRef()) {
+        if (c.groupId === id) c.groupId = newParent;
       }
-      g.el.remove();
-      setGroups(groupsRef().filter((gg) => gg.id !== id));
+      // Child groups re-point to this group's parent.
+      for (const child of groups) {
+        if (child.parentId === id) child.parentId = newParent;
+      }
+      setGroups(groups.filter((gg) => gg.id !== id));
+      const el = groupEls.get(id);
+      if (el) { el.remove(); groupEls.delete(id); }
+      renderGroups();
+      updateGroupBounds();
+      updateGroupCredits();
       notifyChange();
     }
 
@@ -116,7 +232,10 @@
       const innerHdrH = 48;
       const innerPad = 20;
       for (const g of groupsRef()) {
-        const members = cardsRef().filter((c) => g.cardIds.has(c.id));
+        const el = groupEls.get(g.id);
+        if (!el) continue;
+        // Members = direct cards + every nested inner group's cards (supers).
+        const members = cardsInGroup(g.id, { deep: true });
         if (!members.length) continue;
         const pad = g.level === 1 ? 40 : innerPad;
         const hdrH = g.level === 1 ? 56 : innerHdrH;
@@ -133,7 +252,7 @@
           maxY = Math.max(maxY, r.y + r.h);
         }
         let contentWidth = maxX - minX + pad * 2;
-        const header = g.el.querySelector(".cb-group-header");
+        const header = el.querySelector(".cb-group-header");
         if (header) {
           const mirror = header.querySelector(".cb-group-label-mirror");
           const creditsBadge = header.querySelector(".cb-group-credits");
@@ -147,14 +266,14 @@
           headerContentWidth += gaps + headerPad;
           contentWidth = Math.max(contentWidth, headerContentWidth);
         }
-        g.el.style.transform = `translate(${minX - pad}px, ${minY - topPad - hdrH}px)`;
-        g.el.style.width = contentWidth + "px";
-        g.el.style.height = maxY - minY + pad + topPad + hdrH + "px";
+        el.style.transform = `translate(${minX - pad}px, ${minY - topPad - hdrH}px)`;
+        el.style.width = contentWidth + "px";
+        el.style.height = maxY - minY + pad + topPad + hdrH + "px";
       }
     }
 
     function startGroupDrag(group, e) {
-      const members = cardsRef().filter((c) => group.cardIds.has(c.id));
+      const members = cardsInGroup(group.id, { deep: true });
       const state = { groupId: group.id, startMouseX: e.clientX, startMouseY: e.clientY, startPositions: new Map() };
       for (const c of members) state.startPositions.set(c.id, { x: c.x, y: c.y });
       setGroupDragState(state);
@@ -183,7 +302,7 @@
         btn.addEventListener("click", (evt) => {
           evt.stopPropagation();
           group.color = opt.id;
-          applyGroupTheme(group);
+          applyGroupTheme(group, groupEls.get(group.id));
           closeGroupColorMenu();
           notifyChange();
         });
@@ -203,103 +322,57 @@
       const minCards = opts?.allowSingle ? 1 : 2;
       if (selectedCards.size < minCards) return;
 
-      const allInGroups = [...selectedCards].every((cid) => {
-        const c = cardsRef().find((cc) => cc.id === cid);
-        return c && c.groupId != null;
-      });
+      const cardObjs = [...selectedCards]
+        .map((cid) => cardsRef().find((c) => c.id === cid))
+        .filter(Boolean);
+      const allInGroups = cardObjs.length > 0 && cardObjs.every((c) => c.groupId != null);
       const touchedGroupIds = new Set();
-      for (const cid of selectedCards) {
-        const c = cardsRef().find((cc) => cc.id === cid);
-        if (c?.groupId != null) touchedGroupIds.add(c.groupId);
-      }
+      for (const c of cardObjs) if (c.groupId != null) touchedGroupIds.add(c.groupId);
       // forceSuper lets callers (POC import) create a top-level super-group
-      // directly from loose cards — each Use Case becomes a green super-group
-      // even though it isn't a "group of groups" in the auto-detected sense.
+      // directly from loose cards. A "group of groups" (super with children) is
+      // only the auto-detected case: every selection already grouped, spanning
+      // 2+ groups.
       const isSuper = !!opts?.forceSuper || (allInGroups && touchedGroupIds.size >= 2);
+      const groupOfGroups = allInGroups && touchedGroupIds.size >= 2;
 
-      if (!isSuper) {
-        for (const cid of selectedCards) {
-          const card = cardsRef().find((c) => c.id === cid);
-          if (card?.groupId !== null && card?.groupId !== undefined) {
-            const old = groupsRef().find((g) => g.id === card.groupId);
-            if (old) {
-              old.cardIds.delete(cid);
-              if (old.cardIds.size < 2) {
-                old.el.remove();
-                setGroups(groupsRef().filter((g) => g.id !== old.id));
-              }
-            }
-          }
-        }
-      }
-
-      const allCardIds = new Set(selectedCards);
-      if (isSuper) {
-        for (const gid of touchedGroupIds) {
-          const g = groupsRef().find((gg) => gg.id === gid);
-          if (g) {
-            for (const cid of g.cardIds) allCardIds.add(cid);
-          }
-        }
-      }
-
-      const el = document.createElement("div");
-      el.className = "cb-group";
-      if (isSuper) el.classList.add("cb-group-super");
-      const header = document.createElement("div");
-      header.className = "cb-group-header";
-      const { wrap: labelWrap, label } = createGroupLabel(initialLabel || "");
-      const creditsBadge = document.createElement("span");
-      creditsBadge.className = "cb-group-credits";
-      const delBtn = document.createElement("button");
-      delBtn.className = "cb-group-delete";
-      delBtn.innerHTML = "&#x2715;";
-      header.appendChild(labelWrap);
-      header.appendChild(creditsBadge);
-      header.appendChild(delBtn);
-      el.appendChild(header);
-      const group = { id: getNextGroupId(), cardIds: allCardIds, el, level: isSuper ? 1 : 0, color: null };
-      // Stamped on the live DOM so external consumers (the table view's
-      // editable section header, future plugins) can address a specific
-      // group without exposing the internal `groups` array. Persisted
-      // groups get the same attribute via restoreGroup below.
-      el.setAttribute("data-group-id", String(group.id));
-      delBtn.addEventListener("click", (evt) => {
-        evt.stopPropagation();
-        disbandGroup(group.id);
-      });
-      el.addEventListener("mousedown", (evt) => {
-        if (evt.button !== 0) return;
-        if (evt.target === label) return;
-        closeGroupColorMenu();
-        evt.stopPropagation();
-        startGroupDrag(group, evt);
-      });
-      el.addEventListener("contextmenu", (evt) => {
-        evt.preventDefault();
-        evt.stopPropagation();
-        openGroupColorMenu(group, evt);
-      });
-      for (const cid of group.cardIds) {
-        const c = cardsRef().find((cc) => cc.id === cid);
-        if (c) c.groupId = group.id;
-      }
+      const group = {
+        id: getNextGroupId(),
+        label: initialLabel || "",
+        level: isSuper ? 1 : 0,
+        color: null,
+        parentId: null,
+      };
       groupsRef().push(group);
-      cardContainerRef().insertBefore(el, cardContainerRef().firstChild);
-      applyGroupTheme(group);
+
+      if (groupOfGroups) {
+        // Nest the touched inner groups under the new super (parentId); their
+        // member cards keep pointing at their inner group via card.groupId.
+        for (const gid of touchedGroupIds) {
+          const inner = groupsRef().find((g) => g.id === gid);
+          if (inner) inner.parentId = group.id;
+        }
+      } else {
+        // Direct ownership: each selected card points at the new group. Setting
+        // groupId pulls them out of any prior group automatically.
+        for (const c of cardObjs) c.groupId = group.id;
+      }
+
+      pruneEmptyGroups();
+      renderGroups();
       updateGroupBounds();
       updateGroupCredits();
       clearSelection();
       notifyChange();
-      if (!initialLabel && !skipFocus) requestAnimationFrame(() => label.focus());
+      if (!initialLabel && !skipFocus) {
+        requestAnimationFrame(() => {
+          groupEls.get(group.id)?.querySelector(".cb-group-label")?.focus();
+        });
+      }
     }
 
     // Move a set of cards into an existing group (or out of all groups when
-    // targetGroupId is null). Drives the table view's "Add to group" / "Remove
-    // from group" actions and cross-group drag. Unlike groupSelectedCards (which
-    // creates a NEW group), this re-parents cards into an EXISTING group,
-    // repositions them so the group's derived bounds enclose them, and disbands
-    // any source group that drops below the 2-member minimum.
+    // targetGroupId is null). Re-parents via card.groupId, repositions them so
+    // the group's derived bounds enclose them, and prunes any emptied group.
     function moveCardsToGroup(cardIds, targetGroupId) {
       const ids = (cardIds || []).map(Number).filter((n) => Number.isFinite(n));
       if (ids.length === 0) return;
@@ -309,26 +382,16 @@
         : groupsRef().find((g) => g.id === targetGroupId);
       if (targetGroupId != null && !target) return;
 
-      // Re-parent: pull each card out of its current group and into the target.
-      const touchedOld = new Set();
       for (const id of ids) {
         const card = cardsRef().find((c) => c.id === id);
-        if (!card) continue;
-        if (card.groupId != null && card.groupId !== targetGroupId) {
-          const old = groupsRef().find((g) => g.id === card.groupId);
-          if (old) { old.cardIds.delete(id); touchedOld.add(old.id); }
-        }
-        card.groupId = targetGroupId;
-        if (target) target.cardIds.add(id);
+        if (card) card.groupId = targetGroupId; // null = ungroup
       }
 
-      // Stack the moved cards just below the target group's existing members so
-      // updateGroupBounds draws a box that encloses them (otherwise a far-away
-      // member balloons the group box). Skipped when ungrouping (target null) —
-      // the card keeps its spot and the old box just shrinks.
+      // Stack moved cards just below the target group's existing members so the
+      // derived bounds enclose them (a far-away member would balloon the box).
       if (target) {
-        const members = cardsRef().filter(
-          (c) => target.cardIds.has(c.id) && !idSet.has(c.id),
+        const members = cardsInGroup(target.id, { deep: true }).filter(
+          (c) => !idSet.has(c.id),
         );
         let baseX = 0;
         let baseY = 0;
@@ -347,62 +410,24 @@
         }
       }
 
-      // Disband any source group that fell below the 2-member minimum.
-      for (const gid of touchedOld) {
-        const g = groupsRef().find((gg) => gg.id === gid);
-        if (g && g.cardIds.size < 2) disbandGroup(gid);
-      }
-
+      pruneEmptyGroups();
+      renderGroups();
       updateGroupBounds();
       updateGroupCredits();
       notifyChange();
     }
 
+    // Restore a persisted group as pure data; the el is built by a subsequent
+    // renderGroups() pass. Membership comes from cards' restored groupId.
     function restoreGroup(gs) {
-      const isSuper = gs.level === 1;
-      const el = document.createElement("div");
-      el.className = "cb-group";
-      if (isSuper) el.classList.add("cb-group-super");
-      const header = document.createElement("div");
-      header.className = "cb-group-header";
-      const { wrap: labelWrap, label } = createGroupLabel(gs.label || "");
-      const creditsBadge = document.createElement("span");
-      creditsBadge.className = "cb-group-credits";
-      const delBtn = document.createElement("button");
-      delBtn.className = "cb-group-delete";
-      delBtn.innerHTML = "&#x2715;";
-      header.appendChild(labelWrap);
-      header.appendChild(creditsBadge);
-      header.appendChild(delBtn);
-      el.appendChild(header);
-      const group = { id: gs.id, cardIds: new Set(gs.cardIds), el, level: gs.level || 0, color: gs.color || null };
-      el.setAttribute("data-group-id", String(group.id));
-      delBtn.addEventListener("click", (evt) => {
-        evt.stopPropagation();
-        disbandGroup(group.id);
+      groupsRef().push({
+        id: gs.id,
+        label: gs.label || "",
+        level: gs.level || 0,
+        color: gs.color || null,
+        parentId: gs.parentId ?? null,
       });
-      el.addEventListener("mousedown", (evt) => {
-        if (evt.button !== 0) return;
-        if (evt.target === label) return;
-        closeGroupColorMenu();
-        evt.stopPropagation();
-        startGroupDrag(group, evt);
-      });
-      el.addEventListener("contextmenu", (evt) => {
-        evt.preventDefault();
-        evt.stopPropagation();
-        openGroupColorMenu(group, evt);
-      });
-      for (const cid of group.cardIds) {
-        const c = cardsRef().find((cc) => cc.id === cid);
-        if (c) c.groupId = group.id;
-      }
-      groupsRef().push(group);
-      cardContainerRef().insertBefore(el, cardContainerRef().firstChild);
-      applyGroupTheme(group);
-      ensureNextGroupId(group.id);
-      updateGroupBounds();
-      updateGroupCredits();
+      ensureNextGroupId(gs.id);
     }
 
     return {
@@ -410,11 +435,15 @@
       groupSelectedCards,
       moveCardsToGroup,
       disbandGroup,
+      pruneEmptyGroups,
       updateGroupBounds,
       startGroupDrag,
       openGroupColorMenu,
       closeGroupColorMenu,
       restoreGroup,
+      renderGroups,
+      clearGroupEls,
+      getGroupEl,
     };
   };
 })();

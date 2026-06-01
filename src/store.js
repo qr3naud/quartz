@@ -24,13 +24,18 @@
 
   const listeners = new Set();
 
-  // Owned canonical state (C3.2+). The store physically owns the node array;
-  // the canvas and table read/write the SAME live instance via getNodes(). The
-  // array is never reassigned — only mutated in place — so all holders stay in
-  // sync. (groups + importedTables still facade to the canvas for now; they
-  // relocate in a later slice.)
+  // Owned canonical state (C3.2+). The store physically owns the node array AND
+  // the groups array; the canvas and table read/write the SAME live instances.
+  // The arrays are never reassigned — only mutated in place — so all holders
+  // stay in sync. Groups are PURE DATA `{ id, label, level, color, parentId }`:
+  // membership is `card.groupId` (single source of truth) and super/inner
+  // nesting is `group.parentId`. The canvas owns the group DOM elements
+  // separately (a renderer keyed by id); nothing canvas/DOM lives here.
+  // (importedTables still facades to the canvas for now; relocates in a later
+  // slice.)
   const state = {
     cards: [],
+    groups: [],
   };
 
   // Undo/redo + change-notification ownership (C3.4). The store is the single
@@ -86,8 +91,47 @@
     getNode(id) {
       return model.getNodes().find((n) => n && n.id === id) || null;
     },
+    // Store-owned live groups array. Pure metadata `{ id, label, level, color,
+    // parentId }`; read-only for consumers — mutate via setGroups / the canvas
+    // group lifecycle helpers, never by reassigning the returned array.
     getGroups() {
-      return call("getGroups", []);
+      return state.groups;
+    },
+    // In-place replace (preserve the shared reference, like getNodes/setCards).
+    setGroups(next) {
+      state.groups.length = 0;
+      if (Array.isArray(next)) for (const g of next) state.groups.push(g);
+      return model;
+    },
+    // Cards that belong to a group. `deep` also pulls in cards of descendant
+    // groups (a super-group's members = its own direct cards + every nested
+    // inner group's cards), resolved via parentId. The single membership query
+    // shared by the canvas (bounds, credits, drag) and the table view, so
+    // there's no `cardIds` field to keep in sync.
+    cardsInGroup(groupId, opts) {
+      if (groupId == null) return [];
+      const ids = new Set([groupId]);
+      if (opts && opts.deep) {
+        let grew = true;
+        while (grew) {
+          grew = false;
+          for (const g of state.groups) {
+            if (g.parentId != null && ids.has(g.parentId) && !ids.has(g.id)) {
+              ids.add(g.id);
+              grew = true;
+            }
+          }
+        }
+      }
+      return state.cards.filter((c) => c.groupId != null && ids.has(c.groupId));
+    },
+    // True when a group has no direct member cards AND no child groups — i.e.
+    // safe to remove. Used by the canvas to prune emptied groups.
+    isGroupEmpty(groupId) {
+      const hasDirect = state.cards.some((c) => c.groupId === groupId);
+      if (hasDirect) return false;
+      const hasChild = state.groups.some((g) => g.parentId === groupId);
+      return !hasChild;
     },
     // Cluster membership is canvas PRESENTATION. Exposed here only so the read
     // seam is complete during C1; the table view stops using it in the

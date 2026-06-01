@@ -412,15 +412,16 @@
       openSearch();
       return;
     }
-    // Cmd/Ctrl+E expands every group; Cmd/Ctrl+Shift+E collapses (two-step:
-    // small/inner sections first, then the large/top-level blocks). Mirrors the
-    // Cmd+F gating so it only fires while the table is mounted.
+    // Cmd/Ctrl+E expands, Cmd/Ctrl+Shift+E collapses — both two-step: collapse
+    // closes inner sections then top-level blocks; expand opens top-level blocks
+    // then inner sections. Mirrors the Cmd+F gating so it only fires while the
+    // table is mounted.
     if ((evt.metaKey || evt.ctrlKey) && !evt.altKey && (evt.key === "e" || evt.key === "E")) {
       if (!hostEl) return;
       evt.preventDefault();
       evt.stopPropagation();
       if (evt.shiftKey) collapseGroupsStep();
-      else expandAllGroups();
+      else expandGroupsStep();
       return;
     }
     if (evt.key !== "Escape") return;
@@ -448,12 +449,6 @@
 
   // ---- Expand / collapse all groups ----
 
-  // Expand every section (Cmd+E and the expand button).
-  function expandAllGroups() {
-    collapsedGroups.clear();
-    render();
-  }
-
   // Two-step collapse (Cmd+Shift+E and the collapse button): if any small/inner
   // section is still open, collapse all of those first; once every inner is
   // closed, a second press collapses the large/top-level blocks too.
@@ -463,6 +458,21 @@
       for (const k of renderedInnerKeys) collapsedGroups.add(k);
     } else {
       for (const k of renderedTopKeys) collapsedGroups.add(k);
+    }
+    render();
+  }
+
+  // Two-step expand (Cmd+E and the expand button) — the mirror of
+  // collapseGroupsStep: if any large/top-level block is still closed, open all
+  // of those first (revealing their inner section headers, which stay closed);
+  // once every top-level block is open, a second press expands the small/inner
+  // sections too.
+  function expandGroupsStep() {
+    const topClosed = [...renderedTopKeys].some((k) => collapsedGroups.has(k));
+    if (topClosed) {
+      for (const k of renderedTopKeys) collapsedGroups.delete(k);
+    } else {
+      for (const k of renderedInnerKeys) collapsedGroups.delete(k);
     }
     render();
   }
@@ -508,10 +518,10 @@
     wrap.appendChild(
       mkBtn(
         "cb-table-view-group-toggle-expand",
-        "Expand all groups (\u2318E)",
-        "Expand all groups",
+        "Expand groups (\u2318E)",
+        "Expand groups",
         expandAllSvg(15),
-        expandAllGroups,
+        expandGroupsStep,
       ),
     );
     return wrap;
@@ -1064,37 +1074,21 @@
     // also has at most one inner group whose cardIds include it; we
     // route the DP to that inner section so each DP appears in its
     // most-specific bucket.
-    const supers = realGroups.filter((g) => g.level === 1);
-    const inners = realGroups.filter((g) => g.level !== 1);
-    const innerToSuperId = new Map();
-    const childrenBySuperId = new Map();
-    for (const inner of inners) {
-      let parentId = null;
-      for (const sup of supers) {
-        const supSet = new Set(sup.cardIds);
-        let allIn = true;
-        for (const cid of inner.cardIds) {
-          if (!supSet.has(cid)) { allIn = false; break; }
-        }
-        if (allIn && inner.cardIds.length > 0) {
-          parentId = sup.id;
-          break;
-        }
-      }
-      innerToSuperId.set(inner.id, parentId);
-      if (parentId != null) {
-        if (!childrenBySuperId.has(parentId)) childrenBySuperId.set(parentId, []);
-        childrenBySuperId.get(parentId).push(inner.id);
-      }
-    }
-    // Indexed inner-group-cards-by-card-id so the DP-bucketing loop
-    // below can do an O(1) "which inner group claims this DP?" lookup
-    // per DP, instead of an inner-loop over every group.
-    const innerByCardId = new Map();
-    for (const inner of inners) {
-      for (const cid of inner.cardIds) {
-        if (!innerByCardId.has(cid)) innerByCardId.set(cid, inner.id);
-      }
+    // Nesting is explicit now: each group carries `parentId` (its super-group)
+    // and `level` (1 = super header). A card's group is its most-specific group
+    // via `card.groupId`. The single section-shape resolver both the DP loop
+    // and the ER-only-group loop use.
+    function sectionInfoForGroup(g) {
+      return {
+        key: `g-${g.id}`,
+        name: groupNameById.get(g.id) || "",
+        // Inner groups (parentId set) render at depth 1 (level 0); top-level
+        // groups carry their own level (1 = super header, 0 = standalone).
+        level: g.parentId != null ? 0 : (g.level || 0),
+        parentId: g.parentId ?? null,
+        canvasGroupId: g.id,
+        editable: true,
+      };
     }
 
     // Legacy comment-card-cluster fallback — pre-v3.18.3 POC imports +
@@ -1180,42 +1174,7 @@
     // (parentId differentiates the two).
     function resolveSectionForCard(card) {
       if (card.groupId != null && groupById.has(card.groupId)) {
-        const direct = groupById.get(card.groupId);
-        if (direct.level === 1) {
-          // Super-group: prefer the inner group that claims this card,
-          // so the DP renders under the most specific sub-header.
-          const innerId = innerByCardId.get(card.id);
-          if (innerId != null && innerToSuperId.get(innerId) === direct.id) {
-            return {
-              key: `g-${innerId}`,
-              name: groupNameById.get(innerId) || "",
-              level: 0,
-              parentId: direct.id,
-              canvasGroupId: innerId,
-              editable: true,
-            };
-          }
-          // Direct member of a super-group with no inner claim — rare
-          // but possible if an outside DP gets stamped with a super's
-          // groupId via direct mutation. Render under the super header.
-          return {
-            key: `g-${direct.id}`,
-            name: groupNameById.get(direct.id) || "",
-            level: 1,
-            parentId: null,
-            canvasGroupId: direct.id,
-            editable: true,
-          };
-        }
-        // Standalone (non-super) cb-group.
-        return {
-          key: `g-${direct.id}`,
-          name: groupNameById.get(direct.id) || "",
-          level: 0,
-          parentId: null,
-          canvasGroupId: direct.id,
-          editable: true,
-        };
+        return sectionInfoForGroup(groupById.get(card.groupId));
       }
       const cluster = card.data.groupCluster;
       if (cluster && commentByCluster.has(cluster)) {
@@ -1389,45 +1348,10 @@
     // claims the cluster's primary card.
     for (const [groupId, clusterMap] of ersByGroupId) {
       const ownerGroup = groupById.get(groupId);
-      let sectionInfo;
-      if (ownerGroup?.level === 1) {
-        // Super-group: try to nest under the inner group that claims
-        // the cluster's primary ER. Each clusterMap entry represents
-        // ONE adjacency cluster; we pick the inner group based on the
-        // primary card. In practice all members share an inner group
-        // when grouped together.
-        const firstRow = clusterMap.values().next().value;
-        const primaryCardId = firstRow?.cardId ?? null;
-        const innerId = primaryCardId != null ? innerByCardId.get(primaryCardId) : null;
-        if (innerId != null && innerToSuperId.get(innerId) === ownerGroup.id) {
-          sectionInfo = {
-            key: `g-${innerId}`,
-            name: groupNameById.get(innerId) || "",
-            level: 0,
-            parentId: ownerGroup.id,
-            canvasGroupId: innerId,
-            editable: true,
-          };
-        } else {
-          sectionInfo = {
-            key: `g-${ownerGroup.id}`,
-            name: groupNameById.get(ownerGroup.id) || "",
-            level: 1,
-            parentId: null,
-            canvasGroupId: ownerGroup.id,
-            editable: true,
-          };
-        }
-      } else {
-        sectionInfo = {
-          key: `g-${groupId}`,
-          name: groupNameById.get(groupId) || "",
-          level: 0,
-          parentId: null,
-          canvasGroupId: groupId,
-          editable: true,
-        };
-      }
+      if (!ownerGroup) continue;
+      // The ER's most-specific group is its card.groupId; section shape (depth /
+      // super vs inner) comes straight from parentId + level.
+      const sectionInfo = sectionInfoForGroup(ownerGroup);
       const section = ensureSection(sectionInfo);
       for (const row of clusterMap.values()) {
         section.rows.push(row);
@@ -2514,9 +2438,8 @@
   }
 
   function getBlockCardIdsForGroup(canvasGroupId) {
-    const groups = __cb.model?.getGroups?.() || [];
-    const g = groups.find((gg) => gg.id === canvasGroupId);
-    return g ? g.cardIds.slice() : [];
+    // Deep membership: a super-group block carries its nested inner cards too.
+    return (__cb.model?.cardsInGroup?.(canvasGroupId, { deep: true }) || []).map((c) => c.id);
   }
 
   function getBlockMinY(cardIds) {
@@ -2874,9 +2797,11 @@
     const section = getRowSection(hoverRowId) || "";
     const blocks = [];
     if (section === "groups") {
-      // Groups section: each block is one cb-group.
+      // Groups section: each block is one TOP-LEVEL cb-group (inners reorder
+      // within their super's subgroup section, not here).
       for (const g of __cb.model?.getGroups?.() || []) {
-        const cardIds = g.cardIds.slice();
+        if (g.parentId != null) continue;
+        const cardIds = (__cb.model?.cardsInGroup?.(g.id, { deep: true }) || []).map((c) => c.id);
         if (cardIds.length === 0) continue;
         blocks.push(makeBlock(`group:${g.id}`, cardIds));
       }

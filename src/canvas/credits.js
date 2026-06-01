@@ -8,7 +8,7 @@
     // from lineage (`sourceEnrichmentFieldId`), never canvas geometry/clusters.
     // This keeps the canvas per-DP cost pill AND the per-group credit badge in
     // agreement with the lineage-driven table regardless of card positions.
-    const { cardsRef, groupsRef, getCardById } = deps;
+    const { cardsRef, groupsRef, getCardById, getGroupEl, cardsInGroup } = deps;
 
     function isNonErType(type) {
       return type === "dp" || type === "input" || type === "comment";
@@ -202,9 +202,12 @@
       const { erByKey, dpCountByKey } = buildLineageIndex();
 
       for (const g of groupsRef()) {
-        const badge = g.el.querySelector(".cb-group-credits");
+        const el = getGroupEl ? getGroupEl(g.id) : null;
+        const badge = el ? el.querySelector(".cb-group-credits") : null;
         if (!badge) continue;
-        const members = cardsRef().filter((c) => g.cardIds.has(c.id));
+        const members = cardsInGroup
+          ? cardsInGroup(g.id, { deep: true })
+          : cardsRef().filter((c) => c.groupId === g.id);
         const records = window.__cb.getRecordsCount ? window.__cb.getRecordsCount() : 0;
 
         // `sum` stays the honest per-row figure (drives the "/ row" badge).
