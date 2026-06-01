@@ -343,14 +343,14 @@ function quartzNative(cmd) {
   });
 }
 
-/** Sets (or clears) the "update available" cue on the toolbar icon: a red
+/** Sets (or clears) the "update available" cue on the toolbar icon: an amber
  *  badge, an upside-down icon variant, and a descriptive tooltip. */
 async function quartzSetCue(behind, latestVersion) {
   try {
     await chrome.action.setIcon({ path: behind ? QUARTZ_ICON_UPDATE : QUARTZ_ICON });
     await chrome.action.setBadgeText({ text: behind ? "\u2191" : "" });
     if (behind) {
-      await chrome.action.setBadgeBackgroundColor({ color: "#E5484D" });
+      await chrome.action.setBadgeBackgroundColor({ color: "#D97706" });
       if (chrome.action.setBadgeTextColor) {
         await chrome.action.setBadgeTextColor({ color: "#FFFFFF" });
       }
@@ -389,7 +389,18 @@ async function quartzCheckStatus() {
 async function quartzRunPull(cmd) {
   const res = await quartzNative(cmd);
   if (res && res.ok && res.updated) {
-    await chrome.storage.local.set({ quartzPendingReload: true });
+    // Clear the cached "behind" state too, so the SW-startup cache-restore
+    // after chrome.runtime.reload() doesn't re-show a stale "update available"
+    // cue until the next status check.
+    await chrome.storage.local.set({
+      quartzPendingReload: true,
+      quartzUpdateInfo: {
+        behind: false,
+        latestVersion: res.toVersion,
+        currentVersion: res.toVersion,
+        checkedAt: Date.now(),
+      },
+    });
     await quartzSetCue(false);
     chrome.runtime.reload();
   } else if (res && res.ok) {
@@ -464,4 +475,7 @@ chrome.runtime.onInstalled.addListener(async ({ reason }) => {
   } catch (err) {
     console.warn("[Quartz] tab reload after update failed:", err);
   }
+  // Re-verify against origin now that we just updated, so the cue is
+  // authoritatively correct (clears any lingering "update available").
+  quartzCheckStatus();
 });

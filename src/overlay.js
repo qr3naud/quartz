@@ -425,7 +425,7 @@
     moreDot.className = "cb-toolbar-more-dot";
     moreDot.style.cssText =
       "position:absolute;top:3px;right:3px;width:7px;height:7px;border-radius:50%;" +
-      "background:#E5484D;box-shadow:0 0 0 1.5px rgba(255,255,255,0.9);display:none;";
+      "background:#F59E0B;box-shadow:0 0 0 1.5px rgba(255,255,255,0.9);display:none;";
     moreBtn.appendChild(moreDot);
     __cb.refreshMoreDot = function refreshMoreDot() {
       try {
