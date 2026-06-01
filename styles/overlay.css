@@ -533,6 +533,7 @@
    treatment; the inactive half stays subtle so users know it's clickable
    but not currently in effect. */
 .cb-view-mode-toggle {
+  position: relative;
   display: inline-flex;
   align-items: center;
   height: 32px;
@@ -541,13 +542,50 @@
   background: #f9fafb;
   padding: 2px;
   gap: 0;
+  overflow: hidden;
+}
+
+/* The sliding "thumb": a single white pill that glides between the two halves
+   rather than each half cross-fading its own background. Its width and offset
+   are driven by --cb-thumb-left / --cb-thumb-width, which buildViewModeToggle
+   sets from the *active button's* measured box — so the pill hugs whichever
+   word is active with the same padding, even though "Projected" and "Actual"
+   are different widths. Before JS measures (e.g. the frame after a rebuild) the
+   fallbacks below place it on the correct half via :has() so it never flashes
+   on the wrong side. Sits behind the button text (z-index: 0 vs 1). */
+.cb-view-mode-toggle::before {
+  content: "";
+  position: absolute;
+  top: 3px;
+  bottom: 3px;
+  left: var(--cb-thumb-left, 3px);
+  width: var(--cb-thumb-width, calc(50% - 6px));
+  z-index: 0;
+  background: #ffffff;
+  border-radius: 6px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+  transition: left 0.38s cubic-bezier(0.22, 1, 0.36, 1),
+    width 0.38s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.cb-view-mode-toggle:has(.cb-view-mode-actual.cb-view-mode-btn-active)::before {
+  left: var(--cb-thumb-left, calc(50% + 3px));
+}
+
+/* Applied for one frame while the pill is snapped into place on a plain
+   rebuild (no mode change) so the reposition doesn't animate. */
+.cb-view-mode-toggle.cb-view-mode-no-anim::before {
+  transition: none;
 }
 
 .cb-view-mode-btn {
+  position: relative;
+  z-index: 1;
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   height: 26px;
-  padding: 0 12px;
+  padding: 0 14px;
   border: none;
   background: transparent;
   border-radius: 6px;
@@ -556,7 +594,7 @@
   font-size: 12px;
   font-weight: 500;
   cursor: pointer;
-  transition: background 0.15s, color 0.15s;
+  transition: color 0.38s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .cb-view-mode-btn:hover {
@@ -564,13 +602,17 @@
 }
 
 .cb-view-mode-btn-active {
-  background: #ffffff;
   color: #111827;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
 }
 
 .cb-view-mode-btn-active:hover {
   color: #111827;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cb-view-mode-toggle::before {
+    transition: none;
+  }
 }
 
 /* Tinted accent so users can tell at a glance which mode is on. Projected =

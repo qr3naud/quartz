@@ -500,19 +500,77 @@
       act.textContent = "Actual";
 
       const mode = __cb.viewMode === "actual" ? "actual" : "projected";
-      proj.classList.toggle("cb-view-mode-btn-active", mode === "projected");
-      act.classList.toggle("cb-view-mode-btn-active", mode === "actual");
+
+      // The white pill is a CSS thumb (.cb-view-mode-toggle::before) whose width
+      // and offset come from --cb-thumb-left / --cb-thumb-width. We point it at
+      // the *active button's* measured box so it hugs whichever word is active
+      // with the same padding — "Projected" and "Actual" differ in width, so a
+      // fixed half-pill sits loosely around the shorter one.
+      //
+      // This element is rebuilt on every table-view render, so geometry is set
+      // after the caller mounts us (offsetLeft/Width need layout):
+      //  - plain refresh: snap the pill into place under the active word with
+      //    the no-anim class so the reposition doesn't animate, and
+      //  - when the user just flipped the mode (setViewMode set
+      //    _viewModeSlideFrom): park it under the OLD word, then glide it to the
+      //    new word on the next frame so the transition has a delta to animate.
+      const from = __cb._viewModeSlideFrom;
+      __cb._viewModeSlideFrom = null;
+      const animate = (from === "projected" || from === "actual") && from !== mode;
+      const startMode = animate ? from : mode;
+
+      const applyActive = (m) => {
+        proj.classList.toggle("cb-view-mode-btn-active", m === "projected");
+        act.classList.toggle("cb-view-mode-btn-active", m === "actual");
+      };
+      const moveThumbTo = (m) => {
+        const btn = m === "actual" ? act : proj;
+        wrap.style.setProperty("--cb-thumb-left", `${btn.offsetLeft}px`);
+        wrap.style.setProperty("--cb-thumb-width", `${btn.offsetWidth}px`);
+      };
+
+      applyActive(startMode);
 
       proj.addEventListener("click", () => __cb.setViewMode("projected"));
       act.addEventListener("click", () => __cb.setViewMode("actual"));
 
       wrap.appendChild(proj);
       wrap.appendChild(act);
+
+      requestAnimationFrame(() => {
+        // Snap to the start word without animating the initial placement.
+        wrap.classList.add("cb-view-mode-no-anim");
+        moveThumbTo(startMode);
+        if (animate) {
+          requestAnimationFrame(() => {
+            // Commit the start position, then re-enable the transition and move
+            // to the target word + active color so both glide together.
+            void wrap.offsetWidth;
+            wrap.classList.remove("cb-view-mode-no-anim");
+            applyActive(mode);
+            moveThumbTo(mode);
+          });
+        } else {
+          requestAnimationFrame(() =>
+            wrap.classList.remove("cb-view-mode-no-anim"),
+          );
+        }
+      });
+
       return wrap;
     };
 
     __cb.setViewMode = function (value) {
       const next = value === "actual" ? "actual" : "projected";
+      // Remember the half we're leaving so the rebuilt toggle can replay the
+      // slide. This toggle is mounted only in the table-view action row, which
+      // render() tears down and rebuilds on the very refresh setViewMode kicks
+      // off below — so the pill can't animate via a plain class flip on a
+      // persistent node. buildViewModeToggle consumes this flag to run the
+      // slide as an enter-transition instead. Only set on a real change so
+      // ordinary refreshes (cell edits, syncs) don't animate.
+      const prev = __cb.viewMode === "actual" ? "actual" : "projected";
+      if (prev !== next) __cb._viewModeSlideFrom = prev;
       __cb.viewMode = next;
       if (__cb.overlayEl) {
         __cb.overlayEl.setAttribute("data-cb-view-mode", next);
