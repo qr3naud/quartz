@@ -3460,10 +3460,6 @@
     ersCell.className = "col-ers";
     const chipsWrap = document.createElement("div");
     chipsWrap.className = "cb-table-view-er-chips";
-    const orphanNote = getCardForRowId(primaryCardId)?.data?.note;
-    if (orphanNote && orphanNote.trim()) {
-      chipsWrap.appendChild(buildNoteBadge(primaryCardId, orphanNote));
-    }
     // Removable chip: the only way to delete an unattached enrichment,
     // since orphan-ER rows have no row-level × (the row goes away with
     // the ER itself). For Link-merged multi-chip rows, removing one
@@ -3471,6 +3467,11 @@
     // naturally on the next refresh.
     for (const er of ers) {
       chipsWrap.appendChild(buildErChipEl(er, /* removable */ true));
+    }
+    // Note badge sits to the right of the ER pills (orphan rows have no "+").
+    const orphanNote = getCardForRowId(primaryCardId)?.data?.note;
+    if (orphanNote && orphanNote.trim()) {
+      chipsWrap.appendChild(buildNoteBadge(primaryCardId, orphanNote));
     }
     ersCell.appendChild(chipsWrap);
     tr.appendChild(ersCell);
@@ -3657,12 +3658,13 @@
       if (mergeSpan > 1) ersCell.rowSpan = mergeSpan;
       const chipsWrap = document.createElement("div");
       chipsWrap.className = "cb-table-view-er-chips";
+      for (const er of row.ers) {
+        chipsWrap.appendChild(buildErChipEl(er, /* removable */ true));
+      }
+      // Note badge sits to the right of the ER pills, just before the "+".
       const dpNote = getCardForRowId(row.cardId)?.data?.note;
       if (dpNote && dpNote.trim()) {
         chipsWrap.appendChild(buildNoteBadge(row.cardId, dpNote));
-      }
-      for (const er of row.ers) {
-        chipsWrap.appendChild(buildErChipEl(er, /* removable */ true));
       }
       const addErBtn = document.createElement("button");
       addErBtn.type = "button";

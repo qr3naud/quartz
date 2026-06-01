@@ -1215,7 +1215,6 @@
   width: 22px;
   height: 22px;
   padding: 0;
-  margin-right: 2px;
   background: #fef3c7;
   color: #b45309;
   border: 1px solid #fde68a;
@@ -1228,6 +1227,9 @@
   background: #fde68a;
   border-color: #f59e0b;
   color: #92400e;
+  /* Hide the cursor while hovering so it doesn't sit over the preview box
+     (which appears just below the badge) and obscure the note text. */
+  cursor: none;
 }
 
 /* Read-only hover preview — body-level so the table overflow can't clip it. */
