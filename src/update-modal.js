@@ -12,7 +12,7 @@
 
   const __cb = window.__cb;
 
-  const GITHUB_REPO_URL = "https://github.com/qr3naud/scoping";
+  const GITHUB_REPO_URL = "https://github.com/qr3naud/quartz";
   const GITHUB_ICON_SVG =
     '<svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor" aria-hidden="true">' +
     '<path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 ' +

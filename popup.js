@@ -186,7 +186,7 @@
         // Neutral wording: the popup runs in extension context with no access
         // to the content script's __cb namespace, so we can't ask
         // hasFeature("internal_branding") whether the toolbar button reads
-        // "GTME View" or "Scoping". "Canvas button" is correct for both.
+        // "Quartz" or "Scoping". "Canvas button" is correct for both.
         showStatus("No saved canvases yet. Open the canvas button on a workbook to start.");
       }
       return;

@@ -356,7 +356,7 @@ async function quartzSetCue(behind, latestVersion) {
       }
     }
     await chrome.action.setTitle({
-      title: behind ? `Quartz \u2014 update available (v${latestVersion || "?"})` : "My Canvases",
+      title: behind ? `Quartz \u2014 update available (v${latestVersion || "?"})` : "Quartz",
     });
   } catch (err) {
     console.warn("[Quartz] setCue failed:", err);

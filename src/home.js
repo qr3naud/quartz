@@ -134,7 +134,30 @@
     const inner = document.createElement("div");
     const refInner = referenceOption.firstElementChild;
     if (refInner) inner.className = refInner.className;
-    inner.textContent = "Canvases";
+    // Key icon + branded label, laid out inline to mirror the toolbar button.
+    inner.style.display = "inline-flex";
+    inner.style.alignItems = "center";
+    inner.style.gap = "6px";
+
+    const icon = document.createElement("img");
+    icon.alt = "";
+    icon.setAttribute("aria-hidden", "true");
+    icon.style.width = "14px";
+    icon.style.height = "14px";
+    icon.style.flexShrink = "0";
+    icon.style.objectFit = "contain";
+    if (typeof chrome !== "undefined" && chrome.runtime?.getURL) {
+      icon.src = chrome.runtime.getURL("icons/key-icon.png");
+    }
+
+    const label = document.createElement("span");
+    // Match the toolbar button gating: internal GTMEs see "Quartz", everyone
+    // else sees "Scoping" (same `internal_branding` flag used at line ~401).
+    label.textContent =
+      __cb.hasFeature && __cb.hasFeature("internal_branding") ? "Quartz" : "Scoping";
+
+    inner.appendChild(icon);
+    inner.appendChild(label);
     span.appendChild(inner);
 
     return span;

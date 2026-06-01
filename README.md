@@ -1,4 +1,4 @@
-# Clay Scoping Tool
+# Quartz
 
 A Chrome extension that adds a visual scoping canvas to Clay workbooks for planning enrichment workflows.
 
@@ -21,7 +21,7 @@ A Chrome extension that adds a visual scoping canvas to Clay workbooks for plann
 Open the **Terminal** app (on macOS: press `Cmd + Space`, type "Terminal", press Enter), then paste this command and press Enter:
 
 ```bash
-git clone https://github.com/qr3naud/scoping.git ~/Quartz
+git clone https://github.com/qr3naud/quartz.git ~/Quartz
 ```
 
 This creates a folder called `Quartz` in your **home folder** and downloads the latest version of the extension into it.
@@ -39,7 +39,7 @@ This creates a folder called `Quartz` in your **home folder** and downloads the 
 3. Click **Load unpacked** (button on the left)
 4. In the file picker, select the `Quartz` folder in your home folder, then click **Select** / **Open**
 
-You should now see a card titled **Clay Scoping Tool** in the extensions list.
+You should now see a card titled **Quartz** in the extensions list.
 
 ### 3. Enable one-click updates
 
@@ -49,11 +49,13 @@ This registers a tiny helper so the **Update** button inside the extension can p
 bash ~/Quartz/scripts/install-updater.sh
 ```
 
-Then go back to [`chrome://extensions`](chrome://extensions) and click the **circular refresh icon** on the **Clay Scoping Tool** card once, so the new permissions take effect.
+Then go back to [`chrome://extensions`](chrome://extensions) and click the **circular refresh icon** on the **Quartz** card once, so the new permissions take effect.
 
 ### 4. Confirm it works
 
-Open any Clay workbook (e.g. `https://app.clay.com/workspaces/...`). You should see a **GTME View** button in the workbook toolbar. Click it to open the canvas.
+Open any Clay workbook (e.g. `https://app.clay.com/workspaces/...`). You should see a **Quartz** button in the workbook toolbar. Click it to open the canvas.
+
+> Internal Clay GTM team members see the button labeled **Quartz**; everyone else sees **Scoping** (same button, controlled by the `internal_branding` flag).
 
 If you don't see the button, reload the Clay tab. Still missing? See [Troubleshooting](#troubleshooting) below.
 
@@ -76,7 +78,7 @@ The extension pulls the latest version, reloads itself, and refreshes your open 
 > cd ~/Quartz && git pull
 > ```
 >
-> Then go to [`chrome://extensions`](chrome://extensions), click the refresh icon on the **Clay Scoping Tool** card, and reload your Clay tabs.
+> Then go to [`chrome://extensions`](chrome://extensions), click the refresh icon on the **Quartz** card, and reload your Clay tabs.
 
 ---
 
@@ -86,7 +88,7 @@ The extension's ID is now pinned (so the updater helper can talk to it), and it 
 
 1. Move it out of Downloads (one-time): `mv ~/Downloads/Quartz ~/Quartz` — or, if your folder is still named `clay-scoping-extension`, re-clone per Install step 1.
 2. Pull the latest: `cd ~/Quartz && git pull`.
-3. At [`chrome://extensions`](chrome://extensions), **Remove** the old **Clay Scoping Tool** card, then **Load unpacked** the `~/Quartz` folder.
+3. At [`chrome://extensions`](chrome://extensions), **Remove** the old **Quartz** card, then **Load unpacked** the `~/Quartz` folder.
 4. Run Install step 3 to enable one-click updates.
 
 Your canvases are safe — they live in the cloud, not in the extension.
@@ -95,8 +97,8 @@ Your canvases are safe — they live in the cloud, not in the extension.
 
 ## Troubleshooting
 
-**I don't see the "GTME View" button on Clay workbooks**
-Reload the Clay tab first. If it's still missing, go to [`chrome://extensions`](chrome://extensions), click the refresh icon on the **Clay Scoping Tool** card, then reload Clay again.
+**I don't see the "Quartz" button on Clay workbooks**
+Reload the Clay tab first. If it's still missing, go to [`chrome://extensions`](chrome://extensions), click the refresh icon on the **Quartz** card, then reload Clay again.
 
 **Terminal says `git: command not found`**
 You need Apple's developer tools. Run this in Terminal and click **Install** in the popup:
