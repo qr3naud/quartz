@@ -71,8 +71,9 @@
     'stroke-linejoin="round" aria-hidden="true"><polyline points="9 6 15 12 9 18"/></svg>';
 
   /** A collapsible group node. Returns { wrap, childrenEl } and toggles a
-   *  collapsed class on click of the header. */
-  function makeGroup(level, label, count, isNew, collapsed) {
+   *  collapsed class on click of the header. `tone` colors the label pill:
+   *  "white" (major), "ok" (green), "behind" (amber), or "grey". */
+  function makeGroup(level, label, count, tone, collapsed) {
     const wrap = document.createElement("div");
     wrap.className = "cb-update-group cb-update-group-" + level + (collapsed ? " cb-update-collapsed" : "");
 
@@ -82,14 +83,12 @@
     header.innerHTML = CHEVRON_SVG;
 
     const labelEl = document.createElement("span");
-    labelEl.className = "cb-update-group-label";
+    labelEl.className = "cb-update-grouppill cb-update-grouppill-" + tone;
     labelEl.textContent = label;
     header.appendChild(labelEl);
 
-    // Groups containing incoming commits get an amber count pill (no separate
-    // "new" tag).
     const countEl = document.createElement("span");
-    countEl.className = "cb-update-group-count" + (isNew ? " cb-update-group-count-new" : "");
+    countEl.className = "cb-update-group-count";
     countEl.textContent = String(count);
     header.appendChild(countEl);
 
@@ -186,12 +185,12 @@
       const minors = majors.get(major);
       const majorCommits = [...minors.values()].flat();
       const majorHasNew = majorCommits.some((c) => c.isNew);
-      // Expand the newest major (or any major with incoming commits).
+      // Major header: a white pill showing just the major number.
       const { wrap: majorWrap, childrenEl: majorChildren } = makeGroup(
         "major",
-        "Version " + major,
+        String(major),
         majorCommits.length,
-        majorHasNew,
+        "white",
         !(firstMajor || majorHasNew),
       );
       bodyEl.appendChild(majorWrap);
@@ -201,13 +200,17 @@
       for (const minor of sortedMinors) {
         const rows = minors.get(minor).sort((a, b) => (b.version.patch - a.version.patch));
         const minorHasNew = rows.some((c) => c.isNew);
+        // The most recent subgroup (newest minor of the newest major) is green
+        // when up to date / amber when behind; every other subgroup is grey.
+        const isMostRecent = firstMajor && firstMinor;
+        const tone = isMostRecent ? (behind ? "behind" : "ok") : "grey";
         const { wrap: minorWrap, childrenEl: minorChildren } = makeGroup(
           "minor",
           "v" + major + "." + minor,
           rows.length,
-          minorHasNew,
+          tone,
           // Expand the newest minor of the newest major, or any with new commits.
-          !((firstMajor && firstMinor) || minorHasNew),
+          !(isMostRecent || minorHasNew),
         );
         for (const c of rows) minorChildren.appendChild(makeCommitRow(c));
         majorChildren.appendChild(minorWrap);
@@ -217,7 +220,7 @@
     }
 
     if (other.length) {
-      const { wrap, childrenEl } = makeGroup("major", "Other changes", other.length, false, true);
+      const { wrap, childrenEl } = makeGroup("major", "Other", other.length, "white", true);
       for (const c of other) childrenEl.appendChild(makeCommitRow(c));
       bodyEl.appendChild(wrap);
     }
