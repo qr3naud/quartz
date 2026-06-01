@@ -63,8 +63,32 @@
     el.textContent = (name || "?").trim().charAt(0);
   }
 
+  /** Reads a user's name + avatar from the Supabase `users` table. Used to
+   *  recover the acting admin's profile while impersonating (the /v3/me
+   *  adminUser payload carries no avatar). RLS permits reading your own row
+   *  (id = jwt sub), which is the acting identity. */
+  async function fetchUserRow(userId) {
+    if (!userId) return null;
+    try {
+      const rows = await supa.supabaseFetch("users", "GET", {
+        query: { id: `eq.${userId}`, select: "name,profile_picture", limit: "1" },
+      });
+      const row = rows && rows[0];
+      return row ? { name: row.name || null, profilePicture: row.profile_picture || null } : null;
+    } catch (err) {
+      console.warn("[Clay Scoping Popup] users row fetch failed:", err);
+      return null;
+    }
+  }
+
   /** Clay's API includes session cookies because we use credentials:"include"
-   *  and the manifest grants host permissions for api.clay.com. */
+   *  and the manifest grants host permissions for api.clay.com.
+   *
+   *  Returns the *acting* identity: normally the user themselves, but while
+   *  impersonating it's the real Clay admin (same logic as presence / the
+   *  collaborators widget and the JWT `sub` minted by clay-auth-mint). /v3/me
+   *  returns the impersonated user at the top level plus `adminUser` (the real
+   *  acting identity, server-set so trustworthy). */
   async function fetchCurrentUser() {
     try {
       const res = await fetch("https://api.clay.com/v3/me", {
@@ -73,6 +97,24 @@
       if (!res.ok) return null;
       const data = await res.json();
       if (!data || data.id == null) return null;
+
+      const admin = data.adminUser || null;
+      if (data.isImpersonated === true && admin) {
+        const acting = {
+          id: String(admin.id),
+          name: admin.fullName || admin.name || admin.email || null,
+          profilePicture: null, // adminUser payload has no avatar
+        };
+        // Recover the admin's name/avatar from their own Supabase row (the
+        // JWT sub matches the acting id, so RLS permits this read).
+        const row = await fetchUserRow(acting.id);
+        if (row) {
+          acting.name = acting.name || row.name;
+          acting.profilePicture = row.profilePicture || acting.profilePicture;
+        }
+        return acting;
+      }
+
       return {
         id: String(data.id),
         name: data.fullName || data.name || data.username || data.email || null,
