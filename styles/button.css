@@ -38,9 +38,23 @@
   color: #4338ca;
 }
 
+/* Shown immediately but not yet clickable while auth is still loading. */
+.cb-btn-loading {
+  opacity: 0.6;
+  cursor: progress;
+}
+
+.cb-btn-loading:hover {
+  background: #ffffff;
+  border-color: rgba(0, 0, 0, 0.15);
+  color: #374151;
+}
+
 .cb-float {
+  /* Fixed to the viewport so it stays put when the Clay flow canvas pans/zooms
+     underneath. Anchored top-right, below Clay's workbook header. */
   position: fixed;
-  bottom: 20px;
+  top: 64px;
   right: 20px;
   z-index: 99999;
 }

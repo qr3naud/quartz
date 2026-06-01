@@ -46,7 +46,27 @@
 
     btn.appendChild(icon);
     btn.appendChild(label);
+
+    // Render the box right away (so it shows the instant Clay's canvas does),
+    // but keep it un-clickable until auth is ready — openCanvas needs the JWT,
+    // so clicking before `supabaseJwtReady` resolves would otherwise be a dead
+    // click. While loading we dim it and ignore clicks; it lights up on its own
+    // when the JWT lands.
+    let ready = false;
+    function setReady(value) {
+      ready = value;
+      btn.classList.toggle("cb-btn-loading", !value);
+      btn.setAttribute("aria-busy", value ? "false" : "true");
+    }
+    if (__cb.supabaseJwtReady && typeof __cb.supabaseJwtReady.then === "function") {
+      setReady(false);
+      __cb.supabaseJwtReady.finally(() => setReady(true));
+    } else {
+      setReady(true);
+    }
+
     btn.addEventListener("click", async () => {
+      if (!ready) return;
       if (__cb.overlayEl) {
         __cb.overlayEl.style.display = "flex";
       } else {
@@ -95,17 +115,55 @@
     return false;
   }
 
+  // Anchor the launcher to the top-right CORNER OF THE FLOW CANVAS (the
+  // dotted-grid area) rather than the viewport edge — otherwise it sits over
+  // Clay's right-hand workbook panel. The canvas is react-flow's container; we
+  // fall back to "just below the top nav, viewport right" if it isn't found.
+  function positionFloatToCanvas(wrapper) {
+    const flow = document.querySelector(".react-flow");
+    if (flow) {
+      const r = flow.getBoundingClientRect();
+      if (r.width > 0 && r.height > 0) {
+        wrapper.style.top = Math.round(r.top + 12) + "px";
+        wrapper.style.right = Math.round(window.innerWidth - r.right + 12) + "px";
+        return;
+      }
+    }
+    // Fallback: clear Clay's top nav (which sits lower when the impersonation
+    // banner is shown, common for the GTME/SE users). `right` keeps the CSS
+    // default.
+    const clayHeader =
+      document.querySelector("#clay-app header") ??
+      document.querySelector("#clay-app nav") ??
+      document.querySelector("#clay-app > div > div:first-child");
+    if (clayHeader) {
+      const headerBottom = clayHeader.getBoundingClientRect().bottom;
+      if (headerBottom > 0) wrapper.style.top = Math.round(headerBottom + 12) + "px";
+    }
+  }
+
   function injectFallbackFloat() {
-    // The floating button is a fallback for when we can't find the native
-    // workbook toolbar. Only a workbook URL has a toolbar to target in the
-    // first place, so don't show the float on /home, /find-leads, /settings,
-    // etc. — there's nothing to fall back to, and the button would be a
-    // phantom "open canvas" with no canvas to open.
+    // The floating launcher is shown when there's no native table toolbar to
+    // inject into (e.g. the workbook Overview/flow view). Only a workbook URL
+    // has a canvas to open, so skip it on /home, /settings, etc.
     if (!__cb.parseIdsFromUrl()) return;
     if (document.querySelector(".cb-float")) return;
     const wrapper = buildButton();
     wrapper.classList.add("cb-float");
+    positionFloatToCanvas(wrapper);
     document.body.appendChild(wrapper);
+
+    // Keep it pinned to the canvas corner as the canvas resizes — a window
+    // resize or the right-hand workbook panel toggling both change its width.
+    const flow = document.querySelector(".react-flow");
+    if (flow && typeof ResizeObserver !== "undefined") {
+      const ro = new ResizeObserver(() => {
+        const f = document.querySelector(".cb-float");
+        if (f) positionFloatToCanvas(f);
+        else ro.disconnect();
+      });
+      ro.observe(flow);
+    }
   }
 
   function removeFloatIfOffWorkbook() {
@@ -117,15 +175,23 @@
   function startObserver() {
     if (tryInjectIntoToolbar()) return;
 
+    // The flow/overview view never gets a native toolbar, so surface the Quartz
+    // box as soon as its canvas exists — no waiting out the toolbar hunt.
+    if (document.querySelector(".react-flow")) injectFallbackFloat();
+
     let attempts = 0;
-    const MAX_ATTEMPTS = 60;
+    const FLOAT_AFTER = 5; // ~2.5s: fallback for toolbar-less pages without a flow canvas
+    const MAX_ATTEMPTS = 60; // ~30s: stop hunting for the native toolbar
 
     const observer = new MutationObserver(() => {
       if (tryInjectIntoToolbar()) {
         observer.disconnect();
         const floater = document.querySelector(".cb-float");
         if (floater) floater.remove();
+        return;
       }
+      // Show the box the moment the flow canvas mounts (idempotent thereafter).
+      if (document.querySelector(".react-flow")) injectFallbackFloat();
     });
 
     observer.observe(document.body, { childList: true, subtree: true });
@@ -136,10 +202,13 @@
         clearInterval(fallbackTimer);
         return;
       }
+      // Fallback for any other toolbar-less page that has no flow canvas.
+      if (attempts >= FLOAT_AFTER) {
+        injectFallbackFloat();
+      }
       if (attempts >= MAX_ATTEMPTS) {
         clearInterval(fallbackTimer);
         observer.disconnect();
-        injectFallbackFloat();
       }
     }, 500);
   }
