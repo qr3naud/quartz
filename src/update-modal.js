@@ -331,10 +331,16 @@
       updateBtn.disabled = true;
       applyState("loading", "Updating\u2026");
       sendUpdateMessage(type).then(({ lastError, res }) => {
-        // On a successful update the extension reloads and this whole page is
-        // torn down — we only reach here for no-op / error outcomes.
+        // Success: the service worker reloads the extension on a successful
+        // update, which closes this message channel (lastError). The only real
+        // failures come back as a proper { ok:false } response, so a closed
+        // channel — or an explicit updated:true — means the reload is underway.
+        // Stay on "Updating…" until the tab refreshes; never flash an error.
+        if (lastError || (res && res.ok && res.updated)) {
+          return; // keep "Updating…", keep the button disabled (busy stays true)
+        }
         busy = false;
-        if (lastError || !res || res.ok === false) {
+        if (!res || res.ok === false) {
           if (res && res.error === "host-missing") {
             applyState("error", "Setup needed");
           } else if (res && res.error === "ff-only") {
