@@ -96,6 +96,12 @@
   // render pick it up + clear it.
   let pendingFocusGroupId = null;
 
+  // DP names are static text by default (so a click selects the row). A
+  // "Rename" context-menu action — or inserting a new DP — sets this to the
+  // card id so the NEXT render renders that one row's name as a focused input.
+  // Consumed + cleared in render() (mirrors pendingFocusGroupId).
+  let pendingRenameCardId = null;
+
   // ---- Row identity helpers ----
   //
   // The id types in play here:
@@ -1701,6 +1707,60 @@
     return card;
   }
 
+  // Right-click "Insert below" — column-aware. Over the ER column it opens
+  // the enrichment picker (a new enrichment linked to this row's data point);
+  // anywhere else it inserts a new data point directly under the row.
+  function insertBelow(ctx) {
+    if (!ctx) return;
+    if (ctx.col === "er") {
+      startAddEnrichment(parseCardIdFromRowId(ctx.rowId));
+    } else {
+      insertDataPointBelow(ctx.rowId);
+    }
+  }
+
+  // Create a new data point and slot it immediately after `targetRowId`
+  // within the same section, then open its name for inline editing.
+  function insertDataPointBelow(targetRowId) {
+    const canvas = __cb.canvas;
+    const target = getCardForRowId(targetRowId);
+    if (!canvas?.addDataPointCard || !target) return;
+
+    const newDp = startAddDataPoint("");
+    if (!newDp) return;
+
+    // Match the target's section membership so the new DP lands in the same
+    // block group (flat / real cb-group / legacy comment-card cluster).
+    if (target.groupId != null) newDp.groupId = target.groupId;
+    if (target.data?.groupCluster != null) {
+      newDp.data.groupCluster = target.data.groupCluster;
+    }
+
+    // Order it right after the target: collect the section's blocks (now
+    // including the new DP), move the new block directly below the target,
+    // and reindex sequential tableOrders over the whole section.
+    const blocks = collectSectionBlocks(targetRowId);
+    const newKey = `row:${newDp.id}`;
+    const targetCardId = parseCardIdFromRowId(targetRowId);
+    const movedIdx = blocks.findIndex((b) => b.key === newKey);
+    if (movedIdx !== -1) {
+      const [moved] = blocks.splice(movedIdx, 1);
+      let targetIdx = blocks.findIndex(
+        (b) => targetCardId != null && b.cardIds.includes(targetCardId),
+      );
+      if (targetIdx === -1) targetIdx = blocks.length - 1;
+      blocks.splice(targetIdx + 1, 0, moved);
+      reindexBlocks(blocks);
+    }
+
+    // Set the rename flag BEFORE model.update(): the update notifies the
+    // store subscription, which synchronously refreshes the table and
+    // consumes the flag (rendering + focusing the new row's name input).
+    pendingRenameCardId = newDp.id;
+    __cb.model.update();
+    if (__cb.saveTabs) __cb.saveTabs();
+  }
+
   // ---- Group action ----
   //
   // Mirrors a canvas Shift+Enter onto the selected DPs. Reuses the existing
@@ -2058,23 +2118,29 @@
     if (dropPosition === "below") targetIdx += 1;
     sectionBlocks.splice(targetIdx, 0, moved);
 
-    // Sequentially reassign tableOrder over EVERY block in the section,
-    // not just the dragged one. This "captures" any newly added /
-    // unordered blocks at their effective sort position, so future
-    // drops see a fully ordered section. Every card in a block gets
-    // the same tableOrder so clusters stay grouped in the table view
-    // (matches the canvas's "linked cards share Y" invariant).
+    reindexBlocks(sectionBlocks);
+    // No geometry change → no refreshClusters needed (snap-derive has
+    // nothing new to discover). Just persist + re-render.
+    __cb.model.update();
+  }
+
+  // Sequentially reassign tableOrder over EVERY block in the given (already
+  // ordered) list, not just one. This "captures" any newly added / unordered
+  // blocks at their effective sort position, so future drops see a fully
+  // ordered section. Every card in a block gets the same tableOrder so
+  // clusters stay grouped in the table view (matches the canvas's "linked
+  // cards share Y" invariant). Shared by performDrop + insertDataPointBelow.
+  function reindexBlocks(orderedBlocks) {
+    const canvas = __cb.canvas;
+    if (!canvas) return;
     let order = 0;
-    for (const block of sectionBlocks) {
+    for (const block of orderedBlocks) {
       for (const id of block.cardIds) {
         const c = canvas.getCardById?.(id);
         if (c) c.tableOrder = order;
       }
       order += 1;
     }
-    // No geometry change → no refreshClusters needed (snap-derive has
-    // nothing new to discover). Just persist + re-render.
-    __cb.model.update();
   }
 
   // Build the list of {key, cardIds, minY, tableOrder} blocks for
@@ -2146,63 +2212,69 @@
 
   // ---- Context menu ----
   //
-  // The menu always opens on right-click — even with a single row selected
-  // — and gates Group / Link as `enabled: false` with a hint label when
-  // the selection isn't sufficient. Earlier behavior was to silently
-  // bail when fewer than 2 DPs were selected, which made the right-click
-  // feel completely broken (single-row right-clicks were the common case).
+  // The menu adapts to the selection and the column the user right-clicked
+  // in, and only ever shows applicable actions (no greyed-out entries):
+  //   - single data point row → Rename + Insert below
+  //   - single orphan enrichment row → Insert below
+  //   - 2+ card rows → Group (and Link when the selection can share an
+  //     enrichment)
+  // `ctx` carries { rowId, col } from onRowContextMenu so Insert below can
+  // branch on the column (ER column opens the picker; DP column adds a DP).
 
-  function openContextMenu(x, y) {
-    closeContextMenu();
+  function buildContextItems(ctx) {
     const cardIds = getCardRowsInSelection();
-    const enough = cardIds.length >= 2;
-    // Adaptive label so the menu reads naturally for each selection
-    // shape (DPs, ERs, or a mix). `noun` flips between "data points",
-    // "enrichments", and "rows" depending on what's actually selected.
-    const selCards = cardIds.map(getCardForRowId).filter(Boolean);
-    const erCount = selCards.filter((c) => isErType(c.data?.type)).length;
-    const dpCards = selCards.filter((c) => c.data?.type === "dp");
-    const dpWithLineage = dpCards.some(
-      (c) => (c.data?.sourceEnrichmentFieldId ?? null) != null,
-    );
-    let noun = "rows";
-    if (enough) {
+    const items = [];
+
+    if (cardIds.length >= 2) {
+      // Multi-select: Group, plus Link when the selection can share one.
+      const selCards = cardIds.map(getCardForRowId).filter(Boolean);
+      const erCount = selCards.filter((c) => isErType(c.data?.type)).length;
+      const dpCards = selCards.filter((c) => c.data?.type === "dp");
+      const dpWithLineage = dpCards.some(
+        (c) => (c.data?.sourceEnrichmentFieldId ?? null) != null,
+      );
       const types = new Set(selCards.map((c) => (c.data?.type === "dp" ? "dp" : "er")));
+      let noun = "rows";
       if (types.size === 1 && types.has("dp")) noun = "data points";
       else if (types.size === 1 && types.has("er")) noun = "enrichments";
-    }
-    // Link = "share an enrichment" in the lineage model (cost splits across
-    // the DPs). It's meaningful only when the selection can actually share
-    // one: exactly one enrichment + data point(s), or DP-only where at least
-    // one DP already carries a source enrichment to propagate. Pure orphan
-    // DPs / multiple enrichments have nothing to share, so the action is
-    // disabled with a hint instead of silently no-op'ing.
-    const canShareEnrichment =
-      enough &&
-      ((erCount === 1 && dpCards.length >= 1) ||
-        (erCount === 0 && dpCards.length >= 2 && dpWithLineage));
-    const items = [
-      {
-        id: "group",
-        label: enough ? `Group ${cardIds.length} ${noun}` : "Group selected",
-        hint: enough ? null : "Shift+click another row to enable",
-        enabled: enough,
+
+      items.push({
+        label: `Group ${cardIds.length} ${noun}`,
         action: () => groupSelected(),
-      },
-      {
-        id: "link",
-        label: enough
-          ? `Link ${cardIds.length} ${noun} (share enrichment)`
-          : "Link selected",
-        hint: !enough
-          ? "Shift+click another row to enable"
-          : canShareEnrichment
-            ? null
-            : "Select rows that share an enrichment",
-        enabled: canShareEnrichment,
-        action: () => linkSelected(),
-      },
-    ];
+      });
+
+      // Link = "share an enrichment" in the lineage model. Only meaningful
+      // for exactly one enrichment + data point(s), or DP-only where at
+      // least one DP already carries a source enrichment to propagate.
+      const canShareEnrichment =
+        (erCount === 1 && dpCards.length >= 1) ||
+        (erCount === 0 && dpCards.length >= 2 && dpWithLineage);
+      if (canShareEnrichment) {
+        items.push({
+          label: `Link ${cardIds.length} ${noun} (share enrichment)`,
+          action: () => linkSelected(),
+        });
+      }
+      return items;
+    }
+
+    // Single row. Rename applies only to data points; Insert below applies
+    // to any card row (column-aware).
+    if (ctx?.rowId != null) {
+      const card = getCardForRowId(ctx.rowId);
+      if (card?.data?.type === "dp") {
+        items.push({ label: "Rename", action: () => startInlineRename(ctx.rowId) });
+      }
+      items.push({ label: "Insert below", action: () => insertBelow(ctx) });
+    }
+    return items;
+  }
+
+  function openContextMenu(x, y, ctx) {
+    closeContextMenu();
+    const items = buildContextItems(ctx);
+    // Nothing actionable for this selection/column → don't open an empty menu.
+    if (items.length === 0) return;
 
     contextMenuBackdrop = document.createElement("div");
     contextMenuBackdrop.className = "cb-table-view-context-backdrop";
@@ -2224,28 +2296,15 @@
     for (const item of items) {
       const btn = document.createElement("button");
       btn.type = "button";
-      btn.className =
-        "cb-table-view-context-menu-option" +
-        (item.enabled ? "" : " cb-table-view-context-menu-option-disabled");
+      btn.className = "cb-table-view-context-menu-option";
       const labelEl = document.createElement("div");
       labelEl.className = "cb-table-view-context-menu-option-label";
       labelEl.textContent = item.label;
       btn.appendChild(labelEl);
-      if (item.hint) {
-        const hintEl = document.createElement("div");
-        hintEl.className = "cb-table-view-context-menu-option-hint";
-        hintEl.textContent = item.hint;
-        btn.appendChild(hintEl);
-      }
-      if (item.enabled) {
-        btn.addEventListener("click", () => {
-          closeContextMenu();
-          item.action();
-        });
-      } else {
-        btn.disabled = true;
-        btn.setAttribute("aria-disabled", "true");
-      }
+      btn.addEventListener("click", () => {
+        closeContextMenu();
+        item.action();
+      });
       contextMenuEl.appendChild(btn);
     }
 
@@ -2271,7 +2330,13 @@
     if (!selectedRowIds.has(rowId)) {
       setSelection([rowId], rowId);
     }
-    openContextMenu(evt.clientX, evt.clientY);
+    // Which column the cursor is over decides what "Insert below" does.
+    const col = evt.target.closest(".col-ers")
+      ? "er"
+      : evt.target.closest(".col-dp")
+        ? "dp"
+        : "other";
+    openContextMenu(evt.clientX, evt.clientY, { rowId, col });
   }
 
   // ---- Rendering ----
@@ -2607,6 +2672,27 @@
       }
       pendingFocusGroupId = null;
     }
+    // Consume a pending rename: the matching DP row rendered its name as an
+    // input (see buildDpRow) — focus + select it now that it's in the DOM.
+    if (pendingRenameCardId != null) {
+      const nameInput = hostEl.querySelector(
+        `[data-row-id="${pendingRenameCardId}"] .cb-table-view-cell-input-text`,
+      );
+      if (nameInput) {
+        nameInput.focus();
+        nameInput.select();
+      }
+      pendingRenameCardId = null;
+    }
+  }
+
+  // Re-render with the given DP row's name as a focused input (the rename
+  // affordance, since the name is otherwise static text).
+  function startInlineRename(rowId) {
+    const cardId = parseCardIdFromRowId(rowId);
+    if (cardId == null) return;
+    pendingRenameCardId = cardId;
+    render();
   }
 
   // Walk a section's DP rows in render order, group consecutive rows by
@@ -2839,25 +2925,47 @@
 
     const dpCell = document.createElement("td");
     dpCell.className = "col-dp";
-    const dpInput = document.createElement("input");
-    dpInput.type = "text";
-    dpInput.className = "cb-table-view-cell-input cb-table-view-cell-input-text";
-    dpInput.placeholder = "Add data point name\u2026";
-    let committed = false;
-    dpInput.addEventListener("keydown", (evt) => {
-      if (evt.key === "Enter") {
-        evt.preventDefault();
-        evt.target.blur();
-      }
+    // Grey "+" (mirrors the ER-column add chip) that reveals an inline input
+    // on click — naming it attaches a new DP card to this orphan cluster.
+    const addDpBtn = document.createElement("button");
+    addDpBtn.type = "button";
+    addDpBtn.className = "cb-table-view-add-dp-chip";
+    addDpBtn.title = "Add a data point name for this enrichment";
+    addDpBtn.innerHTML = plusSvg(11);
+    addDpBtn.addEventListener("mousedown", (evt) => evt.stopPropagation());
+    addDpBtn.addEventListener("click", (evt) => {
+      evt.stopPropagation();
+      const dpInput = document.createElement("input");
+      dpInput.type = "text";
+      dpInput.className = "cb-table-view-cell-input cb-table-view-cell-input-text";
+      dpInput.placeholder = "Add data point name\u2026";
+      dpInput.addEventListener("mousedown", (e) => e.stopPropagation());
+      dpInput.addEventListener("click", (e) => e.stopPropagation());
+      let committed = false;
+      dpInput.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          e.target.blur();
+        } else if (e.key === "Escape") {
+          e.preventDefault();
+          committed = true; // cancel without creating
+          render();
+        }
+      });
+      dpInput.addEventListener("blur", () => {
+        if (committed) return;
+        const text = dpInput.value.trim();
+        if (text.length === 0) {
+          render(); // restore the "+"
+          return;
+        }
+        committed = true;
+        attachDpToOrphanCluster(cardIds, text);
+      });
+      dpCell.replaceChildren(dpInput);
+      dpInput.focus();
     });
-    dpInput.addEventListener("blur", () => {
-      if (committed) return;
-      const text = dpInput.value.trim();
-      if (text.length === 0) return;
-      committed = true;
-      attachDpToOrphanCluster(cardIds, text);
-    });
-    dpCell.appendChild(dpInput);
+    dpCell.appendChild(addDpBtn);
     tr.appendChild(dpCell);
 
     // Coverage = the ER's own coverage (editable in projected, run attempts in
@@ -3010,20 +3118,36 @@
 
     const dpCell = document.createElement("td");
     dpCell.className = "col-dp";
-    const dpInput = document.createElement("input");
-    dpInput.type = "text";
-    dpInput.className = "cb-table-view-cell-input cb-table-view-cell-input-text";
-    dpInput.value = row.name;
-    dpInput.placeholder = "Type data point\u2026";
-    // Stop propagation on the input itself so clicking-to-edit doesn't
-    // also toggle row selection. Same trick the existing chip x button uses.
-    dpInput.addEventListener("mousedown", (evt) => evt.stopPropagation());
-    dpInput.addEventListener("click", (evt) => evt.stopPropagation());
-    dpInput.addEventListener("keydown", (evt) => {
-      if (evt.key === "Enter") evt.target.blur();
-    });
-    dpInput.addEventListener("blur", () => commitDpName(row.cardId, dpInput.value));
-    dpCell.appendChild(dpInput);
+    if (pendingRenameCardId === row.cardId) {
+      // Rename mode (or a freshly inserted DP): render a focused input. The
+      // render() focus pass selects it; commit writes via commitDpName.
+      const dpInput = document.createElement("input");
+      dpInput.type = "text";
+      dpInput.className = "cb-table-view-cell-input cb-table-view-cell-input-text";
+      dpInput.value = row.name;
+      dpInput.placeholder = "Type data point\u2026";
+      // Stop propagation on the input itself so editing doesn't also toggle
+      // row selection. Same trick the existing chip x button uses.
+      dpInput.addEventListener("mousedown", (evt) => evt.stopPropagation());
+      dpInput.addEventListener("click", (evt) => evt.stopPropagation());
+      dpInput.addEventListener("keydown", (evt) => {
+        if (evt.key === "Enter") evt.target.blur();
+      });
+      dpInput.addEventListener("blur", () => commitDpName(row.cardId, dpInput.value));
+      dpCell.appendChild(dpInput);
+    } else {
+      // Static text — clicking anywhere on the row (including the name)
+      // selects it. Renaming happens via the right-click menu.
+      const dpText = document.createElement("div");
+      dpText.className = "cb-table-view-dp-name";
+      if (row.name) {
+        dpText.textContent = row.name;
+      } else {
+        dpText.classList.add("cb-table-view-dp-name-empty");
+        dpText.textContent = "Untitled data point";
+      }
+      dpCell.appendChild(dpText);
+    }
     tr.appendChild(dpCell);
 
     // Coverage (per enrichment): projected = editable rows (default total rows,
@@ -4046,6 +4170,7 @@
       selectionAnchorId = null;
       visibleRowOrder = [];
       pendingFocusGroupId = null;
+      pendingRenameCardId = null;
       if (hostEl) hostEl.innerHTML = "";
       hostEl = null;
       tableEl = null;

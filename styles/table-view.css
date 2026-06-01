@@ -853,6 +853,25 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* Static data point name (default, non-editing state). Padding/typography
+   match .cb-table-view-cell-input so toggling to the rename input doesn't
+   shift the layout. Fills the cell so a click anywhere selects the row. */
+.cb-table-view-dp-name {
+  padding: 5px 8px;
+  font-size: 13px;
+  color: #1f2937;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  box-sizing: border-box;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cb-table-view-dp-name-empty {
+  color: #9ca3af;
+}
+
 .cb-table-view-cell-suffix {
   display: inline-block;
   margin-left: 4px;
@@ -1049,6 +1068,30 @@
 }
 
 .cb-table-view-add-er-chip:hover {
+  background: #eef2ff;
+  border-color: #6366f1;
+  border-style: solid;
+  color: #4338ca;
+}
+
+/* DP-column "+" on orphan-enrichment rows — mirrors the ER add chip so the
+   two "add" affordances read identically. Reveals an inline name input. */
+.cb-table-view-add-dp-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 3px 5px;
+  background: transparent;
+  color: #6366f1;
+  border: 1px dashed #c7d2fe;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
+}
+
+.cb-table-view-add-dp-chip:hover {
   background: #eef2ff;
   border-color: #6366f1;
   border-style: solid;
