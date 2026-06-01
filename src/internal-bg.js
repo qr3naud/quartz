@@ -315,14 +315,39 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 
 const QUARTZ_HOST = "com.quartz.updater";
 const QUARTZ_ALARM = "quartzUpdateCheck";
-const QUARTZ_ICON = {
-  16: "icons/icon-16.png", 32: "icons/icon-32.png",
-  48: "icons/icon-48.png", 128: "icons/icon-128.png",
-};
-const QUARTZ_ICON_UPDATE = {
-  16: "icons/icon-16-update.png", 32: "icons/icon-32-update.png",
-  48: "icons/icon-48-update.png", 128: "icons/icon-128-update.png",
-};
+const QUARTZ_ICON_SIZES = [16, 32, 48, 128];
+
+// Toolbar icon as ImageData (per size). MV3 service workers can't decode an
+// image from a file path via chrome.action.setIcon({path}) — there's no
+// document — so we render the icon (optionally rotated 180deg for the
+// "update available" cue) on an OffscreenCanvas and set it as imageData.
+// Built lazily and cached.
+let _quartzIconData = { normal: null, flipped: null };
+
+async function buildQuartzIconData(flip) {
+  const out = {};
+  for (const size of QUARTZ_ICON_SIZES) {
+    const resp = await fetch(chrome.runtime.getURL(`icons/icon-${size}.png`));
+    const blob = await resp.blob();
+    const bitmap = await createImageBitmap(blob);
+    const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
+    const ctx = canvas.getContext("2d");
+    if (flip) {
+      ctx.translate(bitmap.width, bitmap.height);
+      ctx.rotate(Math.PI);
+    }
+    ctx.drawImage(bitmap, 0, 0);
+    out[size] = ctx.getImageData(0, 0, bitmap.width, bitmap.height);
+    if (bitmap.close) bitmap.close();
+  }
+  return out;
+}
+
+async function quartzIconData(flip) {
+  const key = flip ? "flipped" : "normal";
+  if (!_quartzIconData[key]) _quartzIconData[key] = await buildQuartzIconData(flip);
+  return _quartzIconData[key];
+}
 
 /** Promisified sendNativeMessage. Resolves {ok:false, error:"host-missing"}
  *  when the helper isn't installed (so the UI can show the one-time setup
@@ -343,23 +368,27 @@ function quartzNative(cmd) {
   });
 }
 
-/** Sets (or clears) the "update available" cue on the toolbar icon: an amber
- *  badge, an upside-down icon variant, and a descriptive tooltip. */
+/** Sets (or clears) the "update available" cue on the toolbar icon: the icon
+ *  is flipped upside-down when an update is available, with a descriptive
+ *  tooltip. No badge. Each chrome.action call is isolated so a failure in one
+ *  (e.g. setIcon) can't suppress the others. */
 async function quartzSetCue(behind, latestVersion) {
   try {
-    await chrome.action.setIcon({ path: behind ? QUARTZ_ICON_UPDATE : QUARTZ_ICON });
-    await chrome.action.setBadgeText({ text: behind ? "\u2191" : "" });
-    if (behind) {
-      await chrome.action.setBadgeBackgroundColor({ color: "#D97706" });
-      if (chrome.action.setBadgeTextColor) {
-        await chrome.action.setBadgeTextColor({ color: "#FFFFFF" });
-      }
-    }
     await chrome.action.setTitle({
       title: behind ? `Quartz \u2014 update available (v${latestVersion || "?"})` : "Quartz",
     });
   } catch (err) {
-    console.warn("[Quartz] setCue failed:", err);
+    console.warn("[Quartz] setTitle failed:", err);
+  }
+  // No badge — clear any that a previous build may have set.
+  try {
+    await chrome.action.setBadgeText({ text: "" });
+  } catch {}
+  try {
+    const imageData = await quartzIconData(!!behind);
+    await chrome.action.setIcon({ imageData });
+  } catch (err) {
+    console.warn("[Quartz] setIcon failed:", err);
   }
 }
 

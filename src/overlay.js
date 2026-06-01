@@ -78,12 +78,20 @@
     '<path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>' +
     '</svg>';
 
+  // Chevron-left glyph for the "Archived" row — its submenu opens to the left.
+  const CHEVRON_LEFT_ICON_SVG =
+    '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" ' +
+    'fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" ' +
+    'stroke-linejoin="round" aria-hidden="true"><polyline points="15 18 9 12 15 6"/></svg>';
+
   let moreMenuEl = null;
   let moreMenuBackdrop = null;
+  let moreSubmenuEl = null;
 
   function closeMoreMenu() {
     if (moreMenuEl) { moreMenuEl.remove(); moreMenuEl = null; }
     if (moreMenuBackdrop) { moreMenuBackdrop.remove(); moreMenuBackdrop = null; }
+    if (moreSubmenuEl) { moreSubmenuEl.remove(); moreSubmenuEl = null; }
   }
 
   __cb.closeMoreMenu = closeMoreMenu;
@@ -149,47 +157,6 @@
     });
     moreMenuEl.appendChild(updateItem);
 
-    // View (Canvas / Tables) — leads the menu since "what am I looking at"
-    // is the most fundamental choice. State pill shows the current view
-    // name; clicking flips to the other and closes the menu, mirroring
-    // the Pro Mode row's UX one level down.
-    //
-    // Canvas is being de-prioritized in favor of the table view, so for
-    // everyone except the allow-listed emails (see __cb.canUseCanvasView)
-    // the row renders greyed out and locked — the view is forced to
-    // "table" elsewhere, so the pill always reads "Tables" here.
-    const canUseCanvas = __cb.canUseCanvasView?.() ?? false;
-    const inTable = __cb.brainstormView === "table";
-    const currentViewLabel = inTable ? "Tables" : "Canvas";
-    const otherViewLabel = inTable ? "Canvas" : "Tables";
-    const viewItem = document.createElement("button");
-    viewItem.type = "button";
-    if (canUseCanvas) {
-      viewItem.className = "cb-export-menu-option cb-more-menu-option";
-      viewItem.title = `Switch to the ${otherViewLabel.toLowerCase()} view`;
-      viewItem.innerHTML =
-        `<span class="cb-more-menu-icon">${SWAP_VIEW_ICON_SVG}</span>` +
-        `<span class="cb-more-menu-label">View</span>` +
-        `<span class="cb-more-menu-state">${currentViewLabel}</span>`;
-      viewItem.addEventListener("click", (evt) => {
-        evt.stopPropagation();
-        closeMoreMenu();
-        if (__cb.setBrainstormView) {
-          __cb.setBrainstormView(inTable ? "canvas" : "table");
-        }
-      });
-    } else {
-      viewItem.className =
-        "cb-export-menu-option cb-more-menu-option cb-more-menu-option-disabled";
-      viewItem.disabled = true;
-      viewItem.title = "Canvas view is being rebuilt — table view only";
-      viewItem.innerHTML =
-        `<span class="cb-more-menu-icon">${SWAP_VIEW_ICON_SVG}</span>` +
-        `<span class="cb-more-menu-label">View</span>` +
-        `<span class="cb-more-menu-state">Tables</span>`;
-    }
-    moreMenuEl.appendChild(viewItem);
-
     // Upload POC — bulk-imports data points from a POC overview doc. Used to
     // live as a button in the table-view header; relocated here to keep that
     // header compact. A plain action row (icon + label, no state pill),
@@ -209,27 +176,6 @@
       });
       moreMenuEl.appendChild(uploadItem);
     }
-
-    // Pro Mode — always available. Renders as a toggle row: clicking
-    // closes the menu and flips __cb.setProMode, which already handles
-    // the cluster reflow + visual updates downstream.
-    const proActive = !!__cb.proMode;
-    const proItem = document.createElement("button");
-    proItem.type = "button";
-    proItem.className =
-      "cb-export-menu-option cb-more-menu-option" +
-      (proActive ? " cb-more-menu-option-active" : "");
-    proItem.title = "Show fill rates on data point cards";
-    proItem.innerHTML =
-      `<span class="cb-more-menu-icon">${PRO_ICON_SVG}</span>` +
-      `<span class="cb-more-menu-label">Pro Mode</span>` +
-      `<span class="cb-more-menu-state">${proActive ? "On" : "Off"}</span>`;
-    proItem.addEventListener("click", (evt) => {
-      evt.stopPropagation();
-      closeMoreMenu();
-      if (__cb.setProMode) __cb.setProMode(!__cb.proMode);
-    });
-    moreMenuEl.appendChild(proItem);
 
     // Old vs New Pricing — gated by the pricing_comparison feature flag,
     // same gate the standalone toolbar button used to carry. When the
@@ -268,6 +214,113 @@
         __cb.openExportJsonModal();
       });
       moreMenuEl.appendChild(inspectItem);
+    }
+
+    // Archived — deprecated toggles (View + Pro Mode), kept available only to
+    // the maintainer. Hovering (or clicking) the row opens a flyout submenu to
+    // the left. The chevron-left icon hints at the open direction.
+    const isArchiveAdmin =
+      (__cb.userEmail || "").trim().toLowerCase() === "quentin.renaud@clay.com";
+    if (isArchiveAdmin) {
+      // View (Canvas / Tables) toggle. Canvas is allow-listed; otherwise the
+      // row is locked to Tables.
+      const canUseCanvas = __cb.canUseCanvasView?.() ?? false;
+      const inTable = __cb.brainstormView === "table";
+      const currentViewLabel = inTable ? "Tables" : "Canvas";
+      const otherViewLabel = inTable ? "Canvas" : "Tables";
+      const viewItem = document.createElement("button");
+      viewItem.type = "button";
+      if (canUseCanvas) {
+        viewItem.className = "cb-export-menu-option cb-more-menu-option";
+        viewItem.title = `Switch to the ${otherViewLabel.toLowerCase()} view`;
+        viewItem.innerHTML =
+          `<span class="cb-more-menu-icon">${SWAP_VIEW_ICON_SVG}</span>` +
+          `<span class="cb-more-menu-label">View</span>` +
+          `<span class="cb-more-menu-state">${currentViewLabel}</span>`;
+        viewItem.addEventListener("click", (evt) => {
+          evt.stopPropagation();
+          closeMoreMenu();
+          if (__cb.setBrainstormView) __cb.setBrainstormView(inTable ? "canvas" : "table");
+        });
+      } else {
+        viewItem.className =
+          "cb-export-menu-option cb-more-menu-option cb-more-menu-option-disabled";
+        viewItem.disabled = true;
+        viewItem.title = "Canvas view is being rebuilt — table view only";
+        viewItem.innerHTML =
+          `<span class="cb-more-menu-icon">${SWAP_VIEW_ICON_SVG}</span>` +
+          `<span class="cb-more-menu-label">View</span>` +
+          `<span class="cb-more-menu-state">Tables</span>`;
+      }
+
+      // Pro Mode toggle.
+      const proActive = !!__cb.proMode;
+      const proItem = document.createElement("button");
+      proItem.type = "button";
+      proItem.className =
+        "cb-export-menu-option cb-more-menu-option" +
+        (proActive ? " cb-more-menu-option-active" : "");
+      proItem.title = "Show fill rates on data point cards";
+      proItem.innerHTML =
+        `<span class="cb-more-menu-icon">${PRO_ICON_SVG}</span>` +
+        `<span class="cb-more-menu-label">Pro Mode</span>` +
+        `<span class="cb-more-menu-state">${proActive ? "On" : "Off"}</span>`;
+      proItem.addEventListener("click", (evt) => {
+        evt.stopPropagation();
+        closeMoreMenu();
+        if (__cb.setProMode) __cb.setProMode(!__cb.proMode);
+      });
+
+      // The Archived row + its left-opening flyout submenu.
+      const archivedItem = document.createElement("button");
+      archivedItem.type = "button";
+      archivedItem.className = "cb-export-menu-option cb-more-menu-option cb-more-menu-has-submenu";
+      archivedItem.title = "Archived tools";
+      archivedItem.innerHTML =
+        `<span class="cb-more-menu-icon">${CHEVRON_LEFT_ICON_SVG}</span>` +
+        `<span class="cb-more-menu-label">Archived</span>`;
+
+      const submenu = document.createElement("div");
+      submenu.className = "cb-export-menu cb-more-menu cb-more-submenu";
+      submenu.style.display = "none";
+      submenu.addEventListener("mousedown", (evt) => evt.stopPropagation());
+      submenu.appendChild(viewItem);
+      submenu.appendChild(proItem);
+
+      let submenuHideTimer = null;
+      const positionSubmenu = () => {
+        const r = archivedItem.getBoundingClientRect();
+        submenu.style.position = "fixed";
+        submenu.style.top = r.top + "px";
+        // Open to the LEFT: pin the submenu's right edge just left of the row.
+        submenu.style.right = Math.max(8, window.innerWidth - r.left + 6) + "px";
+        submenu.style.zIndex = "9999999";
+      };
+      const showSubmenu = () => {
+        clearTimeout(submenuHideTimer);
+        positionSubmenu();
+        submenu.style.display = "block";
+        archivedItem.classList.add("cb-more-menu-option-active");
+      };
+      const hideSubmenu = () => {
+        submenuHideTimer = setTimeout(() => {
+          submenu.style.display = "none";
+          archivedItem.classList.remove("cb-more-menu-option-active");
+        }, 160);
+      };
+      archivedItem.addEventListener("mouseenter", showSubmenu);
+      archivedItem.addEventListener("mouseleave", hideSubmenu);
+      archivedItem.addEventListener("click", (evt) => {
+        evt.stopPropagation();
+        if (submenu.style.display === "none") showSubmenu();
+        else hideSubmenu();
+      });
+      submenu.addEventListener("mouseenter", () => clearTimeout(submenuHideTimer));
+      submenu.addEventListener("mouseleave", hideSubmenu);
+
+      moreMenuEl.appendChild(archivedItem);
+      moreSubmenuEl = submenu;
+      document.body.appendChild(submenu);
     }
 
     document.body.appendChild(moreMenuBackdrop);
