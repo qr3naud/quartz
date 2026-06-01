@@ -309,15 +309,20 @@
 
     btn.onclick = () => runUpdate("cb:update:pull");
 
-    // Instant banner from the SW's cached status, then a live re-check.
+    // Instant banner from the SW's cached status, then a live re-check that is
+    // the source of truth. If the live check can't be confirmed (helper not
+    // installed, host error) or reports up-to-date, hide the banner — never
+    // leave a stale "Update available" claim, which is what caused the popup
+    // and the overlay to disagree.
     try {
       chrome.storage.local.get("quartzUpdateInfo", (r) => showBanner(r && r.quartzUpdateInfo));
     } catch {}
     chrome.runtime.sendMessage({ type: "cb:update:status" }, (res) => {
-      if (chrome.runtime.lastError) return; // helper not installed — stay quiet
-      if (res && res.ok) {
-        showBanner({ behind: (res.behind || 0) > 0, latestVersion: res.latestVersion });
+      if (chrome.runtime.lastError || !res || !res.ok) {
+        showBanner(null); // unconfirmed -> don't claim an update is available
+        return;
       }
+      showBanner({ behind: (res.behind || 0) > 0, latestVersion: res.latestVersion });
     });
   }
 

@@ -242,17 +242,28 @@
       `<span class="cb-more-menu-label">Update</span>` +
       `<span class="cb-more-menu-state cb-update-state"></span>`;
     const updateStateEl = updateItem.querySelector(".cb-update-state");
+    const renderUpdateState = (behind, latestVersion) => {
+      if (behind) {
+        updateItem.classList.add("cb-more-menu-option-active");
+        updateStateEl.textContent = latestVersion ? `v${latestVersion}` : "Available";
+      } else {
+        updateItem.classList.remove("cb-more-menu-option-active");
+        updateStateEl.textContent = "Up to date";
+      }
+    };
+    // Seed instantly from the cached status, then refresh live so the menu
+    // never disagrees with the popup / toolbar cue.
     try {
       chrome.storage.local.get("quartzUpdateInfo", (r) => {
         const info = r && r.quartzUpdateInfo;
-        if (info && info.behind) {
-          updateItem.classList.add("cb-more-menu-option-active");
-          updateStateEl.textContent = info.latestVersion ? `v${info.latestVersion}` : "Available";
-        } else if (info) {
-          updateStateEl.textContent = "Up to date";
-        }
+        if (info) renderUpdateState(!!info.behind, info.latestVersion);
       });
     } catch {}
+    chrome.runtime.sendMessage({ type: "cb:update:status" }, (res) => {
+      if (chrome.runtime.lastError || !res || !res.ok) return; // leave seeded state
+      renderUpdateState((res.behind || 0) > 0, res.latestVersion);
+      if (__cb.refreshMoreDot) __cb.refreshMoreDot();
+    });
     let updateBusy = false;
     updateItem.addEventListener("click", (evt) => {
       evt.stopPropagation();
