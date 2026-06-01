@@ -50,10 +50,10 @@
 
 .cb-update-header {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   justify-content: space-between;
-  gap: 8px;
-  padding: 18px 22px 12px;
+  gap: 12px;
+  padding: 16px 22px;
   border-bottom: 1px solid #f1f5f9;
 }
 
@@ -63,25 +63,46 @@
   color: #111827;
 }
 
-.cb-update-version {
+.cb-update-headright {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* Short status label, sits to the left of the version pill. */
+.cb-update-status {
   font-size: 12px;
   font-weight: 600;
+}
+
+.cb-update-status-loading { color: #9ca3af; }
+.cb-update-status-ok { color: #15803d; }
+.cb-update-status-available { color: #b45309; }
+.cb-update-status-error { color: #b42318; }
+
+/* Version pill — larger, color reflects state: green up to date, amber behind. */
+.cb-update-version {
+  font-size: 13px;
+  font-weight: 700;
+  padding: 3px 11px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.cb-update-version-ok {
+  background: #dcfce7;
+  color: #15803d;
+}
+
+.cb-update-version-behind {
+  background: #fef3c7;
+  color: #b45309;
+}
+
+.cb-update-version-loading {
+  background: #f1f5f9;
   color: #6b7280;
 }
-
-/* ---- Status line ---- */
-
-.cb-update-status {
-  padding: 10px 22px;
-  font-size: 13px;
-  font-weight: 600;
-  border-bottom: 1px solid #f1f5f9;
-}
-
-.cb-update-status-loading { color: #6b7280; }
-.cb-update-status-ok { color: #15803d; }
-.cb-update-status-available { color: #b42318; }
-.cb-update-status-error { color: #b42318; }
 
 /* ---- Body / version tree ---- */
 

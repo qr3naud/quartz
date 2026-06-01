@@ -202,11 +202,6 @@
     }
   }
 
-  function setStatus(statusEl, kind, text) {
-    statusEl.className = "cb-update-status cb-update-status-" + kind;
-    statusEl.textContent = text;
-  }
-
   function sendUpdateMessage(type) {
     return new Promise((resolve) => {
       try {
@@ -232,25 +227,38 @@
     modalEl.addEventListener("click", (evt) => evt.stopPropagation());
     modalEl.addEventListener("mousedown", (evt) => evt.stopPropagation());
 
-    // Header
+    // Header: title on the left; a short status label + a colored version
+    // pill on the right (green when up to date, amber when behind).
     const header = document.createElement("div");
     header.className = "cb-update-header";
     const title = document.createElement("div");
     title.className = "cb-update-title";
     title.textContent = "Quartz";
-    const versionEl = document.createElement("div");
-    versionEl.className = "cb-update-version";
+
+    const headRight = document.createElement("div");
+    headRight.className = "cb-update-headright";
+    const statusEl = document.createElement("span");
+    statusEl.className = "cb-update-status cb-update-status-loading";
+    statusEl.textContent = "Checking\u2026";
+    const versionPill = document.createElement("span");
     const currentVersion = (chrome.runtime.getManifest && chrome.runtime.getManifest().version) || "";
-    versionEl.textContent = currentVersion ? "v" + currentVersion : "";
+    versionPill.className = "cb-update-version cb-update-version-loading";
+    versionPill.textContent = currentVersion ? "v" + currentVersion : "";
+    headRight.appendChild(statusEl);
+    headRight.appendChild(versionPill);
+
     header.appendChild(title);
-    header.appendChild(versionEl);
+    header.appendChild(headRight);
     modalEl.appendChild(header);
 
-    // Status line
-    const statusEl = document.createElement("div");
-    statusEl.className = "cb-update-status cb-update-status-loading";
-    statusEl.textContent = "Checking for updates\u2026";
-    modalEl.appendChild(statusEl);
+    // Updates the short status label and the version-pill color together.
+    const applyState = (kind, text) => {
+      statusEl.className = "cb-update-status cb-update-status-" + kind;
+      statusEl.textContent = text;
+      const pill =
+        kind === "ok" ? "ok" : kind === "loading" ? "loading" : "behind";
+      versionPill.className = "cb-update-version cb-update-version-" + pill;
+    };
 
     // Body (timeline)
     const body = document.createElement("div");
@@ -286,16 +294,16 @@
       if (busy) return;
       busy = true;
       updateBtn.disabled = true;
-      setStatus(statusEl, "loading", "Updating\u2026");
+      applyState("loading", "Updating\u2026");
       sendUpdateMessage(type).then(({ lastError, res }) => {
         // On a successful update the extension reloads and this whole page is
         // torn down — we only reach here for no-op / error outcomes.
         busy = false;
         if (lastError || !res || res.ok === false) {
           if (res && res.error === "host-missing") {
-            setStatus(statusEl, "error", "One-time setup needed \u2014 run: bash ~/Quartz/scripts/install-updater.sh");
+            applyState("error", "Setup needed");
           } else if (res && res.error === "ff-only") {
-            setStatus(statusEl, "error", "Local changes block the update.");
+            applyState("error", "Conflict");
             updateBtn.disabled = false;
             updateBtn.textContent = "Force update";
             updateBtn.onclick = () => {
@@ -304,11 +312,11 @@
               }
             };
           } else {
-            setStatus(statusEl, "error", "Update failed. Try again.");
+            applyState("error", "Update failed");
             updateBtn.disabled = false;
           }
         } else if (res.ok && !res.updated) {
-          setStatus(statusEl, "ok", "You're on the latest version.");
+          applyState("ok", "Up to date");
         }
       });
     }
@@ -319,7 +327,7 @@
       if (lastError || !res || res.ok === false) {
         spinner.remove();
         if (res && res.error === "host-missing") {
-          setStatus(statusEl, "error", "Updater not set up yet.");
+          applyState("error", "Setup needed");
           body.innerHTML = "";
           const hint = document.createElement("div");
           hint.className = "cb-update-empty";
@@ -330,17 +338,16 @@
           body.appendChild(hint);
           body.appendChild(code);
         } else {
-          setStatus(statusEl, "error", "Couldn't check for updates.");
+          applyState("error", "Check failed");
         }
         return;
       }
       const behind = (res.behind || 0) > 0;
       if (behind) {
-        const latest = res.latestVersion ? "v" + res.latestVersion : "latest";
-        setStatus(statusEl, "available", `Update available \u2014 ${latest} (${res.behind} new)`);
+        applyState("available", "Update available");
         updateBtn.disabled = false;
       } else {
-        setStatus(statusEl, "ok", "You're on the latest version.");
+        applyState("ok", "Up to date");
         updateBtn.disabled = true;
       }
       renderTimeline(body, res);
