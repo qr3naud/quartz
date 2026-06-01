@@ -49,6 +49,23 @@
     return (window.__cb && window.__cb.canvas) || null;
   }
 
+  // Deep-clone a serialized snapshot so undo/redo entries are frozen in time.
+  // serialize() returns card objects whose `data` (incl. nested arrays like a
+  // waterfall's `providers`) is a LIVE reference; without cloning, an in-place
+  // edit (e.g. reordering providers) would mutate the historical snapshots too,
+  // making undo a no-op. The blob is pure data (no DOM/functions), so
+  // structuredClone is safe, with a JSON fallback.
+  function cloneSnapshot(s) {
+    if (s == null) return s;
+    try {
+      return typeof structuredClone === "function"
+        ? structuredClone(s)
+        : JSON.parse(JSON.stringify(s));
+    } catch (_e) {
+      try { return JSON.parse(JSON.stringify(s)); } catch (_e2) { return s; }
+    }
+  }
+
   function call(method, fallback) {
     const c = canvas();
     return c && typeof c[method] === "function" ? c[method]() : fallback;
@@ -100,7 +117,7 @@
         if (undoStack.length > MAX_UNDO) undoStack.shift();
         redoStack = [];
       }
-      lastSnapshot = model.serialize();
+      lastSnapshot = cloneSnapshot(model.serialize());
       model.notify();
       const cb = window.__cb;
       if (cb && typeof cb.onCanvasStateChange === "function") cb.onCanvasStateChange();
@@ -140,10 +157,15 @@
     },
     // After a fresh restore: set the baseline snapshot + clear history.
     historyResetBaseline() {
-      lastSnapshot = model.serialize();
+      lastSnapshot = cloneSnapshot(model.serialize());
       undoStack = [];
       redoStack = [];
     },
+
+    // Deep-clone helper exposed so the canvas can freeze a history snapshot
+    // before restoring from it (keeps the live model independent of the
+    // retained undo/redo entry).
+    cloneSnapshot,
     // Full teardown (canvas destroy).
     historyClear() {
       lastSnapshot = null;

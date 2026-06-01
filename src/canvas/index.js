@@ -741,9 +741,16 @@
     // the snapshot to re-render. Null = nothing to undo.
     const snap = __cb.model.historyUndo();
     if (!snap) return;
+    // Restore rebuilds every card object, so any popover holding a direct card
+    // reference (e.g. the waterfall provider chain) would go stale — close it.
+    if (window.__cb.closeProviderChain) window.__cb.closeProviderChain();
     clearCanvas();
     __cb.model.setRestoring(true);
-    const { view: _v, ...stateToRestore } = snap;
+    // Clone before restoring: restore() wires the snapshot's `data` objects
+    // straight onto the rebuilt cards, so without this a later in-place edit
+    // would mutate the retained history entry.
+    const cloned = __cb.model.cloneSnapshot ? __cb.model.cloneSnapshot(snap) : snap;
+    const { view: _v, ...stateToRestore } = cloned;
     getPersistenceHelpers().restore(stateToRestore);
     __cb.model.setRestoring(false);
     // Visuals-only: the undo snapshot already carries the relational
@@ -758,9 +765,11 @@
     if (dragState || groupDragState || panState || selBoxState) return;
     const snap = __cb.model.historyRedo();
     if (!snap) return;
+    if (window.__cb.closeProviderChain) window.__cb.closeProviderChain();
     clearCanvas();
     __cb.model.setRestoring(true);
-    const { view: _v, ...stateToRestore } = snap;
+    const cloned = __cb.model.cloneSnapshot ? __cb.model.cloneSnapshot(snap) : snap;
+    const { view: _v, ...stateToRestore } = cloned;
     getPersistenceHelpers().restore(stateToRestore);
     __cb.model.setRestoring(false);
     refreshClusterVisuals();

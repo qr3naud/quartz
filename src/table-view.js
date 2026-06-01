@@ -3473,8 +3473,11 @@
   // open so its in-menu anchor isn't torn out from under it.
   function refreshOpenErMenu() {
     if (!erChipMenuEl || erChipMenuCardId == null) return;
-    if (erMenuModelPickerEl || erMenuKeyToggleEl || window.__cb._freqPickerEl
-        || window.__cb._providerChainEl) return;
+    // Note: the provider-chain popover is intentionally NOT in this skip list —
+    // editing providers should live-update the menu's cost pill. The popover is
+    // a separate body-mounted panel positioned once, so re-rendering the menu
+    // underneath (rebuilding the "View providers" anchor) doesn't disturb it.
+    if (erMenuModelPickerEl || erMenuKeyToggleEl || window.__cb._freqPickerEl) return;
     const card = __cb.canvas?.getCardById?.(erChipMenuCardId);
     if (!card) { closeErChipMenu(); return; }
     renderErMenuBody(erChipMenuEl, buildErChipData(card));

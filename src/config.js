@@ -707,7 +707,9 @@
       // back to credit mode the previous credits resurface. Only meaningful
       // when a credit value exists OR the provider was originally
       // requiresApiKey (matches the on-card showKeyToggle behavior).
-      const CREDIT_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" fill="currentColor" viewBox="0 0 256 256"><path d="M207.58,63.84C186.85,53.48,159.33,48,128,48S69.15,53.48,48.42,63.84,16,88.78,16,104v48c0,15.22,11.82,29.85,32.42,40.16S96.67,208,128,208s58.85-5.48,79.58-15.84S240,167.22,240,152V104C240,88.78,228.18,74.15,207.58,63.84Z" opacity="0.2"/><path d="M128,64c62.64,0,96,23.23,96,40s-33.36,40-96,40-96-23.23-96-40S65.36,64,128,64Z"/></svg>';
+      // Phosphor "Coin" (duotone, regular) — the same correct credit glyph the
+      // table-view cost pill uses, replacing the old hand-rolled coin.
+      const CREDIT_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><path opacity="0.2" d="M232,104c0,24-40,48-104,48S24,128,24,104,64,56,128,56,232,80,232,104Z"/><path d="M207.58,63.84C186.85,53.48,159.33,48,128,48S69.15,53.48,48.42,63.84,16,88.78,16,104v48c0,15.22,11.82,29.85,32.42,40.16S96.67,208,128,208s58.85-5.48,79.58-15.84S240,167.22,240,152V104C240,88.78,228.18,74.15,207.58,63.84ZM128,64c62.64,0,96,23.23,96,40s-33.36,40-96,40-96-23.23-96-40S65.36,64,128,64Zm-8,95.86v32c-19-.62-35-3.42-48-7.49V153.05A203.43,203.43,0,0,0,120,159.86Zm16,0a203.43,203.43,0,0,0,48-6.81v31.31c-13,4.07-29,6.87-48,7.49ZM32,152V133.53a82.88,82.88,0,0,0,16.42,10.63c2.43,1.21,5,2.35,7.58,3.43V178C40.17,170.16,32,160.29,32,152Zm168,26V147.59c2.61-1.08,5.15-2.22,7.58-3.43A82.88,82.88,0,0,0,224,133.53V152C224,160.29,215.83,170.16,200,178Z"/></svg>';
       // Duotone Phosphor key — matches the on-card private-key pill in
       // canvas/cards.js (darker outline #3b82f6, lighter inside #93c5fd).
       // Used in two places: the validation dropdown's right-side keyOnly
@@ -1223,15 +1225,24 @@
       document.body.appendChild(backdrop);
       document.body.appendChild(panel);
 
-      // Position under the anchor; clamp to viewport so a card near the
-      // right edge doesn't push the panel off-screen.
-      const rect = anchorEl.getBoundingClientRect();
+      // Cap the height to the viewport (with internal scroll) so a long
+      // provider list is never cropped at the bottom, then position with the
+      // shared viewport-clamping helper: opens to the LEFT of the anchor
+      // (panel right edge aligned to the trigger's right edge) and flips above
+      // when there's no room below. The inner validation menu is body-mounted
+      // (fixed), so panel scroll never clips it.
       panel.style.position = "fixed";
       panel.style.zIndex = "9999999";
-      panel.style.top = (rect.bottom + 6) + "px";
-      const panelW = panel.offsetWidth || 320;
-      const left = Math.min(rect.left, window.innerWidth - panelW - 12);
-      panel.style.left = Math.max(8, left) + "px";
+      panel.style.maxHeight = (window.innerHeight - 16) + "px";
+      panel.style.overflowY = "auto";
+      if (typeof window.__cb.placePopover === "function") {
+        window.__cb.placePopover(panel, anchorEl, { gap: 6, align: "right" });
+      } else {
+        const rect = anchorEl.getBoundingClientRect();
+        const panelW = panel.offsetWidth || 320;
+        panel.style.top = (rect.bottom + 6) + "px";
+        panel.style.left = Math.max(8, Math.min(rect.left, window.innerWidth - panelW - 12)) + "px";
+      }
 
       window.__cb._providerChainEl = panel;
       window.__cb._providerChainBackdrop = backdrop;
