@@ -78,6 +78,10 @@
   let dragMoveHandler = null;
   let dragUpHandler = null;
   let dropIndicatorEl = null;
+  // Set true when a threshold drag promotes to a real block drag, so the
+  // trailing click on the same gesture doesn't also select a row / toggle a
+  // group. Consumed (and cleared) by the next onRowClick / group-toggle click.
+  let suppressNextRowClick = false;
 
   // Context menu — single open instance at a time.
   let contextMenuEl = null;
@@ -362,6 +366,12 @@
     // Right-click handled separately — bail out so contextmenu doesn't
     // race the click event for the selection state.
     if (evt.button !== 0) return;
+    // Suppress the click that trails a drag-to-reorder gesture so it doesn't
+    // also (re)select the dropped row.
+    if (suppressNextRowClick) {
+      suppressNextRowClick = false;
+      return;
+    }
     if (evt.shiftKey) {
       extendSelectionTo(rowId);
     } else if (evt.metaKey || evt.ctrlKey) {
@@ -2307,6 +2317,8 @@
       cardIds = getBlockCardIdsForGroup(blockKey);
     }
     if (cardIds.length === 0) return;
+    // Swallow the click that fires at the end of this drag gesture.
+    suppressNextRowClick = true;
     dragInProgress = true;
     dragState = {
       blockKind,
@@ -2362,8 +2374,18 @@
     }
     const rect = target.getBoundingClientRect();
     const above = evt.clientY < rect.top + rect.height / 2;
+    const dropPosition = above ? "above" : "below";
+    // Don't hint (or allow) a drop that would leave the block exactly where it
+    // is — i.e. the slot immediately adjacent to its current position.
+    const plan = computeDropInsert(hoverRowId, dropPosition);
+    if (!plan || plan.insertIdx === plan.draggedIdx) {
+      hideDropIndicator();
+      dragState.hoverRowId = null;
+      dragState.dropPosition = null;
+      return;
+    }
     dragState.hoverRowId = hoverRowId;
-    dragState.dropPosition = above ? "above" : "below";
+    dragState.dropPosition = dropPosition;
     showDropIndicator(target, above);
   }
 
@@ -2482,31 +2504,44 @@
   // touch canvas geometry. Cluster membership is owned by lineage
   // (clusterByLineage), not geometry, so keeping table-view reorders
   // geometry-free guarantees the canvas stays bit-for-bit unchanged.
-  function performDrop(hoverRowId, dropPosition) {
-    const canvas = __cb.canvas;
-    if (!canvas) return;
+  // Resolve where the dragged block would land for a given hover target +
+  // position WITHOUT mutating anything persistent. Returns the section's
+  // blocks with the dragged block already spliced OUT, plus its original index
+  // (`draggedIdx`) and the index it would be re-inserted at (`insertIdx`).
+  // insertIdx === draggedIdx means the drop is a no-op — the two slots
+  // immediately adjacent to the block's current spot (row directly above with
+  // "below", row directly below with "above"). Shared by onDragMove (to gate
+  // the indicator) and performDrop (to apply the move) so the math is identical.
+  function computeDropInsert(hoverRowId, dropPosition) {
     const sectionBlocks = collectSectionBlocks(hoverRowId);
-    if (sectionBlocks.length < 2) return;
+    if (sectionBlocks.length < 2) return null;
     const draggedKey = dragState.blockKind === "group"
       ? `group:${dragState.blockKey}`
       : `row:${dragState.cardIds[0]}`;
     const draggedIdx = sectionBlocks.findIndex((b) => b.key === draggedKey);
-    if (draggedIdx === -1) return;
+    if (draggedIdx === -1) return null;
     const [moved] = sectionBlocks.splice(draggedIdx, 1);
     // hoverRowId is string-form; b.cardIds are numeric. Normalize before
     // findIndex or it never matches.
     const hoverCardId = parseCardIdFromRowId(hoverRowId);
-    let targetIdx = sectionBlocks.findIndex((b) =>
+    let insertIdx = sectionBlocks.findIndex((b) =>
       (hoverCardId != null && b.cardIds.includes(hoverCardId)) ||
       b.key === `group:${hoverRowId.startsWith("g-") ? hoverRowId.slice(2) : hoverRowId}`,
     );
-    if (targetIdx === -1) {
-      // Couldn't resolve target — bail without mutating.
-      sectionBlocks.splice(draggedIdx, 0, moved);
-      return;
-    }
-    if (dropPosition === "below") targetIdx += 1;
-    sectionBlocks.splice(targetIdx, 0, moved);
+    if (insertIdx === -1) return null;
+    if (dropPosition === "below") insertIdx += 1;
+    return { sectionBlocks, moved, draggedIdx, insertIdx };
+  }
+
+  function performDrop(hoverRowId, dropPosition) {
+    const canvas = __cb.canvas;
+    if (!canvas) return;
+    const plan = computeDropInsert(hoverRowId, dropPosition);
+    if (!plan) return;
+    const { sectionBlocks, moved, draggedIdx, insertIdx } = plan;
+    // No-op when the block would land back in its own slot (adjacent drop).
+    if (insertIdx === draggedIdx) return;
+    sectionBlocks.splice(insertIdx, 0, moved);
 
     reindexBlocks(sectionBlocks);
     // No geometry change → no refreshClusters needed (snap-derive has
@@ -2895,10 +2930,9 @@
 
     const thead = document.createElement("thead");
     const headRow = document.createElement("tr");
-    // Leftmost "drag" column carries the gripper handle on every body row.
-    // Empty header label so the column reads as control affordance, not data.
+    // Rows are drag-anywhere (no dedicated handle column): a mousedown on any
+    // non-interactive part of a row arms a threshold drag — see attachRowDrag.
     const headers = [
-      { label: "", cls: "col-drag" },
       { label: "Data point", cls: "col-dp" },
       { label: "Coverage", cls: "col-coverage" },
       { label: "Fill rate (%)", cls: "col-fill" },
@@ -3325,34 +3359,62 @@
     return tr;
   }
 
-  // Build a drag-handle <td> for the leftmost column. Mousedown initiates
-  // a drag of `blockKind` (`row` for an orphan/DP row, `group` for a
-  // group header) keyed by `blockKey`. Visual: a 6-dot gripper icon that
-  // shows on row hover (CSS controls visibility).
-  function buildDragHandleCell(blockKind, blockKey) {
-    const td = document.createElement("td");
-    td.className = "col-drag";
-    const handle = document.createElement("span");
-    handle.className = "cb-table-view-drag-handle";
-    handle.title = "Drag to reorder";
-    handle.setAttribute("aria-hidden", "true");
-    handle.innerHTML = gripperSvg(12);
-    handle.addEventListener("mousedown", (evt) => {
-      // Stop propagation so the row click handler doesn't toggle selection
-      // when the user starts a drag.
-      evt.stopPropagation();
-      startBlockDrag(blockKind, blockKey, evt);
+  // Arms a threshold-based drag on a whole row / group header (drag-anywhere,
+  // no dedicated handle). On mousedown over a NON-interactive part of the row
+  // we listen for movement; once the pointer travels past DRAG_THRESHOLD_PX we
+  // promote it to a real block drag via startBlockDrag. Short of that the
+  // gesture stays a plain click (select a row / toggle a group), so editing,
+  // chips, and buttons are unaffected. startBlockDrag also sets
+  // suppressNextRowClick so the trailing click doesn't double-fire selection.
+  const DRAG_THRESHOLD_PX = 5;
+  function attachRowDrag(tr, blockKind, blockKey) {
+    tr.addEventListener("mousedown", (evt) => {
+      if (evt.button !== 0) return;
+      // Don't hijack drags that begin on interactive controls — let them
+      // edit/click. Most already stopPropagation on mousedown; this is a
+      // backstop that also covers bubbled events.
+      if (
+        evt.target instanceof Element &&
+        evt.target.closest(
+          'input, textarea, select, button, a, [contenteditable="true"], .cb-table-view-cell-input-text',
+        )
+      ) {
+        return;
+      }
+      // Fresh gesture — clear any stale suppression left over from a drag that
+      // ended on a different row (where no trailing click fired to consume it).
+      suppressNextRowClick = false;
+      const startX = evt.clientX;
+      const startY = evt.clientY;
+      let armed = true;
+      const onArmMove = (e) => {
+        if (!armed) return;
+        if (
+          Math.abs(e.clientX - startX) > DRAG_THRESHOLD_PX ||
+          Math.abs(e.clientY - startY) > DRAG_THRESHOLD_PX
+        ) {
+          disarm();
+          startBlockDrag(blockKind, blockKey, e);
+        }
+      };
+      const onArmUp = () => disarm();
+      const disarm = () => {
+        armed = false;
+        document.removeEventListener("mousemove", onArmMove);
+        document.removeEventListener("mouseup", onArmUp);
+      };
+      document.addEventListener("mousemove", onArmMove);
+      document.addEventListener("mouseup", onArmUp);
     });
-    td.appendChild(handle);
-    return td;
   }
 
   // Wires generic row interaction handlers (selection click, right-click
-  // context menu) onto a <tr>. Caller is responsible for adding the
-  // data-row-id and data-row-section attributes before calling.
+  // context menu, drag-to-reorder) onto a <tr>. Caller is responsible for
+  // adding the data-row-id and data-row-section attributes before calling.
   function attachRowInteractionHandlers(tr, rowId) {
     tr.addEventListener("click", (evt) => onRowClick(rowId, evt));
     tr.addEventListener("contextmenu", (evt) => onRowContextMenu(rowId, evt));
+    attachRowDrag(tr, "row", rowId);
   }
 
   // Looks like a regular DP row but the DP cell carries an editable
@@ -3379,8 +3441,6 @@
     tr.setAttribute("data-row-id", String(primaryCardId));
     tr.setAttribute("data-row-section", sectionId || "orphan");
     attachRowInteractionHandlers(tr, String(primaryCardId));
-
-    tr.appendChild(buildDragHandleCell("row", String(primaryCardId)));
 
     const dpCell = document.createElement("td");
     dpCell.className = "col-dp";
@@ -3577,8 +3637,6 @@
     const clusterId = getClusterIdForCardId(row.cardId);
     tr.setAttribute("data-cluster-id", clusterId == null ? "null" : String(clusterId));
     attachRowInteractionHandlers(tr, String(row.cardId));
-
-    tr.appendChild(buildDragHandleCell("row", String(row.cardId)));
 
     const dpCell = document.createElement("td");
     dpCell.className = "col-dp";
@@ -4198,22 +4256,13 @@
     const wrap = document.createElement("div");
     wrap.className = "cb-table-view-group-row-inner";
 
-    // Drag handle lives inside the group-row inner container so it sits
-    // flush with the chevron / icon / label flex axis. Stops propagation
-    // so the toggle handler below doesn't fire on mousedown.
-    const dragHandle = document.createElement("span");
-    dragHandle.className = "cb-table-view-drag-handle cb-table-view-drag-handle-group";
-    dragHandle.title = "Drag to reorder group";
-    dragHandle.setAttribute("aria-hidden", "true");
-    dragHandle.innerHTML = gripperSvg(12);
-    dragHandle.addEventListener("mousedown", (evt) => {
-      // Only real cb-groups can reorder (canvas Group order persists).
-      // Legacy comment-card sections are virtual — no group object to
-      // shift — so the handle is dead for them.
-      if (section.canvasGroupId == null) return;
-      evt.stopPropagation();
-      startBlockDrag("group", section.canvasGroupId, evt);
-    });
+    // Group headers are drag-anywhere too: a threshold drag anywhere on the
+    // header row reorders the group (only real cb-groups — legacy virtual
+    // comment-card sections have no group object to shift). A plain click still
+    // toggles collapse (suppressNextRowClick guards the trailing click).
+    if (section.canvasGroupId != null) {
+      attachRowDrag(tr, "group", section.canvasGroupId);
+    }
 
     const chevron = document.createElement("span");
     chevron.className = "cb-table-view-group-row-chevron";
@@ -4287,7 +4336,6 @@
     const dpCount = section.totalRowCount ?? section.rows.length;
     count.textContent = `${dpCount} data point${dpCount === 1 ? "" : "s"}`;
 
-    wrap.appendChild(dragHandle);
     wrap.appendChild(chevron);
     wrap.appendChild(icon);
     wrap.appendChild(labelEl);
@@ -4329,6 +4377,11 @@
     // to a section header itself, so highlighting it would be confusing.
     tr.addEventListener("click", (evt) => {
       if (evt.button !== 0) return;
+      // Swallow the click that trails a group drag-to-reorder gesture.
+      if (suppressNextRowClick) {
+        suppressNextRowClick = false;
+        return;
+      }
       toggle();
     });
     // Right-click on a header opens the context menu so reps see the
@@ -4547,24 +4600,6 @@
       '<line x1="3" y1="6" x2="3.01" y2="6"/>' +
       '<line x1="3" y1="12" x2="3.01" y2="12"/>' +
       '<line x1="3" y1="18" x2="3.01" y2="18"/>' +
-      '</svg>'
-    );
-  }
-
-  // Six-dot gripper — same visual idiom Notion / Linear use for drag
-  // affordances. Renders inside the leftmost col-drag cell (or, on group
-  // header rows, inside the inner flex container next to the chevron).
-  function gripperSvg(size) {
-    const s = String(size);
-    return (
-      `<svg xmlns="http://www.w3.org/2000/svg" width="${s}" height="${s}" viewBox="0 0 24 24" ` +
-      'fill="currentColor" aria-hidden="true">' +
-      '<circle cx="9" cy="6" r="1.5"/>' +
-      '<circle cx="15" cy="6" r="1.5"/>' +
-      '<circle cx="9" cy="12" r="1.5"/>' +
-      '<circle cx="15" cy="12" r="1.5"/>' +
-      '<circle cx="9" cy="18" r="1.5"/>' +
-      '<circle cx="15" cy="18" r="1.5"/>' +
       '</svg>'
     );
   }

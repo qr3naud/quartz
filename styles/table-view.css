@@ -311,16 +311,6 @@
   z-index: 4;
 }
 
-/* The drag column's HEADER cell must stay sticky like the rest of the header.
-   `.col-drag` sets position: relative (so the BODY cell's absolutely-positioned
-   drag handle anchors correctly), and that rule outranks `thead th`, which
-   would otherwise let the top-left header cell scroll away and expose a
-   transparent gap over the per-table colored band on scroll. */
-.cb-table-view-table thead th.col-drag {
-  position: sticky;
-  top: 0;
-}
-
 .cb-table-view-table tbody td {
   padding: 8px 14px;
   border-bottom: 1px solid #f1f5f9;
@@ -367,16 +357,6 @@
   text-align: right;
 }
 
-/* Drag column: leftmost, narrow, holds the gripper handle. The handle
-   is hidden until the row is hovered (or being dragged) to keep the
-   spreadsheet read clean. The cell itself stays click-through so
-   clicking the row body still hits the row's selection handler. */
-.cb-table-view-table .col-drag {
-  width: 24px;
-  padding: 0 !important;
-  position: relative;
-}
-
 /* ============================================================================
  * Selection / drag / context menu
  * ========================================================================= */
@@ -406,46 +386,35 @@
   -webkit-user-select: text;
 }
 
-/* Drag handle — six-dot gripper, only visible on row hover. Cursor flips
-   to grab so the affordance is unmissable when you mouse over a row. */
-.cb-table-view-drag-handle {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 22px;
-  height: 22px;
-  margin-left: 2px;
-  border-radius: 4px;
-  color: #9ca3af;
+/* Drag-anywhere affordance: rows + group headers are draggable from any
+   non-interactive spot (the dedicated gripper handle was removed), so the whole
+   row shows a grab cursor on hover and grabbing while a drag is in flight.
+   Inputs keep the text caret and buttons/chips keep the pointer (rules below)
+   so the in-cell affordances still read correctly. */
+.cb-table-view-dp-row,
+.cb-table-view-orphan-dp-row,
+.cb-table-view-group-row {
   cursor: grab;
-  opacity: 0;
-  transition: opacity 0.12s, background 0.12s, color 0.12s;
-  user-select: none;
 }
 
-.cb-table-view-drag-handle:hover {
-  background: #f3f4f6;
-  color: #4b5563;
-}
-
-.cb-table-view-drag-handle:active,
-.cb-table-view-row-dragging .cb-table-view-drag-handle {
+.cb-table-view-row-dragging,
+.cb-table-view-row-dragging .cb-table-view-dp-row,
+.cb-table-view-row-dragging.cb-table-view-group-row {
   cursor: grabbing;
-  background: #e0e7ff;
-  color: #4338ca;
-  opacity: 1 !important;
 }
 
-.cb-table-view-table tbody tr:hover .cb-table-view-drag-handle {
-  opacity: 1;
+.cb-table-view-dp-row input,
+.cb-table-view-dp-row [contenteditable="true"],
+.cb-table-view-orphan-dp-row input,
+.cb-table-view-group-row input {
+  cursor: text;
 }
 
-/* Group headers: the drag handle lives inside .cb-table-view-group-row-inner
-   (next to the chevron) instead of in a dedicated col-drag cell, so it has
-   slightly different hover spacing. */
-.cb-table-view-drag-handle-group {
-  margin-left: -4px;
-  margin-right: 2px;
+.cb-table-view-dp-row button,
+.cb-table-view-dp-row a,
+.cb-table-view-orphan-dp-row button,
+.cb-table-view-group-row button {
+  cursor: pointer;
 }
 
 /* Source-row visual cue while dragging: faint indigo outline on every
