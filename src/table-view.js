@@ -72,6 +72,10 @@
   // context menu) so it escapes the table's overflow clipping.
   let erChipMenuEl = null;
   let erChipMenuBackdrop = null;
+  // Card id + preferred (pre-clamp) position of the open details menu, so it
+  // can be re-rendered in place (keeping it open) when the table re-renders.
+  let erChipMenuCardId = null;
+  let erChipMenuPos = null;
   // Grouped model picker spawned from the details-menu Model pill (AI columns).
   let erMenuModelPickerEl = null;
   let erMenuModelPickerBackdrop = null;
@@ -80,13 +84,10 @@
   let erMenuKeyToggleEl = null;
   let erMenuKeyToggleBackdrop = null;
 
-  // Duotone glyphs copied verbatim from the canvas credit pill
-  // (src/canvas/cards.js) so the table-view private-key toggle is pixel-identical
-  // — same blue duotone key, same green duotone coin.
+  // Blue duotone key glyph copied verbatim from the canvas credit pill
+  // (src/canvas/cards.js) so the table-view private-key toggle is pixel-identical.
   const KEY_TOGGLE_KEY_SVG =
     '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 256 256"><path fill="#3b82f6" d="M216.57,39.43A80,80,0,0,0,83.91,120.78L28.69,176A15.86,15.86,0,0,0,24,187.31V216a16,16,0,0,0,16,16H72a8,8,0,0,0,8-8V208H96a8,8,0,0,0,8-8V184h16a8,8,0,0,0,5.66-2.34l9.56-9.57A79.73,79.73,0,0,0,160,176h.1A80,80,0,0,0,216.57,39.43Z"/><path fill="#93c5fd" d="M224,98.1c-1.09,34.09-29.75,61.86-63.89,61.9H160a63.7,63.7,0,0,1-23.65-4.51,8,8,0,0,0-8.84,1.68L116.69,168H96a8,8,0,0,0-8,8v16H72a8,8,0,0,0-8,8v16H40V187.31l58.83-58.82a8,8,0,0,0,1.68-8.84A63.72,63.72,0,0,1,96,95.92c0-34.14,27.81-62.8,61.9-63.89A64,64,0,0,1,224,98.1ZM192,76a12,12,0,1,1-12-12A12,12,0,0,1,192,76Z"/></svg>';
-  const KEY_TOGGLE_CREDIT_SVG =
-    '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" fill="currentColor" viewBox="0 0 256 256"><path d="M207.58,63.84C186.85,53.48,159.33,48,128,48S69.15,53.48,48.42,63.84,16,88.78,16,104v48c0,15.22,11.82,29.85,32.42,40.16S96.67,208,128,208s58.85-5.48,79.58-15.84S240,167.22,240,152V104C240,88.78,228.18,74.15,207.58,63.84Z" opacity="0.2"/><path d="M128,64c62.64,0,96,23.23,96,40s-33.36,40-96,40-96-23.23-96-40S65.36,64,128,64Z"/></svg>';
 
   // After a Group action the new section's label input wants focus so the
   // user types the name immediately. We can't focus it synchronously
@@ -1522,8 +1523,10 @@
         opt.appendChild(costSpan);
         opt.addEventListener("click", (e) => {
           e.stopPropagation();
-          commitModel(er.id, model);
+          // Close the picker first so it's gone before commit → refresh
+          // re-renders the (still-open) details menu in place.
           closeErMenuModelPicker();
+          commitModel(er.id, model);
         });
         subInner.appendChild(opt);
       }
@@ -1598,7 +1601,7 @@
     option.type = "button";
     option.className = "cb-key-toggle-option";
     option.innerHTML = isKeyMode
-      ? '<span style="color:#059669;display:flex">' + KEY_TOGGLE_CREDIT_SVG + "</span><span>Use Clay credits</span>"
+      ? '<span style="color:#0dac65;display:flex">' + coinSvg(14) + "</span><span>Use Clay credits</span>"
       : KEY_TOGGLE_KEY_SVG + "<span>Use private key</span>";
     option.addEventListener("click", (e) => {
       e.stopPropagation();
@@ -1609,6 +1612,9 @@
 
     document.body.appendChild(erMenuKeyToggleBackdrop);
     document.body.appendChild(el);
+    // Track the element so closeErMenuKeyToggle can actually remove it — without
+    // this assignment each toggle orphaned on document.body and never closed.
+    erMenuKeyToggleEl = el;
     el.style.zIndex = "9999999";
     window.__cb.placePopover?.(el, anchorEl, { gap: 4 });
   }
@@ -3209,8 +3215,11 @@
   function closeErChipMenu() {
     closeErMenuModelPicker();
     closeErMenuKeyToggle();
+    window.__cb.closeFrequencyPicker?.();
     if (erChipMenuEl) { erChipMenuEl.remove(); erChipMenuEl = null; }
     if (erChipMenuBackdrop) { erChipMenuBackdrop.remove(); erChipMenuBackdrop = null; }
+    erChipMenuCardId = null;
+    erChipMenuPos = null;
     document.removeEventListener("keydown", onErChipMenuKey);
   }
 
@@ -3344,24 +3353,13 @@
     return `${formatNumber(perYear)} credits / row`;
   }
 
-  function openErChipMenu(er, anchorEl) {
-    closeErChipMenu();
-    closeContextMenu();
-
-    erChipMenuBackdrop = document.createElement("div");
-    erChipMenuBackdrop.className = "cb-table-view-er-menu-backdrop";
-    erChipMenuBackdrop.addEventListener("mousedown", (evt) => {
-      evt.stopPropagation();
-      closeErChipMenu();
-    });
-    erChipMenuBackdrop.addEventListener("contextmenu", (evt) => {
-      evt.preventDefault();
-      closeErChipMenu();
-    });
-
-    const menu = document.createElement("div");
-    menu.className = "cb-table-view-er-menu";
-    menu.addEventListener("mousedown", (evt) => evt.stopPropagation());
+  // Builds (or rebuilds) the menu's contents into `menu`. Split out from
+  // openErChipMenu so the menu can be re-rendered in place after an edit
+  // (frequency / model / private-key) without tearing it down — the user keeps
+  // it open to change other things. Editing controls close only their own
+  // sub-popover; the commit flows back here via refreshOpenErMenu.
+  function renderErMenuBody(menu, er) {
+    menu.innerHTML = "";
 
     // Header: logo + name + kind badge.
     const header = document.createElement("div");
@@ -3436,28 +3434,75 @@
     }
 
     menu.appendChild(footer);
+  }
+
+  // Clamp the open menu to the viewport given preferred (pre-clamp) coords.
+  function positionErMenu(preferredLeft, preferredTop) {
+    if (!erChipMenuEl) return;
+    const mw = erChipMenuEl.offsetWidth;
+    const mh = erChipMenuEl.offsetHeight;
+    const left = Math.max(8, Math.min(preferredLeft, window.innerWidth - mw - 8));
+    let top = preferredTop;
+    if (top + mh > window.innerHeight - 8) {
+      top = Math.max(8, window.innerHeight - mh - 8);
+    }
+    erChipMenuEl.style.left = `${left}px`;
+    erChipMenuEl.style.top = `${top}px`;
+  }
+
+  // Re-render the open details menu from fresh card data after an edit/refresh,
+  // keeping it open. Skips while a sub-popover (model / key / frequency) is
+  // open so its in-menu anchor isn't torn out from under it.
+  function refreshOpenErMenu() {
+    if (!erChipMenuEl || erChipMenuCardId == null) return;
+    if (erMenuModelPickerEl || erMenuKeyToggleEl || window.__cb._freqPickerEl) return;
+    const card = __cb.canvas?.getCardById?.(erChipMenuCardId);
+    if (!card) { closeErChipMenu(); return; }
+    renderErMenuBody(erChipMenuEl, buildErChipData(card));
+    if (erChipMenuPos) positionErMenu(erChipMenuPos.left, erChipMenuPos.top);
+  }
+
+  function openErChipMenu(er, anchorEl) {
+    closeErChipMenu();
+    closeContextMenu();
+
+    erChipMenuBackdrop = document.createElement("div");
+    erChipMenuBackdrop.className = "cb-table-view-er-menu-backdrop";
+    erChipMenuBackdrop.addEventListener("mousedown", (evt) => {
+      evt.stopPropagation();
+      closeErChipMenu();
+    });
+    erChipMenuBackdrop.addEventListener("contextmenu", (evt) => {
+      evt.preventDefault();
+      closeErChipMenu();
+    });
+
+    const menu = document.createElement("div");
+    menu.className = "cb-table-view-er-menu";
+    menu.addEventListener("mousedown", (evt) => evt.stopPropagation());
 
     document.body.appendChild(erChipMenuBackdrop);
     document.body.appendChild(menu);
     erChipMenuEl = menu;
+    erChipMenuCardId = er.id;
 
-    // Position below the chip, left-aligned, clamped to the viewport. Flip
-    // above the chip when it would overflow the bottom edge.
-    const rect = anchorEl.getBoundingClientRect();
+    renderErMenuBody(menu, er);
+
+    // Position below the chip, left-aligned, clamped to the viewport (flip
+    // above when it would overflow the bottom). The preferred coords are
+    // stashed so an in-place re-render re-clamps to the same anchor.
     menu.style.position = "fixed";
     menu.style.zIndex = "9999999";
     menu.style.left = "0px";
     menu.style.top = "0px";
-    const menuWidth = menu.offsetWidth;
-    const menuHeight = menu.offsetHeight;
-    const maxLeft = window.innerWidth - menuWidth - 8;
-    menu.style.left = `${Math.max(8, Math.min(rect.left, maxLeft))}px`;
-    let top = rect.bottom + 6;
-    if (top + menuHeight > window.innerHeight - 8) {
-      const above = rect.top - 6 - menuHeight;
-      top = above > 8 ? above : Math.max(8, window.innerHeight - menuHeight - 8);
+    const rect = anchorEl.getBoundingClientRect();
+    let preferredTop = rect.bottom + 6;
+    if (preferredTop + menu.offsetHeight > window.innerHeight - 8) {
+      const above = rect.top - 6 - menu.offsetHeight;
+      if (above > 8) preferredTop = above;
     }
-    menu.style.top = `${top}px`;
+    erChipMenuPos = { left: rect.left, top: preferredTop };
+    positionErMenu(erChipMenuPos.left, erChipMenuPos.top);
 
     document.addEventListener("keydown", onErChipMenuKey);
   }
@@ -3948,10 +3993,6 @@
     },
     refresh() {
       if (!hostEl) return;
-      // A render() rebuilds every row, so the chip that anchors an open
-      // details menu is about to be torn down — close it first so it doesn't
-      // hang detached over the table.
-      closeErChipMenu();
       // Skip the re-render while the user is mid-edit on a cell — re-rendering
       // would steal focus and drop their in-progress input. The blur handler
       // (which fires on commit) will trigger the next refresh via
@@ -3980,6 +4021,10 @@
           nextScroller.scrollLeft = Math.min(prevLeft, Math.max(0, maxLeft));
         }
       }
+      // The details menu lives on document.body (survives the table rebuild) —
+      // re-render its contents in place so an edit keeps it open with fresh data
+      // instead of tearing it down.
+      refreshOpenErMenu();
     },
     isMounted() {
       return !!hostEl;
