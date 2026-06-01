@@ -143,13 +143,16 @@
       chrome.storage.local.get("quartzUpdateInfo", (r) => {
         const info = r && r.quartzUpdateInfo;
         if (info) renderUpdateState(!!info.behind, info.latestVersion);
+        // Same behind-gate as the view-open check: once we're behind, keep the
+        // cached pill and skip the fetch — only the Update modal re-checks then.
+        if (info && info.behind) return;
+        chrome.runtime.sendMessage({ type: "cb:update:status" }, (res) => {
+          if (chrome.runtime.lastError || !res || !res.ok) return; // leave seeded state
+          renderUpdateState((res.behind || 0) > 0, res.latestVersion);
+          if (__cb.refreshMoreDot) __cb.refreshMoreDot();
+        });
       });
     } catch {}
-    chrome.runtime.sendMessage({ type: "cb:update:status" }, (res) => {
-      if (chrome.runtime.lastError || !res || !res.ok) return; // leave seeded state
-      renderUpdateState((res.behind || 0) > 0, res.latestVersion);
-      if (__cb.refreshMoreDot) __cb.refreshMoreDot();
-    });
     updateItem.addEventListener("click", (evt) => {
       evt.stopPropagation();
       closeMoreMenu();
@@ -491,14 +494,17 @@
       } catch {}
     };
     __cb.refreshMoreDot();
-    // Recheck update status on tab load/refresh so the toolbar icon + menu dot
-    // reflect reality without the user opening the popup or menu. Throttled in
-    // the service worker (see QUARTZ_CHECK_THROTTLE_MS), so rapid refreshes and
-    // multiple open tabs don't each fire a `git fetch`. The storage.onChanged
-    // listener below repaints the dot once the SW writes the fresh result.
+    // Recheck update status whenever the extension view opens (this runs inside
+    // openCanvas) so the toolbar icon + menu dot reflect reality. Once we know
+    // we're behind we stop auto-checking — the cue already shows, and only the
+    // popup / Update modal refresh from there. The storage.onChanged listener
+    // below repaints the dot once the SW writes a fresh result.
     try {
-      chrome.runtime.sendMessage({ type: "cb:update:status", throttled: true }, () => {
-        void chrome.runtime.lastError;
+      chrome.storage.local.get("quartzUpdateInfo", (r) => {
+        if (r && r.quartzUpdateInfo && r.quartzUpdateInfo.behind) return;
+        chrome.runtime.sendMessage({ type: "cb:update:status" }, () => {
+          void chrome.runtime.lastError;
+        });
       });
     } catch {}
     if (chrome.storage && chrome.storage.onChanged && !__cb.__quartzCueWired) {

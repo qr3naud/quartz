@@ -314,10 +314,6 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 // ---------------------------------------------------------------------------
 
 const QUARTZ_HOST = "com.quartz.updater";
-const QUARTZ_ALARM = "quartzUpdateCheck";
-// Minimum gap between throttled status checks (the per-tab-load recheck). Keeps
-// rapid refreshes / many open Clay tabs from each firing a `git fetch`.
-const QUARTZ_CHECK_THROTTLE_MS = 30000;
 const QUARTZ_ICON_SIZES = [16, 32, 48, 128];
 
 // Toolbar icon as ImageData (per size). MV3 service workers can't decode an
@@ -395,33 +391,10 @@ async function quartzSetCue(behind, latestVersion) {
   }
 }
 
-/** Asks the helper whether the repo is behind origin, caches the result for
- *  the popup/overlay, and refreshes the toolbar cue.
- *
- *  Throttled callers (the per-tab-load recheck) pass {force:false} and reuse a
- *  recent cached result instead of hitting the network. Explicit user actions
- *  (popup / menu open), the alarm, and install pass force (the default) and
- *  always get a fresh fetch. */
-async function quartzCheckStatus({ force = true } = {}) {
-  if (!force) {
-    try {
-      const { quartzUpdateInfo } = await chrome.storage.local.get("quartzUpdateInfo");
-      if (
-        quartzUpdateInfo &&
-        quartzUpdateInfo.checkedAt &&
-        Date.now() - quartzUpdateInfo.checkedAt < QUARTZ_CHECK_THROTTLE_MS
-      ) {
-        return {
-          ok: true,
-          behind: quartzUpdateInfo.behind ? 1 : 0,
-          latestVersion: quartzUpdateInfo.latestVersion,
-          currentVersion: quartzUpdateInfo.currentVersion,
-          cached: true,
-        };
-      }
-    } catch {}
-  }
-  const res = await quartzNative("status");
+/** Writes the status fields of a host result to the cache + toolbar cue, then
+ *  returns the result untouched. Shared by the status check and the Update
+ *  modal's log fetch — both return behind / currentVersion / latestVersion. */
+async function quartzCacheStatus(res) {
   if (res && res.ok) {
     const behind = (res.behind || 0) > 0;
     await chrome.storage.local.set({
@@ -435,6 +408,13 @@ async function quartzCheckStatus({ force = true } = {}) {
     await quartzSetCue(behind, res.latestVersion);
   }
   return res;
+}
+
+/** Asks the helper whether the repo is behind origin, caches the result for
+ *  the popup/overlay, and refreshes the toolbar cue. Callers gate the cadence
+ *  (the view-open / More-menu checks skip when already behind). */
+async function quartzCheckStatus() {
+  return quartzCacheStatus(await quartzNative("status"));
 }
 
 /** Runs pull/forcePull. If files changed, reloads the extension so Chrome
@@ -483,13 +463,13 @@ async function quartzRunPull(cmd) {
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (!msg || typeof msg.type !== "string") return;
   if (msg.type === "cb:update:status") {
-    // The per-tab-load recheck sets throttled:true; popup/menu opens don't, so
-    // an explicit user action always forces a fresh fetch.
-    quartzCheckStatus({ force: !msg.throttled }).then(sendResponse);
+    quartzCheckStatus().then(sendResponse);
     return true;
   }
   if (msg.type === "cb:update:log") {
-    quartzNative("log").then(sendResponse);
+    // The Update modal is an explicit "check for exact details", so cache the
+    // status + refresh the cue from the log result before returning commits.
+    quartzNative("log").then(quartzCacheStatus).then(sendResponse);
     return true;
   }
   if (msg.type === "cb:update:pull") {
@@ -503,8 +483,8 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 });
 
 // Restore the cue from the last known status whenever the SW spins up (no
-// network) — keeps the badge visible across browser restarts until the next
-// scheduled check refreshes it.
+// network) — keeps the icon cue correct across browser/SW restarts until the
+// next view-open / popup / modal check refreshes it.
 chrome.storage.local
   .get("quartzUpdateInfo")
   .then(({ quartzUpdateInfo }) => {
@@ -512,16 +492,12 @@ chrome.storage.local
   })
   .catch(() => {});
 
-// Periodic background check so the toolbar cue appears without user action.
+// One-time check right after a fresh install so the cue is correct before the
+// user opens the view. There's no periodic background poll: status is rechecked
+// when the extension view / More menu opens (unless already behind), and always
+// when the popup or Update modal opens.
 chrome.runtime.onInstalled.addListener((details) => {
-  chrome.alarms.create(QUARTZ_ALARM, { periodInMinutes: 180, delayInMinutes: 1 });
   if (details.reason === "install") quartzCheckStatus();
-});
-chrome.runtime.onStartup.addListener(() => {
-  chrome.alarms.create(QUARTZ_ALARM, { periodInMinutes: 180, delayInMinutes: 1 });
-});
-chrome.alarms.onAlarm.addListener((alarm) => {
-  if (alarm.name === QUARTZ_ALARM) quartzCheckStatus();
 });
 
 // chrome.runtime.reload() on an unpacked extension fires onInstalled with
