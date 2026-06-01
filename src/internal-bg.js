@@ -315,6 +315,9 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 
 const QUARTZ_HOST = "com.quartz.updater";
 const QUARTZ_ALARM = "quartzUpdateCheck";
+// Minimum gap between throttled status checks (the per-tab-load recheck). Keeps
+// rapid refreshes / many open Clay tabs from each firing a `git fetch`.
+const QUARTZ_CHECK_THROTTLE_MS = 30000;
 const QUARTZ_ICON_SIZES = [16, 32, 48, 128];
 
 // Toolbar icon as ImageData (per size). MV3 service workers can't decode an
@@ -393,8 +396,31 @@ async function quartzSetCue(behind, latestVersion) {
 }
 
 /** Asks the helper whether the repo is behind origin, caches the result for
- *  the popup/overlay, and refreshes the toolbar cue. */
-async function quartzCheckStatus() {
+ *  the popup/overlay, and refreshes the toolbar cue.
+ *
+ *  Throttled callers (the per-tab-load recheck) pass {force:false} and reuse a
+ *  recent cached result instead of hitting the network. Explicit user actions
+ *  (popup / menu open), the alarm, and install pass force (the default) and
+ *  always get a fresh fetch. */
+async function quartzCheckStatus({ force = true } = {}) {
+  if (!force) {
+    try {
+      const { quartzUpdateInfo } = await chrome.storage.local.get("quartzUpdateInfo");
+      if (
+        quartzUpdateInfo &&
+        quartzUpdateInfo.checkedAt &&
+        Date.now() - quartzUpdateInfo.checkedAt < QUARTZ_CHECK_THROTTLE_MS
+      ) {
+        return {
+          ok: true,
+          behind: quartzUpdateInfo.behind ? 1 : 0,
+          latestVersion: quartzUpdateInfo.latestVersion,
+          currentVersion: quartzUpdateInfo.currentVersion,
+          cached: true,
+        };
+      }
+    } catch {}
+  }
   const res = await quartzNative("status");
   if (res && res.ok) {
     const behind = (res.behind || 0) > 0;
@@ -416,7 +442,20 @@ async function quartzCheckStatus() {
  *  open Clay tabs. Returns the helper's result (best-effort — the reload may
  *  tear down the message channel before the caller reads it). */
 async function quartzRunPull(cmd) {
-  const res = await quartzNative(cmd);
+  let res = await quartzNative(cmd);
+  // ~/Quartz is a deploy clone the user never edits by hand, so a fast-forward
+  // pull that's blocked by local drift (most often a file-mode change on
+  // quartz-updater.py) should be discarded and forced rather than surfacing a
+  // "local changes would be overwritten" error. "Update now" then never sticks.
+  if (
+    cmd === "pull" &&
+    res &&
+    !res.ok &&
+    (res.error === "ff-only" ||
+      /local change|overwritten|fast-forward/i.test(res.output || ""))
+  ) {
+    res = await quartzNative("forcePull");
+  }
   if (res && res.ok && res.updated) {
     // Clear the cached "behind" state too, so the SW-startup cache-restore
     // after chrome.runtime.reload() doesn't re-show a stale "update available"
@@ -444,7 +483,9 @@ async function quartzRunPull(cmd) {
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (!msg || typeof msg.type !== "string") return;
   if (msg.type === "cb:update:status") {
-    quartzCheckStatus().then(sendResponse);
+    // The per-tab-load recheck sets throttled:true; popup/menu opens don't, so
+    // an explicit user action always forces a fresh fetch.
+    quartzCheckStatus({ force: !msg.throttled }).then(sendResponse);
     return true;
   }
   if (msg.type === "cb:update:log") {

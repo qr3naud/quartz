@@ -491,6 +491,16 @@
       } catch {}
     };
     __cb.refreshMoreDot();
+    // Recheck update status on tab load/refresh so the toolbar icon + menu dot
+    // reflect reality without the user opening the popup or menu. Throttled in
+    // the service worker (see QUARTZ_CHECK_THROTTLE_MS), so rapid refreshes and
+    // multiple open tabs don't each fire a `git fetch`. The storage.onChanged
+    // listener below repaints the dot once the SW writes the fresh result.
+    try {
+      chrome.runtime.sendMessage({ type: "cb:update:status", throttled: true }, () => {
+        void chrome.runtime.lastError;
+      });
+    } catch {}
     if (chrome.storage && chrome.storage.onChanged && !__cb.__quartzCueWired) {
       __cb.__quartzCueWired = true;
       chrome.storage.onChanged.addListener((changes, area) => {
