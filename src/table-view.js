@@ -376,6 +376,20 @@
       const id = row.getAttribute("data-row-id");
       row.classList.toggle("cb-table-view-row-selected", selectedRowIds.has(id));
     }
+    // The shared Credits/Actions/Enrichments cells are rowspanned onto the
+    // merge-first row only, so a follower row's selection can't reach them via
+    // the per-row class. Flag the first row when ANY row in its run is selected
+    // so CSS can light up those shared cells too.
+    const firsts = hostEl.querySelectorAll("tr.cb-table-view-dp-row-merge-first");
+    for (const first of firsts) {
+      let anySel = first.classList.contains("cb-table-view-row-selected");
+      let n = first.nextElementSibling;
+      while (n && n.classList.contains("cb-table-view-dp-row-merge-follow")) {
+        if (n.classList.contains("cb-table-view-row-selected")) anySel = true;
+        n = n.nextElementSibling;
+      }
+      first.classList.toggle("cb-table-view-merge-run-selected", anySel);
+    }
   }
 
   // Click handler factory for row <tr>s. We attach it on the row body and
@@ -851,7 +865,19 @@
         : { mode: "actual", ran: null, total: null };
     } else {
       const rows = erCard ? (erCard.data.coverageRows ?? totalRows) : totalRows;
-      coverage = { mode: "projected", rows, editable: !!erCard, erCardId: erCard ? erCard.id : null };
+      // Per-ER "attempted total" (the division denominator). Defaults to (and
+      // tracks) the global Records total until the rep overrides it on this ER;
+      // editing it never changes global Records.
+      const total = erCard?.data?.coverageTotalCustom
+        ? Number(erCard.data.coverageTotal) || 0
+        : totalRows;
+      coverage = {
+        mode: "projected",
+        rows,
+        total,
+        editable: !!erCard,
+        erCardId: erCard ? erCard.id : null,
+      };
     }
 
     let fill = null;
@@ -895,23 +921,65 @@
     cb.tableView?.refresh?.();
   }
 
+  // Writes the projected coverage DENOMINATOR (the per-ER "attempted total")
+  // onto an enrichment card. Display-only for the coverage fraction — cost is
+  // driven by coverageRows (the numerator), so this doesn't recompute credits,
+  // but we still persist + re-render so the fraction updates everywhere the ER
+  // appears.
+  function setErCoverageTotal(erCardId, value) {
+    const cb = window.__cb;
+    const er = (cb.canvas?.getCards?.() || []).find((c) => c.id === erCardId);
+    if (!er) return;
+    const n = Math.max(0, Math.round(Number(String(value).replace(/[^\d]/g, "")) || 0));
+    er.data.coverageTotal = n;
+    er.data.coverageTotalCustom = true;
+    cb.canvas?.notifyChange?.();
+    cb.tableView?.refresh?.();
+  }
+
   // Renders a Coverage <td> from a coverage descriptor (see coverageFillFor).
   function buildCoverageCell(coverage) {
     const td = document.createElement("td");
     if (coverage && coverage.mode === "projected" && coverage.editable) {
       td.className = "col-coverage";
-      const input = document.createElement("input");
-      input.type = "number";
-      input.min = "0";
-      input.step = "1";
-      input.className = "cb-table-view-cell-input cb-table-view-cell-input-num";
-      input.value = coverage.rows != null ? String(coverage.rows) : "";
-      input.title = "Rows this enrichment runs on (drives projected cost)";
-      input.addEventListener("mousedown", (e) => e.stopPropagation());
-      input.addEventListener("click", (e) => e.stopPropagation());
-      input.addEventListener("keydown", (e) => { if (e.key === "Enter") e.target.blur(); });
-      input.addEventListener("blur", () => setErCoverage(coverage.erCardId, input.value));
-      td.appendChild(input);
+      // Editable division: [rows] / [attempted total], both per-ER. Mirrors the
+      // Actual mode "ran / total" so the two modes read the same.
+      const wrap = document.createElement("div");
+      wrap.className = "cb-table-view-cov-edit";
+
+      const mkInput = (val, title, onCommit) => {
+        const input = document.createElement("input");
+        input.type = "number";
+        input.min = "0";
+        input.step = "1";
+        input.className = "cb-table-view-cell-input cb-table-view-cell-input-num";
+        input.value = val != null ? String(val) : "";
+        input.title = title;
+        input.addEventListener("mousedown", (e) => e.stopPropagation());
+        input.addEventListener("click", (e) => e.stopPropagation());
+        input.addEventListener("keydown", (e) => { if (e.key === "Enter") e.target.blur(); });
+        input.addEventListener("blur", () => onCommit(input.value));
+        return input;
+      };
+
+      wrap.appendChild(
+        mkInput(coverage.rows, "Rows this enrichment runs on (drives projected cost)",
+          (v) => setErCoverage(coverage.erCardId, v)),
+      );
+      const sep = document.createElement("span");
+      sep.className = "cb-table-view-cov-sep";
+      sep.textContent = "/";
+      wrap.appendChild(sep);
+      wrap.appendChild(
+        mkInput(coverage.total, "Attempted total for this enrichment (defaults to total records)",
+          (v) => setErCoverageTotal(coverage.erCardId, v)),
+      );
+
+      const denom = Number(coverage.total) || 0;
+      if (denom > 0) {
+        td.title = `${Math.min(100, Math.round(((Number(coverage.rows) || 0) / denom) * 100))}% of rows attempted`;
+      }
+      td.appendChild(wrap);
     } else if (coverage && coverage.mode === "projected") {
       td.className = "col-coverage cb-table-view-cell-readonly";
       td.textContent = coverage.rows ? Number(coverage.rows).toLocaleString() : "\u2014";
@@ -3892,7 +3960,10 @@
       );
       if (nameInput) {
         nameInput.focus();
-        nameInput.select();
+        // Caret at the far right (end of the name) rather than selecting all,
+        // so the rep appends/edits from the end.
+        const end = nameInput.value.length;
+        nameInput.setSelectionRange(end, end);
       }
       pendingRenameCardId = null;
     }

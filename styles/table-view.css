@@ -335,6 +335,10 @@
      crushing the columns. Sum of the fixed columns + a readable Data point /
      Enrichments minimum. */
   min-width: 920px;
+  /* Fixed layout: column widths come from the header row, NOT cell content, so
+     collapsing groups / changing rows never shifts the header, and no column
+     hugs its content. */
+  table-layout: fixed;
   border-collapse: separate;
   border-spacing: 0;
   font-size: 13px;
@@ -381,7 +385,7 @@
 }
 
 .cb-table-view-table .col-coverage {
-  width: 120px;
+  width: 168px;
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
 }
@@ -845,14 +849,39 @@
  * Auto-rowspan merged cells (Link result + organic multi-DP clusters)
  * ========================================================================= */
 
-/* Host of a merged run (the first row carries the rowspan'd <td>s).
-   Visually flat with the follower rows so the run reads as a stack. */
+/* Tint EVERY cell of a linked run uniformly so the stretched ER cell blends
+   into one cohesive block instead of reading as a boxed white patch. */
+.cb-table-view-dp-row-merge-first td,
+.cb-table-view-dp-row-merge-follow td {
+  background: #fafbff;
+}
+
+/* A single indigo accent marking where the shared (rowspan'd) columns begin —
+   no per-cell borders so the band stays clean. */
+.cb-table-view-dp-row-merge-first td.col-credits {
+  border-left: 2px solid #c7d2fe;
+}
+
 .cb-table-view-dp-row-merge-first td.col-credits,
 .cb-table-view-dp-row-merge-first td.col-actions,
 .cb-table-view-dp-row-merge-first td.col-ers {
   vertical-align: middle;
-  background: #fafbff;
-  border-left: 2px solid #c7d2fe;
+}
+
+/* Hover keeps the tinted family (don't flash the default grey hover). */
+.cb-table-view-dp-row-merge-first:hover td,
+.cb-table-view-dp-row-merge-follow:hover td {
+  background: #f5f7ff;
+}
+
+/* The shared (rowspan'd) cells live on the merge-first row, so selecting a
+   follower can't reach them via .cb-table-view-row-selected. applySelectionClasses
+   flags the first row when any run member is selected; light those cells here so
+   the whole linked band highlights regardless of which row was clicked. */
+.cb-table-view-dp-row-merge-first.cb-table-view-merge-run-selected td.col-credits,
+.cb-table-view-dp-row-merge-first.cb-table-view-merge-run-selected td.col-actions,
+.cb-table-view-dp-row-merge-first.cb-table-view-merge-run-selected td.col-ers {
+  background: #eef2ff;
 }
 
 /* Follower rows in a merge run: keep the DP / fill / handle / row-delete
@@ -981,9 +1010,26 @@
 }
 
 .cb-table-view-cell-input-num {
-  width: 70px;
-  text-align: right;
+  width: 58px;
+  padding: 4px 5px;
+  /* Match the read-only Actual cells (left-aligned, weight 500) so Coverage /
+     Fill read the same in Projected and Actual. */
+  text-align: left;
+  font-weight: 500;
   font-variant-numeric: tabular-nums;
+}
+
+/* Projected coverage division: [rows] / [attempted total]. */
+.cb-table-view-cov-edit {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.cb-table-view-cov-sep {
+  flex-shrink: 0;
+  color: #9ca3af;
+  font-weight: 500;
 }
 
 /* Static data point name (default, non-editing state). Padding/typography
@@ -1009,7 +1055,7 @@
   display: inline-block;
   margin-left: 4px;
   color: #6b7280;
-  font-size: 12px;
+  font-size: 13px;
 }
 
 .cb-table-view-cell-readonly {
