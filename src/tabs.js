@@ -1250,6 +1250,25 @@
     }
 
     __cb.recordsActual = tab?.state?.recordsActual ?? null;
+    // Actual mode reads real spend, which only an imported tab has. Switching
+    // to a non-imported tab (no recordsActual) must fall back to Projected —
+    // otherwise the summary sits on Actual showing 0, with no toggle visible
+    // (it only renders for imported tabs) to switch back. Set the mode before
+    // the recordsInput recalc + setBrainstormView mount below so they render
+    // Projected directly.
+    if (!(Number(__cb.recordsActual) > 0) && __cb.viewMode === "actual") {
+      __cb.viewMode = "projected";
+      if (__cb.tabStore) __cb.tabStore.viewMode = "projected";
+      if (__cb.overlayEl) __cb.overlayEl.setAttribute("data-cb-view-mode", "projected");
+    }
+    // Refresh the Actual loading/expired flags for the tab we just entered (its
+    // cards may already carry spend, or none) BEFORE the recalc below, so the
+    // summary doesn't blur known numbers using the previous tab's state. We do
+    // NOT clear _autoActualPending here: the settle() onThisTab gate already
+    // prevents a background fetch from flipping the wrong tab, and keeping it
+    // armed lets the auto-flip still fire if results land while on this tab.
+    __cb.applyActualSummaryState?.();
+
     const recordsInput = document.getElementById("cb-records-input");
     if (recordsInput) {
       recordsInput.value = tab?.state?.records || "";
@@ -1293,12 +1312,6 @@
     if (__cb.setBrainstormView) {
       __cb.setBrainstormView(tab?.state?.brainstormView === "table" ? "table" : "canvas");
     }
-
-    // A pending auto-flip belongs to the tab it was armed on; cancel it and
-    // re-evaluate the Actual loading/expired shimmer for the tab we just
-    // entered (its cards may or may not carry real spend).
-    __cb._autoActualPending = false;
-    __cb.applyActualSummaryState?.();
 
     __cb.saveTabs();
     renderTabBar();

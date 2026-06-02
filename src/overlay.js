@@ -727,14 +727,15 @@
 
       applyActive(startMode);
 
-      // A manual pick cancels the pending auto-flip to Actual (see
-      // fetchSpendInBackground) so we never yank the view out from under the user.
+      // Only an explicit Projected pick cancels the auto-flip to Actual — the
+      // user has said they want Projected, so don't yank them to Actual when the
+      // spend lands. Picking Actual leaves the flag armed (harmless: results
+      // landing just re-confirms Actual and runs the count-up).
       proj.addEventListener("click", () => {
         __cb._autoActualPending = false;
         __cb.setViewMode("projected");
       });
       act.addEventListener("click", () => {
-        __cb._autoActualPending = false;
         __cb.setViewMode("actual");
       });
 
@@ -1145,13 +1146,39 @@
     ];
     for (const el of actualValueEls) el._cbActualDependent = true;
 
-    // True when we're on Actual, the spend fetch has finished (nothing
-    // pending), there are cost-bearing cards, but none carry real spend — i.e.
-    // the realtime window returned nothing. cellCount > 0 means the column ran
+    // Is the CURRENT tab still waiting on actual spend? The pending set is keyed
+    // by tableId and global across tabs, so we scope it to on-screen cards AND
+    // require that the card hasn't already been stamped with spend. This is what
+    // distinguishes "this tab's fetch is in flight" (blur) from "another tab is
+    // fetching the same table I already have data for" (don't blur). cellCount>0
+    // counts as having data (column ran, even if free).
+    function currentTabSpendPending() {
+      const pend = __cb.actualSpendPending;
+      if (!pend || pend.size === 0) return false;
+      const cards = __cb.canvas?.getCards?.() || [];
+      for (const c of cards) {
+        const d = c.data;
+        if (!d) continue;
+        if (d.type === "dp" || d.type === "input" || d.type === "comment") continue;
+        if (!d.tableId || !pend.has(d.tableId)) continue;
+        const sp = d.stats?.spend;
+        const hasSpend =
+          sp &&
+          ((sp.cellCount || 0) > 0 ||
+            (sp.credits || 0) > 0 ||
+            (sp.actionExecutions || 0) > 0);
+        if (!hasSpend) return true;
+      }
+      return false;
+    }
+
+    // True when we're on Actual, the current tab's spend fetch has finished,
+    // there are cost-bearing cards, but none carry real spend — i.e. the
+    // realtime window returned nothing. cellCount > 0 means the column ran
     // within the window (even if it cost 0 credits), so that is NOT expired.
     function computeActualExpired() {
       if (__cb.viewMode !== "actual") return false;
-      if ((__cb.actualSpendPending?.size ?? 0) > 0) return false;
+      if (currentTabSpendPending()) return false;
       const cards = __cb.canvas?.getCards?.() || [];
       let hasCostCard = false;
       for (const c of cards) {
@@ -1172,14 +1199,16 @@
       return hasCostCard;
     }
 
-    // Recompute the expired flag and (re)apply the shimmer class. Called before
-    // each recalc that can change Actual state (setViewMode, fetch completion).
-    // setSummaryNumber reads __cb.actualSpendExpired to render "Expired".
+    // Recompute the loading + expired flags and (re)apply the blur class. Called
+    // before each recalc that can change Actual state (setViewMode, fetch
+    // completion, tab switch). setSummaryNumber reads __cb.actualLoading /
+    // __cb.actualSpendExpired to decide what to render.
     __cb.applyActualSummaryState = function () {
+      __cb.actualLoading = __cb.viewMode === "actual" && currentTabSpendPending();
       __cb.actualSpendExpired = computeActualExpired();
-      const loading =
-        __cb.viewMode === "actual" && (__cb.actualSpendPending?.size ?? 0) > 0;
-      for (const b of actualBoxes) b.classList.toggle("cb-summary-loading", loading);
+      for (const b of actualBoxes) {
+        b.classList.toggle("cb-summary-loading", __cb.actualLoading);
+      }
     };
     __cb._expiredTooltip = EXPIRED_TOOLTIP;
 
@@ -1277,6 +1306,20 @@
     // callers (records typing, edits) leave the flag unset, so only the
     // Projected/Actual flip animates.
     function setSummaryNumber(el, value, format) {
+      // Actual flipped before this tab's spend landed: keep the projected
+      // number visible and let CSS blur it; don't overwrite with the unknown
+      // actual (reads 0). _cbNum stays the projected value, so when data lands
+      // the count-up runs from it (projected -> actual). Reads the cached
+      // __cb.actualLoading (scoped to the current tab) set by
+      // applyActualSummaryState — NOT the global pending set, so a fetch pending
+      // on another tab doesn't blur this tab's known numbers.
+      if (el._cbActualDependent && __cb.actualLoading) {
+        if (el._cbTween) {
+          cancelAnimationFrame(el._cbTween);
+          el._cbTween = null;
+        }
+        return;
+      }
       // Actual mode with no live spend (column ran >30 days ago): show
       // "Expired" + tooltip instead of a misleading 0. The underlying number
       // is still tracked on _cbNum so flipping back to Projected animates from
@@ -2147,6 +2190,7 @@
     __cb.recordsActual = null;
     __cb._autoActualPending = false;
     __cb.actualSpendExpired = false;
+    __cb.actualLoading = false;
     if (__cb.actualSpendPending) __cb.actualSpendPending.clear();
     __cb.applyActualSummaryState = null;
     if (__cb.closeTotalCostEditor) __cb.closeTotalCostEditor();

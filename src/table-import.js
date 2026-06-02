@@ -2233,10 +2233,21 @@
     // clears the shimmer and flags "Expired" when the window returned nothing.
     const settle = (didStamp) => {
       if (!__cb.canvas) return;
+      // Auto-flip to Actual only when the user is actually viewing THIS table's
+      // tab (its cards are on the live canvas) and hasn't opted into Projected.
+      // The onThisTab gate is what keeps a fetch finishing in the background
+      // from yanking a different tab the user has since switched to.
+      const onThisTab = (__cb.canvas.getCards?.() || []).some(
+        (c) => c.data?.tableId === tableId,
+      );
       const autoFlip =
-        didStamp && __cb._autoActualPending && typeof __cb.setViewMode === "function";
-      __cb._autoActualPending = false;
+        didStamp &&
+        onThisTab &&
+        __cb._autoActualPending &&
+        __cb.viewMode !== "actual" &&
+        typeof __cb.setViewMode === "function";
       if (autoFlip) {
+        __cb._autoActualPending = false;
         __cb.setViewMode("actual");
       } else {
         __cb.applyActualSummaryState?.();

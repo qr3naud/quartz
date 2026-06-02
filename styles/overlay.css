@@ -85,7 +85,7 @@
   display: none;
 }
 
-.cb-topbar-right > * {
+.cb-topbar-right>* {
   flex-shrink: 0;
 }
 
@@ -709,6 +709,8 @@
   font-weight: 600;
   color: #111827;
   margin-top: 3px;
+  /* Smoothly sharpen + recolor when the Actual-mode loading blur is removed. */
+  transition: filter 0.3s ease, color 0.3s ease, opacity 0.3s ease;
 }
 
 .cb-summary-input {
@@ -1161,6 +1163,7 @@ body:has(.cb-overlay) [data-floating-ui-portal] {
     opacity: 0;
     transform: translateY(-6px) scale(0.98);
   }
+
   to {
     opacity: 1;
     transform: translateY(0) scale(1);
@@ -1177,6 +1180,7 @@ body:has(.cb-overlay) [data-floating-ui-portal] {
     opacity: 0;
     transform: translateY(-6px);
   }
+
   to {
     opacity: 1;
     transform: translateY(0);
@@ -1198,43 +1202,20 @@ body:has(.cb-overlay) [data-floating-ui-portal] {
   from {
     opacity: 0;
   }
+
   to {
     opacity: 1;
   }
 }
 
-/* Actual-mode loading skeleton: while the spend fetch is in flight and the user
-   is on Actual, every spend-derived summary number becomes a shimmering pill.
-   The value text is hidden (transparent) and a sweeping highlight runs across a
-   tinted bar. Applied by __cb.applyActualSummaryState. */
+/* Actual-mode loading: while the spend fetch is in flight and the user is on
+   Actual, the projected number stays on screen but sits blurred (static, no
+   motion) until the data lands, then sharpens via the base transition (see
+   setSummaryNumber). Blurring the real text blends far better than an injected
+   skeleton block. Applied by __cb.applyActualSummaryState. */
 .cb-summary-box.cb-summary-loading .cb-summary-value {
-  position: relative;
-  display: inline-block;
-  min-width: 56px;
-  color: transparent;
-  border-radius: 5px;
-  overflow: hidden;
-  background: #eef2ff;
-}
-
-.cb-summary-box.cb-summary-loading .cb-summary-value::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(
-    90deg,
-    transparent,
-    rgba(99, 102, 241, 0.3),
-    transparent
-  );
-  transform: translateX(-100%);
-  animation: cb-shimmer 1.1s ease-in-out infinite;
-}
-
-@keyframes cb-shimmer {
-  to {
-    transform: translateX(100%);
-  }
+  filter: blur(2px);
+  color: #9ca3af;
 }
 
 /* "Expired" — the realtime window returned no spend (column ran >30 days ago).
@@ -1246,6 +1227,7 @@ body:has(.cb-overlay) [data-floating-ui-portal] {
 }
 
 @media (prefers-reduced-motion: reduce) {
+
   .cb-export-menu,
   .cb-total-cost-editor,
   .cb-table-view-context-menu,
@@ -1253,10 +1235,14 @@ body:has(.cb-overlay) [data-floating-ui-portal] {
   .cb-view-fade-in {
     animation: none;
   }
+
   .cb-pricing-cards {
     transition: none;
   }
-  .cb-summary-box.cb-summary-loading .cb-summary-value::after {
-    animation: none;
+
+  /* The loading blur is static (not motion) so it stays; just drop the
+     sharpen transition so it appears/clears instantly. */
+  .cb-summary-value {
+    transition: none;
   }
 }
