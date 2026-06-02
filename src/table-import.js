@@ -2135,6 +2135,9 @@
       __cb.actualSpendPending = __cb.actualSpendPending || new Set();
       __cb.actualSpendPending.add(tableId);
       fetchSpendInBackground(workspaceId, tableId);
+      // New import → the run set changed; drop any cached sessions so the
+      // session-cutoff picker rebuilds them.
+      __cb.sessionCutoff?.invalidateCache();
       // Resolve projected cost for "Run function" (subroutine) cards, whose
       // cost lives in the table they reference rather than the catalog.
       fetchSubroutineCostsInBackground(workspaceId, tableId);

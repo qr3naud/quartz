@@ -17,38 +17,38 @@
   //   - non-contiguous selection → per-session byColumn calls summed (any
   //     subset; credits/actions accurate, cellCount becomes executions-style).
   //
-  // Multi-table tabs: sessions are bucketed over the COMBINED run timeline of
-  // every imported table; the selected window is fetched per table and stamped
-  // onto that table's cards. (Per-table session lists are a future refinement.)
+  // Robustness (v4.0.1):
+  //   - sessions are cached in localStorage so a page refresh shows them
+  //     instantly instead of re-fetching the (large) /run/recent payload,
+  //   - a single in-flight load promise prevents the loader from restarting on
+  //     every table re-render,
+  //   - applySelection is serialized (fetch everything first, then stamp only
+  //     if still the latest call) so rapid toggles can't leave cards with their
+  //     spend cleared (which showed up as "Expired").
   // ---------------------------------------------------------------------------
 
   const cb = (window.__cb = window.__cb || {});
 
-  // Runtime state for the active tab. Rebuilt when the tab/table set changes.
+  const CACHE_TTL_MS = 60 * 60 * 1000; // sessions cache is good for 1h
+
+  // Runtime state for the active tab.
   let state = null;
   // {
-  //   tableIds: string[], runsByTable: {tid: runs[]}, runs: run[],
-  //   sessions: session[], selectedIds: Set<string>, gapMs: number,
-  //   loaded: bool, loading: bool, loadToken: number,
+  //   tableIds, runsByTable, runs (null when loaded from cache), sessions,
+  //   selectedIds:Set, gapMs, loaded, loading,
   // }
-  let loadToken = 0;
-  // Listeners (the picker UI) notified when state changes so it can re-render.
+  let loadingPromise = null; // de-dupes concurrent ensureLoaded calls
+  let applyToken = 0; // serializes applySelection (latest wins)
   const listeners = new Set();
 
   function notify() {
     for (const fn of listeners) {
-      try {
-        fn();
-      } catch {}
+      try { fn(); } catch {}
     }
   }
 
   function workspaceId() {
-    return (
-      cb.currentWorkspaceId ||
-      cb.parseIdsFromUrl?.()?.workspaceId ||
-      null
-    );
+    return cb.currentWorkspaceId || cb.parseIdsFromUrl?.()?.workspaceId || null;
   }
 
   function storageKey() {
@@ -57,7 +57,7 @@
     return `cb-session-cutoff-${wb}-${tab}`;
   }
 
-  function loadPersisted() {
+  function loadCache() {
     try {
       return JSON.parse(localStorage.getItem(storageKey()) || "null");
     } catch {
@@ -65,16 +65,25 @@
     }
   }
 
+  // Persist sessions + selection + gap so a refresh is instant.
   function persist() {
     if (!state) return;
     try {
       localStorage.setItem(
         storageKey(),
         JSON.stringify({
+          sessions: state.sessions,
           selectedIds: [...state.selectedIds],
           gapMs: state.gapMs,
+          ts: Date.now(),
         }),
       );
+    } catch {}
+  }
+
+  function clearCache() {
+    try {
+      localStorage.removeItem(storageKey());
     } catch {}
   }
 
@@ -94,30 +103,16 @@
   }
 
   function rebucket() {
-    state.sessions = cb.cost.bucketRunsIntoSessions(state.runs, state.gapMs);
+    state.sessions = cb.cost.bucketRunsIntoSessions(state.runs || [], state.gapMs);
   }
 
   function selectAll() {
     state.selectedIds = new Set(state.sessions.map((s) => s.id));
   }
 
-  // Load run/recent for every imported table, bucket, and seed the selection.
-  // Idempotent: a no-op when already loaded for the same table set (unless
-  // forced). Auto-applies the resolved selection once after a fresh load.
-  async function ensureLoaded(opts) {
-    opts = opts || {};
-    const tableIds = distinctTableIds();
-    if (!tableIds.length) {
-      state = null;
-      notify();
-      return null;
-    }
-    if (state && state.loaded && !opts.force && sameSet(state.tableIds, tableIds)) {
-      return state;
-    }
-    const token = ++loadToken;
-    const persisted = loadPersisted();
-    const gapMs = persisted?.gapMs || cb.cost.DEFAULT_SESSION_GAP_MS;
+  // Fetch run/recent for every imported table and bucket into sessions. Only
+  // called on a cache miss (or a forced refresh / gap change).
+  async function loadFromNetwork(tableIds, gapMs, prevSelectedIds) {
     state = {
       tableIds,
       runsByTable: {},
@@ -127,7 +122,6 @@
       gapMs,
       loaded: false,
       loading: true,
-      loadToken: token,
     };
     notify();
 
@@ -135,7 +129,6 @@
     const all = [];
     for (const tid of tableIds) {
       const runs = ws ? await cb.fetchRunSpend(ws, tid, 210) : null;
-      if (token !== loadToken) return null; // superseded
       if (Array.isArray(runs)) {
         state.runsByTable[tid] = runs;
         for (const r of runs) all.push(r);
@@ -144,24 +137,82 @@
     state.runs = all;
     rebucket();
 
-    // Restore a valid persisted selection, else default to ALL sessions.
     const valid = new Set(state.sessions.map((s) => s.id));
-    const restored = (persisted?.selectedIds || []).filter((id) => valid.has(id));
+    const restored = (prevSelectedIds || []).filter((id) => valid.has(id));
     if (restored.length) state.selectedIds = new Set(restored);
     else selectAll();
 
-    state.loading = false;
     state.loaded = true;
+    state.loading = false;
+    persist();
     notify();
 
     // Apply the resolved window so Actual reflects the selected sessions
-    // (replacing the import's quick 30-day default).
+    // (replacing the import's quick 30-day default). Silent — no table refresh
+    // loop; the summary refresh inside applySelection is enough.
     if (state.sessions.length) await applySelection({ silent: true });
     return state;
   }
 
-  // Remove any previously-stamped measured spend from a table's cards so a new
-  // selection fully replaces it (deselected sessions don't leave stale spend).
+  // Idempotent loader. Cache hit → instant (cards already carry the last
+  // applied spend, so no re-stamp). Cache miss → fetch + bucket + apply.
+  function ensureLoaded(opts) {
+    opts = opts || {};
+    const tableIds = distinctTableIds();
+    if (!tableIds.length) {
+      state = null;
+      notify();
+      return Promise.resolve(null);
+    }
+    if (
+      !opts.force &&
+      state &&
+      state.loaded &&
+      sameSet(state.tableIds, tableIds)
+    ) {
+      return Promise.resolve(state);
+    }
+    if (loadingPromise && !opts.force) return loadingPromise;
+
+    loadingPromise = (async () => {
+      try {
+        const cache = loadCache();
+        const gapMs = opts.gapMs || cache?.gapMs || cb.cost.DEFAULT_SESSION_GAP_MS;
+
+        // Cache hit: show the stored sessions immediately, no network, no
+        // re-stamp (the tab's cards already restored their persisted spend).
+        if (
+          !opts.force &&
+          cache?.sessions?.length &&
+          cache.ts &&
+          Date.now() - cache.ts < CACHE_TTL_MS
+        ) {
+          const valid = new Set(cache.sessions.map((s) => s.id));
+          const sel = (cache.selectedIds || []).filter((id) => valid.has(id));
+          state = {
+            tableIds,
+            runsByTable: {},
+            runs: null, // lazy — refetched only if the gap changes
+            sessions: cache.sessions,
+            selectedIds: new Set(sel.length ? sel : cache.sessions.map((s) => s.id)),
+            gapMs,
+            loaded: true,
+            loading: false,
+          };
+          notify();
+          return state;
+        }
+
+        return await loadFromNetwork(tableIds, gapMs, cache?.selectedIds);
+      } finally {
+        loadingPromise = null;
+      }
+    })();
+    return loadingPromise;
+  }
+
+  // Remove previously-stamped measured spend from a table's cards so a new
+  // selection fully replaces it.
   function clearTableSpend(tid) {
     for (const card of cb.canvas?.getCards?.() || []) {
       const d = card.data;
@@ -192,39 +243,14 @@
     return target;
   }
 
-  // Fetch the selected window(s) per table (hybrid contiguous/non-contiguous),
-  // re-stamp the cards, and refresh the summary + table.
-  async function applySelection(opts) {
-    opts = opts || {};
-    if (!state || !state.loaded) return;
-    const ws = workspaceId();
-    if (!ws) return;
+  // Drives the summary status text in Actual mode (overlay.setSummaryNumber):
+  //   null          → show real numbers
+  //   {label,tooltip}→ show the label (e.g. "Error" / "—") instead of a number
+  function setNotice(notice) {
+    cb.actualSummaryNotice = notice || null;
+  }
 
-    const idxById = new Map(state.sessions.map((s, i) => [s.id, i]));
-    const selected = state.sessions.filter((s) => state.selectedIds.has(s.id));
-    const selIdx = selected.map((s) => idxById.get(s.id));
-    const contiguous = cb.cost.selectionIsContiguous(selIdx);
-
-    for (const tid of state.tableIds) {
-      let merged = new Map();
-      if (selected.length) {
-        if (contiguous) {
-          const startISO = selected[0].startISO;
-          const endISO = selected[selected.length - 1].endISO;
-          const rows = await cb.fetchColumnSpendForRange(ws, tid, startISO, endISO);
-          merged = cb.spendRowsToMap(rows);
-        } else {
-          for (const s of selected) {
-            const rows = await cb.fetchColumnSpendForRange(ws, tid, s.startISO, s.endISO);
-            mergeSpendMaps(merged, cb.spendRowsToMap(rows));
-          }
-        }
-      }
-      clearTableSpend(tid);
-      if (merged.size) cb.applyActualSpend(merged, tid);
-    }
-
-    // Refresh through the same path the import settle() uses.
+  function refreshSummary(silent) {
     cb._animateSummary = true;
     try {
       cb.canvas?.refreshCreditTotal?.();
@@ -234,7 +260,99 @@
     cb.canvas?.updateGroupCredits?.();
     cb.applyActualSummaryState?.();
     cb.model?.update?.();
-    if (!opts.silent && cb.tableView?.refresh) cb.tableView.refresh();
+    if (!silent && cb.tableView?.refresh) cb.tableView.refresh();
+  }
+
+  // Fetch the selected window(s) per table, then re-stamp + refresh. Serialized
+  // via applyToken: all fetches run first and we only mutate cards if this is
+  // still the latest call, so overlapping toggles can't clear-then-leave-empty
+  // (which used to surface as a false "Expired"). Distinguishes:
+  //   - no sessions selected  → "—" notice (intentional empty),
+  //   - fetch failure (null)  → "Error" notice, existing numbers preserved,
+  //   - success with no spend → genuine "Expired" (now rare),
+  //   - success with spend    → real numbers.
+  async function applySelection(opts) {
+    opts = opts || {};
+    if (!state || !state.loaded) return;
+    const ws = workspaceId();
+    if (!ws) return;
+
+    const myToken = ++applyToken;
+    const idxById = new Map(state.sessions.map((s, i) => [s.id, i]));
+    const selected = state.sessions.filter((s) => state.selectedIds.has(s.id));
+
+    // Nothing selected → clear spend and show a "no selection" notice (not
+    // "Expired", which would imply the data is gone).
+    if (!selected.length) {
+      for (const tid of state.tableIds) clearTableSpend(tid);
+      cb.actualSpendApplying = false;
+      setNotice({
+        label: "\u2014",
+        tooltip:
+          "No sessions selected \u2014 pick at least one session to count Actual spend.",
+      });
+      refreshSummary(opts.silent);
+      persist();
+      return;
+    }
+
+    const selIdx = selected.map((s) => idxById.get(s.id));
+    const contiguous = cb.cost.selectionIsContiguous(selIdx);
+
+    // Loading shimmer while fetching.
+    cb.actualSpendApplying = true;
+    cb.applyActualSummaryState?.();
+
+    // Phase 1: fetch everything (no card mutation yet). fetchColumnSpendForRange
+    // returns null on a real failure vs [] for a legitimately empty window.
+    const results = [];
+    let hadError = false;
+    for (const tid of state.tableIds) {
+      const merged = new Map();
+      if (contiguous) {
+        const rows = await cb.fetchColumnSpendForRange(
+          ws,
+          tid,
+          selected[0].startISO,
+          selected[selected.length - 1].endISO,
+        );
+        if (myToken !== applyToken) return; // superseded — drop silently
+        if (rows == null) hadError = true;
+        else mergeSpendMaps(merged, cb.spendRowsToMap(rows));
+      } else {
+        for (const s of selected) {
+          const rows = await cb.fetchColumnSpendForRange(ws, tid, s.startISO, s.endISO);
+          if (myToken !== applyToken) return; // superseded
+          if (rows == null) hadError = true;
+          else mergeSpendMaps(merged, cb.spendRowsToMap(rows));
+        }
+      }
+      results.push([tid, merged]);
+    }
+    if (myToken !== applyToken) return; // superseded before mutating
+
+    cb.actualSpendApplying = false;
+
+    // A fetch failed → keep the existing numbers, surface an error, let a retry
+    // (re-toggle) recover. Never blank the cards on a transient failure.
+    if (hadError) {
+      setNotice({
+        label: "Error",
+        tooltip:
+          "Couldn't load actual spend for the selected sessions. Check your " +
+          "connection, then toggle a session to retry.",
+      });
+      refreshSummary(opts.silent);
+      return;
+    }
+
+    // Phase 2: mutate atomically (only the latest call reaches here).
+    setNotice(null);
+    for (const [tid, merged] of results) {
+      clearTableSpend(tid);
+      if (merged.size) cb.applyActualSpend(merged, tid);
+    }
+    refreshSummary(opts.silent);
     persist();
   }
 
@@ -246,10 +364,22 @@
       return () => listeners.delete(fn);
     },
     ensureLoaded,
-    // Reset when switching tabs so the next render reloads for the new tab.
+    // Reset when switching tabs / re-importing so the next render reloads.
     invalidate() {
       state = null;
-      loadToken++;
+      loadingPromise = null;
+      applyToken++;
+      cb.actualSummaryNotice = null;
+      cb.actualSpendApplying = false;
+    },
+    // Drop the cached sessions too (new import → run set changed).
+    invalidateCache() {
+      clearCache();
+      state = null;
+      loadingPromise = null;
+      applyToken++;
+      cb.actualSummaryNotice = null;
+      cb.actualSpendApplying = false;
     },
     getState() {
       return state;
@@ -279,17 +409,16 @@
       applySelection();
     },
     setGapMs(gapMs) {
-      if (!state || !gapMs || gapMs <= 0) return;
-      const prevSelectedAll =
-        state.selectedIds.size === state.sessions.length;
+      if (!state || !gapMs || gapMs <= 0 || gapMs === state.gapMs) return;
+      // Re-bucketing needs the raw runs. If they were loaded from cache (runs
+      // null), force a network reload with the new gap.
+      if (!state.runs || !state.runs.length) {
+        ensureLoaded({ force: true, gapMs });
+        return;
+      }
       state.gapMs = gapMs;
       rebucket();
-      // Re-bucketing changes session ids; default to all unless the user had a
-      // partial selection we can't meaningfully remap.
-      selectAll();
-      if (!prevSelectedAll) {
-        // Keep "all" — partial selections don't survive a re-bucket cleanly.
-      }
+      selectAll(); // session ids change on re-bucket; default to all
       persist();
       notify();
       applySelection();

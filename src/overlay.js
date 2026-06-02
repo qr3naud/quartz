@@ -1124,8 +1124,9 @@
     // (the column hasn't run in the last 30 days), they read "Expired" with an
     // explanatory tooltip instead of a misleading 0.
     const EXPIRED_TOOLTIP =
-      "No usage in the last 30 days — this column last ran over 30 days ago, " +
-      "so live spend isn't available. Switch to Projected for an estimate.";
+      "No realtime usage found for the selected sessions. This table has no live " +
+      "credit data in the window (realtime tracking began Nov 5, 2025) — switch to " +
+      "Projected for an estimate.";
     const actualValueEls = [
       creditsValue,
       actionsValue,
@@ -1204,7 +1205,12 @@
     // completion, tab switch). setSummaryNumber reads __cb.actualLoading /
     // __cb.actualSpendExpired to decide what to render.
     __cb.applyActualSummaryState = function () {
-      __cb.actualLoading = __cb.viewMode === "actual" && currentTabSpendPending();
+      // Loading = import fetch in flight for this tab, OR the session-cutoff
+      // picker is mid-fetch (actualSpendApplying). Either way, blur rather than
+      // flash a wrong/blank number.
+      __cb.actualLoading =
+        __cb.viewMode === "actual" &&
+        (currentTabSpendPending() || !!__cb.actualSpendApplying);
       __cb.actualSpendExpired = computeActualExpired();
       for (const b of actualBoxes) {
         b.classList.toggle("cb-summary-loading", __cb.actualLoading);
@@ -1324,16 +1330,34 @@
       // "Expired" + tooltip instead of a misleading 0. The underlying number
       // is still tracked on _cbNum so flipping back to Projected animates from
       // the right value.
-      if (el._cbActualDependent && __cb.viewMode === "actual" && __cb.actualSpendExpired) {
-        if (el._cbTween) {
-          cancelAnimationFrame(el._cbTween);
-          el._cbTween = null;
+      // Actual-mode status notice (no sessions selected / fetch error) takes
+      // precedence over Expired — set by the session-cutoff controller so a
+      // transient error or empty selection reads correctly instead of a
+      // misleading "Expired".
+      if (el._cbActualDependent && __cb.viewMode === "actual") {
+        const notice = __cb.actualSummaryNotice;
+        if (notice && notice.label) {
+          if (el._cbTween) {
+            cancelAnimationFrame(el._cbTween);
+            el._cbTween = null;
+          }
+          el._cbNum = value;
+          el.textContent = notice.label;
+          el.title = notice.tooltip || "";
+          el.classList.add("cb-summary-expired");
+          return;
         }
-        el._cbNum = value;
-        el.textContent = "Expired";
-        el.title = __cb._expiredTooltip || "";
-        el.classList.add("cb-summary-expired");
-        return;
+        if (__cb.actualSpendExpired) {
+          if (el._cbTween) {
+            cancelAnimationFrame(el._cbTween);
+            el._cbTween = null;
+          }
+          el._cbNum = value;
+          el.textContent = "Expired";
+          el.title = __cb._expiredTooltip || "";
+          el.classList.add("cb-summary-expired");
+          return;
+        }
       }
       if (el.classList.contains("cb-summary-expired")) {
         el.classList.remove("cb-summary-expired");
@@ -2191,6 +2215,8 @@
     __cb._autoActualPending = false;
     __cb.actualSpendExpired = false;
     __cb.actualLoading = false;
+    __cb.actualSummaryNotice = null;
+    __cb.actualSpendApplying = false;
     if (__cb.actualSpendPending) __cb.actualSpendPending.clear();
     __cb.applyActualSummaryState = null;
     if (__cb.closeTotalCostEditor) __cb.closeTotalCostEditor();
