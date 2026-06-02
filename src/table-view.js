@@ -2047,20 +2047,26 @@
     if (!card) return;
     const next = (value || "").trim();
     const prev = card.data.text || card.data.displayName || "";
-    if (next === prev) return;
 
-    card.data.text = next;
-    card.data.displayName = next;
+    if (next !== prev) {
+      card.data.text = next;
+      card.data.displayName = next;
 
-    const textEl = card.el?.querySelector(".cb-dp-text");
-    if (textEl) {
-      textEl.textContent = next;
-      if (next) textEl.removeAttribute("data-placeholder");
-      else textEl.setAttribute("data-placeholder", "Type data point\u2026");
+      const textEl = card.el?.querySelector(".cb-dp-text");
+      if (textEl) {
+        textEl.textContent = next;
+        if (next) textEl.removeAttribute("data-placeholder");
+        else textEl.setAttribute("data-placeholder", "Type data point\u2026");
+      }
+
+      __cb.model.update();
+      if (__cb.saveTabs) __cb.saveTabs();
     }
 
-    __cb.model.update();
-    if (__cb.saveTabs) __cb.saveTabs();
+    // Always re-render so the rename input reverts to static text on commit
+    // (Enter / blur), even when the name is unchanged. pendingRenameCardId was
+    // already cleared by the render focus pass, so this rebuilds the static row.
+    if (__cb.tableView?.refresh) __cb.tableView.refresh();
   }
 
   function commitFillRate(cardId, rawValue) {

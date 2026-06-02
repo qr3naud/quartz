@@ -353,7 +353,7 @@
   background: #f9fafb;
   border-bottom: 1px solid #e5e7eb;
   padding: 10px 14px;
-  text-align: left;
+  text-align: center;
   font-size: 11px;
   font-weight: 600;
   color: #6b7280;
@@ -1017,6 +1017,15 @@
   text-align: left;
   font-weight: 500;
   font-variant-numeric: tabular-nums;
+  /* Drop the native number spinners — they ate too much of the small cell. */
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
+.cb-table-view-cell-input-num::-webkit-outer-spin-button,
+.cb-table-view-cell-input-num::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
 }
 
 /* Projected coverage division: [rows] / [attempted total]. */
