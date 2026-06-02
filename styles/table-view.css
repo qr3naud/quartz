@@ -1932,14 +1932,28 @@
 }
 
 .cb-session-pop-gap {
-  width: 48px;
+  /* Hug the value (no fixed box) and drop the native spinners — same treatment
+     as the Coverage/Fill inputs. */
+  width: auto;
+  field-sizing: content;
+  min-width: 2ch;
+  max-width: 56px;
   height: 26px;
   padding: 0 6px;
   border: 1px solid #d1d5db;
   border-radius: 6px;
   font-family: inherit;
   font-size: 12px;
+  text-align: center;
   color: #111827;
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
+.cb-session-pop-gap::-webkit-outer-spin-button,
+.cb-session-pop-gap::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
 }
 
 .cb-session-pop-gap:focus {
