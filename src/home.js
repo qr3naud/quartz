@@ -61,6 +61,17 @@
     return window.location.pathname.endsWith("/home");
   }
 
+  // Workspace id straight from the home URL (/workspaces/:id/home).
+  // __cb.parseIdsFromUrl() only resolves when a /workbooks/ segment is present
+  // (it returns null otherwise), so on /home it would give null — which would
+  // silently drop the workspace filter AND never match the 4515 global gate.
+  // Parse it ourselves so both work on the home page.
+  function currentWorkspaceId() {
+    const parts = window.location.pathname.split("/");
+    const i = parts.indexOf("workspaces");
+    return i !== -1 && parts[i + 1] ? parts[i + 1] : null;
+  }
+
   function findRadioGroup() {
     // The HomeTab.tsx data attribute is the most specific signal. If the
     // bundler strips data-sentry-* attrs in some future build, fall back to
@@ -418,7 +429,7 @@
     // injected on /workspaces/:id/home). In workspace mode it's the hard
     // filter that scopes the list to the workspace being viewed; in global
     // mode (below) it's only used to detect the internal workspace.
-    const workspaceId = __cb.parseIdsFromUrl()?.workspaceId ?? null;
+    const workspaceId = currentWorkspaceId();
 
     // Global mode: on Clay's own internal workspace (4515) an internal user
     // sees every canvas across ALL workspaces. Everywhere else (and for any
