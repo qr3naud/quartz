@@ -626,9 +626,10 @@
   color: #047857;
 }
 
-/* Run-bucket (session) count badge inside the Actual button. Empty on first
-   paint (hidden via :empty) until the session list loads; the table view fills
-   it. Clicking Actual opens the session-cutoff menu. */
+/* Selected-session count badge inside the Actual button. Always rendered (an
+   empty pill before the session list loads; the count persists across mode
+   switches). Grey while Actual isn't the active view; emerald when it is (rule
+   below). Clicking Actual again opens the session-cutoff menu. */
 .cb-view-mode-actual-badge {
   display: inline-flex;
   align-items: center;
@@ -638,15 +639,18 @@
   margin-left: 6px;
   padding: 0 4px;
   border-radius: 999px;
-  background: #d1fae5;
-  color: #047857;
+  background: #e5e7eb;
+  color: #6b7280;
   font-size: 10px;
   font-weight: 700;
   line-height: 1;
+  transition: background 0.38s cubic-bezier(0.22, 1, 0.36, 1),
+    color 0.38s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
-.cb-view-mode-actual-badge:empty {
-  display: none;
+.cb-view-mode-actual.cb-view-mode-btn-active .cb-view-mode-actual-badge {
+  background: #d1fae5;
+  color: #047857;
 }
 
 /* Projected / Actual is gated behind Pro Mode — non-Pro users don't see

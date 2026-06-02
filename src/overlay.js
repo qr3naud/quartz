@@ -720,8 +720,13 @@
       const thumb = document.createElement("span");
       thumb.className = "cb-view-mode-thumb";
 
+      // NOTE: don't clear _viewModeSlideFrom here. setViewMode can trigger more
+      // than one table refresh in the same tick (credit recompute + explicit
+      // refresh), each rebuilding this toggle; clearing on read would let the
+      // first (discarded) rebuild consume the flag and the surviving toggle
+      // would snap instead of slide. We clear it in the rAF below instead, so
+      // every synchronous rebuild this tick sees the same value.
       const from = __cb._viewModeSlideFrom;
-      __cb._viewModeSlideFrom = null;
       const animate = (from === "projected" || from === "actual") && from !== mode;
       const startMode = animate ? from : mode;
 
@@ -752,11 +757,13 @@
         __cb.setViewMode("projected");
       });
       // Actual doubles as the session-cutoff menu trigger now (the standalone
-      // session button was removed): switch to Actual, then toggle the session
+      // session button was removed). First click just switches to Actual;
+      // clicking Actual again (when it's already selected) opens the session
       // popover anchored to the freshly-rebuilt Actual button.
       act.addEventListener("click", () => {
+        const wasActual = __cb.viewMode === "actual";
         __cb.setViewMode("actual");
-        if (__cb.toggleSessionPopover) {
+        if (wasActual && __cb.toggleSessionPopover) {
           const anchor =
             __cb.overlayEl?.querySelector(
               ".cb-table-view-mode-toggle .cb-view-mode-actual",
@@ -770,6 +777,8 @@
       wrap.appendChild(act);
 
       requestAnimationFrame(() => {
+        // Consume the slide flag now (after the synchronous rebuild burst).
+        __cb._viewModeSlideFrom = null;
         // Snap to the start word without animating the initial placement.
         wrap.classList.add("cb-view-mode-no-anim");
         moveThumbTo(startMode);

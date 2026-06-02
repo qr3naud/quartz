@@ -1063,14 +1063,14 @@
   let sessionPopoverEl = null;
   let sessionPopoverBackdrop = null;
 
-  // Number of run "buckets" (sessions) shown in the Actual button's badge.
-  // Empty until the session list has actually loaded, so the badge stays blank
-  // on first paint (per spec) instead of flashing a 0.
+  // Number of SELECTED run buckets (sessions) shown in the Actual button's
+  // badge. Empty until the session list has loaded, so the badge stays blank on
+  // first paint instead of flashing a 0; the count persists across mode
+  // switches (the badge just goes grey in Projected — see CSS).
   function actualRunsBadgeText() {
     const st = window.__cb.sessionCutoff?.getState?.();
     if (!st || st.loading) return "";
-    const n = st.sessions?.length || 0;
-    return n > 0 ? String(n) : "";
+    return String(st.selectedIds?.size ?? 0);
   }
 
   function refreshActualRunsBadge() {
@@ -1079,8 +1079,8 @@
   }
 
   // Wire the Actual button's session UI: lazy-load the session list, subscribe
-  // once so the badge + any open popover stay live, and fill the badge now.
-  // Replaces the old standalone session-picker button.
+  // once so the badge + any open popover stay live, and fill the badge once this
+  // render mounts. Replaces the old standalone session-picker button.
   function wireActualSessionUI() {
     const cut = window.__cb.sessionCutoff;
     if (!cut) return;
@@ -1092,7 +1092,11 @@
         if (sessionPopoverEl) renderSessionPopoverRows();
       });
     }
-    refreshActualRunsBadge();
+    // Defer to after this render: the toggle (and its badge) is appended to
+    // hostEl at the end of render, so fill the badge once it's in the DOM —
+    // this is what makes the count show (and persist) even when sessions are
+    // already cached and the subscription won't re-fire.
+    requestAnimationFrame(refreshActualRunsBadge);
   }
 
   function fmtSessionDate(iso) {
