@@ -16,9 +16,10 @@
   // the JWT for the row to render. Options without a `feature` field show
   // for everyone. The runtime filter sits at the top of openExportMenu.
   const EXPORT_OPTIONS = [
-    { id: "gtme",    label: "Export to GTME Calculator", enabled: true,  feature: "gtme_export" },
-    { id: "dealops", label: "Export to DealOps",         enabled: false, feature: "gtme_export" },
-    { id: "table",   label: "Export as Table",           enabled: true  },
+    { id: "gtme",     label: "Export to GTME Calculator", enabled: true,  feature: "gtme_export" },
+    { id: "dealdesk", label: "Submit to deal desk",       enabled: true,  feature: "gtme_export" },
+    { id: "dealops",  label: "Export to DealOps",         enabled: false, feature: "gtme_export" },
+    { id: "table",    label: "Export as Table",           enabled: true  },
     // "Import Inspector" (formerly "Export as JSON") moved to the three-dots
     // ("more") menu — see __cb.openMoreMenu in src/overlay.js.
   ];
@@ -76,6 +77,7 @@
           closeExportMenu();
           if (opt.id === "table") __cb.openExportTableModal();
           else if (opt.id === "gtme") __cb.openGtmeExportModal();
+          else if (opt.id === "dealdesk" && __cb.openDealDeskModal) __cb.openDealDeskModal();
         });
       }
       menuEl.appendChild(item);
@@ -629,6 +631,10 @@
       actionPrice: parseDollarValue(tabState.actionCost),
     };
   }
+
+  // Exposed so src/deal-desk.js can build the same per-tab volumes/prices
+  // without duplicating the cost-model walk.
+  __cb.computeTabVolumes = computeTabVolumes;
 
   // ---- base64url encode a UTF-8 string ----
 

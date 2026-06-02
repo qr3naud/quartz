@@ -270,6 +270,37 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     return true;
   }
 
+  // cb:dealdesk:submit — { account, configs, channel?, manager_emails?,
+  // workbookId?, workspaceId? }. Forwards a scoped quote to the deal-desk
+  // Slack app via the deal-desk-submit Edge Function. user_email + callback_url
+  // are set server-side; the function records pending rows and returns the
+  // Slack response (with the message permalink).
+  if (msg.type === "cb:dealdesk:submit") {
+    (async () => {
+      try {
+        if (!msg.body || typeof msg.body !== "object") {
+          sendResponse({ ok: false, error: "missing submission body" });
+          return;
+        }
+        const res = await callProxy("deal-desk-submit", {
+          method: "POST",
+          body: msg.body,
+        });
+        const text = await res.text();
+        let envelope = null;
+        try { envelope = text ? JSON.parse(text) : null; } catch {}
+        if (envelope && typeof envelope === "object" && "ok" in envelope) {
+          sendResponse(envelope);
+        } else {
+          sendResponse({ ok: res.ok, status: res.status, data: envelope, rawText: text || undefined });
+        }
+      } catch (err) {
+        sendResponse({ ok: false, error: err?.message || String(err) });
+      }
+    })();
+    return true;
+  }
+
   // cb:dust:createConversation — { body } (apiKey/workspaceId no longer
   // accepted; the proxy holds both server-side).
   if (msg.type === "cb:dust:createConversation") {
