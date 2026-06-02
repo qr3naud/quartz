@@ -332,9 +332,11 @@
 .cb-table-view-table {
   width: 100%;
   /* Floor the table width so narrow viewports scroll horizontally instead of
-     crushing the columns. Sum of the fixed columns + a readable Data point /
-     Enrichments minimum. */
-  min-width: 920px;
+     crushing the columns. With table-layout:fixed the Enrichments column is the
+     remainder, so it's what shrinks first — keep the floor high enough that it
+     stays ~320px (room for a full enrichment pill) at the narrowest, and the
+     container scrolls horizontally beyond that instead of squishing it. */
+  min-width: 1200px;
   /* Fixed layout: column widths come from the header row, NOT cell content, so
      collapsing groups / changing rows never shifts the header, and no column
      hugs its content. */
@@ -1778,22 +1780,28 @@
  * Actual-spend session cutoff picker (sits next to the Projected/Actual toggle)
  * ========================================================================= */
 .cb-session-picker {
+  /* Stretch so the button fills the action row's height like the other
+     controls (the row is align-items: stretch). */
   display: inline-flex;
-  align-items: center;
+  align-items: stretch;
 }
 
 .cb-session-picker-btn {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  height: 32px;
-  padding: 0 10px;
+  /* Padding-driven to exactly match .cb-table-view-add-er-btn (Scope Ads etc.)
+     so all action-row controls — including the Projected/Actual toggle, which
+     stretches — are the same size. */
+  padding: 7px 12px;
   border: 1px solid #d1d5db;
   border-radius: 8px;
   background: #ffffff;
-  color: #374151;
+  /* Emerald text to match the Actual toggle — the session cutoff only scopes
+     Actual spend, so the shared color signals they're linked. */
+  color: #047857;
   font-family: inherit;
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 500;
   cursor: pointer;
   transition: background 0.12s, border-color 0.12s;

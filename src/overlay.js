@@ -721,8 +721,15 @@
       };
       const moveThumbTo = (m) => {
         const btn = m === "actual" ? act : proj;
-        wrap.style.setProperty("--cb-thumb-left", `${btn.offsetLeft}px`);
-        wrap.style.setProperty("--cb-thumb-width", `${btn.offsetWidth}px`);
+        // Sub-pixel measurement: offsetLeft/offsetWidth are integer-rounded,
+        // which leaves a ~1px asymmetry between the Projected and Actual ends
+        // (the outer gap looked uneven). getBoundingClientRect is fractional, so
+        // the pill hugs each word with an identical gap on both sides.
+        const wrapRect = wrap.getBoundingClientRect();
+        const btnRect = btn.getBoundingClientRect();
+        const left = btnRect.left - wrapRect.left - wrap.clientLeft;
+        wrap.style.setProperty("--cb-thumb-left", `${left}px`);
+        wrap.style.setProperty("--cb-thumb-width", `${btnRect.width}px`);
       };
 
       applyActive(startMode);
