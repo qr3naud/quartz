@@ -391,6 +391,97 @@
 }
 
 /* ==========================================================================
+   REUSABLE MODAL FOOTER  (shared color scheme — prefer this on new modals)
+   --------------------------------------------------------------------------
+   Mirrors the enrichment picker's selection banner (.cb-selection-banner /
+   .cb-banner-*): a light-gray bar with a top border, a borderless gray
+   secondary action, and a bold indigo primary action. Use this on any modal
+   footer so they all read the same. Markup:
+
+     <div class="cb-modal-footer">
+       <!-- optional left-aligned hint/content -->
+       <div class="cb-modal-footer-actions">
+         <button class="cb-modal-btn cb-modal-btn-ghost">Cancel</button>
+         <button class="cb-modal-btn cb-modal-btn-primary">Confirm</button>
+       </div>
+     </div>
+
+   The actions group is right-aligned (margin-left:auto) whether or not a
+   hint is present. Primary supports :disabled; both support leading SVGs.
+   ========================================================================== */
+
+.cb-modal-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 24px;
+  background: #f9fafb;
+  border-top: 1px solid #e5e7eb;
+  flex-shrink: 0;
+}
+
+.cb-modal-footer-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  margin-left: auto;
+}
+
+.cb-modal-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 34px;
+  padding: 0 14px;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #374151;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.cb-modal-btn svg {
+  flex-shrink: 0;
+}
+
+.cb-modal-btn:hover {
+  background: #f3f4f6;
+}
+
+.cb-modal-btn-primary {
+  background: #6366f1;
+  border-color: #6366f1;
+  color: #ffffff;
+  font-weight: 600;
+}
+
+.cb-modal-btn-primary:hover {
+  background: #4f46e5;
+  border-color: #4f46e5;
+}
+
+.cb-modal-btn-primary:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.cb-modal-btn-ghost {
+  background: transparent;
+  border-color: transparent;
+  color: #6b7280;
+}
+
+.cb-modal-btn-ghost:hover {
+  background: #f3f4f6;
+}
+
+/* ==========================================================================
    GTME EXPORT MODAL — narrower than the table modal because there's no grid.
    Only opened from the menu row that's filtered out for non-internal users
    via the `gtme_export` feature flag (see src/export.js openExportMenu),
@@ -2151,52 +2242,15 @@
   flex-shrink: 0;
 }
 
-/* ---- Footer action group ----
-   Right-aligned secondary (Done) + primary (Download) pair. The wrapper
-   was previously undefined (display:block), so the two buttons sat flush
-   against each other — flex + gap restores the standard footer spacing. */
-.cb-gtme-footer-actions {
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-}
-
 /* ---- Footer Download button ----
-   Primary action: indigo fill matching .cb-export-submit, sized to line up
-   with the secondary Done button (same 32px height, same 14px inline
-   padding, same radius). White glyph + dropdown caret. (Previously leaned
-   on a `cb-gtme-submit` class that was never defined, so the button
-   rendered as bare text.) */
-
-.cb-pricing-download {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  height: 32px;
-  padding: 0 14px;
-  border: 1px solid #6366f1;
-  border-radius: 6px;
-  background: #6366f1;
-  color: #ffffff;
-  font-family: inherit;
-  font-size: 13px;
-  font-weight: 500;
-  cursor: pointer;
-  transition: background 0.15s, border-color 0.15s;
-}
-
-.cb-pricing-download:hover {
-  background: #4f46e5;
-  border-color: #4f46e5;
-}
-
-.cb-pricing-download svg {
-  flex-shrink: 0;
-}
+   Base look comes from the shared .cb-modal-btn .cb-modal-btn-primary
+   classes; this rule only adds download-specific behavior (the green
+   post-download confirmation flash). */
 
 /* Post-download confirmation — the browser saves the file silently (it
    lands in Downloads with no in-app signal), so the button flashes green
-   with a "Downloaded" label for ~1.6s so the click visibly registers. */
+   with a "Downloaded" label for ~1.6s so the click visibly registers.
+   Higher specificity than .cb-modal-btn-primary[:hover] so it wins. */
 .cb-pricing-download.cb-pricing-download-done,
 .cb-pricing-download.cb-pricing-download-done:hover {
   background: #059669;
