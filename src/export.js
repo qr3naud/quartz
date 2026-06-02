@@ -609,18 +609,16 @@
     let weightedActionsPerRow = 0;
     for (const c of tabState.cards) {
       if (!c?.data || isNonErType(c.data.type)) continue;
-      const credits = c.data.credits ?? 0;
-      const actions = c.data.actionExecutions ?? 0;
+      // Shared cost model, forced to projected — the discount calc always uses
+      // catalog/list-style per-row credits, never measured spend. perRowCost
+      // zeroes private-key credits, matching the prior usePrivateKey guard
+      // (private-key ERs burn no Clay credits but their actions still run).
+      const { credits, actions } = window.__cb.cost.perRowCost(c, { viewMode: "projected" });
       const freqId = c.data.frequencyCustom
         ? c.data.frequency
         : (c.data.frequency || globalFreqId);
       const mult = frequencyMultiplier(freqId);
-      // Private-key ERs don't burn Clay credits but their action calls still
-      // run, so we exclude them from credits but keep them in actions —
-      // same rule the canvas uses everywhere else.
-      if (!c.data.usePrivateKey) {
-        weightedCreditsPerRow += credits * mult;
-      }
+      weightedCreditsPerRow += credits * mult;
       weightedActionsPerRow += actions * mult;
     }
 

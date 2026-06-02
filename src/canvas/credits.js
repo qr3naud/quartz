@@ -10,19 +10,12 @@
     // agreement with the lineage-driven table regardless of card positions.
     const { cardsRef, groupsRef, getCardById, getGroupEl, cardsInGroup } = deps;
 
-    function isNonErType(type) {
-      return type === "dp" || type === "input" || type === "comment";
-    }
-
-    // Per-ER coverage ratio: coverage / total-rows. Folded into the weighted
-    // per-row sums so the existing "× records" downstream yields credits ×
-    // coverage. Defaults to 1 (coverage == records) so unedited ERs behave
-    // exactly as before; lowering an ER's Coverage scales only its cost.
-    function coverageRatio(card, records) {
-      if (!records || records <= 0) return 1;
-      const cov = card.data.coverageRows != null ? Number(card.data.coverageRows) : records;
-      return Number.isFinite(cov) && cov >= 0 ? cov / records : 1;
-    }
+    // Cost primitives now live in the shared model (src/cost-model.js) so the
+    // canvas summary, table view, and export calc can't drift. Thin local
+    // aliases keep the call sites below readable.
+    const isNonErType = (type) => window.__cb.cost.isNonErType(type);
+    const coverageRatio = (card, records) =>
+      window.__cb.cost.coverageRatio(card, records);
 
     function notifyCreditTotal() {
       const cb = window.__cb;
@@ -50,12 +43,12 @@
           : cb.DEFAULT_FREQUENCY_ID;
         for (const c of cardsRef()) {
           if (isNonErType(c.data.type)) continue;
-          const sp = c.data.stats?.spend;
-          if (!sp) continue;
-          const cells = Number(sp.cellCount) || 0;
-          if (cells <= 0) continue;
-          const rowCredits = (Number(sp.credits) || 0) / cells;
-          const rowActions = (Number(sp.actionExecutions) || 0) / cells;
+          // fallbackToProjected:false → no-spend cards contribute 0 (the
+          // summary's long-standing behavior; the table view falls back to
+          // projected instead, which is intentional there).
+          const { credits: rowCredits, actions: rowActions, noSpend } =
+            cb.cost.perRowCost(c, { viewMode: "actual", fallbackToProjected: false });
+          if (noSpend) continue;
           const freqId = c.data.frequencyCustom
             ? c.data.frequency
             : (c.data.frequency || globalFreqId);
@@ -93,25 +86,27 @@
         ? cb.getCurrentFrequencyId()
         : cb.DEFAULT_FREQUENCY_ID;
       const records = cb.getRecordsCount ? cb.getRecordsCount() : 0;
+      // Projected cost bills on fill (filled cells), not coverage (attempts) —
+      // built once so billableFraction is O(1) per ER.
+      const erFillMap = cb.cost.buildErFillMap(cardsRef());
       for (const c of cardsRef()) {
         if (isNonErType(c.data.type)) continue;
-        const credits = c.data.credits ?? 0;
-        const actions = c.data.actionExecutions ?? 0;
+        // perRowCost returns 0 credits for private-key ERs, so the
+        // unconditional adds below match the prior `if (!usePrivateKey)` guard.
+        const { credits, actions } = cb.cost.perRowCost(c, { viewMode: "projected" });
         const freqId = c.data.frequencyCustom
           ? c.data.frequency
           : (c.data.frequency || globalFreqId);
         const mult = cb.getFrequencyMultiplier
           ? cb.getFrequencyMultiplier(freqId)
           : 1;
-        // Coverage scales the weighted (total) slots only — the per-row "Avg"
-        // boxes stay honest about a single execution.
-        const covMult = mult * coverageRatio(c, records);
-        if (!c.data.usePrivateKey) {
-          creditTotal += credits;
-          weightedCreditTotal += credits * covMult;
-        }
+        // Coverage × fill scales the weighted (total) slots only — the per-row
+        // "Avg" boxes stay honest about a single execution.
+        const billMult = mult * cb.cost.billableFraction(c, records, erFillMap);
+        creditTotal += credits;
+        weightedCreditTotal += credits * billMult;
         actionExecTotal += actions;
-        weightedActionExecTotal += actions * covMult;
+        weightedActionExecTotal += actions * billMult;
       }
       if (cb.updateCreditTotal) {
         cb.updateCreditTotal(
@@ -218,6 +213,8 @@
       // full cost directly. So the badge agrees with the table regardless of
       // canvas geometry.
       const { erByKey, dpCountByKey } = buildLineageIndex();
+      // Projected billable fraction (coverage × fill) per ER — built once.
+      const erFillMap = window.__cb.cost.buildErFillMap(cardsRef());
 
       for (const g of groupsRef()) {
         const el = getGroupEl ? getGroupEl(g.id) : null;
@@ -229,8 +226,8 @@
         const records = window.__cb.getRecordsCount ? window.__cb.getRecordsCount() : 0;
 
         // `sum` stays the honest per-row figure (drives the "/ row" badge).
-        // `weightedSum` folds in each ER's coverage ratio so the group total
-        // (× records) reflects per-enrichment coverage overrides.
+        // `weightedSum` folds in each ER's billable fraction (coverage × fill)
+        // so the group total (× records) reflects coverage + fill overrides.
         let sum = 0;
         let actionSum = 0;
         let weightedSum = 0;
@@ -245,7 +242,7 @@
           for (let i = 0; i < keys.length; i++) {
             const er = erByKey.get(keys[i]);
             const count = dpCountByKey.get(keys[i]) || 1;
-            const cov = coverageRatio(er, records);
+            const cov = window.__cb.cost.billableFraction(er, records, erFillMap);
             const share = dpShareFor(c, keys[i], i, keys.length);
             if (!er.data.usePrivateKey && er.data.credits != null && er.data.credits > 0) {
               sum += share * (er.data.credits / count);
@@ -267,7 +264,7 @@
           if (isNonErType(c.data.type)) continue;
           const key = erLineageKey(c);
           if ((dpCountByKey.get(key) || 0) > 0) continue;
-          const cov = coverageRatio(c, records);
+          const cov = window.__cb.cost.billableFraction(c, records, erFillMap);
           if (!c.data.usePrivateKey && c.data.credits != null && c.data.credits > 0) {
             sum += c.data.credits;
             weightedSum += c.data.credits * cov;

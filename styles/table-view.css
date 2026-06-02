@@ -1683,3 +1683,160 @@
   font-size: 13px;
   line-height: 1.4;
 }
+
+/* ============================================================================
+ * Actual-spend session cutoff picker (sits next to the Projected/Actual toggle)
+ * ========================================================================= */
+.cb-session-picker {
+  display: inline-flex;
+  align-items: center;
+}
+
+.cb-session-picker-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #374151;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s;
+}
+
+.cb-session-picker-btn:hover {
+  background: #f9fafb;
+  border-color: #9ca3af;
+}
+
+.cb-session-picker-btn svg {
+  color: #9ca3af;
+}
+
+.cb-session-pop {
+  width: 280px;
+  max-height: 360px;
+  display: flex;
+  flex-direction: column;
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  box-shadow: 0 10px 25px rgba(15, 23, 42, 0.15), 0 4px 10px rgba(15, 23, 42, 0.08);
+  font-family: inherit;
+  overflow: hidden;
+}
+
+.cb-session-pop-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  border-bottom: 1px solid #f1f5f9;
+}
+
+.cb-session-pop-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: #111827;
+}
+
+.cb-session-pop-all {
+  border: none;
+  background: none;
+  color: #4338ca;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  padding: 0;
+}
+
+.cb-session-pop-all:hover {
+  text-decoration: underline;
+}
+
+.cb-session-pop-body {
+  overflow-y: auto;
+  padding: 4px;
+}
+
+.cb-session-pop-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.cb-session-pop-row:hover {
+  background: #f9fafb;
+}
+
+.cb-session-pop-row input {
+  cursor: pointer;
+}
+
+.cb-session-pop-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.cb-session-pop-date {
+  font-size: 13px;
+  font-weight: 500;
+  color: #111827;
+}
+
+.cb-session-pop-sub {
+  font-size: 11px;
+  color: #6b7280;
+}
+
+.cb-session-pop-empty {
+  padding: 16px 12px;
+  text-align: center;
+  font-size: 12px;
+  color: #6b7280;
+}
+
+.cb-session-pop-note {
+  padding: 6px 12px;
+  font-size: 11px;
+  color: #92400e;
+  background: #fffbeb;
+  border-top: 1px solid #fde68a;
+}
+
+.cb-session-pop-footer {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  border-top: 1px solid #f1f5f9;
+  font-size: 12px;
+  color: #6b7280;
+}
+
+.cb-session-pop-gap {
+  width: 48px;
+  height: 26px;
+  padding: 0 6px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  font-family: inherit;
+  font-size: 12px;
+  color: #111827;
+}
+
+.cb-session-pop-gap:focus {
+  outline: none;
+  border-color: #6366f1;
+  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.15);
+}

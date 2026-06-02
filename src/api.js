@@ -784,4 +784,46 @@
       return null;
     }
   };
+
+  // Per-RUN realtime spend over the last N days. Each entry carries a runId, a
+  // timestamp (MIN arrival, unix seconds), totals, and a per-column breakdown
+  // (columns[].{fieldId, creditsSpent, actionExecutionCreditsSpent, cellCount}).
+  // Used to discover "sessions" (time-gap clusters of runs) for the Actual
+  // spend cutoff picker. Same coverage window caveat as fetchColumnSpend
+  // (realtime data only complete from 2025-11-05).
+  __cb.fetchRunSpend = async function (workspaceId, tableId, days = 210) {
+    try {
+      const res = await fetch(
+        `https://api.clay.com/v3/realtime-credit-usage/${workspaceId}/table/${tableId}/run/recent?days=${days}`,
+        { credentials: "include" }
+      );
+      if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
+      return res.json();
+    } catch (err) {
+      console.warn("[Clay Scoping] fetchRunSpend failed:", err);
+      return null;
+    }
+  };
+
+  // Per-column actual spend for an explicit [startISO, endISO] window (the
+  // session cutoff path). Same response shape as fetchColumnSpend but for an
+  // arbitrary range instead of "last N days". Query uses bracket-encoded
+  // timeRange (verified against the ts-rest server) — startISO/endISO are
+  // ISO-8601 UTC strings (z.string().datetime()). A single contiguous window
+  // collapses a row's re-runs to ~distinct rows in cellCount; summing several
+  // windows counts executions. Returns null on failure.
+  __cb.fetchColumnSpendForRange = async function (workspaceId, tableId, startISO, endISO) {
+    try {
+      const enc = encodeURIComponent;
+      const url =
+        `https://api.clay.com/v3/realtime-credit-usage/${workspaceId}/table/${tableId}/column` +
+        `?timeRange[startTime]=${enc(startISO)}&timeRange[endTime]=${enc(endISO)}`;
+      const res = await fetch(url, { credentials: "include" });
+      if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
+      return res.json();
+    } catch (err) {
+      console.warn("[Clay Scoping] fetchColumnSpendForRange failed:", err);
+      return null;
+    }
+  };
 })();

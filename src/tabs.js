@@ -1269,6 +1269,10 @@
     // armed lets the auto-flip still fire if results land while on this tab.
     __cb.applyActualSummaryState?.();
 
+    // Session cutoff state is per tab — drop it so the picker reloads sessions
+    // for the tab we just switched into.
+    __cb.sessionCutoff?.invalidate();
+
     const recordsInput = document.getElementById("cb-records-input");
     if (recordsInput) {
       recordsInput.value = tab?.state?.records || "";

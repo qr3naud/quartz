@@ -2269,17 +2269,36 @@
 
     if (!Array.isArray(spendRows) || !__cb.canvas) { settle(false); return; }
 
-    const spendByFieldId = new Map();
-    for (const row of spendRows) {
+    const spendByFieldId = spendRowsToMap(spendRows);
+    if (spendByFieldId.size === 0) { settle(false); return; }
+
+    settle(stampSpend(spendByFieldId, tableId));
+  }
+
+  // Convert a byColumn / column-recent response (array of
+  // {fieldId, creditsSpent, actionExecutionCreditsSpent, cellCount}) into the
+  // Map<fieldId, {credits, actionExecutions, cellCount}> the stamper expects.
+  function spendRowsToMap(rows) {
+    const m = new Map();
+    if (!Array.isArray(rows)) return m;
+    for (const row of rows) {
       if (!row?.fieldId) continue;
-      spendByFieldId.set(row.fieldId, {
+      m.set(row.fieldId, {
         credits: Number(row.creditsSpent) || 0,
         actionExecutions: Number(row.actionExecutionCreditsSpent) || 0,
         cellCount: Number(row.cellCount) || 0,
       });
     }
-    if (spendByFieldId.size === 0) { settle(false); return; }
+    return m;
+  }
+  __cb.spendRowsToMap = spendRowsToMap;
 
+  // Fold a spend map onto a table's cards (standalone/basic ER+DP via fieldId;
+  // waterfalls per-provider then re-aggregated). Returns whether anything was
+  // stamped. Shared by the import's background fetch and the session cutoff
+  // picker so re-selecting sessions re-stamps through the exact same path.
+  function stampSpend(spendByFieldId, tableId) {
+    if (!__cb.canvas || !spendByFieldId || spendByFieldId.size === 0) return false;
     let stamped = false;
     for (const card of __cb.canvas.getCards()) {
       const d = card.data;
@@ -2305,9 +2324,9 @@
         }
       }
     }
-
-    settle(stamped);
+    return stamped;
   }
+  __cb.applyActualSpend = stampSpend;
 
   // Background ACTUAL fill: the fast import profiles only a ~50-row sample, so
   // per-DP nullPercentage (the fill signal) is approximate. Re-fetch /context at

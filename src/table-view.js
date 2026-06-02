@@ -963,6 +963,208 @@
     return td;
   }
 
+  // ---- Actual-spend session cutoff picker ---------------------------------
+  // A dropdown next to the Projected/Actual toggle that scopes measured spend
+  // to selected work sessions (see src/session-cutoff.js for the controller).
+  let sessionPickerSubscribed = false;
+  let sessionPopoverEl = null;
+  let sessionPopoverBackdrop = null;
+
+  function sessionPickerLabel() {
+    const st = window.__cb.sessionCutoff?.getState?.();
+    if (!st || st.loading) return "Sessions\u2026";
+    const total = st.sessions.length;
+    if (!total) return "All spend";
+    const sel = st.selectedIds.size;
+    if (sel >= total) return `All ${total} session${total === 1 ? "" : "s"}`;
+    if (sel === 0) return "No sessions";
+    return `${sel} of ${total} sessions`;
+  }
+
+  function fmtSessionDate(iso) {
+    try {
+      return new Date(iso).toLocaleString(undefined, {
+        month: "short",
+        day: "numeric",
+        hour: "numeric",
+        minute: "2-digit",
+      });
+    } catch {
+      return iso;
+    }
+  }
+
+  function closeSessionPopover() {
+    if (sessionPopoverEl) { sessionPopoverEl.remove(); sessionPopoverEl = null; }
+    if (sessionPopoverBackdrop) { sessionPopoverBackdrop.remove(); sessionPopoverBackdrop = null; }
+  }
+
+  function renderSessionPopoverRows() {
+    if (!sessionPopoverEl) return;
+    const cut = window.__cb.sessionCutoff;
+    const st = cut?.getState?.();
+    const body = sessionPopoverEl.querySelector(".cb-session-pop-body");
+    if (!body) return;
+    body.replaceChildren();
+    if (!st || st.loading) {
+      const m = document.createElement("div");
+      m.className = "cb-session-pop-empty";
+      m.textContent = "Loading sessions\u2026";
+      body.appendChild(m);
+      return;
+    }
+    if (!st.sessions.length) {
+      const m = document.createElement("div");
+      m.className = "cb-session-pop-empty";
+      m.textContent = "No realtime runs found.";
+      body.appendChild(m);
+      return;
+    }
+    for (const s of st.sessions.slice().reverse()) {
+      const row = document.createElement("label");
+      row.className = "cb-session-pop-row";
+      const cbx = document.createElement("input");
+      cbx.type = "checkbox";
+      cbx.checked = st.selectedIds.has(s.id);
+      cbx.addEventListener("mousedown", (e) => e.stopPropagation());
+      cbx.addEventListener("change", (e) => { e.stopPropagation(); cut.toggle(s.id); });
+      const meta = document.createElement("div");
+      meta.className = "cb-session-pop-meta";
+      const date = document.createElement("div");
+      date.className = "cb-session-pop-date";
+      date.textContent = fmtSessionDate(s.startISO);
+      const sub = document.createElement("div");
+      sub.className = "cb-session-pop-sub";
+      sub.textContent =
+        `${s.columnsTouched} col${s.columnsTouched === 1 ? "" : "s"} \u00b7 ` +
+        `${Math.round(s.credits).toLocaleString()} cr`;
+      meta.appendChild(date);
+      meta.appendChild(sub);
+      row.appendChild(cbx);
+      row.appendChild(meta);
+      body.appendChild(row);
+    }
+    const note = sessionPopoverEl.querySelector(".cb-session-pop-note");
+    if (note) note.style.display = cut.isContiguous() ? "none" : "";
+  }
+
+  function toggleSessionPopover(anchorBtn) {
+    if (sessionPopoverEl) { closeSessionPopover(); return; }
+    const cut = window.__cb.sessionCutoff;
+
+    sessionPopoverBackdrop = document.createElement("div");
+    sessionPopoverBackdrop.style.cssText = "position:fixed;inset:0;z-index:9999998;";
+    sessionPopoverBackdrop.addEventListener("mousedown", (e) => {
+      e.stopPropagation();
+      closeSessionPopover();
+    });
+
+    sessionPopoverEl = document.createElement("div");
+    sessionPopoverEl.className = "cb-session-pop";
+    sessionPopoverEl.addEventListener("mousedown", (e) => e.stopPropagation());
+
+    const header = document.createElement("div");
+    header.className = "cb-session-pop-header";
+    const title = document.createElement("span");
+    title.className = "cb-session-pop-title";
+    title.textContent = "Count Actual spend from";
+    const allBtn = document.createElement("button");
+    allBtn.type = "button";
+    allBtn.className = "cb-session-pop-all";
+    allBtn.textContent = "Select all";
+    allBtn.addEventListener("click", (e) => { e.stopPropagation(); cut.setAll(true); });
+    header.appendChild(title);
+    header.appendChild(allBtn);
+    sessionPopoverEl.appendChild(header);
+
+    const body = document.createElement("div");
+    body.className = "cb-session-pop-body";
+    sessionPopoverEl.appendChild(body);
+
+    const note = document.createElement("div");
+    note.className = "cb-session-pop-note";
+    note.style.display = "none";
+    note.textContent =
+      "Non-adjacent sessions selected \u2014 summed per session.";
+    sessionPopoverEl.appendChild(note);
+
+    const footer = document.createElement("div");
+    footer.className = "cb-session-pop-footer";
+    const gapLbl = document.createElement("span");
+    gapLbl.textContent = "Group runs within";
+    const gapInput = document.createElement("input");
+    gapInput.type = "number";
+    gapInput.min = "1";
+    gapInput.className = "cb-session-pop-gap";
+    const st0 = cut.getState?.();
+    gapInput.value = String(
+      Math.max(
+        1,
+        Math.round(
+          (st0?.gapMs || window.__cb.cost.DEFAULT_SESSION_GAP_MS) / 3600000,
+        ),
+      ),
+    );
+    gapInput.addEventListener("mousedown", (e) => e.stopPropagation());
+    gapInput.addEventListener("keydown", (e) => { if (e.key === "Enter") e.target.blur(); });
+    gapInput.addEventListener("change", (e) => {
+      e.stopPropagation();
+      cut.setGapMs(Math.max(1, Number(gapInput.value) || 6) * 3600000);
+    });
+    const gapSuffix = document.createElement("span");
+    gapSuffix.textContent = "h";
+    footer.appendChild(gapLbl);
+    footer.appendChild(gapInput);
+    footer.appendChild(gapSuffix);
+    sessionPopoverEl.appendChild(footer);
+
+    document.body.appendChild(sessionPopoverBackdrop);
+    document.body.appendChild(sessionPopoverEl);
+
+    const rect = anchorBtn.getBoundingClientRect();
+    sessionPopoverEl.style.position = "fixed";
+    sessionPopoverEl.style.top = `${rect.bottom + 6}px`;
+    sessionPopoverEl.style.left = `${Math.max(8, rect.left)}px`;
+    sessionPopoverEl.style.zIndex = "9999999";
+
+    renderSessionPopoverRows();
+  }
+
+  function buildSessionPicker() {
+    const cut = window.__cb.sessionCutoff;
+    // One module-level subscription keeps the live button label + open popover
+    // in sync as sessions load / selection changes, without leaking a listener
+    // per table render.
+    if (!sessionPickerSubscribed && cut?.subscribe) {
+      sessionPickerSubscribed = true;
+      cut.subscribe(() => {
+        const lbl = hostEl?.querySelector(".cb-session-picker-label");
+        if (lbl) lbl.textContent = sessionPickerLabel();
+        if (sessionPopoverEl) renderSessionPopoverRows();
+      });
+    }
+    const wrap = document.createElement("div");
+    wrap.className = "cb-session-picker";
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "cb-session-picker-btn";
+    btn.title = "Choose which work sessions count toward Actual spend";
+    const lbl = document.createElement("span");
+    lbl.className = "cb-session-picker-label";
+    lbl.textContent = sessionPickerLabel();
+    btn.appendChild(lbl);
+    btn.insertAdjacentHTML(
+      "beforeend",
+      '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>',
+    );
+    btn.addEventListener("mousedown", (e) => e.stopPropagation());
+    btn.addEventListener("click", (e) => { e.stopPropagation(); toggleSessionPopover(btn); });
+    wrap.appendChild(btn);
+    // Lazy-load sessions for this tab (idempotent).
+    if (cut?.ensureLoaded) cut.ensureLoaded();
+    return wrap;
+  }
+
   function formatNumber(n) {
     if (!Number.isFinite(n)) return "0";
     return n % 1 === 0
@@ -1651,23 +1853,10 @@
   //     hasn't resolved yet (fetchSubroutineCostsInBackground still in flight)
   //     so the cell can show a placeholder instead of a misleading 0.
   function erPerRowCost(er) {
-    const d = er.data || {};
-    const sp = d.stats && d.stats.spend;
-    if (window.__cb?.viewMode === "actual" && sp && Number(sp.cellCount) > 0) {
-      return {
-        credits: (Number(sp.credits) || 0) / Number(sp.cellCount),
-        actions: (Number(sp.actionExecutions) || 0) / Number(sp.cellCount),
-        creditsUnknown: false,
-      };
-    }
-    const credits = d.usePrivateKey ? 0 : (d.credits != null ? Number(d.credits) : 0);
-    const actions = d.actionExecutions != null ? Number(d.actionExecutions) : 0;
-    // Only functions get the "loading" placeholder — a normal enrichment with
-    // null credits (e.g. an HTTP API that bills only action executions) still
-    // reads as 0 credits, which is accurate for it.
-    const creditsUnknown =
-      d.actionKey === "execute-subroutine" && d.credits == null && !d.usePrivateKey;
-    return { credits, actions, creditsUnknown };
+    // Shared cost model (src/cost-model.js). Default fallbackToProjected:true
+    // keeps the table column from blanking when an ER has no spend yet, and
+    // creditsUnknown still flags unresolved subroutine functions.
+    return window.__cb.cost.perRowCost(er);
   }
 
   function buildErChipData(er, opts) {
@@ -3400,6 +3589,13 @@
       introActions.appendChild(viewToggle);
     }
 
+    // Actual-spend session cutoff picker — only meaningful in Actual mode (it
+    // scopes which work sessions count toward measured spend). Sits right after
+    // the Projected/Actual toggle.
+    if (importedYet && __cb.viewMode === "actual" && __cb.sessionCutoff) {
+      introActions.appendChild(buildSessionPicker());
+    }
+
     // "Scope Ads" / "Scope Audiences" lead the action row as scoping
     // quick-starts. ("Upload POC" used to sit to their left; it now lives in
     // the topbar overflow ("more") menu — see __cb.openMoreMenu in
@@ -4017,9 +4213,13 @@
     tr.appendChild(dpCell);
 
     // Coverage = the ER's own coverage (editable in projected, run attempts in
-    // actual). Fill stays muted — there's no data point on this row yet.
+    // actual). Fill is a per-data-point signal and doesn't belong on an
+    // enrichment row, so this cell is left blank (keeps the column grid aligned)
+    // instead of rendering a "—".
     tr.appendChild(buildCoverageCell(row.coverageFill?.coverage));
-    tr.appendChild(buildFillCell(null, row.cardId));
+    const orphanFillTd = document.createElement("td");
+    orphanFillTd.className = "col-fill";
+    tr.appendChild(orphanFillTd);
 
     const creditsCell = document.createElement("td");
     creditsCell.className = "col-credits cb-table-view-cell-readonly";
