@@ -50,6 +50,7 @@
     table: null,           // the picked Clay table (used for download filename)
     tableContainer: null,  // <div> wrapping the <table> so toggle can replace it in place
     pricingToggleBtn: null,
+    downloadBtn: null,     // footer Download trigger, flashed for post-download confirmation
   };
 
   function resetModalState() {
@@ -66,6 +67,7 @@
     state.table = null;
     state.tableContainer = null;
     state.pricingToggleBtn = null;
+    state.downloadBtn = null;
   }
 
   // Seed the matching side's credit rate from the workspace's active
@@ -1227,7 +1229,7 @@
     // styling so it matches the topbar Export menu pattern.
     const downloadBtn = document.createElement("button");
     downloadBtn.type = "button";
-    downloadBtn.className = "cb-gtme-submit cb-pricing-download";
+    downloadBtn.className = "cb-pricing-download";
     downloadBtn.innerHTML =
       '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>' +
       '<span>Download</span>' +
@@ -1236,6 +1238,7 @@
       evt.stopPropagation();
       openDownloadMenu(downloadBtn);
     });
+    state.downloadBtn = downloadBtn;
 
     footerActions.appendChild(doneBtn);
     footerActions.appendChild(downloadBtn);
@@ -2001,6 +2004,27 @@
     a.click();
     document.body.removeChild(a);
     setTimeout(() => URL.revokeObjectURL(url), 1000);
+    flashDownloadDone();
+  }
+
+  // The browser saves the file silently (it lands in Downloads with no
+  // in-app signal), so without feedback the Download button reads as a
+  // no-op. Briefly swap the footer button's label to "Downloaded" so the
+  // click clearly registered. Mirrors the copy-to-clipboard flash used by
+  // the Bands rate cells.
+  function flashDownloadDone() {
+    const btn = state.downloadBtn;
+    const span = btn && btn.querySelector("span");
+    if (!span) return;
+    if (btn._cbFlashTimer) clearTimeout(btn._cbFlashTimer);
+    if (btn._cbOriginalLabel == null) btn._cbOriginalLabel = span.textContent;
+    span.textContent = "Downloaded";
+    btn.classList.add("cb-pricing-download-done");
+    btn._cbFlashTimer = setTimeout(() => {
+      span.textContent = btn._cbOriginalLabel;
+      btn.classList.remove("cb-pricing-download-done");
+      btn._cbFlashTimer = null;
+    }, 1600);
   }
 
   // Builds the row matrix the CSV serializer consumes. When
@@ -2051,6 +2075,12 @@
         if (whole) return "$" + Math.round(Number(n) || 0).toLocaleString();
         return "$" + (Math.round(n * 1000) / 1000).toFixed(3).replace(/0+$/, "").replace(/\.$/, "");
       };
+      // Per-credit / per-action rates are constant regardless of the
+      // records multiplier, so they must keep their fractional precision
+      // even on the whole-rounded "Total per table" row — otherwise
+      // $0.05 / $0.008 collapse to "$0". Always use the precise format.
+      const rateDollar = (n) =>
+        "$" + (Math.round(n * 1000) / 1000).toFixed(3).replace(/0+$/, "").replace(/\.$/, "");
       if (!pricing) {
         return [label, num(row.legacyCredits), num(row.modernCredits), num(row.modernActions), pctText];
       }
@@ -2061,13 +2091,13 @@
       return [
         label,
         num(row.legacyCredits),
-        dollar(state.legacyCreditRate),
+        rateDollar(state.legacyCreditRate),
         dollar(d.legacy),
         num(row.modernCredits),
-        dollar(state.modernCreditRate),
+        rateDollar(state.modernCreditRate),
         dollar(d.modernCredit),
         num(row.modernActions),
-        dollar(state.actionRate),
+        rateDollar(state.actionRate),
         dollar(d.modernAction),
         dollar(d.modernTotal),
         pctText,
