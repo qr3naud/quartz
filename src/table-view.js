@@ -1063,15 +1063,36 @@
   let sessionPopoverEl = null;
   let sessionPopoverBackdrop = null;
 
-  function sessionPickerLabel() {
+  // Number of run "buckets" (sessions) shown in the Actual button's badge.
+  // Empty until the session list has actually loaded, so the badge stays blank
+  // on first paint (per spec) instead of flashing a 0.
+  function actualRunsBadgeText() {
     const st = window.__cb.sessionCutoff?.getState?.();
-    if (!st || st.loading) return "Sessions\u2026";
-    const total = st.sessions.length;
-    if (!total) return "All spend";
-    const sel = st.selectedIds.size;
-    if (sel >= total) return `All ${total} session${total === 1 ? "" : "s"}`;
-    if (sel === 0) return "No sessions";
-    return `${sel} of ${total} sessions`;
+    if (!st || st.loading) return "";
+    const n = st.sessions?.length || 0;
+    return n > 0 ? String(n) : "";
+  }
+
+  function refreshActualRunsBadge() {
+    const badge = hostEl?.querySelector(".cb-view-mode-actual-badge");
+    if (badge) badge.textContent = actualRunsBadgeText();
+  }
+
+  // Wire the Actual button's session UI: lazy-load the session list, subscribe
+  // once so the badge + any open popover stay live, and fill the badge now.
+  // Replaces the old standalone session-picker button.
+  function wireActualSessionUI() {
+    const cut = window.__cb.sessionCutoff;
+    if (!cut) return;
+    cut.ensureLoaded?.();
+    if (!sessionPickerSubscribed && cut.subscribe) {
+      sessionPickerSubscribed = true;
+      cut.subscribe(() => {
+        refreshActualRunsBadge();
+        if (sessionPopoverEl) renderSessionPopoverRows();
+      });
+    }
+    refreshActualRunsBadge();
   }
 
   function fmtSessionDate(iso) {
@@ -1223,40 +1244,11 @@
     renderSessionPopoverRows();
   }
 
-  function buildSessionPicker() {
-    const cut = window.__cb.sessionCutoff;
-    // One module-level subscription keeps the live button label + open popover
-    // in sync as sessions load / selection changes, without leaking a listener
-    // per table render.
-    if (!sessionPickerSubscribed && cut?.subscribe) {
-      sessionPickerSubscribed = true;
-      cut.subscribe(() => {
-        const lbl = hostEl?.querySelector(".cb-session-picker-label");
-        if (lbl) lbl.textContent = sessionPickerLabel();
-        if (sessionPopoverEl) renderSessionPopoverRows();
-      });
-    }
-    const wrap = document.createElement("div");
-    wrap.className = "cb-session-picker";
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.className = "cb-session-picker-btn";
-    btn.title = "Choose which work sessions count toward Actual spend";
-    const lbl = document.createElement("span");
-    lbl.className = "cb-session-picker-label";
-    lbl.textContent = sessionPickerLabel();
-    btn.appendChild(lbl);
-    btn.insertAdjacentHTML(
-      "beforeend",
-      '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>',
-    );
-    btn.addEventListener("mousedown", (e) => e.stopPropagation());
-    btn.addEventListener("click", (e) => { e.stopPropagation(); toggleSessionPopover(btn); });
-    wrap.appendChild(btn);
-    // Lazy-load sessions for this tab (idempotent).
-    if (cut?.ensureLoaded) cut.ensureLoaded();
-    return wrap;
-  }
+  // Exposed so the Projected/Actual toggle's Actual button (built in
+  // src/overlay.js) can open / close the session popover — it replaces the old
+  // standalone session-picker button.
+  window.__cb.toggleSessionPopover = toggleSessionPopover;
+  window.__cb.closeSessionPopover = closeSessionPopover;
 
   function formatNumber(n) {
     if (!Number.isFinite(n)) return "0";
@@ -3685,14 +3677,13 @@
     if (importedYet && typeof __cb.buildViewModeToggle === "function") {
       const viewToggle = __cb.buildViewModeToggle();
       viewToggle.classList.add("cb-table-view-mode-toggle");
-      introActions.appendChild(viewToggle);
-    }
-
-    // Actual-spend session cutoff picker — only meaningful in Actual mode (it
-    // scopes which work sessions count toward measured spend). Sits right after
-    // the Projected/Actual toggle.
-    if (importedYet && __cb.viewMode === "actual" && __cb.sessionCutoff) {
-      introActions.appendChild(buildSessionPicker());
+      // Centered in the intro row (grid column 2) instead of leading the action
+      // cluster.
+      intro.appendChild(viewToggle);
+      // Load sessions + wire the Actual button's badge / popover (replaces the
+      // standalone session-picker button). Runs in both modes so the run-bucket
+      // badge is ready before the user flips to Actual.
+      if (__cb.sessionCutoff) wireActualSessionUI();
     }
 
     // "Scope Ads" / "Scope Audiences" lead the action row as scoping

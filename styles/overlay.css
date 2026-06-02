@@ -545,36 +545,37 @@
   overflow: hidden;
 }
 
-/* The sliding "thumb": a single white pill that glides between the two halves
-   rather than each half cross-fading its own background. Its width and offset
-   are driven by --cb-thumb-left / --cb-thumb-width, which buildViewModeToggle
-   sets from the *active button's* measured box — so the pill hugs whichever
-   word is active with the same padding, even though "Projected" and "Actual"
-   are different widths. Before JS measures (e.g. the frame after a rebuild) the
-   fallbacks below place it on the correct half via :has() so it never flashes
-   on the wrong side. Sits behind the button text (z-index: 0 vs 1). */
-.cb-view-mode-toggle::before {
-  content: "";
+/* The sliding "thumb": a single white pill (a REAL <span>, not a ::before —
+   Chrome doesn't reliably apply JS-set custom properties to a pseudo-element's
+   var()-driven left/width) that glides between the two halves. buildViewModeToggle
+   sets its left/width inline from the active button's box so it hugs whichever
+   word is active even though "Projected" and "Actual" differ in width. The
+   left/width below are just the pre-JS defaults for the first frame. Sits behind
+   the button text (z-index: 0 vs 1). */
+.cb-view-mode-thumb {
   position: absolute;
   top: 3px;
   bottom: 3px;
-  left: var(--cb-thumb-left, 3px);
-  width: var(--cb-thumb-width, calc(50% - 6px));
+  left: 2px;
+  width: calc(50% - 4px);
   z-index: 0;
   background: #ffffff;
   border-radius: 6px;
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+  pointer-events: none;
   transition: left 0.38s cubic-bezier(0.22, 1, 0.36, 1),
     width 0.38s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
-.cb-view-mode-toggle:has(.cb-view-mode-actual.cb-view-mode-btn-active)::before {
-  left: var(--cb-thumb-left, calc(50% + 3px));
+/* Pre-JS default for the Actual side so it doesn't flash on the left for the
+   one frame before JS sets the exact inline left/width. */
+.cb-view-mode-toggle:has(.cb-view-mode-actual.cb-view-mode-btn-active) .cb-view-mode-thumb {
+  left: calc(50% + 2px);
 }
 
 /* Applied for one frame while the pill is snapped into place on a plain
    rebuild (no mode change) so the reposition doesn't animate. */
-.cb-view-mode-toggle.cb-view-mode-no-anim::before {
+.cb-view-mode-toggle.cb-view-mode-no-anim .cb-view-mode-thumb {
   transition: none;
 }
 
@@ -610,7 +611,7 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .cb-view-mode-toggle::before {
+  .cb-view-mode-thumb {
     transition: none;
   }
 }
@@ -623,6 +624,29 @@
 
 .cb-view-mode-actual.cb-view-mode-btn-active {
   color: #047857;
+}
+
+/* Run-bucket (session) count badge inside the Actual button. Empty on first
+   paint (hidden via :empty) until the session list loads; the table view fills
+   it. Clicking Actual opens the session-cutoff menu. */
+.cb-view-mode-actual-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 16px;
+  margin-left: 6px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: #d1fae5;
+  color: #047857;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.cb-view-mode-actual-badge:empty {
+  display: none;
 }
 
 /* Projected / Actual is gated behind Pro Mode — non-Pro users don't see

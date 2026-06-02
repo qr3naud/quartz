@@ -694,22 +694,32 @@
       act.type = "button";
       act.title = "Actual: real spend from Clay's billing pipeline";
       act.textContent = "Actual";
+      // Run-bucket (session) count badge. Filled by the table view's session
+      // wiring once the session list loads; empty (hidden via :empty) on first
+      // paint.
+      const actBadge = document.createElement("span");
+      actBadge.className = "cb-view-mode-actual-badge";
+      act.appendChild(actBadge);
 
       const mode = __cb.viewMode === "actual" ? "actual" : "projected";
 
-      // The white pill is a CSS thumb (.cb-view-mode-toggle::before) whose width
-      // and offset come from --cb-thumb-left / --cb-thumb-width. We point it at
-      // the *active button's* measured box so it hugs whichever word is active
-      // with the same padding — "Projected" and "Actual" differ in width, so a
-      // fixed half-pill sits loosely around the shorter one.
+      // The white pill is a REAL element (.cb-view-mode-thumb), not a ::before:
+      // Chrome doesn't reliably apply JS-set custom properties to a pseudo-
+      // element's var()-driven left/width, so the pill silently fell back to a
+      // fixed 50% half and read asymmetric for the unequal-width words. A real
+      // span with inline left/width is exact. We also derive the offset from the
+      // toggle's padding + button widths (not getBoundingClientRect minus an
+      // integer-rounded border) so both ends get an identical gap, sub-pixel.
       //
-      // This element is rebuilt on every table-view render, so geometry is set
-      // after the caller mounts us (offsetLeft/Width need layout):
-      //  - plain refresh: snap the pill into place under the active word with
-      //    the no-anim class so the reposition doesn't animate, and
+      // Geometry is set after the caller mounts us (widths need layout):
+      //  - plain refresh: snap the pill under the active word with the no-anim
+      //    class so the reposition doesn't animate, and
       //  - when the user just flipped the mode (setViewMode set
-      //    _viewModeSlideFrom): park it under the OLD word, then glide it to the
-      //    new word on the next frame so the transition has a delta to animate.
+      //    _viewModeSlideFrom): park it under the OLD word, then glide to the
+      //    new word next frame so the transition has a delta to animate.
+      const thumb = document.createElement("span");
+      thumb.className = "cb-view-mode-thumb";
+
       const from = __cb._viewModeSlideFrom;
       __cb._viewModeSlideFrom = null;
       const animate = (from === "projected" || from === "actual") && from !== mode;
@@ -720,32 +730,42 @@
         act.classList.toggle("cb-view-mode-btn-active", m === "actual");
       };
       const moveThumbTo = (m) => {
-        const btn = m === "actual" ? act : proj;
-        // Sub-pixel measurement: offsetLeft/offsetWidth are integer-rounded,
-        // which leaves a ~1px asymmetry between the Projected and Actual ends
-        // (the outer gap looked uneven). getBoundingClientRect is fractional, so
-        // the pill hugs each word with an identical gap on both sides.
-        const wrapRect = wrap.getBoundingClientRect();
-        const btnRect = btn.getBoundingClientRect();
-        const left = btnRect.left - wrapRect.left - wrap.clientLeft;
-        wrap.style.setProperty("--cb-thumb-left", `${left}px`);
-        wrap.style.setProperty("--cb-thumb-width", `${btnRect.width}px`);
+        // Buttons fill the toggle's content box edge-to-edge (gap:0), so each
+        // button's left edge equals the toggle's padding-left plus the widths
+        // before it. Projected sits flush at padding-left; Actual ends flush at
+        // padding-right — identical outer gap on both ends, sub-pixel exact.
+        const padL = parseFloat(getComputedStyle(wrap).paddingLeft) || 0;
+        const projW = proj.getBoundingClientRect().width;
+        const actW = act.getBoundingClientRect().width;
+        thumb.style.left = `${m === "actual" ? padL + projW : padL}px`;
+        thumb.style.width = `${m === "actual" ? actW : projW}px`;
       };
 
       applyActive(startMode);
 
       // Only an explicit Projected pick cancels the auto-flip to Actual — the
       // user has said they want Projected, so don't yank them to Actual when the
-      // spend lands. Picking Actual leaves the flag armed (harmless: results
-      // landing just re-confirms Actual and runs the count-up).
+      // spend lands. It also dismisses the session menu (we're leaving Actual).
       proj.addEventListener("click", () => {
         __cb._autoActualPending = false;
+        if (__cb.closeSessionPopover) __cb.closeSessionPopover();
         __cb.setViewMode("projected");
       });
+      // Actual doubles as the session-cutoff menu trigger now (the standalone
+      // session button was removed): switch to Actual, then toggle the session
+      // popover anchored to the freshly-rebuilt Actual button.
       act.addEventListener("click", () => {
         __cb.setViewMode("actual");
+        if (__cb.toggleSessionPopover) {
+          const anchor =
+            __cb.overlayEl?.querySelector(
+              ".cb-table-view-mode-toggle .cb-view-mode-actual",
+            ) || act;
+          __cb.toggleSessionPopover(anchor);
+        }
       });
 
+      wrap.appendChild(thumb);
       wrap.appendChild(proj);
       wrap.appendChild(act);
 
