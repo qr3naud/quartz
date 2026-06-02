@@ -1345,7 +1345,7 @@
       attributeEnum: null,
       packageId: "clay",
       validationPrice: 0,
-      actionExecutions: 1,
+      actionExecutions: __cb.WATERFALL_ACTION_EXECUTIONS,
       groupCluster,
     });
 

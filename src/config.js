@@ -125,6 +125,14 @@
     // Joined with currentPlanPricing in applyCurrentPlanAutoFill to derive
     // the workspace's specific CPA. null until the prefetch resolves.
     actionTiersCatalog: null,
+    // Hardcoded projected action-executions per waterfall row. Real billed
+    // run data (provider-step runs + per-step validation runs, over the rows
+    // the waterfall actually ran on) lands at ~3.0-3.1 for email / phone
+    // waterfalls: the finder cascade averages ~1.5-1.7 attempts per row and
+    // validation fires ~1.4-1.5x per row -- not the 1 (finder) + 1 (validation)
+    // = 2 a naive "avg(providers) + validation" estimate assumes. Hardcode 3
+    // so projected Actions/row matches what these waterfalls really bill.
+    WATERFALL_ACTION_EXECUTIONS: 3,
     waterfallExecByName: {},
     // Built-in Clay waterfall attributes (the WaterfallRow rows in the
     // picker). Indexed by lowercased displayName. See fetchWaterfallExecCosts

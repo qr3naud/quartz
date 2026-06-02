@@ -422,7 +422,10 @@
       for (const attr of Object.values(data.attributeDescriptionsMap?.waterfallAttributes ?? {})) {
         const name = attr.displayName?.toLowerCase();
         if (!name) continue;
-        __cb.waterfallExecByName[name] = 1;
+        // Hardcoded to 3 (see config.js WATERFALL_ACTION_EXECUTIONS). This is
+        // the flat-card fallback's per-row action-executions for a waterfall
+        // that didn't get upgraded to a waterfall card.
+        __cb.waterfallExecByName[name] = __cb.WATERFALL_ACTION_EXECUTIONS;
         const validationIds = Array.isArray(attr.validationProviders) ? [...attr.validationProviders] : [];
         __cb.waterfallByName[name] = {
           displayName: attr.displayName,

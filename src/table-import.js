@@ -1784,35 +1784,15 @@
         }
       }
 
-      // ---- Per-row action-execution averaging ----
+      // ---- Per-row action-executions ----
       //
-      // Mirrors the credit averaging deriveWaterfallTotals already does
-      // (mean of per-step cost + validation when active). Read-only
-      // lookup steps (no `pricing.credits.actionExecution` set in their
-      // action-definition) genuinely bill 0 actions per row server-side
-      // — see calculateActionExecutionCost in apps/api which falls back
-      // to 0. The previous hardcoded `actionExecutions: 1` constant was
-      // overcounting waterfalls of all-lookup steps as 1 action / row.
-      // Validation contributes its own action execution per step it
-      // runs; a key-only validator still bills an actionExecution
-      // (private-key state suppresses credit cost, NOT the action
-      // billing line — same rule canvas/credits.js applies).
-      const validationActionsPerStep = firstValidation
-        ? planAwareActionExecutions(__cb.actionByIdLookup?.[
-            `${firstValidation.actionPackageId ?? "clay"}-${firstValidation.actionKey}`
-          ])
-        : 0;
-      let stepActionsSum = 0;
-      for (const step of wf.steps) {
-        const stepInfo = __cb.actionByIdLookup?.[
-          `${step.actionPackageId ?? "clay"}-${step.actionKey}`
-        ];
-        const stepActions = planAwareActionExecutions(stepInfo);
-        stepActionsSum += stepActions + validationActionsPerStep;
-      }
-      const wfActionsAvg = wf.steps.length > 0
-        ? Math.round((stepActionsSum / wf.steps.length) * 100) / 100
-        : 0;
+      // Hardcoded to __cb.WATERFALL_ACTION_EXECUTIONS (3). Real billed run
+      // data (sum of provider-step + per-step validation runs, over the rows
+      // the waterfall actually ran on) shows email / phone waterfalls average
+      // ~3 action-executions per row: the finder cascade runs ~1.5-1.7
+      // providers per row and validation fires ~1.4-1.5x per row, both > 1.
+      // The prior avg(per-step) + validation estimate assumed 1 finder + 1
+      // validation = 2 and undercounted. See config.js WATERFALL_ACTION_EXECUTIONS.
 
       // Look up the curated swap-out list for this attribute so the
       // popover dropdown can offer alternatives. Mirrors the picker
@@ -1856,7 +1836,7 @@
         // averageCost / credits include the validation surcharge — no
         // need for the user to toggle Remove / Add to "kick" the math.
         validationVisible: !!firstValidation,
-        actionExecutions: wfActionsAvg,
+        actionExecutions: __cb.WATERFALL_ACTION_EXECUTIONS,
         groupCluster: wf.groupId,
         // Anchor the card to the waterfall group so re-imports dedupe via
         // `wf-${groupId}` (set on existingKeys above) AND its own data

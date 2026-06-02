@@ -149,7 +149,7 @@
     validationVisible,
     iconUrl = null,
     iconSvgHtml = null,
-    actionExecutions = 1,
+    actionExecutions = __cb.WATERFALL_ACTION_EXECUTIONS,
     groupCluster = null,
     fieldId = null,
     tableId = null,
@@ -714,7 +714,7 @@
           validationRequiresApiKey: v.requiresApiKey,
           validationOptions: v.options,
           validationProvider: v.selectedActionId,
-          actionExecutions: 1,
+          actionExecutions: __cb.WATERFALL_ACTION_EXECUTIONS,
         });
       }
     }
@@ -734,7 +734,7 @@
           validationRequiresApiKey: v.requiresApiKey,
           validationOptions: v.options,
           validationProvider: v.selectedActionId,
-          actionExecutions: 1,
+          actionExecutions: __cb.WATERFALL_ACTION_EXECUTIONS,
         });
       }
     }
