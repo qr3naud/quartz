@@ -466,8 +466,15 @@
     modalEl.appendChild(header);
     modalEl.appendChild(body);
     modalEl.appendChild(footer);
+    // The modal must be a CHILD of the backdrop: .cb-export-modal-backdrop is a
+    // full-viewport flex container that centers its child, and .cb-export-modal
+    // has no positioning of its own. Appending them as siblings leaves the
+    // backdrop covering the page (swallowing clicks) with the modal lost in
+    // normal flow. Stop propagation so clicks inside never reach the backdrop's
+    // click-outside-to-close handler.
+    modalEl.addEventListener("mousedown", (evt) => evt.stopPropagation());
+    backdropEl.appendChild(modalEl);
     document.body.appendChild(backdropEl);
-    document.body.appendChild(modalEl);
     document.addEventListener("keydown", onKeydown);
 
     renderTabs();
