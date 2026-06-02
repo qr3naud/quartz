@@ -48,6 +48,14 @@
   // Owner filter state. Empty string means "All owners". Reset to "" on
   // every deactivate so the filter starts fresh each mount.
   let selectedOwnerId = "";
+  // Internal/External audience filter — only shown/applied in global mode
+  // (Clay's internal workspace, 4515). "internal" = owner email ends with
+  // @clay.com. Defaults to "internal"; reset on every deactivate. Kept inert
+  // in workspace mode so we never hide an all-external customer list.
+  let selectedAudience = "internal";
+  // True while the global (all-workspaces) view is active. Gates whether the
+  // audience filter is rendered and applied.
+  let isGlobalMode = false;
 
   function isHomeUrl() {
     return window.location.pathname.endsWith("/home");
@@ -275,6 +283,8 @@
     // the panel removal below.
     closeOwnerPopover();
     selectedOwnerId = "";
+    selectedAudience = "internal";
+    isGlobalMode = false;
 
     const panel = document.getElementById(PANEL_ID);
     if (panel) {
@@ -302,10 +312,23 @@
     headingRow.className =
       "mx-auto grid w-full grid-cols-[1fr_auto] gap-1 px-8 pt-2 pb-3";
     const headingWrap = document.createElement("div");
-    headingWrap.className = "flex max-w-full flex-row items-center gap-3";
+    headingWrap.className = "flex max-w-full flex-row items-center gap-2";
+    // Clay-heart icon next to the heading (same chrome.runtime.getURL pattern
+    // as the tab's key icon). Must be listed in web_accessible_resources.
+    const heartIcon = document.createElement("img");
+    heartIcon.alt = "";
+    heartIcon.setAttribute("aria-hidden", "true");
+    heartIcon.style.width = "22px";
+    heartIcon.style.height = "22px";
+    heartIcon.style.flexShrink = "0";
+    heartIcon.style.objectFit = "contain";
+    if (typeof chrome !== "undefined" && chrome.runtime?.getURL) {
+      heartIcon.src = chrome.runtime.getURL("icons/clay-heart.png");
+    }
     const heading = document.createElement("h4");
     heading.className = "truncate text-xl font-bold font-sans tracking-tight";
-    heading.textContent = "Canvases";
+    heading.textContent = "You're gonna love this new tool";
+    headingWrap.appendChild(heartIcon);
     headingWrap.appendChild(heading);
     headingRow.appendChild(headingWrap);
 
@@ -392,46 +415,68 @@
     }
 
     // The home page URL always carries a workspace id (this tab is only
-    // injected on /workspaces/:id/home), so we use it as a hard filter on
-    // the canvases query. This is the partition that keeps the home tab
-    // scoped to the workspace the user is actually viewing — matches the
-    // same UX boundary applied in popup.js fetchCanvases.
+    // injected on /workspaces/:id/home). In workspace mode it's the hard
+    // filter that scopes the list to the workspace being viewed; in global
+    // mode (below) it's only used to detect the internal workspace.
     const workspaceId = __cb.parseIdsFromUrl()?.workspaceId ?? null;
 
+    // Global mode: on Clay's own internal workspace (4515) an internal user
+    // sees every canvas across ALL workspaces. Everywhere else (and for any
+    // non-internal user) the list is scoped to the current workspace — but
+    // still shows ALL members' canvases, not just the caller's. `is_internal`
+    // is surfaced to the content script as the internal_branding feature (the
+    // mint grants the whole INTERNAL_FEATURES set iff is_internal), so
+    // hasFeature is an exact proxy for the JWT claim that RLS reads.
+    const GLOBAL_WORKSPACE_ID = "4515";
+    const globalMode =
+      workspaceId === GLOBAL_WORKSPACE_ID &&
+      !!(__cb.hasFeature && __cb.hasFeature("internal_branding"));
+    isGlobalMode = globalMode;
+
     try {
+      // Query the canvases table directly so the list is workspace-wide (every
+      // member's canvases), not just the caller's contributor rows. RLS allows
+      // this: a member reads any canvas in their workspace; an internal caller
+      // reads every canvas in every workspace. workbook_name is populated by
+      // tabs.js on every save (pushToSupabase); falls back to the opaque
+      // workbook_id for rows written by an older extension build.
       const rowsQuery = {
-        user_id: `eq.${userId}`,
-        // !inner forces PostgREST to drop contributor rows whose embedded
-        // canvas doesn't match the workspace filter below; without it the
-        // workspace filter would silently return canvases:null rows.
-        // workbook_name is populated by tabs.js on every save (see
-        // pushToSupabase). Falls back to the opaque workbook_id if the row
-        // was written by an older extension build.
-        select:
-          "workbook_id,last_accessed_at,canvases!inner(workspace_id,workbook_name,updated_at)",
-        order: "last_accessed_at.desc",
-        limit: "50",
+        select: "workbook_id,workspace_id,workbook_name,updated_at",
+        order: "updated_at.desc",
+        limit: "500",
       };
-      if (workspaceId) {
-        rowsQuery["canvases.workspace_id"] = `eq.${workspaceId}`;
+      if (!globalMode && workspaceId) {
+        rowsQuery.workspace_id = `eq.${workspaceId}`;
       }
-      const rows = await supa.supabaseFetch("canvas_contributors", "GET", {
+      const canvasRows = await supa.supabaseFetch("canvases", "GET", {
         query: rowsQuery,
       });
 
-      if (!rows || rows.length === 0) {
-        const brandedButtonName =
-          __cb.hasFeature && __cb.hasFeature("internal_branding") ? "Quartz" : "Scoping";
-        statusEl.textContent =
-          `No saved canvases yet. Open the ${brandedButtonName} button on a workbook to start.`;
+      if (!canvasRows || canvasRows.length === 0) {
+        statusEl.textContent = globalMode
+          ? "No canvases yet."
+          : "No canvases in this workspace yet.";
         tableWrap.innerHTML = "";
         return;
       }
 
+      // Normalize into the shape renderTable expects (it reads row.canvases.*
+      // and row.last_accessed_at). The "Last updated" column now reflects the
+      // canvas's updated_at, since the list is no longer personal.
+      const rows = canvasRows.map((c) => ({
+        workbook_id: c.workbook_id,
+        last_accessed_at: c.updated_at,
+        canvases: {
+          workspace_id: c.workspace_id,
+          workbook_name: c.workbook_name,
+          updated_at: c.updated_at,
+        },
+      }));
+
       // Second round-trip: for every workbook in the result, fetch all
       // contributors sorted by first_accessed_at asc. The earliest row per
-      // workbook is the owner. One query covers the whole page; we then
-      // group client-side.
+      // workbook is the owner. We also pull the owner's email so we can flag
+      // internal (@clay.com) owners for the Internal/External filter.
       const workbookIds = rows.map((r) => r.workbook_id);
       let ownersByWorkbook = new Map();
       try {
@@ -439,16 +484,19 @@
           query: {
             workbook_id: `in.(${workbookIds.join(",")})`,
             select:
-              "workbook_id,user_id,first_accessed_at,users(name,profile_picture)",
+              "workbook_id,user_id,first_accessed_at,users(name,profile_picture,email)",
             order: "first_accessed_at.asc",
           },
         });
         for (const r of ownerRows || []) {
           if (ownersByWorkbook.has(r.workbook_id)) continue;
+          const email = r.users?.email || null;
           ownersByWorkbook.set(r.workbook_id, {
             id: r.user_id,
             name: r.users?.name || r.user_id,
             profilePicture: r.users?.profile_picture || null,
+            email,
+            isInternal: (email || "").trim().toLowerCase().endsWith("@clay.com"),
           });
         }
       } catch (err) {
@@ -459,7 +507,7 @@
 
       statusEl.style.display = "none";
       renderTable(tableWrap, rows, ownersByWorkbook, userId);
-      renderFilterBar(filterBar, ownersByWorkbook, userId, tableWrap);
+      renderFilterBar(filterBar, ownersByWorkbook, userId, tableWrap, globalMode);
     } catch (err) {
       console.warn("[Clay Scoping] home canvases fetch failed:", err);
       statusEl.textContent = "Couldn't load canvases from the server.";
@@ -571,7 +619,7 @@
     thead.className = THEAD_CLASS;
     const headRow = document.createElement("tr");
     headRow.className = HEAD_TR_CLASS;
-    const headers = ["Name", "Owner", "Last opened"];
+    const headers = ["Name", "Owner", "Last updated"];
     for (let i = 0; i < headers.length; i++) {
       const th = document.createElement("th");
       th.className = TH_CLASS;
@@ -599,9 +647,12 @@
       // referenced by `h-(--row-height)` on the row and
       // `min-h-(--row-height)` on the cell.
       tr.style.setProperty("--row-height", "46px");
-      // Used by applyOwnerFilter() to hide/show rows via display:none
+      // Used by applyRowFilters() to hide/show rows via display:none
       // without re-rendering the tbody.
       tr.dataset.ownerId = owner?.id || "";
+      // "1" when the owner's email is @clay.com — drives the Internal/External
+      // filter in global mode.
+      tr.dataset.ownerInternal = owner?.isInternal ? "1" : "0";
 
       if (workspaceId) {
         tr.style.cursor = "pointer";
@@ -666,18 +717,25 @@
   }
 
   /**
-   * Show/hide rows based on the currently-selected owner id. Empty string
-   * means "All owners". Using display:none rather than re-rendering keeps
-   * the click handlers wired and DOM state stable.
+   * Show/hide rows based on the currently-selected owner id AND the audience
+   * (Internal/External) filter. Owner: empty string means "All owners".
+   * Audience: only applied in global mode (where the pill is rendered) so a
+   * default-Internal filter never blanks an all-external workspace list.
+   * Using display:none rather than re-rendering keeps click handlers wired
+   * and DOM state stable.
    */
-  function applyOwnerFilter(tableWrap, ownerId) {
+  function applyRowFilters(tableWrap) {
     const rows = tableWrap.querySelectorAll("tbody tr");
     for (const tr of rows) {
-      if (!ownerId || tr.dataset.ownerId === ownerId) {
-        tr.style.display = "";
-      } else {
-        tr.style.display = "none";
-      }
+      const ownerOk =
+        !selectedOwnerId || tr.dataset.ownerId === selectedOwnerId;
+      const audienceOk =
+        !isGlobalMode ||
+        !selectedAudience ||
+        (selectedAudience === "internal"
+          ? tr.dataset.ownerInternal === "1"
+          : tr.dataset.ownerInternal === "0");
+      tr.style.display = ownerOk && audienceOk ? "" : "none";
     }
   }
 
@@ -686,8 +744,15 @@
    * half opens the popover. Mirrors the DOM Clay uses on the home-page
    * HomepageFilters.tsx component.
    */
-  function renderFilterBar(filterBar, ownersByWorkbook, currentUserId, tableWrap) {
+  function renderFilterBar(filterBar, ownersByWorkbook, currentUserId, tableWrap, globalMode) {
     filterBar.innerHTML = "";
+
+    // Internal/External segmented control — global mode only. In workspace
+    // mode it's omitted (a customer workspace is all-external, so defaulting
+    // to Internal would hide every row).
+    if (globalMode) {
+      filterBar.appendChild(buildAudiencePill(tableWrap));
+    }
 
     // Gather the unique owners seen across the fetched rows. Build the
     // popover list from these so the dropdown never contains users who
@@ -753,7 +818,7 @@
         (newSelection) => {
           selectedOwnerId = newSelection.id;
           triggerLabel.textContent = newSelection.label;
-          applyOwnerFilter(tableWrap, selectedOwnerId);
+          applyRowFilters(tableWrap);
         },
       );
     });
@@ -762,6 +827,63 @@
     pill.appendChild(labelWrap);
     pill.appendChild(triggerWrap);
     filterBar.appendChild(pill);
+
+    // Apply current filters on mount. In global mode the default audience is
+    // "internal", so external-owned canvases are hidden on first paint.
+    applyRowFilters(tableWrap);
+  }
+
+  /**
+   * Two-segment "Internal | External" control shown only in global mode.
+   * Filters rows by whether the canvas owner's email is @clay.com. Mirrors
+   * the Owner pill's bordered-pill styling; the active segment uses inline
+   * token colors (Clay's Tailwind build tree-shakes unused bg utilities, so
+   * we don't rely on a class for the active background).
+   */
+  function buildAudiencePill(tableWrap) {
+    const pill = document.createElement("div");
+    pill.className =
+      "h-6 flex w-fit items-center overflow-hidden rounded-sm border " +
+      "border-border-primary";
+
+    const options = [
+      { id: "internal", label: "Internal" },
+      { id: "external", label: "External" },
+    ];
+
+    options.forEach((opt, i) => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.dataset.audience = opt.id;
+      const divider = i > 0 ? "border-l border-border-primary " : "";
+      btn.className =
+        divider +
+        "text-xs font-medium px-2 h-full cursor-pointer flex items-center";
+      btn.textContent = opt.label;
+      styleAudienceSegment(btn, opt.id === selectedAudience);
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        if (selectedAudience === opt.id) return;
+        selectedAudience = opt.id;
+        for (const b of pill.querySelectorAll("button[data-audience]")) {
+          styleAudienceSegment(b, b.dataset.audience === selectedAudience);
+        }
+        applyRowFilters(tableWrap);
+      });
+      pill.appendChild(btn);
+    });
+
+    return pill;
+  }
+
+  function styleAudienceSegment(btn, active) {
+    if (active) {
+      btn.style.backgroundColor = "var(--color-bg-secondary, rgba(0,0,0,0.06))";
+      btn.style.color = "var(--color-content-primary, currentColor)";
+    } else {
+      btn.style.backgroundColor = "transparent";
+      btn.style.color = "var(--color-content-secondary, currentColor)";
+    }
   }
 
   /**
