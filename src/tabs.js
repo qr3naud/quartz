@@ -1294,6 +1294,12 @@
       __cb.setBrainstormView(tab?.state?.brainstormView === "table" ? "table" : "canvas");
     }
 
+    // A pending auto-flip belongs to the tab it was armed on; cancel it and
+    // re-evaluate the Actual loading/expired shimmer for the tab we just
+    // entered (its cards may or may not carry real spend).
+    __cb._autoActualPending = false;
+    __cb.applyActualSummaryState?.();
+
     __cb.saveTabs();
     renderTabBar();
 

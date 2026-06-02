@@ -406,8 +406,12 @@
   // menu. Esc clears too.
   function onDocClick(evt) {
     if (!hostEl) return;
-    if (hostEl.contains(evt.target)) return;
     if (contextMenuEl && contextMenuEl.contains(evt.target)) return;
+    // Keep the selection only when the click lands on a real row; clicking the
+    // empty table area or the chrome around it (inside or outside the host)
+    // clears it, matching Escape. Inputs, chips, and body-mounted menu
+    // backdrops stopPropagation on mousedown, so they never reach here.
+    if (hostEl.contains(evt.target) && evt.target.closest("[data-row-id]")) return;
     clearSelection();
   }
 

@@ -727,8 +727,16 @@
 
       applyActive(startMode);
 
-      proj.addEventListener("click", () => __cb.setViewMode("projected"));
-      act.addEventListener("click", () => __cb.setViewMode("actual"));
+      // A manual pick cancels the pending auto-flip to Actual (see
+      // fetchSpendInBackground) so we never yank the view out from under the user.
+      proj.addEventListener("click", () => {
+        __cb._autoActualPending = false;
+        __cb.setViewMode("projected");
+      });
+      act.addEventListener("click", () => {
+        __cb._autoActualPending = false;
+        __cb.setViewMode("actual");
+      });
 
       wrap.appendChild(proj);
       wrap.appendChild(act);
@@ -783,6 +791,10 @@
           );
       }
       if (__cb.tabStore) __cb.tabStore.viewMode = next;
+      // Recompute Actual loading/expired state BEFORE the recalc so
+      // setSummaryNumber renders the shimmer placeholder / "Expired" correctly
+      // for the mode we're entering.
+      __cb.applyActualSummaryState?.();
       // Re-run credit math so the summary boxes flip immediately. Flag the
       // refresh so the headline numbers count up/down to their new values
       // (setSummaryNumber reads this synchronously); cleared right after so
@@ -1104,6 +1116,73 @@
     pricingGroup.appendChild(pricingToggleBox);
     pricingGroup.appendChild(pricingCards);
 
+    // --- Actual-mode loading / expired state ---------------------------------
+    // Every summary number that reflects real spend in Actual mode. While the
+    // background spend fetch is in flight (actualSpendPending) and the user is
+    // on Actual, these boxes shimmer. If the fetch comes back with no spend
+    // (the column hasn't run in the last 30 days), they read "Expired" with an
+    // explanatory tooltip instead of a misleading 0.
+    const EXPIRED_TOOLTIP =
+      "No usage in the last 30 days — this column last ran over 30 days ago, " +
+      "so live spend isn't available. Switch to Projected for an estimate.";
+    const actualValueEls = [
+      creditsValue,
+      actionsValue,
+      totalValue,
+      totalActionsValue,
+      creditDollarValue,
+      actionDollarValue,
+      totalDollarValue,
+    ];
+    const actualBoxes = [
+      creditsBox,
+      actionsBox,
+      totalBox,
+      totalActionsBox,
+      creditCostBox,
+      actionCostBox,
+      totalDollarBox,
+    ];
+    for (const el of actualValueEls) el._cbActualDependent = true;
+
+    // True when we're on Actual, the spend fetch has finished (nothing
+    // pending), there are cost-bearing cards, but none carry real spend — i.e.
+    // the realtime window returned nothing. cellCount > 0 means the column ran
+    // within the window (even if it cost 0 credits), so that is NOT expired.
+    function computeActualExpired() {
+      if (__cb.viewMode !== "actual") return false;
+      if ((__cb.actualSpendPending?.size ?? 0) > 0) return false;
+      const cards = __cb.canvas?.getCards?.() || [];
+      let hasCostCard = false;
+      for (const c of cards) {
+        const d = c.data;
+        if (!d) continue;
+        if (d.type === "dp" || d.type === "input" || d.type === "comment") continue;
+        hasCostCard = true;
+        const sp = d.stats?.spend;
+        if (
+          sp &&
+          ((sp.cellCount || 0) > 0 ||
+            (sp.credits || 0) > 0 ||
+            (sp.actionExecutions || 0) > 0)
+        ) {
+          return false;
+        }
+      }
+      return hasCostCard;
+    }
+
+    // Recompute the expired flag and (re)apply the shimmer class. Called before
+    // each recalc that can change Actual state (setViewMode, fetch completion).
+    // setSummaryNumber reads __cb.actualSpendExpired to render "Expired".
+    __cb.applyActualSummaryState = function () {
+      __cb.actualSpendExpired = computeActualExpired();
+      const loading =
+        __cb.viewMode === "actual" && (__cb.actualSpendPending?.size ?? 0) > 0;
+      for (const b of actualBoxes) b.classList.toggle("cb-summary-loading", loading);
+    };
+    __cb._expiredTooltip = EXPIRED_TOOLTIP;
+
     summaryBar.appendChild(creditsBox);
     summaryBar.appendChild(actionsBox);
     summaryBar.appendChild(recordsBox);
@@ -1198,6 +1277,25 @@
     // callers (records typing, edits) leave the flag unset, so only the
     // Projected/Actual flip animates.
     function setSummaryNumber(el, value, format) {
+      // Actual mode with no live spend (column ran >30 days ago): show
+      // "Expired" + tooltip instead of a misleading 0. The underlying number
+      // is still tracked on _cbNum so flipping back to Projected animates from
+      // the right value.
+      if (el._cbActualDependent && __cb.viewMode === "actual" && __cb.actualSpendExpired) {
+        if (el._cbTween) {
+          cancelAnimationFrame(el._cbTween);
+          el._cbTween = null;
+        }
+        el._cbNum = value;
+        el.textContent = "Expired";
+        el.title = __cb._expiredTooltip || "";
+        el.classList.add("cb-summary-expired");
+        return;
+      }
+      if (el.classList.contains("cb-summary-expired")) {
+        el.classList.remove("cb-summary-expired");
+        el.title = "";
+      }
       const from = typeof el._cbNum === "number" ? el._cbNum : value;
       el._cbNum = value;
       const reduce =
@@ -2047,6 +2145,10 @@
     __cb.getActionCost = null;
     __cb.applyRecordsState = null;
     __cb.recordsActual = null;
+    __cb._autoActualPending = false;
+    __cb.actualSpendExpired = false;
+    if (__cb.actualSpendPending) __cb.actualSpendPending.clear();
+    __cb.applyActualSummaryState = null;
     if (__cb.closeTotalCostEditor) __cb.closeTotalCostEditor();
     __cb.closeTotalCostEditor = null;
     __cb.proMode = false;

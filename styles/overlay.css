@@ -1203,6 +1203,48 @@ body:has(.cb-overlay) [data-floating-ui-portal] {
   }
 }
 
+/* Actual-mode loading skeleton: while the spend fetch is in flight and the user
+   is on Actual, every spend-derived summary number becomes a shimmering pill.
+   The value text is hidden (transparent) and a sweeping highlight runs across a
+   tinted bar. Applied by __cb.applyActualSummaryState. */
+.cb-summary-box.cb-summary-loading .cb-summary-value {
+  position: relative;
+  display: inline-block;
+  min-width: 56px;
+  color: transparent;
+  border-radius: 5px;
+  overflow: hidden;
+  background: #eef2ff;
+}
+
+.cb-summary-box.cb-summary-loading .cb-summary-value::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(99, 102, 241, 0.3),
+    transparent
+  );
+  transform: translateX(-100%);
+  animation: cb-shimmer 1.1s ease-in-out infinite;
+}
+
+@keyframes cb-shimmer {
+  to {
+    transform: translateX(100%);
+  }
+}
+
+/* "Expired" — the realtime window returned no spend (column ran >30 days ago).
+   Muted vs a real number, with a help cursor signalling the hover tooltip. */
+.cb-summary-value.cb-summary-expired {
+  color: #9ca3af;
+  font-weight: 500;
+  cursor: help;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .cb-export-menu,
   .cb-total-cost-editor,
@@ -1213,5 +1255,8 @@ body:has(.cb-overlay) [data-floating-ui-portal] {
   }
   .cb-pricing-cards {
     transition: none;
+  }
+  .cb-summary-box.cb-summary-loading .cb-summary-value::after {
+    animation: none;
   }
 }

@@ -2094,13 +2094,16 @@
       __cb.canvas.refreshClusters({ dragCardIds: new Set() });
     }
 
-    // Always start in Projected mode. The projected leg (model-aware catalog
-    // credits) is what's available the moment rows land; actual spend is still
-    // being fetched in the background (fetchSpendInBackground below). The user
-    // can flip to Actual once those values populate.
+    // Start in Projected mode — its numbers are ready the moment rows land,
+    // while actual spend is still being fetched in the background. When that
+    // fetch resolves with real spend, fetchSpendInBackground auto-flips to
+    // Actual (unless the user picks a mode first). _autoActualPending arms that
+    // flip; actualSpendExpired is reset so a prior import's state doesn't leak.
     if (typeof __cb.setViewMode === "function") {
       __cb.setViewMode("projected");
     }
+    __cb._autoActualPending = importedAny && !!workspaceId;
+    __cb.actualSpendExpired = false;
 
     // Bulk imports add many cards in sequence. Each addCard internally
     // calls notifyCreditTotal, but the topbar summary ("Avg Credits / Row"
@@ -2127,6 +2130,10 @@
     // the import, then stamp card.data.stats.spend so the Projected -> Actual
     // toggle has real numbers ready by the time the user flips it.
     if (importedAny && workspaceId) {
+      // Track this table's spend leg as in-flight so the summary boxes shimmer
+      // if the user flips to Actual before it lands.
+      __cb.actualSpendPending = __cb.actualSpendPending || new Set();
+      __cb.actualSpendPending.add(tableId);
       fetchSpendInBackground(workspaceId, tableId);
       // Resolve projected cost for "Run function" (subroutine) cards, whose
       // cost lives in the table they reference rather than the catalog.
@@ -2213,9 +2220,43 @@
     try {
       spendRows = await __cb.fetchColumnSpend(workspaceId, tableId, 30);
     } catch {
-      return;
+      spendRows = null;
     }
-    if (!Array.isArray(spendRows) || !__cb.canvas) return;
+    // This table's spend leg is done (success / empty / failure) — drop it from
+    // the pending set so any Actual-mode loading shimmer can resolve.
+    __cb.actualSpendPending?.delete(tableId);
+
+    // Settle the summary once the fetch resolves. didStamp = we folded real
+    // spend into the cards. When armed (_autoActualPending) and we have data,
+    // auto-flip to Actual (setViewMode animates the count-up + pill slide and
+    // refreshes everything). Otherwise refresh in place — applyActualSummaryState
+    // clears the shimmer and flags "Expired" when the window returned nothing.
+    const settle = (didStamp) => {
+      if (!__cb.canvas) return;
+      const autoFlip =
+        didStamp && __cb._autoActualPending && typeof __cb.setViewMode === "function";
+      __cb._autoActualPending = false;
+      if (autoFlip) {
+        __cb.setViewMode("actual");
+      } else {
+        __cb.applyActualSummaryState?.();
+        __cb._animateSummary = true;
+        try {
+          if (typeof __cb.canvas.refreshCreditTotal === "function") {
+            __cb.canvas.refreshCreditTotal();
+          }
+        } finally {
+          __cb._animateSummary = false;
+        }
+        if (typeof __cb.canvas.updateGroupCredits === "function") {
+          __cb.canvas.updateGroupCredits();
+        }
+        if (__cb.tableView?.refresh) __cb.tableView.refresh();
+      }
+      if (didStamp) __cb.model.update();
+    };
+
+    if (!Array.isArray(spendRows) || !__cb.canvas) { settle(false); return; }
 
     const spendByFieldId = new Map();
     for (const row of spendRows) {
@@ -2226,7 +2267,7 @@
         cellCount: Number(row.cellCount) || 0,
       });
     }
-    if (spendByFieldId.size === 0) return;
+    if (spendByFieldId.size === 0) { settle(false); return; }
 
     let stamped = false;
     for (const card of __cb.canvas.getCards()) {
@@ -2254,11 +2295,7 @@
       }
     }
 
-    if (!stamped) return;
-    if (typeof __cb.canvas.refreshCreditTotal === "function") __cb.canvas.refreshCreditTotal();
-    if (typeof __cb.canvas.updateGroupCredits === "function") __cb.canvas.updateGroupCredits();
-    __cb.model.update();
-    if (__cb.tableView?.refresh) __cb.tableView.refresh();
+    settle(stamped);
   }
 
   // Background ACTUAL fill: the fast import profiles only a ~50-row sample, so

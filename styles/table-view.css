@@ -363,6 +363,7 @@
   padding: 8px 14px;
   border-bottom: 1px solid #f1f5f9;
   vertical-align: middle;
+  transition: background-color 130ms ease;
 }
 
 .cb-table-view-table tbody tr:last-child td {
