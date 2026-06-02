@@ -984,9 +984,25 @@
       td.className = "col-coverage cb-table-view-cell-readonly";
       td.textContent = coverage.rows ? Number(coverage.rows).toLocaleString() : "\u2014";
     } else if (coverage && coverage.mode === "actual" && coverage.total) {
-      td.className = "col-coverage cb-table-view-cell-readonly";
-      td.textContent = `${(coverage.ran || 0).toLocaleString()} / ${coverage.total.toLocaleString()}`;
+      td.className = "col-coverage";
+      // Mirror the Projected division's structure + box metrics so toggling
+      // modes doesn't shift the numbers, and the "/" reads grey like Projected.
+      const wrap = document.createElement("div");
+      wrap.className = "cb-table-view-cov-edit";
+      const mkRo = (n) => {
+        const s = document.createElement("span");
+        s.className = "cb-table-view-cell-num-ro";
+        s.textContent = Number(n || 0).toLocaleString();
+        return s;
+      };
+      const sep = document.createElement("span");
+      sep.className = "cb-table-view-cov-sep";
+      sep.textContent = "/";
+      wrap.appendChild(mkRo(coverage.ran));
+      wrap.appendChild(sep);
+      wrap.appendChild(mkRo(coverage.total));
       td.title = `${Math.round(((coverage.ran || 0) / coverage.total) * 100)}% of rows attempted`;
+      td.appendChild(wrap);
     } else {
       td.className = "col-coverage cb-table-view-cell-muted";
       td.textContent = "\u2014";
@@ -1022,8 +1038,17 @@
       sp.title = "Loading actual fill rate\u2026";
       td.appendChild(sp);
     } else if (fill && fill.pct != null) {
-      td.className = "col-fill cb-table-view-cell-readonly";
-      td.textContent = `${fill.pct}%`;
+      td.className = "col-fill";
+      // Match the Projected input's box metrics + grey "%" so the value sits in
+      // the same place and reads the same across modes.
+      const numSpan = document.createElement("span");
+      numSpan.className = "cb-table-view-cell-num-ro";
+      numSpan.textContent = String(fill.pct);
+      const suffix = document.createElement("span");
+      suffix.className = "cb-table-view-cell-suffix";
+      suffix.textContent = "%";
+      td.appendChild(numSpan);
+      td.appendChild(suffix);
     } else {
       td.className = "col-fill cb-table-view-cell-muted";
       td.textContent = "\u2014";

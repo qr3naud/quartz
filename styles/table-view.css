@@ -1010,16 +1010,51 @@
 }
 
 .cb-table-view-cell-input-num {
-  width: 58px;
-  padding: 4px 5px;
-  /* Match the read-only Actual cells (left-aligned, weight 500) so Coverage /
-     Fill read the same in Projected and Actual. */
-  text-align: left;
+  /* Hug the value instead of a fixed-width box; keep a clickable minimum and a
+     cap so a big number can't blow out the fixed column. */
+  /* width:auto is required for field-sizing to take effect — the base
+     .cb-table-view-cell-input sets width:100%, which otherwise forces the box
+     to fill the whole cell (this was why the fill box wasn't snug). */
+  width: auto;
+  field-sizing: content;
+  min-width: 2ch;
+  max-width: 72px;
+  padding: 4px 3px;
+  /* Centered, weight 500 — matches the centered headers and the read-only
+     Actual cells (centered via the col rule below) so every numeric column
+     reads consistently. */
+  text-align: center;
   font-weight: 500;
   font-variant-numeric: tabular-nums;
   /* Drop the native number spinners — they ate too much of the small cell. */
   -moz-appearance: textfield;
   appearance: textfield;
+}
+
+/* Read-only number "chip" for Actual mode — same box metrics as the Projected
+   input at rest (transparent 1px border + identical padding/min-width) so the
+   value occupies the exact same footprint and the numbers don't shift when
+   toggling Projected <-> Actual. */
+.cb-table-view-cell-num-ro {
+  display: inline-block;
+  box-sizing: border-box;
+  min-width: 2ch;
+  padding: 4px 3px;
+  border: 1px solid transparent;
+  text-align: center;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  color: #1f2937;
+}
+
+/* Numeric columns: center the body cells in both modes (projected inputs and
+   actual read-only text) so they line up under the centered headers — no more
+   mixed left/right alignment. Scoped to tbody; DP name + Enrichments stay left. */
+.cb-table-view-table tbody td.col-coverage,
+.cb-table-view-table tbody td.col-fill,
+.cb-table-view-table tbody td.col-credits,
+.cb-table-view-table tbody td.col-actions {
+  text-align: center;
 }
 
 .cb-table-view-cell-input-num::-webkit-outer-spin-button,
@@ -1062,7 +1097,7 @@
 
 .cb-table-view-cell-suffix {
   display: inline-block;
-  margin-left: 4px;
+  margin-left: 1px;
   color: #6b7280;
   font-size: 13px;
 }
