@@ -5,6 +5,20 @@
 
   __cb.updateGroupButtonVisibility = function () {};
 
+  // Cache whether the current user is the Quartz maintainer so the service
+  // worker can scope update checks (admin -> origin/main HEAD; everyone else ->
+  // the published version). Pure-UI gate; refreshed whenever the JWT (and thus
+  // the email) lands or rotates. Same email check as the Archived menu.
+  function syncQuartzAdminFlag() {
+    try {
+      const isAdmin =
+        (__cb.userEmail || "").trim().toLowerCase() === "quentin.renaud@clay.com";
+      chrome.storage.local.set({ quartzIsAdmin: isAdmin });
+    } catch {}
+  }
+  syncQuartzAdminFlag();
+  if (__cb.onSupabaseJwtChange) __cb.onSupabaseJwtChange(syncQuartzAdminFlag);
+
   // Pie-slice icon — visually communicates "fraction of the whole filled".
   // Hoisted to module scope so the overflow menu (__cb.openMoreMenu) can
   // reuse the same glyph that used to ride on the standalone Pro Mode

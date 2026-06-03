@@ -441,11 +441,26 @@ async function quartzCacheStatus(res) {
   return res;
 }
 
+/** Whether the current user is the Quartz maintainer. Cached in storage by the
+ *  content script (overlay.js) from the JWT email; the SW reads it to scope
+ *  update checks (admin -> origin/main HEAD; everyone else -> published). A
+ *  pure-UI gate, defaulting to non-admin when unknown. */
+async function isQuartzAdmin() {
+  try {
+    const r = await chrome.storage.local.get("quartzIsAdmin");
+    return !!r.quartzIsAdmin;
+  } catch {
+    return false;
+  }
+}
+
 /** Asks the helper whether the repo is behind origin, caches the result for
- *  the popup/overlay, and refreshes the toolbar cue. Callers gate the cadence
- *  (the view-open / More-menu checks skip when already behind). */
+ *  the popup/overlay, and refreshes the toolbar cue. Non-admins are scoped to
+ *  the published version. Callers gate the cadence (the view-open / More-menu
+ *  checks skip when already behind). */
 async function quartzCheckStatus() {
-  return quartzCacheStatus(await quartzNative("status"));
+  const published = !(await isQuartzAdmin());
+  return quartzCacheStatus(await quartzNative("status", { published }));
 }
 
 /** Runs pull/forcePull. If files changed, reloads the extension so Chrome
@@ -453,7 +468,8 @@ async function quartzCheckStatus() {
  *  open Clay tabs. Returns the helper's result (best-effort — the reload may
  *  tear down the message channel before the caller reads it). */
 async function quartzRunPull(cmd) {
-  let res = await quartzNative(cmd);
+  const published = !(await isQuartzAdmin());
+  let res = await quartzNative(cmd, { published });
   // ~/Quartz is a deploy clone the user never edits by hand, so a fast-forward
   // pull that's blocked by local drift (most often a file-mode change on
   // quartz-updater.py) should be discarded and forced rather than surfacing a
@@ -465,7 +481,7 @@ async function quartzRunPull(cmd) {
     (res.error === "ff-only" ||
       /local change|overwritten|fast-forward/i.test(res.output || ""))
   ) {
-    res = await quartzNative("forcePull");
+    res = await quartzNative("forcePull", { published });
   }
   if (res && res.ok && res.updated) {
     // Clear the cached "behind" state too, so the SW-startup cache-restore
@@ -513,7 +529,10 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg.type === "cb:update:log") {
     // The Update modal is an explicit "check for exact details", so cache the
     // status + refresh the cue from the log result before returning commits.
-    quartzNative("log").then(quartzCacheStatus).then(sendResponse);
+    (async () => {
+      const published = !(await isQuartzAdmin());
+      return quartzCacheStatus(await quartzNative("log", { published }));
+    })().then(sendResponse);
     return true;
   }
   if (msg.type === "cb:update:pull") {

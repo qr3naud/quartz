@@ -239,6 +239,12 @@
   gap: 12px;
   padding: 6px 6px 6px 8px;
   border-radius: 8px;
+  position: relative; /* anchor the sliding Install button */
+  overflow: hidden; /* keep it clipped off the right edge until armed */
+}
+
+.cb-update-item-armable {
+  cursor: pointer;
 }
 
 .cb-update-item:hover {
@@ -300,11 +306,16 @@
   color: #15803d;
 }
 
-/* Admin version picker: a hover-revealed "Install" button at the row's right
-   edge (reserves its space so the row doesn't jump on hover), plus a static
-   "Installed" marker on the currently-running version. */
+/* Admin version picker. The "Install" button sits off the row's right edge and
+   slides in when the row is clicked (armed) - the row otherwise looks like a
+   normal commit row. Clicking it hard-resets the clone to that commit. */
 .cb-update-install {
-  flex-shrink: 0;
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%) translateX(140%);
+  opacity: 0;
+  pointer-events: none;
   padding: 1px 9px;
   font-size: 11px;
   font-weight: 600;
@@ -313,11 +324,13 @@
   background: #eef2ff;
   color: #4f46e5;
   cursor: pointer;
-  visibility: hidden;
+  transition: transform 0.18s ease, opacity 0.18s ease;
 }
 
-.cb-update-item:hover .cb-update-install {
-  visibility: visible;
+.cb-update-item-armed .cb-update-install {
+  transform: translateY(-50%) translateX(0);
+  opacity: 1;
+  pointer-events: auto;
 }
 
 .cb-update-install:hover {
@@ -326,6 +339,13 @@
   color: #ffffff;
 }
 
+/* Hide the status marker while the Install button is sliding over it. */
+.cb-update-item-armed .cb-update-installed,
+.cb-update-item-armed .cb-update-published {
+  opacity: 0;
+}
+
+/* Currently-running version: grey marker. */
 .cb-update-installed {
   flex-shrink: 0;
   padding: 1px 9px;
@@ -333,6 +353,17 @@
   font-weight: 600;
   border-radius: 9px;
   color: #9ca3af;
+}
+
+/* Published version (what non-admins receive): teal marker. */
+.cb-update-published {
+  flex-shrink: 0;
+  padding: 1px 9px;
+  font-size: 11px;
+  font-weight: 600;
+  border-radius: 9px;
+  background: #ccfbf1;
+  color: #0f766e;
 }
 
 .cb-update-empty {

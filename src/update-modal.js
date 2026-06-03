@@ -137,17 +137,28 @@
     row.appendChild(date);
     row.appendChild(badge);
 
-    // Admin-only version picker: the currently-installed version shows a static
-    // "Installed" marker; every other version shows a hover-revealed "Install"
-    // button that hard-resets the clone to that commit (forward or rollback).
+    // Admin version picker. Status markers: teal "Published" (the version
+    // non-admins receive) takes precedence over grey "Installed" (the version
+    // currently running). Any version except the running one is installable -
+    // the row is clickable and the "Install" button slides in from the right.
     if (ctx && ctx.isAdmin) {
       const ver = commit.version ? commit.version.raw : null;
-      if (ver && ctx.currentVersion && ver === ctx.currentVersion) {
-        const installed = document.createElement("span");
-        installed.className = "cb-update-installed";
-        installed.textContent = "Installed";
-        row.appendChild(installed);
-      } else {
+      const isInstalled = !!(ver && ctx.currentVersion && ver === ctx.currentVersion);
+      const isPublished = !!(ver && ctx.publishedVersion && ver === ctx.publishedVersion);
+
+      if (isPublished) {
+        const m = document.createElement("span");
+        m.className = "cb-update-published";
+        m.textContent = "Published";
+        row.appendChild(m);
+      } else if (isInstalled) {
+        const m = document.createElement("span");
+        m.className = "cb-update-installed";
+        m.textContent = "Installed";
+        row.appendChild(m);
+      }
+
+      if (!isInstalled) {
         const install = document.createElement("button");
         install.type = "button";
         install.className = "cb-update-install";
@@ -158,6 +169,20 @@
           ctx.onInstall(commit.hash, ver || commit.hash.slice(0, 7));
         });
         row.appendChild(install);
+
+        // Click the row to arm it (Install slides in from the right). Only one
+        // row armed at a time; clicking again disarms.
+        row.classList.add("cb-update-item-armable");
+        row.addEventListener("click", () => {
+          const body = row.closest(".cb-update-body");
+          const wasArmed = row.classList.contains("cb-update-item-armed");
+          if (body) {
+            body
+              .querySelectorAll(".cb-update-item-armed")
+              .forEach((r) => r.classList.remove("cb-update-item-armed"));
+          }
+          if (!wasArmed) row.classList.add("cb-update-item-armed");
+        });
       }
     }
     return row;
@@ -448,6 +473,7 @@
       const ctx = {
         isAdmin,
         currentVersion,
+        publishedVersion: res.publishedVersion || null,
         onInstall: (hash, label) => {
           if (window.confirm("Install v" + label + "? This reloads the extension.")) {
             runCheckout(hash, label);

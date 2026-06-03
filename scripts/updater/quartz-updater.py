@@ -133,17 +133,51 @@ def version_at(ref):
         return None
 
 
-def do_status():
+def published_pointer():
+    """The (version, commit) that non-admins are gated to, from the committed
+    releases.json on the upstream branch (read live so even an old client gets
+    the current pointer). Returns (None, None) if absent/unresolvable, in which
+    case callers fall back to @{u} (latest) - the gate fails open, by design
+    (it's a UI gate, not a security boundary)."""
+    out = git("show", "@{u}:releases.json")
+    if out.returncode != 0:
+        return (None, None)
+    try:
+        ver = json.loads(out.stdout).get("published")
+    except Exception:
+        ver = None
+    if not ver:
+        return (None, None)
+    # Resolve the version string to its commit via the "(vX.Y.Z)" subject suffix
+    # the commit convention guarantees. --fixed-strings so the dots are literal;
+    # "(v6.1)" is not a substring of "(v6.10)", so the match is exact.
+    res = git("log", "@{u}", "-1", "--format=%H", "--fixed-strings", "--grep=(v{})".format(ver))
+    commit = res.stdout.strip().split("\n")[0] if res.returncode == 0 else ""
+    return (ver, commit or None)
+
+
+def _target(published):
+    """Resolve the update target: the published commit for non-admins (when one
+    exists), else the upstream HEAD. Returns (target_ref, published_version)."""
+    pub_ver, pub_commit = published_pointer()
+    if published and pub_commit:
+        return (pub_commit, pub_ver)
+    return ("@{u}", pub_ver)
+
+
+def do_status(published=False):
     fetched = git("fetch", "--quiet")
     if fetched.returncode != 0:
         return {"ok": False, "error": "git fetch failed", "detail": fetched.stderr.strip()}
-    counted = git("rev-list", "--count", "HEAD..@{u}")
+    target, pub_ver = _target(published)
+    counted = git("rev-list", "--count", "HEAD..{}".format(target))
     behind = int(counted.stdout.strip()) if counted.returncode == 0 and counted.stdout.strip().isdigit() else 0
     return {
         "ok": True,
         "behind": behind,
         "currentVersion": local_version(),
-        "latestVersion": version_at("@{u}") or local_version(),
+        "latestVersion": version_at(target) or local_version(),
+        "publishedVersion": pub_ver,
     }
 
 
@@ -167,30 +201,36 @@ def _parse_log(ref_range, limit=None):
     return commits
 
 
-def do_log():
+def do_log(published=False):
     fetched = git("fetch", "--quiet")
     if fetched.returncode != 0:
         return {"ok": False, "error": "git fetch failed", "detail": fetched.stderr.strip()}
-    counted = git("rev-list", "--count", "HEAD..@{u}")
+    target, pub_ver = _target(published)
+    counted = git("rev-list", "--count", "HEAD..{}".format(target))
     behind = int(counted.stdout.strip()) if counted.returncode == 0 and counted.stdout.strip().isdigit() else 0
     return {
         "ok": True,
         "behind": behind,
         "currentVersion": local_version(),
-        "latestVersion": version_at("@{u}") or local_version(),
-        "incoming": _parse_log("HEAD..@{u}"),
-        "recent": _parse_log("@{u}", limit=50),
+        "latestVersion": version_at(target) or local_version(),
+        "publishedVersion": pub_ver,
+        "incoming": _parse_log("HEAD..{}".format(target)),
+        "recent": _parse_log(target, limit=50),
     }
 
 
-def do_pull(force=False):
+def do_pull(force=False, published=False):
     before = local_version()
     before_head = git("rev-parse", "HEAD").stdout.strip()
-    if force:
+    target, _ = _target(published)
+    use_pub = published and target != "@{u}"
+    if force or use_pub:
+        # Non-admins (published) always hard-reset to the published commit -
+        # they may sit on a commit that isn't a fast-forward ancestor.
         fetched = git("fetch", "origin", "--quiet")
         if fetched.returncode != 0:
             return {"ok": False, "error": "git fetch failed", "detail": fetched.stderr.strip()}
-        result = git("reset", "--hard", "@{u}")
+        result = git("reset", "--hard", target)
     else:
         result = git("pull", "--ff-only")
     output = (result.stdout + result.stderr).strip()
@@ -252,15 +292,16 @@ def main():
     if not msg:
         return
     cmd = msg.get("cmd")
+    published = bool(msg.get("published"))
     try:
         if cmd == "status":
-            send_message(do_status())
+            send_message(do_status(published=published))
         elif cmd == "log":
-            send_message(do_log())
+            send_message(do_log(published=published))
         elif cmd == "pull":
-            send_message(do_pull(force=False))
+            send_message(do_pull(force=False, published=published))
         elif cmd == "forcePull":
-            send_message(do_pull(force=True))
+            send_message(do_pull(force=True, published=published))
         elif cmd == "checkout":
             send_message(do_checkout(msg.get("ref")))
         else:
