@@ -769,6 +769,13 @@
     }
   };
 
+  // Default Actual spend window stamped on import (also the session picker's
+  // pre-selection cutoff — same value so the displayed number maps to the
+  // pre-selected sessions). SESSION_DISCOVERY_DAYS is the wider window used to
+  // LIST sessions, so older runs stay selectable.
+  __cb.ACTUAL_IMPORT_DAYS = 7;
+  __cb.SESSION_DISCOVERY_DAYS = 365;
+
   // Per-column actual spend over the last N days. Backed by Redshift via
   // Kinesis ingestion (~minutes of lag). Note: realtime credit usage is only
   // complete from REALTIME_CREDIT_USAGE_START_DATE = 2025-11-05 — for tables
@@ -808,24 +815,34 @@
     }
   };
 
-  // Per-column actual spend for an explicit [startISO, endISO] window (the
-  // session cutoff path). Same response shape as fetchColumnSpend but for an
-  // arbitrary range instead of "last N days". Query uses bracket-encoded
-  // timeRange (verified against the ts-rest server) — startISO/endISO are
-  // ISO-8601 UTC strings (z.string().datetime()). A single contiguous window
-  // collapses a row's re-runs to ~distinct rows in cellCount; summing several
-  // windows counts executions. Returns null on failure.
-  __cb.fetchColumnSpendForRange = async function (workspaceId, tableId, startISO, endISO) {
+  // Authoritative per-row credit + action cost for a subroutine (function)
+  // table — the same number Clay's column editor shows. A function field has NO
+  // creditCost in /context (the wrapper bills only action executions; cost lives
+  // in the referenced sub-table). Clay computes it server-side via
+  // getRunCostEstimate (standalone sub-columns summed, waterfall steps
+  // AVERAGED). Reconstructing it client-side by flat-summing sub-table field
+  // creditCosts overcounts waterfalls, so we call the same endpoint instead.
+  //   GET /v3/workspaces/:ws/subroutines?subroutineTableIds[]=<refTableId>
+  //   -> { subroutines: [{ table, cost, actionExecutionCost, ... }] }
+  // Bracket array encoding is required (repeated ?key=v returns 400). Returns
+  // { cost, actionExecutionCost } for the referenced table, or null on failure.
+  __cb.fetchSubroutineCosts = async function (workspaceId, referencedTableId) {
     try {
-      const enc = encodeURIComponent;
       const url =
-        `https://api.clay.com/v3/realtime-credit-usage/${workspaceId}/table/${tableId}/column` +
-        `?timeRange[startTime]=${enc(startISO)}&timeRange[endTime]=${enc(endISO)}`;
+        `https://api.clay.com/v3/workspaces/${workspaceId}/subroutines` +
+        `?subroutineTableIds[]=${encodeURIComponent(referencedTableId)}`;
       const res = await fetch(url, { credentials: "include" });
       if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
-      return res.json();
+      const body = await res.json();
+      const arr = Array.isArray(body) ? body : body?.subroutines || [];
+      const hit = arr[0];
+      if (!hit) return null;
+      return {
+        cost: Number(hit.cost) || 0,
+        actionExecutionCost: Number(hit.actionExecutionCost) || 0,
+      };
     } catch (err) {
-      console.warn("[Clay Scoping] fetchColumnSpendForRange failed:", err);
+      console.warn("[Clay Scoping] fetchSubroutineCosts failed:", err);
       return null;
     }
   };

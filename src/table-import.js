@@ -2115,9 +2115,12 @@
       __cb.actualSpendPending = __cb.actualSpendPending || new Set();
       __cb.actualSpendPending.add(tableId);
       fetchSpendInBackground(workspaceId, tableId);
-      // New import → the run set changed; drop any cached sessions so the
-      // session-cutoff picker rebuilds them.
+      // New import → the run set changed; drop any cached sessions, then
+      // start fetching the run list in the background so the picker pre-selects
+      // the last-7-days sessions and the badge animates in without the user
+      // having to open it first.
       __cb.sessionCutoff?.invalidateCache();
+      __cb.sessionCutoff?.ensureLoaded?.();
       // Resolve projected cost for "Run function" (subroutine) cards, whose
       // cost lives in the table they reference rather than the catalog.
       fetchSubroutineCostsInBackground(workspaceId, tableId);
@@ -2130,15 +2133,14 @@
   }
 
   // Subroutine ("Run function") fields have no catalog or /context cost of
-  // their own — their projected credits AND actions are the sum of the table
-  // they reference (data.referencedTableId). We resolve that here in the
-  // background: one /context per unique referenced table (deduped + session-
-  // cached). Credits come from each field's creditCost (resolveEffectiveCredits,
-  // matching Clay's Edit-column panel); actions come from each action field's
-  // catalog actionExecutions, looked up via the field's actionInfo. Both are
-  // stamped onto the card so Projected mode reflects the full cost.
+  // their own — their projected credits + actions live in the table they
+  // reference (data.referencedTableId). Resolve them via the SAME endpoint
+  // Clay's column editor uses (__cb.fetchSubroutineCosts -> listSubroutines),
+  // which returns the authoritative per-row cost (standalone sub-columns summed,
+  // waterfall steps averaged). The old approach flat-summed every sub-table
+  // field's creditCost, which overcounted waterfalls (e.g. 33.9 vs Clay's 17.4).
   async function fetchSubroutineCostsInBackground(workspaceId, tableId) {
-    if (!__cb.canvas || typeof __cb.fetchReferencedTableFieldConfigs !== "function") return;
+    if (!__cb.canvas || typeof __cb.fetchSubroutineCosts !== "function") return;
 
     const fnCards = [];
     const refIds = new Set();
@@ -2157,22 +2159,8 @@
     await Promise.all(
       Array.from(refIds).map(async (refId) => {
         if (cache.has(refId)) return;
-        const fcs = await __cb.fetchReferencedTableFieldConfigs(workspaceId, refId);
-        if (!Array.isArray(fcs)) return;
-        let credits = 0;
-        let actions = 0;
-        for (const fc of fcs) {
-          if (fc.creditCost) {
-            const c = resolveEffectiveCredits(fc.creditCost, null);
-            if (Number.isFinite(c)) credits += c;
-          }
-          const ai = fc.actionInfo;
-          if (ai && ai.actionKey) {
-            const info = __cb.actionByIdLookup?.[`${ai.actionPackageId}-${ai.actionKey}`];
-            actions += planAwareActionExecutions(info);
-          }
-        }
-        cache.set(refId, { credits, actions });
+        const v = await __cb.fetchSubroutineCosts(workspaceId, refId);
+        if (v) cache.set(refId, { credits: v.cost, actions: v.actionExecutionCost });
       })
     );
 
@@ -2201,7 +2189,7 @@
   async function fetchSpendInBackground(workspaceId, tableId) {
     let spendRows = null;
     try {
-      spendRows = await __cb.fetchColumnSpend(workspaceId, tableId, 30);
+      spendRows = await __cb.fetchColumnSpend(workspaceId, tableId, __cb.ACTUAL_IMPORT_DAYS);
     } catch {
       spendRows = null;
     }

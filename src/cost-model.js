@@ -25,9 +25,23 @@
     return type === "dp" || type === "input" || type === "comment";
   }
 
+  // Rows an enrichment actually ran on — the per-row denominator for Actual.
+  // Order: run-status coverage.ran (genuine "did it run", frozen at import) →
+  // the Records field → cellCount (last resort). NOT cellCount-first: cellCount
+  // is credits÷cost (a billing artifact) and is fan-out-inflated for function
+  // columns, which understates true per-row cost. See ARCHITECTURE.md.
+  function actualRowDenominator(card) {
+    const d = (card && card.data) || {};
+    const ran = Number(d.stats?.coverage?.ran) || 0;
+    if (ran > 0) return ran;
+    const recs = cb.getRecordsCount ? Number(cb.getRecordsCount()) || 0 : 0;
+    if (recs > 0) return recs;
+    return Number(d.stats?.spend?.cellCount) || 0;
+  }
+
   // Per-row (per-execution) cost for one enrichment card, view-mode aware.
   //   Projected: the card's resolved catalog / subroutine credits + actions.
-  //   Actual:    measured spend (data.stats.spend) averaged over its cellCount.
+  //   Actual:    measured spend (data.stats.spend) ÷ rows that ran (coverage.ran).
   //
   // Options:
   //   viewMode            - "projected" | "actual" (defaults to __cb.viewMode)
@@ -47,12 +61,15 @@
     const d = (card && card.data) || {};
     const sp = d.stats && d.stats.spend;
 
-    if (viewMode === "actual" && sp && Number(sp.cellCount) > 0) {
-      return {
-        credits: (Number(sp.credits) || 0) / Number(sp.cellCount),
-        actions: (Number(sp.actionExecutions) || 0) / Number(sp.cellCount),
-        creditsUnknown: false,
-      };
+    if (viewMode === "actual" && sp) {
+      const denom = actualRowDenominator(card);
+      if (denom > 0) {
+        return {
+          credits: (Number(sp.credits) || 0) / denom,
+          actions: (Number(sp.actionExecutions) || 0) / denom,
+          creditsUnknown: false,
+        };
+      }
     }
     if (viewMode === "actual" && !fallbackToProjected) {
       return { credits: 0, actions: 0, creditsUnknown: false, noSpend: true };
@@ -166,7 +183,10 @@
           credits: 0,
           actionExec: 0,
           cells: 0,
-          fieldIds: new Set(),
+          // Per-column rollup (normalized to the spend-map shape) so the picker
+          // can re-derive selection numbers by summing locally — no byColumn
+          // fetch. JSON-safe (plain object) so it survives the localStorage cache.
+          perField: {},
         };
         raw.push(cur);
       }
@@ -176,7 +196,13 @@
       cur.actionExec += r.actionExecutionCreditsSpent || 0;
       cur.cells += r.cellCount || 0;
       for (const c of r.columns || []) {
-        if (c && c.fieldId) cur.fieldIds.add(c.fieldId);
+        if (!c || !c.fieldId) continue;
+        const e =
+          cur.perField[c.fieldId] ||
+          (cur.perField[c.fieldId] = { credits: 0, actionExecutions: 0, cellCount: 0 });
+        e.credits += Number(c.creditsSpent) || 0;
+        e.actionExecutions += Number(c.actionExecutionCreditsSpent) || 0;
+        e.cellCount += Number(c.cellCount) || 0;
       }
     }
     return raw.map((s) => ({
@@ -189,25 +215,15 @@
       credits: s.credits,
       actionExec: s.actionExec,
       cells: s.cells,
-      columnsTouched: s.fieldIds.size,
+      columnsTouched: Object.keys(s.perField).length,
+      perField: s.perField,
     }));
-  }
-
-  // Are the given session indices (into a sorted sessions array) a contiguous
-  // run? Drives the hybrid fetch: contiguous → one byColumn call over the span;
-  // non-contiguous → per-session calls summed.
-  function selectionIsContiguous(selectedIndices) {
-    if (!selectedIndices || selectedIndices.length <= 1) return true;
-    const s = selectedIndices.slice().sort((a, b) => a - b);
-    for (let i = 1; i < s.length; i++) {
-      if (s[i] !== s[i - 1] + 1) return false;
-    }
-    return true;
   }
 
   cb.cost = {
     isNonErType,
     perRowCost,
+    actualRowDenominator,
     coverageRatio,
     erLineageKey,
     fillFraction,
@@ -215,6 +231,5 @@
     billableFraction,
     DEFAULT_SESSION_GAP_MS,
     bucketRunsIntoSessions,
-    selectionIsContiguous,
   };
 })();

@@ -1075,7 +1075,17 @@
 
   function refreshActualRunsBadge() {
     const badge = hostEl?.querySelector(".cb-view-mode-actual-badge");
-    if (badge) badge.textContent = actualRunsBadgeText();
+    if (!badge) return;
+    const next = actualRunsBadgeText();
+    const prev = badge.textContent || "";
+    badge.textContent = next;
+    // Pulse when the count first resolves (loading "" -> a number), so the user
+    // sees the sessions landing without a jarring number swap.
+    if (next && next !== prev) {
+      badge.classList.remove("cb-view-mode-actual-badge-pulse");
+      void badge.offsetWidth;
+      badge.classList.add("cb-view-mode-actual-badge-pulse");
+    }
   }
 
   // Wire the Actual button's session UI: lazy-load the session list, subscribe
@@ -1113,8 +1123,96 @@
   }
 
   function closeSessionPopover() {
+    closeSessionSubmenu();
     if (sessionPopoverEl) { sessionPopoverEl.remove(); sessionPopoverEl = null; }
     if (sessionPopoverBackdrop) { sessionPopoverBackdrop.remove(); sessionPopoverBackdrop = null; }
+  }
+
+  // Coin (credits) + sparkle (action executions) glyphs, matching the cost
+  // badges in the ER details menu / canvas cards.
+  const SESSION_COIN_SVG =
+    '<svg width="11" height="11" viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><path opacity="0.2" d="M232,104c0,24-40,48-104,48S24,128,24,104,64,56,128,56,232,80,232,104Z"/><path d="M207.58,63.84C186.85,53.48,159.33,48,128,48S69.15,53.48,48.42,63.84,16,88.78,16,104v48c0,15.22,11.82,29.85,32.42,40.16S96.67,208,128,208s58.85-5.48,79.58-15.84S240,167.22,240,152V104C240,88.78,228.18,74.15,207.58,63.84ZM128,64c62.64,0,96,23.23,96,40s-33.36,40-96,40-96-23.23-96-40S65.36,64,128,64Z"/></svg>';
+  const SESSION_SPARK_SVG =
+    '<svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2l2.2 5.8L20 10l-5.8 2.2L12 18l-2.2-5.8L4 10l5.8-2.2L12 2z"/></svg>';
+
+  // fieldId -> column display name, from the live cards (for the hover submenu).
+  function sessionFieldNameMap() {
+    const m = new Map();
+    for (const c of window.__cb.canvas?.getCards?.() || []) {
+      const d = c.data;
+      if (d && d.fieldId && !m.has(d.fieldId)) {
+        m.set(d.fieldId, d.displayName || d.text || d.fieldId);
+      }
+      // waterfall providers carry their own fieldIds
+      if (d && d.type === "waterfall" && Array.isArray(d.providers)) {
+        for (const p of d.providers) {
+          if (p.fieldId && !m.has(p.fieldId)) {
+            m.set(p.fieldId, p.displayName || d.displayName || p.fieldId);
+          }
+        }
+      }
+    }
+    return m;
+  }
+
+  function buildCostBadges(credits, actions) {
+    const wrap = document.createElement("span");
+    wrap.className = "cb-session-cost-badges";
+    const cr = document.createElement("span");
+    cr.className = "cb-session-cost-badge cb-session-cost-badge-credit";
+    cr.innerHTML = SESSION_COIN_SVG + `<span>${Math.round(credits).toLocaleString()}</span>`;
+    wrap.appendChild(cr);
+    if (actions > 0) {
+      const ac = document.createElement("span");
+      ac.className = "cb-session-cost-badge cb-session-cost-badge-action";
+      ac.innerHTML = SESSION_SPARK_SVG + `<span>${Math.round(actions).toLocaleString()}</span>`;
+      wrap.appendChild(ac);
+    }
+    return wrap;
+  }
+
+  // ---- Hover submenu: which columns ran in a session ----
+  let sessionSubmenuEl = null;
+  let sessionSubmenuTimer = null;
+
+  function closeSessionSubmenu() {
+    if (sessionSubmenuTimer) { clearTimeout(sessionSubmenuTimer); sessionSubmenuTimer = null; }
+    if (sessionSubmenuEl) { sessionSubmenuEl.remove(); sessionSubmenuEl = null; }
+  }
+
+  function openSessionSubmenu(session, anchorRow) {
+    closeSessionSubmenu();
+    const pf = session.perField || {};
+    const fids = Object.keys(pf);
+    if (!fids.length) return;
+    const names = sessionFieldNameMap();
+    const el = document.createElement("div");
+    el.className = "cb-session-submenu";
+    el.addEventListener("mousedown", (e) => e.stopPropagation());
+    el.addEventListener("mouseenter", () => {
+      if (sessionSubmenuTimer) { clearTimeout(sessionSubmenuTimer); sessionSubmenuTimer = null; }
+    });
+    el.addEventListener("mouseleave", () => closeSessionSubmenu());
+    // Sort columns by credits desc so the expensive ones lead.
+    fids.sort((a, b) => (pf[b].credits || 0) - (pf[a].credits || 0));
+    for (const fid of fids) {
+      const v = pf[fid];
+      const r = document.createElement("div");
+      r.className = "cb-session-submenu-row";
+      const nm = document.createElement("span");
+      nm.className = "cb-session-submenu-name";
+      nm.textContent = names.get(fid) || fid;
+      r.appendChild(nm);
+      r.appendChild(buildCostBadges(v.credits || 0, v.actionExecutions || 0));
+      el.appendChild(r);
+    }
+    document.body.appendChild(el);
+    const rect = anchorRow.getBoundingClientRect();
+    el.style.position = "fixed";
+    el.style.top = `${rect.top}px`;
+    el.style.left = `${rect.right + 6}px`;
+    el.style.zIndex = "10000000";
+    if (window.__cb.clampSubmenu) window.__cb.clampSubmenu(el);
   }
 
   function renderSessionPopoverRows() {
@@ -1123,6 +1221,7 @@
     const st = cut?.getState?.();
     const body = sessionPopoverEl.querySelector(".cb-session-pop-body");
     if (!body) return;
+    closeSessionSubmenu();
     body.replaceChildren();
     if (!st || st.loading) {
       const m = document.createElement("div");
@@ -1154,16 +1253,22 @@
       const sub = document.createElement("div");
       sub.className = "cb-session-pop-sub";
       sub.textContent =
-        `${s.columnsTouched} col${s.columnsTouched === 1 ? "" : "s"} \u00b7 ` +
-        `${Math.round(s.credits).toLocaleString()} cr`;
+        `${s.columnsTouched} col${s.columnsTouched === 1 ? "" : "s"}`;
       meta.appendChild(date);
       meta.appendChild(sub);
       row.appendChild(cbx);
       row.appendChild(meta);
+      row.appendChild(buildCostBadges(s.credits || 0, s.actionExec || 0));
+      // Hover → submenu of which columns ran in this session.
+      row.addEventListener("mouseenter", () => {
+        if (sessionSubmenuTimer) { clearTimeout(sessionSubmenuTimer); sessionSubmenuTimer = null; }
+        openSessionSubmenu(s, row);
+      });
+      row.addEventListener("mouseleave", () => {
+        sessionSubmenuTimer = setTimeout(closeSessionSubmenu, 180);
+      });
       body.appendChild(row);
     }
-    const note = sessionPopoverEl.querySelector(".cb-session-pop-note");
-    if (note) note.style.display = cut.isContiguous() ? "none" : "";
   }
 
   function toggleSessionPopover(anchorBtn) {
