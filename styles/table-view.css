@@ -2308,9 +2308,14 @@
   border-color: #9ca3af;
 }
 
-.cb-uc-scope-total {
-  font-size: 12px;
-  font-weight: 600;
-  color: #166534;
-  font-variant-numeric: tabular-nums;
+/* Table headers fill the row so margin-left:auto on the scope controls (and the
+ * imported stamp) right-aligns them. Non-table group headers stay inline. */
+.cb-table-view-table-row .cb-table-view-group-row-inner {
+  display: flex;
+  width: 100%;
+}
+
+/* The imported-at stamp sits at the very right, just after the cost pill. */
+.cb-table-view-group-row-imported {
+  white-space: nowrap;
 }

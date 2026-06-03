@@ -5741,19 +5741,12 @@
     freqWrap.appendChild(freqBtn);
     wrap.appendChild(freqWrap);
 
-    // Sub-total for this use case (credits / actions / $), from the last roll-up.
+    // Sub-total for this use case, from the last roll-up — rendered as the same
+    // segmented cost pill as the ER details view (StarFour actions first, Coin
+    // credits second).
     const sub = (cb._multiTotals?.perUseCase || []).find((u) => u.key === ucKey);
     if (sub) {
-      const creditCost = cb.getCreditCost ? cb.getCreditCost() : 0;
-      const actionCost = cb.getActionCost ? cb.getActionCost() : 0;
-      const dollars = sub.credits * creditCost + sub.actions * actionCost;
-      const tot = document.createElement("span");
-      tot.className = "cb-uc-scope-total";
-      tot.textContent =
-        `${Math.round(sub.credits).toLocaleString()} cr` +
-        (sub.actions > 0 ? ` \u00b7 ${Math.round(sub.actions).toLocaleString()} act` : "") +
-        (dollars > 0 ? ` \u00b7 $${Math.round(dollars).toLocaleString()}` : "");
-      wrap.appendChild(tot);
+      wrap.appendChild(buildCostBadges(sub.credits || 0, sub.actions || 0));
     }
     return wrap;
   }
@@ -5904,31 +5897,53 @@
     wrap.appendChild(labelEl);
     wrap.appendChild(count);
 
-    // Per-table header extras (Import Clay Table): the SOURCE table's total
-    // row count and when it was imported. Distinct from the "N data points"
-    // count above (which is imported columns, not source rows).
+    // Per-table header extras (Import Clay Table): enrichment count, the SOURCE
+    // table's total row count, the per-use-case scope controls, and when it was
+    // imported (far right). The "N data points" count above is imported columns;
+    // "N enrichments" is the ER cards belonging to this table's use case.
     if (opts.isTable) {
+      const cb = window.__cb;
+
+      const erCount = (cb.model?.getNodes?.() || []).filter(
+        (n) =>
+          n?.data &&
+          !cb.cost.isNonErType(n.data.type) &&
+          cb.cost.useCaseKeyForCard(n) === section.groupId,
+      ).length;
+      if (erCount > 0) {
+        const enr = document.createElement("span");
+        enr.className = "cb-table-view-group-row-count";
+        enr.textContent = `${erCount} enrichment${erCount === 1 ? "" : "s"}`;
+        wrap.appendChild(enr);
+      }
+
       if (Number.isFinite(opts.recordCount) && opts.recordCount > 0) {
         const rows = document.createElement("span");
         rows.className = "cb-table-view-group-row-meta";
         rows.textContent = `${opts.recordCount.toLocaleString()} row${opts.recordCount === 1 ? "" : "s"}`;
         wrap.appendChild(rows);
       }
-      if (Number.isFinite(opts.importedAt) && opts.importedAt > 0) {
-        const when = document.createElement("span");
-        when.className = "cb-table-view-group-row-meta";
-        when.textContent = `imported ${relativeTimeText(opts.importedAt)}`;
-        when.title = new Date(opts.importedAt).toLocaleString();
-        wrap.appendChild(when);
-      }
 
       // Per-use-case scope controls — only when 2+ imported tables exist (the
       // global Records/Frequency in the summary bar are hidden then, so each
       // table owns its own here). section.groupId is the `t-<tableId>` use-case
-      // key. Stops propagation so editing doesn't toggle the section collapse.
-      const cb = window.__cb;
-      if (cb.cost?.useCaseCount?.() >= 2 && typeof section.groupId === "string") {
+      // key. .cb-uc-scope carries margin-left:auto so it (and the imported
+      // stamp after it) sit at the right edge.
+      const multiUseCase =
+        cb.cost?.useCaseCount?.() >= 2 && typeof section.groupId === "string";
+      if (multiUseCase) {
         wrap.appendChild(buildUseCaseScopeControls(section.groupId));
+      }
+
+      // Imported-at, pinned to the far right. The scope controls already push to
+      // the right; when they're absent, this takes the auto margin itself.
+      if (Number.isFinite(opts.importedAt) && opts.importedAt > 0) {
+        const when = document.createElement("span");
+        when.className = "cb-table-view-group-row-meta cb-table-view-group-row-imported";
+        if (!multiUseCase) when.style.marginLeft = "auto";
+        when.textContent = `imported ${relativeTimeText(opts.importedAt)}`;
+        when.title = new Date(opts.importedAt).toLocaleString();
+        wrap.appendChild(when);
       }
     }
 
