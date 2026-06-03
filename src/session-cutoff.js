@@ -71,20 +71,33 @@
 
   // Persist per-table sessions (incl. per-column rollup) + selection + gap so a
   // refresh is instant and selection can re-sum without re-fetching run/recent.
+  // The raw runs ride along too (when present) so a gap change after a refresh
+  // re-buckets locally instead of refetching every table — see setGapMs. They're
+  // the heaviest piece, so if the payload blows the localStorage quota we retry
+  // WITHOUT runs rather than lose the cache entirely (gap tweaks then refetch,
+  // i.e. the pre-runs-cache behavior).
   function persist() {
     if (!state) return;
-    try {
+    const build = (withRuns) => {
       const byTable = {};
       for (const tid of state.tableIds) {
         const t = state.byTable[tid];
         if (!t) continue;
-        byTable[tid] = { sessions: t.sessions, selectedIds: [...t.selectedIds] };
+        byTable[tid] = {
+          sessions: t.sessions,
+          selectedIds: [...t.selectedIds],
+          ...(withRuns ? { runs: t.runs || null } : {}),
+        };
       }
-      localStorage.setItem(
-        storageKey(),
-        JSON.stringify({ byTable, gapMs: state.gapMs, ts: Date.now() }),
-      );
-    } catch {}
+      return JSON.stringify({ byTable, gapMs: state.gapMs, ts: Date.now() });
+    };
+    try {
+      localStorage.setItem(storageKey(), build(true));
+    } catch {
+      try {
+        localStorage.setItem(storageKey(), build(false));
+      } catch {}
+    }
   }
 
   function clearCache() {
@@ -213,7 +226,10 @@
             const valid = new Set(sessions.map((s) => s.id));
             const sel = (ct.selectedIds || []).filter((id) => valid.has(id));
             state.byTable[tid] = {
-              runs: null, // refetched only if the gap changes
+              // Restored when cached (see persist) so a gap change rebuckets
+              // locally; null on older/quota-trimmed caches -> gap change
+              // refetches.
+              runs: ct.runs || null,
               sessions,
               selectedIds: sel.length ? new Set(sel) : defaultSelection(sessions),
             };
