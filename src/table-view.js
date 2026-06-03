@@ -3786,6 +3786,15 @@
           }
         }
         items.push({ label: "Move to", submenu: moveSubmenu });
+        // Jump to the data point's source column in Clay's grid. Only imported
+        // DPs carry fieldId + tableId; manual DPs have no column to find, so we
+        // omit the entry (matches the enrichment menu's canOpen gating).
+        if (card.data.fieldId && card.data.tableId) {
+          items.push({
+            label: "Find in table",
+            action: () => __cb.openCardInTable(card),
+          });
+        }
       }
       items.push({
         label: "Insert data point below",
