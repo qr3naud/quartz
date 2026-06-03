@@ -566,6 +566,77 @@
   font-weight: 400;
 }
 
+/* ---- Context menu flyout submenu ("Move to") ---- */
+
+.cb-table-view-context-menu-sep {
+  height: 1px;
+  background: #e5e7eb;
+  margin: 4px 6px;
+}
+
+.cb-table-view-context-menu-submenu-wrap {
+  position: relative;
+}
+
+/* Parent row: label on the left, chevron pinned right. */
+.cb-table-view-context-menu-option-parent {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.cb-table-view-context-menu-chevron {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  color: #9ca3af;
+}
+
+/* Keep the parent highlighted while the pointer is anywhere over the wrap
+   (including inside the open flyout). */
+.cb-table-view-context-menu-submenu-wrap:hover
+  .cb-table-view-context-menu-option-parent {
+  background: #eef2ff;
+  color: #4338ca;
+}
+
+.cb-table-view-context-menu-submenu-wrap:hover
+  .cb-table-view-context-menu-option-parent
+  .cb-table-view-context-menu-chevron {
+  color: #4338ca;
+}
+
+/* The flyout panel — its own floating surface (NOT .cb-table-view-context-menu,
+   which is position:fixed). Opens to the right of the parent by default. */
+.cb-table-view-context-submenu {
+  position: absolute;
+  top: -5px;
+  left: 100%;
+  display: none;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 200px;
+  max-height: min(70vh, 440px);
+  overflow-y: auto;
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  box-shadow: 0 10px 25px rgba(15, 23, 42, 0.15), 0 4px 10px rgba(15, 23, 42, 0.08);
+  padding: 4px;
+  z-index: 1;
+}
+
+.cb-table-view-context-menu-submenu-wrap:hover .cb-table-view-context-submenu {
+  display: flex;
+}
+
+/* Flip to the left edge of the parent when there's no room on the right. */
+.cb-table-view-context-submenu-left .cb-table-view-context-submenu {
+  left: auto;
+  right: 100%;
+}
+
 /* ---- ER chip details menu (click-to-open popover) ---- */
 
 .cb-table-view-er-menu-backdrop {
@@ -867,14 +938,14 @@
   background: #fafbff;
 }
 
-/* A single indigo accent marking where the shared (rowspan'd) columns begin —
-   no per-cell borders so the band stays clean. */
-.cb-table-view-dp-row-merge-first td.col-credits {
+/* A single indigo accent marking where the shared (rowspan'd) ERs column
+   begins — no per-cell borders so the band stays clean. */
+.cb-table-view-dp-row-merge-first td.col-ers {
   border-left: 2px solid #c7d2fe;
 }
 
-.cb-table-view-dp-row-merge-first td.col-credits,
-.cb-table-view-dp-row-merge-first td.col-actions,
+/* Only the ERs cell is rowspanned now, so it's the one that needs vertical
+   centering across the run; per-row Credits/Actions align like normal cells. */
 .cb-table-view-dp-row-merge-first td.col-ers {
   vertical-align: middle;
 }
@@ -885,12 +956,10 @@
   background: #f5f7ff;
 }
 
-/* The shared (rowspan'd) cells live on the merge-first row, so selecting a
-   follower can't reach them via .cb-table-view-row-selected. applySelectionClasses
-   flags the first row when any run member is selected; light those cells here so
+/* The shared (rowspan'd) ERs cell lives on the merge-first row, so selecting a
+   follower can't reach it via .cb-table-view-row-selected. applySelectionClasses
+   flags the first row when any run member is selected; light that cell here so
    the whole linked band highlights regardless of which row was clicked. */
-.cb-table-view-dp-row-merge-first.cb-table-view-merge-run-selected td.col-credits,
-.cb-table-view-dp-row-merge-first.cb-table-view-merge-run-selected td.col-actions,
 .cb-table-view-dp-row-merge-first.cb-table-view-merge-run-selected td.col-ers {
   background: #eef2ff;
 }
@@ -1621,6 +1690,13 @@
   font-weight: 600;
   color: #4c1d95;
   letter-spacing: 0.005em;
+}
+
+/* Nameless group (freshly created, not being renamed): muted placeholder. */
+.cb-table-view-group-row-label-empty {
+  font-weight: 500;
+  color: #9ca3af;
+  font-style: italic;
 }
 
 /* Nested-group depth: inner-group sub-headers (depth=1) sit under

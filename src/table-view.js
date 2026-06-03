@@ -376,10 +376,10 @@
       const id = row.getAttribute("data-row-id");
       row.classList.toggle("cb-table-view-row-selected", selectedRowIds.has(id));
     }
-    // The shared Credits/Actions/Enrichments cells are rowspanned onto the
-    // merge-first row only, so a follower row's selection can't reach them via
-    // the per-row class. Flag the first row when ANY row in its run is selected
-    // so CSS can light up those shared cells too.
+    // The shared Enrichments cell is rowspanned onto the merge-first row only
+    // (Credits/Actions now render per row), so a follower row's selection can't
+    // reach it via the per-row class. Flag the first row when ANY row in its run
+    // is selected so CSS can light up that shared ERs cell too.
     const firsts = hostEl.querySelectorAll("tr.cb-table-view-dp-row-merge-first");
     for (const first of firsts) {
       let anySel = first.classList.contains("cb-table-view-row-selected");
@@ -1682,7 +1682,10 @@
           level: 0,
           parentId: null,
           canvasGroupId: null,
-          editable: false,
+          // Editable so the header renders an inline label input — renaming
+          // writes back to the cluster's title comment via commitClusterLabel
+          // (the blur handler routes by section kind).
+          editable: true,
         };
       }
       return null;
@@ -2943,6 +2946,64 @@
     labelInput.dispatchEvent(new Event("input", { bubbles: true }));
   }
 
+  // Rename a legacy comment-cluster "basic group" (Clay-table import) by
+  // writing its title comment card's text. A blank name is ignored — the
+  // section is keyed off a titled comment, so an empty title would drop the
+  // group on the next render; we re-render to restore the prior label instead.
+  function commitClusterLabel(clusterId, value) {
+    const v = (value || "").trim();
+    if (!v) {
+      render();
+      return;
+    }
+    let changed = false;
+    for (const c of __cb.model?.getNodes?.() || []) {
+      if (c?.data?.type === "comment" && c.data.groupCluster === clusterId) {
+        if (c.data.text !== v || c.data.displayName !== v) {
+          c.data.text = v;
+          c.data.displayName = v;
+          changed = true;
+        }
+        break;
+      }
+    }
+    if (changed) {
+      __cb.model.update();
+      if (__cb.saveTabs) __cb.saveTabs();
+      render();
+    }
+  }
+
+  // Rename an imported-table block (Import Clay Table). The name is resolved
+  // from the imported-table metadata first (meta.name || card.tableName), so we
+  // update the authoritative metadata and keep the per-card fallback in sync. A
+  // blank name is ignored (re-render restores the prior label).
+  function commitTableLabel(tableId, value) {
+    const v = (value || "").trim();
+    if (!v) {
+      render();
+      return;
+    }
+    const canvas = __cb.canvas;
+    const meta = canvas?.getImportedTables?.()[tableId];
+    let changed = false;
+    if (!meta || meta.name !== v) {
+      if (canvas?.setImportedTable) canvas.setImportedTable(tableId, { name: v });
+      changed = true;
+    }
+    for (const c of __cb.model?.getNodes?.() || []) {
+      if (c?.data?.tableId === tableId && c.data.tableName !== v) {
+        c.data.tableName = v;
+        changed = true;
+      }
+    }
+    if (changed) {
+      __cb.model.update();
+      if (__cb.saveTabs) __cb.saveTabs();
+      render();
+    }
+  }
+
   // ---- Link action ----
   //
   // Merge the selected rows into a single cluster via the relational
@@ -3106,6 +3167,85 @@
       clearSelection();
       if (__cb.tableView?.refresh) __cb.tableView.refresh();
     }
+  }
+
+  // Rename a group from its header context menu: focus + select the header's
+  // inline label input via the same pendingFocusGroupId pass groupSelected /
+  // newGroupFromRow use. `groupRowId` is the section key (e.g. "g-123").
+  function startGroupRename(groupRowId) {
+    blurActiveCellInput();
+    pendingFocusGroupId = groupRowId;
+    render();
+  }
+
+  // Every card in a legacy comment-cluster "basic group": the title comment
+  // card(s) plus each tagged data point's lineage block (the DP + its
+  // enrichments). Clusters tag only DPs (ERs follow by lineage), so we expand
+  // each DP through getBlockForCard. Deduped via a Set since DPs can share ERs.
+  function clusterBlockCardIds(clusterId) {
+    const ids = new Set();
+    for (const c of __cb.model?.getNodes?.() || []) {
+      if (!c?.data) continue;
+      if (c.data.type === "comment" && c.data.groupCluster === clusterId) {
+        ids.add(c.id);
+      } else if (c.data.type === "dp" && c.data.groupCluster === clusterId) {
+        for (const bid of getBlockForCard(c.id)) ids.add(bid);
+      }
+    }
+    return [...ids];
+  }
+
+  // Every card belonging to an imported-table block. All imported cards (DPs,
+  // ERs, inputs, and the cluster title comments) carry data.tableId, so a flat
+  // scan captures the entire block including its nested basic groups.
+  function tableBlockCardIds(tableId) {
+    const ids = [];
+    for (const c of __cb.model?.getNodes?.() || []) {
+      if (c?.data?.tableId === tableId) ids.push(c.id);
+    }
+    return ids;
+  }
+
+  // Delete a whole group and EVERYTHING inside it — every data point and
+  // enrichment. `target` is a real cb-group ({ canvasGroupId }), a
+  // comment-cluster basic group ({ clusterId }), or an imported-table block
+  // ({ tableId }). For real groups, removeCard prunes groups that become empty,
+  // so deleting all member cards disposes the inner groups first and then the
+  // now-childless super-group. `noun` is "group" / "super group" / "table".
+  function deleteGroupWithCards(target, name, noun) {
+    const canvas = __cb.canvas;
+    if (!canvas?.removeCard) return;
+    blurActiveCellInput();
+    const cardIds =
+      target.canvasGroupId != null
+        ? getBlockCardIdsForGroup(target.canvasGroupId)
+        : target.clusterId != null
+          ? clusterBlockCardIds(target.clusterId)
+          : target.tableId != null
+            ? tableBlockCardIds(target.tableId)
+            : [];
+    if (cardIds.length === 0) return;
+    // Count only data points + enrichments for the prompt (the cluster's title
+    // comment card is deleted too but isn't part of the user's mental model).
+    const contentCount = cardIds.filter((id) => {
+      const c = canvas.getCardById?.(id);
+      return c && (c.data?.type === "dp" || isErType(c.data?.type));
+    }).length;
+    const label = name && name.trim() ? `"${name.trim()}"` : `this ${noun}`;
+    const msg = `Delete ${label} and its ${contentCount} card${contentCount === 1 ? "" : "s"} (data points + enrichments)? This can't be undone.`;
+    if (!window.confirm(msg)) return;
+    // Snapshot first — removeCard mutates the card list as it goes.
+    for (const id of cardIds) canvas.removeCard(id);
+    // Belt-and-suspenders for real groups: if the group survived (e.g. it had
+    // no member cards), disband it so the empty section doesn't linger.
+    if (target.canvasGroupId != null) {
+      const survives = (canvas.getGroups?.() || []).some(
+        (g) => g.id === target.canvasGroupId,
+      );
+      if (survives && canvas.disbandGroup) canvas.disbandGroup(target.canvasGroupId);
+    }
+    if (__cb.saveTabs) __cb.saveTabs();
+    if (__cb.tableView?.refresh) __cb.tableView.refresh();
   }
 
   // ---- Drag-and-reorder ----
@@ -3548,8 +3688,35 @@
   // clicked row both insert actions anchor to.
 
   function buildContextItems(ctx) {
-    const cardIds = getCardRowsInSelection();
     const items = [];
+
+    // Group header right-click → rename + delete (with all the data points and
+    // enrichments inside). Handles real cb-groups, legacy comment-cluster basic
+    // groups, AND the imported-table block (the "super group" / table-level
+    // import). The Other / orphan headers aren't groups, so they get no menu.
+    if (ctx?.groupRow) {
+      const gr = ctx.groupRow;
+      const isRealGroup = gr.canvasGroupId != null;
+      const gid = typeof gr.groupId === "string" ? gr.groupId : "";
+      const isTable = !!gr.isTable; // imported-table block ("t-" key)
+      const isCluster = !isRealGroup && !isTable && gid.startsWith("c-");
+      if (isRealGroup || isCluster || isTable) {
+        const noun = isTable ? "table" : gr.level === 1 ? "super group" : "group";
+        const target = isRealGroup
+          ? { canvasGroupId: gr.canvasGroupId }
+          : isTable
+            ? { tableId: gid.slice(2) }
+            : { clusterId: gid.slice(2) };
+        items.push({ label: "Rename", action: () => startGroupRename(gr.groupId) });
+        items.push({
+          label: `Delete ${noun}`,
+          action: () => deleteGroupWithCards(target, gr.name, noun),
+        });
+      }
+      return items;
+    }
+
+    const cardIds = getCardRowsInSelection();
 
     if (cardIds.length >= 2) {
       // Multi-select: Group, plus Link when the selection can share one.
@@ -3591,28 +3758,34 @@
       const card = getCardForRowId(ctx.rowId);
       if (card?.data?.type === "dp") {
         items.push({ label: "Rename", action: () => startInlineRename(ctx.rowId) });
-        // Add-to-group: move this data point (and its enrichments) into another
-        // group, out of its current group, or into a brand-new one. Recognizes
-        // both real cb-groups and comment-cluster basic groups (Clay-table
-        // imports), and skips the group the row is already in.
+        // Add-to-group lives under a single "Move to" parent with a flyout
+        // submenu: New group + Ungroup at the top, then every group this row
+        // can move into. Recognizes both real cb-groups and comment-cluster
+        // basic groups (Clay-table imports), and skips the row's current group.
         const membership = currentMembership(card);
-        for (const g of movableGroupTargets()) {
-          if (g.kind === membership.kind && g.id === membership.id) continue;
-          items.push({
-            label: `Move to: ${g.label}`,
-            action: () => applyGroupMembership(ctx.rowId, { kind: g.kind, id: g.id }),
-          });
-        }
+        const moveSubmenu = [
+          { label: "New group\u2026", action: () => newGroupFromRow(ctx.rowId) },
+        ];
         if (membership.kind !== "none") {
-          items.push({
-            label: "Remove from group",
+          moveSubmenu.push({
+            label: "Ungroup",
             action: () => applyGroupMembership(ctx.rowId, { kind: "none" }),
           });
         }
-        items.push({
-          label: "New group\u2026",
-          action: () => newGroupFromRow(ctx.rowId),
-        });
+        const groupTargets = movableGroupTargets().filter(
+          (g) => !(g.kind === membership.kind && g.id === membership.id),
+        );
+        if (groupTargets.length > 0) {
+          moveSubmenu.push({ separator: true });
+          for (const g of groupTargets) {
+            moveSubmenu.push({
+              label: g.label,
+              action: () =>
+                applyGroupMembership(ctx.rowId, { kind: g.kind, id: g.id }),
+            });
+          }
+        }
+        items.push({ label: "Move to", submenu: moveSubmenu });
       }
       items.push({
         label: "Insert data point below",
@@ -3641,6 +3814,79 @@
     return items;
   }
 
+  // Render one context-menu entry. Leaf items are buttons that run their
+  // action and close the menu; `separator` items render a divider; items with a
+  // `submenu` render a parent row (label + chevron) whose flyout panel opens to
+  // the side on hover (CSS), flipping left / nudging up near a viewport edge.
+  function renderContextItem(item) {
+    if (item.separator) {
+      const sep = document.createElement("div");
+      sep.className = "cb-table-view-context-menu-sep";
+      return sep;
+    }
+    if (item.submenu) {
+      const wrap = document.createElement("div");
+      wrap.className = "cb-table-view-context-menu-submenu-wrap";
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className =
+        "cb-table-view-context-menu-option cb-table-view-context-menu-option-parent";
+      const labelEl = document.createElement("div");
+      labelEl.className = "cb-table-view-context-menu-option-label";
+      labelEl.textContent = item.label;
+      btn.appendChild(labelEl);
+      const chev = document.createElement("span");
+      chev.className = "cb-table-view-context-menu-chevron";
+      chev.innerHTML = chevronRightSvg(13);
+      btn.appendChild(chev);
+      // Clicking the parent only toggles the flyout (hover already opens it);
+      // never close the menu or run an action.
+      btn.addEventListener("click", (evt) => evt.stopPropagation());
+      wrap.appendChild(btn);
+
+      const panel = document.createElement("div");
+      panel.className = "cb-table-view-context-submenu";
+      for (const sub of item.submenu) panel.appendChild(renderContextItem(sub));
+      wrap.appendChild(panel);
+
+      wrap.addEventListener("mouseenter", () => positionSubmenu(wrap, panel));
+      return wrap;
+    }
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "cb-table-view-context-menu-option";
+    const labelEl = document.createElement("div");
+    labelEl.className = "cb-table-view-context-menu-option-label";
+    labelEl.textContent = item.label;
+    btn.appendChild(labelEl);
+    btn.addEventListener("click", () => {
+      closeContextMenu();
+      item.action();
+    });
+    return btn;
+  }
+
+  // Decide which side a flyout submenu opens on so it stays in the viewport.
+  // Force-measures the panel (it's display:none until hover) by toggling
+  // display inline, then flips left and/or nudges up as needed.
+  function positionSubmenu(wrap, panel) {
+    wrap.classList.remove("cb-table-view-context-submenu-left");
+    panel.style.top = "";
+    const prevDisplay = panel.style.display;
+    panel.style.display = "flex";
+    const parentRect = wrap.getBoundingClientRect();
+    const panelRect = panel.getBoundingClientRect();
+    panel.style.display = prevDisplay;
+    if (parentRect.right + panelRect.width + 8 > window.innerWidth) {
+      wrap.classList.add("cb-table-view-context-submenu-left");
+    }
+    const overflowBottom =
+      parentRect.top + panelRect.height + 8 - window.innerHeight;
+    if (overflowBottom > 0) {
+      panel.style.top = `${-Math.min(overflowBottom, Math.max(0, parentRect.top - 8))}px`;
+    }
+  }
+
   function openContextMenu(x, y, ctx) {
     closeContextMenu();
     const items = buildContextItems(ctx);
@@ -3665,18 +3911,7 @@
     contextMenuEl.addEventListener("mousedown", (evt) => evt.stopPropagation());
     contextMenuEl.addEventListener("contextmenu", (evt) => evt.preventDefault());
     for (const item of items) {
-      const btn = document.createElement("button");
-      btn.type = "button";
-      btn.className = "cb-table-view-context-menu-option";
-      const labelEl = document.createElement("div");
-      labelEl.className = "cb-table-view-context-menu-option-label";
-      labelEl.textContent = item.label;
-      btn.appendChild(labelEl);
-      btn.addEventListener("click", () => {
-        closeContextMenu();
-        item.action();
-      });
-      contextMenuEl.appendChild(btn);
+      contextMenuEl.appendChild(renderContextItem(item));
     }
 
     document.body.appendChild(contextMenuBackdrop);
@@ -3936,7 +4171,10 @@
         const tableSection = {
           groupId: tg.key,
           groupName: tg.tableName,
-          editable: false,
+          // Editable so the table-import header renders an inline label input —
+          // renaming writes the imported-table metadata via commitTableLabel
+          // (the blur handler routes by section kind).
+          editable: true,
           canvasGroupId: null,
           level: 1,
           parentId: null,
@@ -4636,27 +4874,26 @@
     // (read-only), spinner while the full profile loads.
     tr.appendChild(buildFillCell(row.coverageFill?.fill, row.cardId));
 
-    // Credits / actions / ERs collapse into the "first" row of a merge
-    // run via rowspan. Followers ("skip") emit no <td> for these columns
-    // — the host's rowspan covers them.
+    // Credits / actions render per DP row — each carries its own split share
+    // (ER credits ÷ #DPs the ER feeds), so a merge run still sums to the ER's
+    // true per-row cost. Only the ERs chips collapse into the "first" row of a
+    // merge run via rowspan; followers ("skip") omit just that one cell.
+    const creditsCell = document.createElement("td");
+    creditsCell.className = "col-credits cb-table-view-cell-readonly";
+    if (row.creditsUnknown) {
+      creditsCell.textContent = "\u2014";
+      creditsCell.title = "Function cost is loading\u2026 switch to Actual for real spend";
+    } else {
+      creditsCell.textContent = formatNumber(row.credits);
+    }
+    tr.appendChild(creditsCell);
+
+    const actionsCell = document.createElement("td");
+    actionsCell.className = "col-actions cb-table-view-cell-readonly";
+    actionsCell.textContent = formatNumber(row.actions);
+    tr.appendChild(actionsCell);
+
     if (mergeMode !== "skip") {
-      const creditsCell = document.createElement("td");
-      creditsCell.className = "col-credits cb-table-view-cell-readonly";
-      if (mergeSpan > 1) creditsCell.rowSpan = mergeSpan;
-      if (row.creditsUnknown) {
-        creditsCell.textContent = "\u2014";
-        creditsCell.title = "Function cost is loading\u2026 switch to Actual for real spend";
-      } else {
-        creditsCell.textContent = formatNumber(row.credits);
-      }
-      tr.appendChild(creditsCell);
-
-      const actionsCell = document.createElement("td");
-      actionsCell.className = "col-actions cb-table-view-cell-readonly";
-      if (mergeSpan > 1) actionsCell.rowSpan = mergeSpan;
-      actionsCell.textContent = formatNumber(row.actions);
-      tr.appendChild(actionsCell);
-
       const ersCell = document.createElement("td");
       ersCell.className = "col-ers" + (mergeSpan > 1 ? " cb-table-view-cell-merged" : "");
       if (mergeSpan > 1) ersCell.rowSpan = mergeSpan;
@@ -5346,7 +5583,14 @@
       : folderSvg(13);
 
     let labelEl;
-    if (section.editable) {
+    // Like DP rows, the label is static text by default and only becomes an
+    // input while this section is the active rename target (pendingFocusGroupId,
+    // set by the "Rename" context action + new-group creation). The input
+    // reverts to static text on Enter / blur. pendingFocusGroupId is a one-shot
+    // (cleared in render()'s focus pass), and refresh() skips re-rendering while
+    // an input is focused, so the field survives until the user commits.
+    const isRenaming = section.editable && pendingFocusGroupId === section.groupId;
+    if (isRenaming) {
       // Mirror pattern (same idiom as canvas/groups.js's createGroupLabel):
       // the .cb-table-view-group-row-label-mirror is a hidden span that
       // shadows the input's text and dictates the wrap's width via
@@ -5384,7 +5628,21 @@
         }
       });
       labelInput.addEventListener("blur", () => {
-        commitGroupLabel(section.canvasGroupId, labelInput.value);
+        // Real cb-groups write through the canvas label element; legacy
+        // comment-cluster sections (no canvas group) write the cluster's
+        // title comment; table-import blocks write the imported-table metadata.
+        const gid = section.groupId;
+        if (section.canvasGroupId != null) {
+          commitGroupLabel(section.canvasGroupId, labelInput.value);
+        } else if (typeof gid === "string" && gid.startsWith("c-")) {
+          commitClusterLabel(gid.slice(2), labelInput.value);
+        } else if (typeof gid === "string" && gid.startsWith("t-")) {
+          commitTableLabel(gid.slice(2), labelInput.value);
+        }
+        // Revert the header to static text once editing ends (pendingFocusGroupId
+        // is already cleared). Commit paths that route through the canvas don't
+        // re-render synchronously, so do it here for all kinds.
+        render();
       });
       labelWrap.appendChild(mirror);
       labelWrap.appendChild(labelInput);
@@ -5392,7 +5650,15 @@
     } else {
       labelEl = document.createElement("span");
       labelEl.className = "cb-table-view-group-row-label";
-      labelEl.textContent = section.groupName;
+      const nm = (section.groupName || "").trim();
+      if (nm) {
+        labelEl.textContent = nm;
+      } else {
+        // Only real cb-groups can be nameless (freshly created); show a muted
+        // placeholder so the row isn't blank when not being renamed.
+        labelEl.classList.add("cb-table-view-group-row-label-empty");
+        labelEl.textContent = "Untitled group";
+      }
     }
 
     const count = document.createElement("span");
@@ -5452,14 +5718,22 @@
       }
       toggle();
     });
-    // Right-click on a header opens the context menu so reps see the
-    // disabled-state hint ("Shift+click another data point to enable")
-    // even before they've built a selection. Suppresses the browser's
-    // default menu so the affordance is consistent with row right-clicks.
+    // Right-click on a header opens the context menu. For real cb-groups it
+    // offers Rename + Delete (super)group; the group context is passed through
+    // so buildContextItems can target this specific section. Suppresses the
+    // browser's default menu so the affordance is consistent with row clicks.
     tr.addEventListener("contextmenu", (evt) => {
       evt.preventDefault();
       evt.stopPropagation();
-      openContextMenu(evt.clientX, evt.clientY);
+      openContextMenu(evt.clientX, evt.clientY, {
+        groupRow: {
+          groupId: section.groupId,
+          canvasGroupId: section.canvasGroupId,
+          level: section.level || 0,
+          name: section.groupName,
+          isTable: !!opts.isTable,
+        },
+      });
     });
     // Keyboard parity for accessibility: Enter / Space mirrors the click
     // toggle. preventDefault on Space keeps the page from scrolling.
@@ -5567,6 +5841,17 @@
       'fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" ' +
       'stroke-linejoin="round" aria-hidden="true">' +
       '<polyline points="6 9 12 15 18 9"/>' +
+      '</svg>'
+    );
+  }
+
+  function chevronRightSvg(size) {
+    const s = String(size);
+    return (
+      `<svg xmlns="http://www.w3.org/2000/svg" width="${s}" height="${s}" viewBox="0 0 24 24" ` +
+      'fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" ' +
+      'stroke-linejoin="round" aria-hidden="true">' +
+      '<polyline points="9 6 15 12 9 18"/>' +
       '</svg>'
     );
   }
