@@ -120,6 +120,15 @@
   // Fetch run/recent for every imported table and bucket into sessions. Only
   // called on a cache miss (or a forced refresh / gap change).
   async function loadFromNetwork(tableIds, gapMs, prevSelectedIds) {
+    // Don't lock in an empty result if the workspace isn't resolvable yet
+    // (ensureLoaded can fire on an early render before openCanvas sets it).
+    // Leave state null so the next ensureLoaded retries once ws is available.
+    const ws = workspaceId();
+    if (!ws) {
+      state = null;
+      return null;
+    }
+
     state = {
       tableIds,
       runs: [],
@@ -131,17 +140,13 @@
     };
     notify();
 
-    const ws = workspaceId();
     const all = [];
     for (const tid of tableIds) {
-      const runs = ws ? await cb.fetchRunSpend(ws, tid, discoveryDays()) : null;
-      console.log("[Clay Scoping][diag] loadFromNetwork", { ws, tid, days: discoveryDays(), runs: Array.isArray(runs) ? runs.length : runs });
+      const runs = await cb.fetchRunSpend(ws, tid, discoveryDays());
       if (Array.isArray(runs)) for (const r of runs) all.push(r);
     }
-    console.log("[Clay Scoping][diag] tableIds", tableIds, "totalRuns", all.length);
     state.runs = all;
     rebucket();
-    console.log("[Clay Scoping][diag] sessions", state.sessions.length);
 
     const valid = new Set(state.sessions.map((s) => s.id));
     const restored = (prevSelectedIds || []).filter((id) => valid.has(id));
