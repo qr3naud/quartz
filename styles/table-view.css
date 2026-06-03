@@ -1826,7 +1826,11 @@
 }
 
 .cb-session-pop {
-  width: 280px;
+  /* Hug the content (date on one line + full cost pill) instead of a fixed
+     width that cropped the credits. Bounded so a long table name can't run away. */
+  width: max-content;
+  min-width: 280px;
+  max-width: 460px;
   max-height: 360px;
   display: flex;
   flex-direction: column;
@@ -1893,17 +1897,30 @@
   display: flex;
   flex-direction: column;
   gap: 1px;
+  flex-shrink: 0;
 }
 
 .cb-session-pop-date {
   font-size: 13px;
   font-weight: 500;
   color: #111827;
+  white-space: nowrap;
 }
 
+/* The "N cols" line opens a hover submenu of the actual columns — signal it
+   with a dotted underline + help cursor. */
 .cb-session-pop-sub {
   font-size: 11px;
   color: #6b7280;
+  width: fit-content;
+  text-decoration: underline dotted #cbd5e1;
+  text-underline-offset: 2px;
+  cursor: help;
+}
+
+.cb-session-pop-row:hover .cb-session-pop-sub {
+  color: #4338ca;
+  text-decoration-color: #a5b4fc;
 }
 
 .cb-session-pop-empty {
@@ -1970,6 +1987,7 @@
 
 .cb-session-cost-pill {
   margin-left: auto;
+  flex-shrink: 0;
 }
 
 /* Hover submenu: which columns ran in a session. */

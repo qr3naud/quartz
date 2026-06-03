@@ -1209,8 +1209,15 @@
     const rect = anchorRow.getBoundingClientRect();
     el.style.position = "fixed";
     el.style.top = `${rect.top}px`;
-    el.style.left = `${rect.right + 6}px`;
     el.style.zIndex = "10000000";
+    // Prefer opening to the right; flip left when there's no room (the popover
+    // sits near the toolbar's right edge, so right-open would crop).
+    const w = el.offsetWidth || 240;
+    if (rect.right + 6 + w <= window.innerWidth - 8) {
+      el.style.left = `${rect.right + 6}px`;
+    } else {
+      el.style.left = `${Math.max(8, rect.left - 6 - w)}px`;
+    }
     if (window.__cb.clampSubmenu) window.__cb.clampSubmenu(el);
   }
 
