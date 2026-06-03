@@ -239,12 +239,18 @@
   gap: 12px;
   padding: 6px 6px 6px 8px;
   border-radius: 8px;
-  position: relative; /* anchor the sliding Install button */
-  overflow: hidden; /* keep it clipped off the right edge until armed */
 }
 
 .cb-update-item-armable {
   cursor: pointer;
+}
+
+/* When armed, keep the row to one line so revealing Install doesn't reflow the
+   message into a taller row. */
+.cb-update-item-armed .cb-update-msg {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .cb-update-item:hover {
@@ -306,31 +312,35 @@
   color: #15803d;
 }
 
-/* Admin version picker. The "Install" button sits off the row's right edge and
-   slides in when the row is clicked (armed) - the row otherwise looks like a
-   normal commit row. Clicking it hard-resets the clone to that commit. */
+/* Admin version picker. The "Install" button stays collapsed (zero-width) at
+   the row's right edge and expands in from the right when the row is clicked
+   (armed) - it pushes the message left rather than overlapping the date/badge.
+   Collapsed it cancels the row gap so the badge/marker stay flush right. */
 .cb-update-install {
-  position: absolute;
-  right: 8px;
-  top: 50%;
-  transform: translateY(-50%) translateX(140%);
+  flex-shrink: 0;
+  max-width: 0;
+  margin-left: -12px;
+  padding: 1px 0;
+  overflow: hidden;
+  white-space: nowrap;
   opacity: 0;
-  pointer-events: none;
-  padding: 1px 9px;
   font-size: 11px;
   font-weight: 600;
   border-radius: 9px;
-  border: 1px solid #c7d2fe;
+  border: 1px solid transparent;
   background: #eef2ff;
   color: #4f46e5;
   cursor: pointer;
-  transition: transform 0.18s ease, opacity 0.18s ease;
+  transition: max-width 0.2s ease, opacity 0.18s ease, margin-left 0.2s ease,
+    padding 0.2s ease, border-color 0.2s ease;
 }
 
 .cb-update-item-armed .cb-update-install {
-  transform: translateY(-50%) translateX(0);
+  max-width: 84px;
+  margin-left: -6px;
+  padding: 1px 9px;
+  border-color: #c7d2fe;
   opacity: 1;
-  pointer-events: auto;
 }
 
 .cb-update-install:hover {
@@ -339,15 +349,10 @@
   color: #ffffff;
 }
 
-/* Hide the status marker while the Install button is sliding over it. */
-.cb-update-item-armed .cb-update-installed,
-.cb-update-item-armed .cb-update-published {
-  opacity: 0;
-}
-
-/* Currently-running version: grey marker. */
+/* Currently-running version: grey marker, tight against the version badge. */
 .cb-update-installed {
   flex-shrink: 0;
+  margin-left: -7px;
   padding: 1px 9px;
   font-size: 11px;
   font-weight: 600;
@@ -355,15 +360,16 @@
   color: #9ca3af;
 }
 
-/* Published version (what non-admins receive): teal marker. */
+/* Published version (what non-admins receive): green marker. */
 .cb-update-published {
   flex-shrink: 0;
+  margin-left: -7px;
   padding: 1px 9px;
   font-size: 11px;
   font-weight: 600;
   border-radius: 9px;
-  background: #ccfbf1;
-  color: #0f766e;
+  background: #dcfce7;
+  color: #15803d;
 }
 
 .cb-update-empty {
