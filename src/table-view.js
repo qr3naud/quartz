@@ -1068,9 +1068,11 @@
   // first paint instead of flashing a 0; the count persists across mode
   // switches (the badge just goes grey in Projected — see CSS).
   function actualRunsBadgeText() {
-    const st = window.__cb.sessionCutoff?.getState?.();
+    const cut = window.__cb.sessionCutoff;
+    const st = cut?.getState?.();
     if (!st || st.loading) return "";
-    return String(st.selectedIds?.size ?? 0);
+    // Total selected sessions across every table column.
+    return String(cut.totalSelected?.() ?? 0);
   }
 
   function refreshActualRunsBadge() {
@@ -1233,6 +1235,95 @@
     el.style.top = `${Math.max(margin, top)}px`;
   }
 
+  // tid -> { name, color } for the per-table column headers.
+  function importedTableMeta() {
+    const m = new Map();
+    const tables = window.__cb.model?.getImportedTables?.() || {};
+    for (const tid of Object.keys(tables)) {
+      const meta = tables[tid] || {};
+      m.set(tid, { name: meta.name || "Table", color: meta.color || meta.importColor || null });
+    }
+    return m;
+  }
+
+  // One session row (checkbox + date + "N cols" submenu trigger + cost pill).
+  // `tid` scopes the toggle to its table's selection.
+  function buildSessionRow(cut, tableState, tid, s) {
+    const row = document.createElement("label");
+    row.className = "cb-session-pop-row";
+    const cbx = document.createElement("input");
+    cbx.type = "checkbox";
+    cbx.checked = tableState.selectedIds.has(s.id);
+    cbx.addEventListener("mousedown", (e) => e.stopPropagation());
+    cbx.addEventListener("change", (e) => { e.stopPropagation(); cut.toggle(tid, s.id); });
+    const meta = document.createElement("div");
+    meta.className = "cb-session-pop-meta";
+    const date = document.createElement("div");
+    date.className = "cb-session-pop-date";
+    date.textContent = fmtSessionDate(s.startISO);
+    const sub = document.createElement("div");
+    sub.className = "cb-session-pop-sub";
+    sub.textContent = `${s.columnsTouched} col${s.columnsTouched === 1 ? "" : "s"}`;
+    // Click the "N cols" line to open/close a submenu listing which columns ran
+    // in this session. preventDefault stops the wrapping <label> from toggling
+    // the row's checkbox; stopPropagation keeps the backdrop from closing.
+    sub.addEventListener("mousedown", (e) => e.stopPropagation());
+    sub.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      openSessionSubmenu(s, sub);
+    });
+    meta.appendChild(date);
+    meta.appendChild(sub);
+    row.appendChild(cbx);
+    row.appendChild(meta);
+    row.appendChild(buildCostBadges(s.credits || 0, s.actionExec || 0));
+    return row;
+  }
+
+  // A single table's column: header (color dot + name + All/Clear) + its rows.
+  function buildSessionColumn(cut, tableState, tid, meta) {
+    const col = document.createElement("div");
+    col.className = "cb-session-pop-col";
+
+    const header = document.createElement("div");
+    header.className = "cb-session-pop-col-header";
+    const dot = document.createElement("span");
+    dot.className = "cb-session-pop-col-dot";
+    if (meta?.color) dot.style.background = meta.color;
+    const nm = document.createElement("span");
+    nm.className = "cb-session-pop-col-name";
+    nm.textContent = meta?.name || "Table";
+    nm.title = nm.textContent;
+    const allOn =
+      tableState.sessions.length > 0 &&
+      tableState.selectedIds.size === tableState.sessions.length;
+    const allBtn = document.createElement("button");
+    allBtn.type = "button";
+    allBtn.className = "cb-session-pop-all cb-session-pop-col-all";
+    allBtn.textContent = allOn ? "Clear" : "All";
+    allBtn.addEventListener("click", (e) => { e.stopPropagation(); cut.setAll(tid, !allOn); });
+    header.appendChild(dot);
+    header.appendChild(nm);
+    header.appendChild(allBtn);
+    col.appendChild(header);
+
+    const list = document.createElement("div");
+    list.className = "cb-session-pop-col-list";
+    if (!tableState.sessions.length) {
+      const m = document.createElement("div");
+      m.className = "cb-session-pop-empty";
+      m.textContent = "No runs.";
+      list.appendChild(m);
+    } else {
+      for (const s of tableState.sessions.slice().reverse()) {
+        list.appendChild(buildSessionRow(cut, tableState, tid, s));
+      }
+    }
+    col.appendChild(list);
+    return col;
+  }
+
   function renderSessionPopoverRows() {
     if (!sessionPopoverEl) return;
     const cut = window.__cb.sessionCutoff;
@@ -1248,47 +1339,35 @@
       body.appendChild(m);
       return;
     }
-    if (!st.sessions.length) {
+    const tableIds = st.tableIds || [];
+    const anySessions = tableIds.some((tid) => st.byTable[tid]?.sessions?.length);
+    if (!anySessions) {
       const m = document.createElement("div");
       m.className = "cb-session-pop-empty";
       m.textContent = "No realtime runs found.";
       body.appendChild(m);
       return;
     }
-    for (const s of st.sessions.slice().reverse()) {
-      const row = document.createElement("label");
-      row.className = "cb-session-pop-row";
-      const cbx = document.createElement("input");
-      cbx.type = "checkbox";
-      cbx.checked = st.selectedIds.has(s.id);
-      cbx.addEventListener("mousedown", (e) => e.stopPropagation());
-      cbx.addEventListener("change", (e) => { e.stopPropagation(); cut.toggle(s.id); });
-      const meta = document.createElement("div");
-      meta.className = "cb-session-pop-meta";
-      const date = document.createElement("div");
-      date.className = "cb-session-pop-date";
-      date.textContent = fmtSessionDate(s.startISO);
-      const sub = document.createElement("div");
-      sub.className = "cb-session-pop-sub";
-      sub.textContent =
-        `${s.columnsTouched} col${s.columnsTouched === 1 ? "" : "s"}`;
-      // Click the "N cols" line to open/close a submenu listing which columns
-      // ran in this session. preventDefault stops the wrapping <label> from
-      // toggling the row's checkbox; stopPropagation keeps the popover backdrop
-      // from closing the whole picker.
-      sub.addEventListener("mousedown", (e) => e.stopPropagation());
-      sub.addEventListener("click", (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        openSessionSubmenu(s, sub);
-      });
-      meta.appendChild(date);
-      meta.appendChild(sub);
-      row.appendChild(cbx);
-      row.appendChild(meta);
-      row.appendChild(buildCostBadges(s.credits || 0, s.actionExec || 0));
-      body.appendChild(row);
+
+    // Single table: flat list (unchanged look). 2+ tables: one column each.
+    if (tableIds.length <= 1) {
+      const tid = tableIds[0];
+      const t = st.byTable[tid];
+      for (const s of t.sessions.slice().reverse()) {
+        body.appendChild(buildSessionRow(cut, t, tid, s));
+      }
+      return;
     }
+
+    const names = importedTableMeta();
+    const cols = document.createElement("div");
+    cols.className = "cb-session-pop-cols";
+    for (const tid of tableIds) {
+      const t = st.byTable[tid];
+      if (!t) continue;
+      cols.appendChild(buildSessionColumn(cut, t, tid, names.get(tid)));
+    }
+    body.appendChild(cols);
   }
 
   function toggleSessionPopover(anchorBtn) {
@@ -1315,7 +1394,7 @@
     allBtn.type = "button";
     allBtn.className = "cb-session-pop-all";
     allBtn.textContent = "Select all";
-    allBtn.addEventListener("click", (e) => { e.stopPropagation(); cut.setAll(true); });
+    allBtn.addEventListener("click", (e) => { e.stopPropagation(); cut.setAllTables(true); });
     header.appendChild(title);
     header.appendChild(allBtn);
     sessionPopoverEl.appendChild(header);
@@ -1367,10 +1446,18 @@
     const rect = anchorBtn.getBoundingClientRect();
     sessionPopoverEl.style.position = "fixed";
     sessionPopoverEl.style.top = `${rect.bottom + 6}px`;
-    sessionPopoverEl.style.left = `${Math.max(8, rect.left)}px`;
     sessionPopoverEl.style.zIndex = "9999999";
 
     renderSessionPopoverRows();
+
+    // Clamp left so a wide multi-column popover stays in the viewport (it's
+    // rendered before measuring so offsetWidth is real).
+    let left = Math.max(8, rect.left);
+    const w = sessionPopoverEl.offsetWidth || 320;
+    if (left + w > window.innerWidth - 8) {
+      left = Math.max(8, window.innerWidth - 8 - w);
+    }
+    sessionPopoverEl.style.left = `${left}px`;
   }
 
   // Exposed so the Projected/Actual toggle's Actual button (built in

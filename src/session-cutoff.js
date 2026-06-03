@@ -2,25 +2,30 @@
   "use strict";
 
   // ---------------------------------------------------------------------------
-  // Actual-spend session cutoff (v5.0).
+  // Actual-spend session cutoff (v6.1 — per-table).
   //
   // The realtime credit endpoints are per-table and aggregate the whole window.
   // This controller lets a user scope Actual spend to specific work sessions
   // (time-gap clusters of runs from /run/recent) and re-stamps the cards'
   // measured spend.
   //
-  // Numbers model (v5.0): credits/actions for any selection are summed LOCALLY
-  // from the per-session per-column rollup already carried in each bucketed
-  // session (run/recent has a full per-column breakdown, and summing runs equals
-  // byColumn exactly for credits/actions — verified). So selecting is instant:
-  // no byColumn fetch, no contiguous/non-contiguous branching, no token race.
-  // The per-row DISPLAY denominator is coverage.ran (run-status, frozen at
-  // import) via cost-model.perRowCost — not the noisy cellCount.
+  // Per-table (v6.1): run/recent is fetched per table and runs carry no tableId,
+  // so we keep runs/sessions/selection grouped BY TABLE (state.byTable[tid]).
+  // The picker renders one column per imported table and the user selects
+  // sessions per table; the Actual badge shows the TOTAL selected across tables.
+  // Each table's spend is summed and stamped independently (applyActualSpend is
+  // tid-scoped), which also makes attribution exact (no cross-table bucket).
   //
-  // Default selection: sessions within the last ACTUAL_IMPORT_DAYS (7), which
-  // matches the import's initial 7-day stamp so the number doesn't jump when the
-  // run list finishes loading. If nothing ran in the last 7 days, fall back to
-  // the single most-recent session (cheap — it's a local re-sum).
+  // Numbers model: credits/actions for any selection are summed LOCALLY from the
+  // per-session per-column rollup already carried in each bucketed session
+  // (run/recent has a full per-column breakdown, and summing runs equals
+  // byColumn exactly for credits/actions — verified). So selecting is instant:
+  // no byColumn fetch, no token race. The per-row DISPLAY denominator is
+  // coverage.ran (run-status, frozen at import) via cost-model.perRowCost.
+  //
+  // Default selection (per table): sessions within the last ACTUAL_IMPORT_DAYS
+  // (7), matching the import's initial 7-day stamp. If a table had no runs in
+  // the last 7 days, fall back to its single most-recent session.
   // ---------------------------------------------------------------------------
 
   const cb = (window.__cb = window.__cb || {});
@@ -28,8 +33,8 @@
   const CACHE_TTL_MS = 60 * 60 * 1000; // sessions cache is good for 1h
 
   let state = null;
-  // { tableIds, runs (null when loaded from cache), sessions, selectedIds:Set,
-  //   gapMs, loaded, loading }
+  // { tableIds:[tid], gapMs, loaded, loading,
+  //   byTable: { [tid]: { runs (null when from cache), sessions, selectedIds:Set } } }
   let loadingPromise = null; // de-dupes concurrent ensureLoaded calls
   const listeners = new Set();
 
@@ -64,19 +69,20 @@
     }
   }
 
-  // Persist sessions (incl. per-column rollup) + selection + gap so a refresh is
-  // instant and selection can still be re-summed without re-fetching run/recent.
+  // Persist per-table sessions (incl. per-column rollup) + selection + gap so a
+  // refresh is instant and selection can re-sum without re-fetching run/recent.
   function persist() {
     if (!state) return;
     try {
+      const byTable = {};
+      for (const tid of state.tableIds) {
+        const t = state.byTable[tid];
+        if (!t) continue;
+        byTable[tid] = { sessions: t.sessions, selectedIds: [...t.selectedIds] };
+      }
       localStorage.setItem(
         storageKey(),
-        JSON.stringify({
-          sessions: state.sessions,
-          selectedIds: [...state.selectedIds],
-          gapMs: state.gapMs,
-          ts: Date.now(),
-        }),
+        JSON.stringify({ byTable, gapMs: state.gapMs, ts: Date.now() }),
       );
     } catch {}
   }
@@ -102,13 +108,18 @@
     return a.every((x) => sb.has(x));
   }
 
-  function rebucket() {
-    state.sessions = cb.cost.bucketRunsIntoSessions(state.runs || [], state.gapMs);
+  // Bucket one table's runs into sessions, namespacing ids with the table id so
+  // they're globally unique (cache keys, submenu open-id) even if two tables
+  // ran at identical timestamps.
+  function bucketForTable(tid, runs, gapMs) {
+    const sessions = cb.cost.bucketRunsIntoSessions(runs || [], gapMs);
+    for (const s of sessions) s.id = `${tid}::${s.id}`;
+    return sessions;
   }
 
   // Default = sessions active within the last ACTUAL_IMPORT_DAYS; if none ran
   // recently, fall back to the single most-recent session (sessions are
-  // oldest→newest). Empty only when there are no sessions at all.
+  // oldest→newest). Empty only when the table has no sessions at all.
   function defaultSelection(sessions) {
     if (!sessions.length) return new Set();
     const cutoffSec = Date.now() / 1000 - importDays() * 86400;
@@ -117,9 +128,13 @@
     return new Set([sessions[sessions.length - 1].id]);
   }
 
-  // Fetch run/recent for every imported table and bucket into sessions. Only
-  // called on a cache miss (or a forced refresh / gap change).
-  async function loadFromNetwork(tableIds, gapMs, prevSelectedIds) {
+  function hasAnySessions() {
+    return !!state && state.tableIds.some((tid) => state.byTable[tid]?.sessions?.length);
+  }
+
+  // Fetch run/recent for every imported table and bucket PER TABLE. Only called
+  // on a cache miss (or a forced refresh / gap change).
+  async function loadFromNetwork(tableIds, gapMs, prevByTableSel) {
     // Don't lock in an empty result if the workspace isn't resolvable yet
     // (ensureLoaded can fire on an early render before openCanvas sets it).
     // Leave state null so the next ensureLoaded retries once ws is available.
@@ -129,30 +144,21 @@
       return null;
     }
 
-    state = {
-      tableIds,
-      runs: [],
-      sessions: [],
-      selectedIds: new Set(),
-      gapMs,
-      loaded: false,
-      loading: true,
-    };
+    state = { tableIds, gapMs, loaded: false, loading: true, byTable: {} };
+    for (const tid of tableIds) {
+      state.byTable[tid] = { runs: [], sessions: [], selectedIds: new Set() };
+    }
     notify();
 
-    const all = [];
     for (const tid of tableIds) {
       const runs = await cb.fetchRunSpend(ws, tid, discoveryDays());
-      if (Array.isArray(runs)) for (const r of runs) all.push(r);
+      const t = state.byTable[tid];
+      t.runs = Array.isArray(runs) ? runs : [];
+      t.sessions = bucketForTable(tid, t.runs, gapMs);
+      const valid = new Set(t.sessions.map((s) => s.id));
+      const restored = (prevByTableSel?.[tid] || []).filter((id) => valid.has(id));
+      t.selectedIds = restored.length ? new Set(restored) : defaultSelection(t.sessions);
     }
-    state.runs = all;
-    rebucket();
-
-    const valid = new Set(state.sessions.map((s) => s.id));
-    const restored = (prevSelectedIds || []).filter((id) => valid.has(id));
-    state.selectedIds = restored.length
-      ? new Set(restored)
-      : defaultSelection(state.sessions);
 
     state.loaded = true;
     state.loading = false;
@@ -162,7 +168,7 @@
     // Re-derive the number from the selected sessions (instant, local). For the
     // recent default this matches the import's 7-day stamp (no visible jump);
     // for the most-recent fallback it fills in the meaningful number.
-    if (state.sessions.length) applySelection({ silent: true });
+    if (hasAnySessions()) applySelection({ silent: true });
     return state;
   }
 
@@ -186,33 +192,43 @@
         const cache = loadCache();
         const gapMs = opts.gapMs || cache?.gapMs || cb.cost.DEFAULT_SESSION_GAP_MS;
 
-        if (
+        // Cache hit requires a per-table entry for EVERY current table, each
+        // carrying the per-column rollup (perField). Pre-v6.1 caches (flat
+        // `sessions`) and pre-v5 caches (no perField) fail this → network.
+        const cacheValid =
           !opts.force &&
-          cache?.sessions?.length &&
-          cache.sessions[0].perField && // pre-v5 caches lack the per-column rollup
+          cache?.byTable &&
           cache.ts &&
-          Date.now() - cache.ts < CACHE_TTL_MS
-        ) {
-          // Cache hit: show stored sessions immediately. Cards already restored
-          // their persisted spend with the tab, so no re-stamp.
-          const valid = new Set(cache.sessions.map((s) => s.id));
-          const sel = (cache.selectedIds || []).filter((id) => valid.has(id));
-          state = {
-            tableIds,
-            runs: null, // refetched only if the gap changes
-            sessions: cache.sessions,
-            selectedIds: sel.length
-              ? new Set(sel)
-              : defaultSelection(cache.sessions),
-            gapMs,
-            loaded: true,
-            loading: false,
-          };
+          Date.now() - cache.ts < CACHE_TTL_MS &&
+          tableIds.every((tid) => {
+            const ct = cache.byTable[tid];
+            return ct?.sessions && (!ct.sessions.length || ct.sessions[0].perField);
+          });
+
+        if (cacheValid) {
+          state = { tableIds, gapMs, loaded: true, loading: false, byTable: {} };
+          for (const tid of tableIds) {
+            const ct = cache.byTable[tid];
+            const sessions = ct.sessions || [];
+            const valid = new Set(sessions.map((s) => s.id));
+            const sel = (ct.selectedIds || []).filter((id) => valid.has(id));
+            state.byTable[tid] = {
+              runs: null, // refetched only if the gap changes
+              sessions,
+              selectedIds: sel.length ? new Set(sel) : defaultSelection(sessions),
+            };
+          }
           notify();
           return state;
         }
 
-        return await loadFromNetwork(tableIds, gapMs, cache?.selectedIds);
+        const prevSel = {};
+        if (cache?.byTable) {
+          for (const tid of Object.keys(cache.byTable)) {
+            prevSel[tid] = cache.byTable[tid]?.selectedIds;
+          }
+        }
+        return await loadFromNetwork(tableIds, gapMs, prevSel);
       } finally {
         loadingPromise = null;
       }
@@ -241,13 +257,15 @@
     }
   }
 
-  // Sum the selected sessions' per-column rollups into a fieldId -> spend map.
-  // fieldId is globally unique, so one map covers all tables; applyActualSpend
-  // filters to each table's cards.
-  function buildSelectedSpendMap() {
+  // Sum ONE table's selected sessions' per-column rollups into a fieldId -> spend
+  // map. fieldId is globally unique, so applyActualSpend(map, tid) safely filters
+  // to that table's cards.
+  function buildSelectedSpendMapForTable(tid) {
     const merged = new Map();
-    for (const s of state.sessions) {
-      if (!state.selectedIds.has(s.id)) continue;
+    const t = state.byTable[tid];
+    if (!t) return merged;
+    for (const s of t.sessions) {
+      if (!t.selectedIds.has(s.id)) continue;
       const pf = s.perField || {};
       for (const fid of Object.keys(pf)) {
         const v = pf[fid];
@@ -260,6 +278,13 @@
       }
     }
     return merged;
+  }
+
+  function totalSelected() {
+    if (!state) return 0;
+    let n = 0;
+    for (const tid of state.tableIds) n += state.byTable[tid]?.selectedIds?.size || 0;
+    return n;
   }
 
   function setNotice(notice) {
@@ -285,15 +310,15 @@
     if (!silent && cb.tableView?.refresh) cb.tableView.refresh();
   }
 
-  // Re-derive Actual spend from the selected sessions (local sum) and re-stamp.
-  // Synchronous and instant — no network. No selection → clear + "—" notice.
+  // Re-derive Actual spend from the selected sessions (local sum) and re-stamp,
+  // per table. Synchronous and instant — no network. No selection anywhere →
+  // clear + "—" notice.
   function applySelection(opts) {
     opts = opts || {};
     if (!state || !state.loaded) return;
     cb.actualSpendApplying = false;
 
-    const selected = state.sessions.filter((s) => state.selectedIds.has(s.id));
-    if (!selected.length) {
+    if (totalSelected() === 0) {
       for (const tid of state.tableIds) clearTableSpend(tid);
       setNotice({
         label: "\u2014",
@@ -306,18 +331,21 @@
     }
 
     setNotice(null);
-    const merged = buildSelectedSpendMap();
+    let anySelected = false;
     let stamped = false;
     for (const tid of state.tableIds) {
       clearTableSpend(tid);
-      if (merged.size && cb.applyActualSpend(merged, tid)) stamped = true;
+      const map = buildSelectedSpendMapForTable(tid);
+      if (map.size) {
+        anySelected = true;
+        if (cb.applyActualSpend(map, tid)) stamped = true;
+      }
     }
-    // The selection has spend (merged.size) but none of its columns are cost
-    // cards on this canvas — e.g. a session that only ran a column on another
-    // tab or a since-deleted one. Show a clear "—" + tooltip rather than the
-    // "Expired" state (which means "no realtime data at all"), which would
-    // otherwise mislead until another, mapping session is added.
-    if (merged.size && !stamped) {
+    // The selection has spend but none of its columns are cost cards on this
+    // canvas — e.g. a session that only ran a since-deleted column. Show a clear
+    // "—" + tooltip rather than the "Expired" state (which means "no realtime
+    // data at all"), which would otherwise mislead.
+    if (anySelected && !stamped) {
       setNotice({
         label: "\u2014",
         tooltip:
@@ -353,33 +381,53 @@
     getState() {
       return state;
     },
-    toggle(id) {
-      if (!state) return;
-      if (state.selectedIds.has(id)) state.selectedIds.delete(id);
-      else state.selectedIds.add(id);
+    // Total selected sessions across all tables (the Actual badge count).
+    totalSelected,
+    toggle(tid, id) {
+      const t = state?.byTable?.[tid];
+      if (!t) return;
+      if (t.selectedIds.has(id)) t.selectedIds.delete(id);
+      else t.selectedIds.add(id);
       persist();
       notify();
       applySelection();
     },
-    setAll(on) {
+    setAll(tid, on) {
+      const t = state?.byTable?.[tid];
+      if (!t) return;
+      t.selectedIds = on ? new Set(t.sessions.map((s) => s.id)) : new Set();
+      persist();
+      notify();
+      applySelection();
+    },
+    setAllTables(on) {
       if (!state) return;
-      if (on) state.selectedIds = new Set(state.sessions.map((s) => s.id));
-      else state.selectedIds = new Set();
+      for (const tid of state.tableIds) {
+        const t = state.byTable[tid];
+        if (!t) continue;
+        t.selectedIds = on ? new Set(t.sessions.map((s) => s.id)) : new Set();
+      }
       persist();
       notify();
       applySelection();
     },
     setGapMs(gapMs) {
       if (!state || !gapMs || gapMs <= 0 || gapMs === state.gapMs) return;
-      // Re-bucketing needs the raw runs. If they came from cache (runs null),
-      // force a network reload with the new gap.
-      if (!state.runs || !state.runs.length) {
+      // Re-bucketing needs the raw runs. If any table loaded from cache (runs
+      // null), force a network reload with the new gap.
+      const haveRuns = state.tableIds.every((tid) =>
+        Array.isArray(state.byTable[tid]?.runs),
+      );
+      if (!haveRuns) {
         ensureLoaded({ force: true, gapMs });
         return;
       }
       state.gapMs = gapMs;
-      rebucket();
-      state.selectedIds = defaultSelection(state.sessions); // ids change on re-bucket
+      for (const tid of state.tableIds) {
+        const t = state.byTable[tid];
+        t.sessions = bucketForTable(tid, t.runs, gapMs);
+        t.selectedIds = defaultSelection(t.sessions); // ids change on re-bucket
+      }
       persist();
       notify();
       applySelection();

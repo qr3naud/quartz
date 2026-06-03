@@ -1903,10 +1903,11 @@
 
 .cb-session-pop {
   /* Hug the content (date on one line + full cost pill) instead of a fixed
-     width that cropped the credits. Bounded so a long table name can't run away. */
+     width that cropped the credits. Bounded so a long table name can't run away;
+     wider cap + horizontal scroll when several table columns are shown. */
   width: max-content;
   min-width: 280px;
-  max-width: 460px;
+  max-width: min(86vw, 760px);
   max-height: 360px;
   display: flex;
   flex-direction: column;
@@ -1948,8 +1949,66 @@
 }
 
 .cb-session-pop-body {
-  overflow-y: auto;
+  /* Both axes: vertical for a long single list, horizontal for many columns. */
+  overflow: auto;
   padding: 4px;
+}
+
+/* Multi-table: one column per imported table, side by side. */
+.cb-session-pop-cols {
+  display: flex;
+  align-items: flex-start;
+}
+
+.cb-session-pop-col {
+  min-width: 256px;
+  display: flex;
+  flex-direction: column;
+}
+
+.cb-session-pop-col + .cb-session-pop-col {
+  border-left: 1px solid #f1f5f9;
+}
+
+/* Sticky so the table name stays visible while the body scrolls vertically. */
+.cb-session-pop-col-header {
+  position: sticky;
+  top: -4px;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  margin: -4px -4px 2px;
+  background: #ffffff;
+  border-bottom: 1px solid #f1f5f9;
+}
+
+.cb-session-pop-col-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #cbd5e1;
+  flex-shrink: 0;
+}
+
+.cb-session-pop-col-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 11px;
+  font-weight: 600;
+  color: #374151;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cb-session-pop-col-all {
+  flex-shrink: 0;
+}
+
+.cb-session-pop-col-list {
+  padding: 0 2px;
 }
 
 .cb-session-pop-row {
