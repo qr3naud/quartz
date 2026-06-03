@@ -1137,43 +1137,68 @@
     if (sessionPopoverBackdrop) { sessionPopoverBackdrop.remove(); sessionPopoverBackdrop = null; }
   }
 
-  // Render the load-timer pill from controller state. While a network fetch is
-  // in flight it ticks "Loading… X.Xs"; on completion it shows "Loaded in X.Xs".
-  // Cache hits (no fetchStartedAt) hide it. Called on a 100ms interval (started
-  // by syncSessionTimer) and on every popover re-render.
-  function updateSessionTimer() {
-    if (!sessionTimerEl) return;
-    const st = window.__cb.sessionCutoff?.getState?.();
-    const started = st?.fetchStartedAt;
-    if (started == null) {
-      sessionTimerEl.style.display = "none";
-      if (sessionTimerInterval) { clearInterval(sessionTimerInterval); sessionTimerInterval = null; }
-      return;
-    }
-    sessionTimerEl.style.display = "";
-    const now =
-      typeof performance !== "undefined" && performance.now
-        ? performance.now()
-        : Date.now();
-    if (st.loading) {
-      sessionTimerEl.textContent = `Loading\u2026 ${((now - started) / 1000).toFixed(1)}s`;
-      sessionTimerEl.classList.add("cb-session-pop-timer-loading");
-    } else {
-      const ms = st.fetchMs != null ? st.fetchMs : now - started;
-      sessionTimerEl.textContent = `Loaded in ${(ms / 1000).toFixed(1)}s`;
-      sessionTimerEl.classList.remove("cb-session-pop-timer-loading");
-      if (sessionTimerInterval) { clearInterval(sessionTimerInterval); sessionTimerInterval = null; }
+  // Relative "fetched" label for the footer pill.
+  function fmtFetchedAgo(ts) {
+    if (ts == null) return "";
+    const sec = Math.max(0, (Date.now() - ts) / 1000);
+    if (sec < 45) return "just now";
+    if (sec < 3600) return `${Math.round(sec / 60)}m ago`;
+    if (sec < 86400) return `${Math.round(sec / 3600)}h ago`;
+    const d = Math.round(sec / 86400);
+    if (d <= 7) return `${d}d ago`;
+    try {
+      return new Date(ts).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+    } catch {
+      return `${d}d ago`;
     }
   }
 
-  // Start the ticker if a fetch is in flight (e.g. after a manual refresh) and
-  // refresh the pill text. Safe to call repeatedly.
+  // The footer pill is the single Actual-data control: while a fetch is in
+  // flight it ticks "Loading… X.Xs"; otherwise it shows when the data was last
+  // fetched ("Fetched 2h ago"), turning amber after a re-import to nudge a
+  // refresh. Clicking it refetches run/recent (cut.refresh).
+  function updateSessionPill() {
+    if (!sessionTimerEl) return;
+    const cut = window.__cb.sessionCutoff;
+    const st = cut?.getState?.();
+    const info = cut?.fetchInfo?.() || { lastFetchedAt: null, anyReused: false, loading: false };
+    sessionTimerEl.classList.remove("cb-session-pop-timer-loading", "cb-session-pop-timer-amber");
+    if (info.loading && st?.fetchStartedAt != null) {
+      const now =
+        typeof performance !== "undefined" && performance.now
+          ? performance.now()
+          : Date.now();
+      sessionTimerEl.style.display = "";
+      sessionTimerEl.textContent = `Loading\u2026 ${((now - st.fetchStartedAt) / 1000).toFixed(1)}s`;
+      sessionTimerEl.classList.add("cb-session-pop-timer-loading");
+      sessionTimerEl.title = "Fetching realtime runs\u2026";
+      return;
+    }
+    if (sessionTimerInterval) { clearInterval(sessionTimerInterval); sessionTimerInterval = null; }
+    if (info.lastFetchedAt == null && !info.anyReused) {
+      sessionTimerEl.style.display = "none";
+      return;
+    }
+    sessionTimerEl.style.display = "";
+    sessionTimerEl.textContent = info.lastFetchedAt != null
+      ? `Fetched ${fmtFetchedAgo(info.lastFetchedAt)}`
+      : "Refresh";
+    if (info.anyReused) {
+      sessionTimerEl.classList.add("cb-session-pop-timer-amber");
+      sessionTimerEl.title =
+        "Reusing previously fetched runs \u2014 click to refresh from Clay.";
+    } else {
+      sessionTimerEl.title = "Click to refresh runs from Clay.";
+    }
+  }
+
+  // Keep the pill live while a fetch runs (e.g. after a manual refresh).
   function syncSessionTimer() {
     const st = window.__cb.sessionCutoff?.getState?.();
     if (st?.loading && st?.fetchStartedAt != null && !sessionTimerInterval) {
-      sessionTimerInterval = setInterval(updateSessionTimer, 100);
+      sessionTimerInterval = setInterval(updateSessionPill, 100);
     }
-    updateSessionTimer();
+    updateSessionPill();
   }
 
   // Error + retry shown in a session column when its run/recent fetch failed or
@@ -1220,7 +1245,6 @@
     };
     menu.appendChild(mk("Select all", () => cut.setAllTables(true)));
     menu.appendChild(mk("Clear all", () => cut.setAllTables(false)));
-    menu.appendChild(mk("Refresh sessions", () => cut.refresh?.()));
     sessionPopoverEl.appendChild(menu);
     sessionHeaderMenuEl = menu;
     // Anchor under the "..." button, relative to the popover.
@@ -1392,7 +1416,11 @@
     row.className = "cb-session-pop-row";
     const cbx = document.createElement("input");
     cbx.type = "checkbox";
-    cbx.checked = tableState.selectedIds.has(s.id);
+    // s.selected: "all" (checked) | "some" (indeterminate) | "none". A displayed
+    // session can merge several 6h base buckets, so a partial selection shows a
+    // dash; clicking it selects all its children (see sessionCutoff.toggle).
+    cbx.checked = s.selected === "all";
+    cbx.indeterminate = s.selected === "some";
     cbx.addEventListener("mousedown", (e) => e.stopPropagation());
     cbx.addEventListener("change", (e) => { e.stopPropagation(); cut.toggle(tid, s.id); });
     const meta = document.createElement("div");
@@ -1503,17 +1531,10 @@
       return;
     }
 
-    // Loaded with zero sessions across every table → nothing to scope.
-    if (!loading) {
-      const anySessions = tableIds.some((tid) => st.byTable[tid]?.sessions?.length);
-      if (!anySessions) {
-        const m = document.createElement("div");
-        m.className = "cb-session-pop-empty";
-        m.textContent = "No realtime runs found.";
-        body.appendChild(m);
-        return;
-      }
-    }
+    // NOTE: do NOT collapse to a single "No realtime runs found." when 2+ tables
+    // all came back empty — that would drop the per-table column structure. Each
+    // column renders its own empty/loading/error state below, so the dual layout
+    // is preserved even when no table has runs.
 
     const names = importedTableMeta();
 
@@ -1599,33 +1620,46 @@
     gapLbl.textContent = "Group runs within";
     const gapInput = document.createElement("input");
     gapInput.type = "number";
-    gapInput.min = "1";
+    // The gap can only be RAISED from the 6h base (display merge is computed
+    // from the base buckets; going below 6h would need the raw runs). Floor at 6.
+    const minGapH = Math.round(
+      (window.__cb.sessionCutoff?.MIN_GAP_MS || 6 * 3600000) / 3600000,
+    );
+    gapInput.min = String(minGapH);
     gapInput.className = "cb-session-pop-gap";
     const st0 = cut.getState?.();
     gapInput.value = String(
       Math.max(
-        1,
-        Math.round(
-          (st0?.gapMs || window.__cb.cost.DEFAULT_SESSION_GAP_MS) / 3600000,
-        ),
+        minGapH,
+        Math.round((st0?.gapMs || window.__cb.cost.DEFAULT_SESSION_GAP_MS) / 3600000),
       ),
     );
     gapInput.addEventListener("mousedown", (e) => e.stopPropagation());
     gapInput.addEventListener("keydown", (e) => { if (e.key === "Enter") e.target.blur(); });
     gapInput.addEventListener("change", (e) => {
       e.stopPropagation();
-      cut.setGapMs(Math.max(1, Number(gapInput.value) || 6) * 3600000);
+      const h = Math.max(minGapH, Number(gapInput.value) || minGapH);
+      gapInput.value = String(h); // reflect the clamp
+      cut.setGapMs(h * 3600000);
     });
     const gapSuffix = document.createElement("span");
     gapSuffix.textContent = "h";
     footer.appendChild(gapLbl);
     footer.appendChild(gapInput);
     footer.appendChild(gapSuffix);
-    // Load-timer pill, pushed to the bottom-right. Populated/ticked by
-    // syncSessionTimer (hidden on cache hits).
+    // Fetched-date / refresh pill, pushed to the bottom-right. Shows when the
+    // runs were last fetched (amber after a re-import), ticks while fetching,
+    // and refetches on click. Populated by syncSessionTimer.
     sessionTimerEl = document.createElement("span");
     sessionTimerEl.className = "cb-session-pop-timer";
     sessionTimerEl.style.display = "none";
+    sessionTimerEl.addEventListener("mousedown", (e) => e.stopPropagation());
+    sessionTimerEl.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const info = cut.fetchInfo?.();
+      if (info && info.loading) return; // already fetching
+      cut.refresh?.();
+    });
     footer.appendChild(sessionTimerEl);
     sessionPopoverEl.appendChild(footer);
 

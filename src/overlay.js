@@ -762,11 +762,8 @@
 
       applyActive(startMode);
 
-      // Only an explicit Projected pick cancels the auto-flip to Actual — the
-      // user has said they want Projected, so don't yank them to Actual when the
-      // spend lands. It also dismisses the session menu (we're leaving Actual).
+      // Switching to Projected dismisses the session menu (we're leaving Actual).
       proj.addEventListener("click", () => {
-        __cb._autoActualPending = false;
         if (__cb.closeSessionPopover) __cb.closeSessionPopover();
         __cb.setViewMode("projected");
       });
@@ -1184,16 +1181,14 @@
     pricingGroup.appendChild(pricingToggleBox);
     pricingGroup.appendChild(pricingCards);
 
-    // --- Actual-mode loading / expired state ---------------------------------
+    // --- Actual-mode loading state ------------------------------------------
     // Every summary number that reflects real spend in Actual mode. While the
-    // background spend fetch is in flight (actualSpendPending) and the user is
-    // on Actual, these boxes shimmer. If the fetch comes back with no spend
-    // (the column hasn't run in the last 30 days), they read "Expired" with an
-    // explanatory tooltip instead of a misleading 0.
-    const EXPIRED_TOOLTIP =
-      "No realtime usage found for the selected sessions. This table has no live " +
-      "credit data in the window (realtime tracking began Nov 5, 2025) — switch to " +
-      "Projected for an estimate.";
+    // session list is being fetched AND nothing has been stamped yet, these
+    // boxes shimmer; once any session spend lands they show the running total
+    // (which climbs as more tables resolve — see session-cutoff progressive
+    // reveal). There is no "Expired" state: the session default always falls
+    // back to the most-recent session, so any table with runs gets a number,
+    // and a table with zero runs shows the "—" no-sessions notice instead.
     const actualValueEls = [
       creditsValue,
       actionsValue,
@@ -1214,46 +1209,17 @@
     ];
     for (const el of actualValueEls) el._cbActualDependent = true;
 
-    // Is the CURRENT tab still waiting on actual spend? The pending set is keyed
-    // by tableId and global across tabs, so we scope it to on-screen cards AND
-    // require that the card hasn't already been stamped with spend. This is what
-    // distinguishes "this tab's fetch is in flight" (blur) from "another tab is
-    // fetching the same table I already have data for" (don't blur). cellCount>0
-    // counts as having data (column ran, even if free).
+    // Blur the Actual numbers only while the session fetch is in flight AND no
+    // cost card carries spend yet. Once the first table lands we stop blurring
+    // and let the running total show (progressive reveal).
     function currentTabSpendPending() {
-      const pend = __cb.actualSpendPending;
-      if (!pend || pend.size === 0) return false;
+      const st = __cb.sessionCutoff?.getState?.();
+      if (!st || !st.loading) return false;
       const cards = __cb.canvas?.getCards?.() || [];
       for (const c of cards) {
         const d = c.data;
         if (!d) continue;
         if (d.type === "dp" || d.type === "input" || d.type === "comment") continue;
-        if (!d.tableId || !pend.has(d.tableId)) continue;
-        const sp = d.stats?.spend;
-        const hasSpend =
-          sp &&
-          ((sp.cellCount || 0) > 0 ||
-            (sp.credits || 0) > 0 ||
-            (sp.actionExecutions || 0) > 0);
-        if (!hasSpend) return true;
-      }
-      return false;
-    }
-
-    // True when we're on Actual, the current tab's spend fetch has finished,
-    // there are cost-bearing cards, but none carry real spend — i.e. the
-    // realtime window returned nothing. cellCount > 0 means the column ran
-    // within the window (even if it cost 0 credits), so that is NOT expired.
-    function computeActualExpired() {
-      if (__cb.viewMode !== "actual") return false;
-      if (currentTabSpendPending()) return false;
-      const cards = __cb.canvas?.getCards?.() || [];
-      let hasCostCard = false;
-      for (const c of cards) {
-        const d = c.data;
-        if (!d) continue;
-        if (d.type === "dp" || d.type === "input" || d.type === "comment") continue;
-        hasCostCard = true;
         const sp = d.stats?.spend;
         if (
           sp &&
@@ -1261,29 +1227,23 @@
             (sp.credits || 0) > 0 ||
             (sp.actionExecutions || 0) > 0)
         ) {
-          return false;
+          return false; // have at least one stamped → show the running total
         }
       }
-      return hasCostCard;
+      return true; // loading and nothing stamped yet → shimmer
     }
 
-    // Recompute the loading + expired flags and (re)apply the blur class. Called
-    // before each recalc that can change Actual state (setViewMode, fetch
-    // completion, tab switch). setSummaryNumber reads __cb.actualLoading /
-    // __cb.actualSpendExpired to decide what to render.
+    // Recompute the loading flag and (re)apply the blur class. Called before each
+    // recalc that can change Actual state (setViewMode, session load, tab
+    // switch). setSummaryNumber reads __cb.actualLoading to decide what to render.
     __cb.applyActualSummaryState = function () {
-      // Loading = import fetch in flight for this tab, OR the session-cutoff
-      // picker is mid-fetch (actualSpendApplying). Either way, blur rather than
-      // flash a wrong/blank number.
       __cb.actualLoading =
         __cb.viewMode === "actual" &&
         (currentTabSpendPending() || !!__cb.actualSpendApplying);
-      __cb.actualSpendExpired = computeActualExpired();
       for (const b of actualBoxes) {
         b.classList.toggle("cb-summary-loading", __cb.actualLoading);
       }
     };
-    __cb._expiredTooltip = EXPIRED_TOOLTIP;
 
     summaryBar.appendChild(creditsBox);
     summaryBar.appendChild(actionsBox);
@@ -1393,14 +1353,9 @@
         }
         return;
       }
-      // Actual mode with no live spend (column ran >30 days ago): show
-      // "Expired" + tooltip instead of a misleading 0. The underlying number
-      // is still tracked on _cbNum so flipping back to Projected animates from
-      // the right value.
-      // Actual-mode status notice (no sessions selected / fetch error) takes
-      // precedence over Expired — set by the session-cutoff controller so a
-      // transient error or empty selection reads correctly instead of a
-      // misleading "Expired".
+      // Actual-mode status notice (no sessions selected, or selected sessions
+      // ran columns not on this canvas) — set by the session-cutoff controller.
+      // Render its label ("—") + tooltip instead of a misleading 0.
       if (el._cbActualDependent && __cb.viewMode === "actual") {
         const notice = __cb.actualSummaryNotice;
         if (notice && notice.label) {
@@ -1411,17 +1366,6 @@
           el._cbNum = value;
           el.textContent = notice.label;
           el.title = notice.tooltip || "";
-          el.classList.add("cb-summary-expired");
-          return;
-        }
-        if (__cb.actualSpendExpired) {
-          if (el._cbTween) {
-            cancelAnimationFrame(el._cbTween);
-            el._cbTween = null;
-          }
-          el._cbNum = value;
-          el.textContent = "Expired";
-          el.title = __cb._expiredTooltip || "";
           el.classList.add("cb-summary-expired");
           return;
         }
@@ -2249,6 +2193,13 @@
       __cb.canvas.refreshClusters({ dragCardIds: new Set() });
     }
 
+    // Rehydrate the Actual session picker from the tab's saved blob (DB) — no
+    // fetch. Cards already carry their persisted spend; restore re-stamps from
+    // the saved selection to stay consistent, and fills (reuse/fetch) any
+    // imported table missing from the blob. Runs before setViewMode so Actual
+    // mode reads a ready state.
+    __cb.sessionCutoff?.restore?.(restoredTab?.state?.sessionCutoff);
+
     __cb.setViewMode(__cb.tabStore.viewMode || "projected");
 
     // savedBrainstormView was resolved before restore() (above) so we could
@@ -2310,12 +2261,10 @@
     __cb.applyRecordsState = null;
     __cb.recordsActual = null;
     __cb.useCaseScope = {};
-    __cb._autoActualPending = false;
-    __cb.actualSpendExpired = false;
     __cb.actualLoading = false;
     __cb.actualSummaryNotice = null;
     __cb.actualSpendApplying = false;
-    if (__cb.actualSpendPending) __cb.actualSpendPending.clear();
+    __cb.sessionCutoff?.invalidate?.();
     __cb.applyActualSummaryState = null;
     if (__cb.closeTotalCostEditor) __cb.closeTotalCostEditor();
     __cb.closeTotalCostEditor = null;

@@ -2074,16 +2074,13 @@
       __cb.canvas.refreshClusters({ dragCardIds: new Set() });
     }
 
-    // Start in Projected mode — its numbers are ready the moment rows land,
-    // while actual spend is still being fetched in the background. When that
-    // fetch resolves with real spend, fetchSpendInBackground auto-flips to
-    // Actual (unless the user picks a mode first). _autoActualPending arms that
-    // flip; actualSpendExpired is reset so a prior import's state doesn't leak.
+    // Start (and stay) in Projected — Actual spend comes from the session picker
+    // once run/recent lands; the user flips to Actual themselves. No auto-flip:
+    // it raced badly across tabs (a fetch finishing could yank a tab the user
+    // had switched to).
     if (typeof __cb.setViewMode === "function") {
       __cb.setViewMode("projected");
     }
-    __cb._autoActualPending = importedAny && !!workspaceId;
-    __cb.actualSpendExpired = false;
 
     // Bulk imports add many cards in sequence. Each addCard internally
     // calls notifyCreditTotal, but the topbar summary ("Avg Credits / Row"
@@ -2106,20 +2103,14 @@
       }
     }
 
-    // Background ACTUAL leg: fetch the 30-day realtime spend without blocking
-    // the import, then stamp card.data.stats.spend so the Projected -> Actual
-    // toggle has real numbers ready by the time the user flips it.
+    // Background ACTUAL leg: the session picker is the single source of Actual
+    // spend. ensureLoaded fills this table — reusing saved sessions (from this
+    // or another tab, no fetch) or fetching run/recent once — then stamps the
+    // cards from the default (last-7-days, else most-recent) selection.
+    // noteImport flags a re-import (amber "refresh" pill) and re-stamps the
+    // fresh cards when the sessions are already in memory.
     if (importedAny && workspaceId) {
-      // Track this table's spend leg as in-flight so the summary boxes shimmer
-      // if the user flips to Actual before it lands.
-      __cb.actualSpendPending = __cb.actualSpendPending || new Set();
-      __cb.actualSpendPending.add(tableId);
-      fetchSpendInBackground(workspaceId, tableId);
-      // New import → the run set changed; drop any cached sessions, then
-      // start fetching the run list in the background so the picker pre-selects
-      // the last-7-days sessions and the badge animates in without the user
-      // having to open it first.
-      __cb.sessionCutoff?.invalidateCache();
+      __cb.sessionCutoff?.noteImport?.(tableId);
       __cb.sessionCutoff?.ensureLoaded?.();
       // Resolve projected cost for "Run function" (subroutine) cards, whose
       // cost lives in the table they reference rather than the catalog.
@@ -2178,72 +2169,6 @@
     if (typeof __cb.canvas.updateGroupCredits === "function") __cb.canvas.updateGroupCredits();
     __cb.model.update();
     if (__cb.tableView?.refresh) __cb.tableView.refresh();
-  }
-
-  // Fetches realtime column spend after the projected import has rendered and
-  // folds it into the already-placed cards' stats. Standalone / basic ER + DP
-  // cards carry data.fieldId; waterfall cards carry per-provider fieldIds, so
-  // we stamp each provider then re-aggregate the parent card's stats (which
-  // sums provider spend). Refreshes the credit total + table view so Actual
-  // mode reflects the new numbers, and persists via notifyChange.
-  async function fetchSpendInBackground(workspaceId, tableId) {
-    let spendRows = null;
-    try {
-      spendRows = await __cb.fetchColumnSpend(workspaceId, tableId, __cb.ACTUAL_IMPORT_DAYS);
-    } catch {
-      spendRows = null;
-    }
-    // This table's spend leg is done (success / empty / failure) — drop it from
-    // the pending set so any Actual-mode loading shimmer can resolve.
-    __cb.actualSpendPending?.delete(tableId);
-
-    // Settle the summary once the fetch resolves. didStamp = we folded real
-    // spend into the cards. When armed (_autoActualPending) and we have data,
-    // auto-flip to Actual (setViewMode animates the count-up + pill slide and
-    // refreshes everything). Otherwise refresh in place — applyActualSummaryState
-    // clears the shimmer and flags "Expired" when the window returned nothing.
-    const settle = (didStamp) => {
-      if (!__cb.canvas) return;
-      // Auto-flip to Actual only when the user is actually viewing THIS table's
-      // tab (its cards are on the live canvas) and hasn't opted into Projected.
-      // The onThisTab gate is what keeps a fetch finishing in the background
-      // from yanking a different tab the user has since switched to.
-      const onThisTab = (__cb.canvas.getCards?.() || []).some(
-        (c) => c.data?.tableId === tableId,
-      );
-      const autoFlip =
-        didStamp &&
-        onThisTab &&
-        __cb._autoActualPending &&
-        __cb.viewMode !== "actual" &&
-        typeof __cb.setViewMode === "function";
-      if (autoFlip) {
-        __cb._autoActualPending = false;
-        __cb.setViewMode("actual");
-      } else {
-        __cb.applyActualSummaryState?.();
-        __cb._animateSummary = true;
-        try {
-          if (typeof __cb.canvas.refreshCreditTotal === "function") {
-            __cb.canvas.refreshCreditTotal();
-          }
-        } finally {
-          __cb._animateSummary = false;
-        }
-        if (typeof __cb.canvas.updateGroupCredits === "function") {
-          __cb.canvas.updateGroupCredits();
-        }
-        if (__cb.tableView?.refresh) __cb.tableView.refresh();
-      }
-      if (didStamp) __cb.model.update();
-    };
-
-    if (!Array.isArray(spendRows) || !__cb.canvas) { settle(false); return; }
-
-    const spendByFieldId = spendRowsToMap(spendRows);
-    if (spendByFieldId.size === 0) { settle(false); return; }
-
-    settle(stampSpend(spendByFieldId, tableId));
   }
 
   // Convert a byColumn / column-recent response (array of

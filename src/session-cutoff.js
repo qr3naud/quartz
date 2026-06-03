@@ -2,43 +2,56 @@
   "use strict";
 
   // ---------------------------------------------------------------------------
-  // Actual-spend session cutoff (v6.1 — per-table).
+  // Actual-spend session cutoff (v7.0 — DB-persisted, base-bucket model).
   //
-  // The realtime credit endpoints are per-table and aggregate the whole window.
-  // This controller lets a user scope Actual spend to specific work sessions
-  // (time-gap clusters of runs from /run/recent) and re-stamps the cards'
-  // measured spend.
+  // Realtime credit data for a table is fetched ONCE from /run/recent (per-run,
+  // with a per-column breakdown). We cluster the runs into "sessions" and let the
+  // user scope Actual spend to the sessions they care about. The selected
+  // sessions' per-column spend is summed locally and stamped onto the cards.
   //
-  // Per-table (v6.1): run/recent is fetched per table and runs carry no tableId,
-  // so we keep runs/sessions/selection grouped BY TABLE (state.byTable[tid]).
-  // The picker renders one column per imported table and the user selects
-  // sessions per table; the Actual badge shows the TOTAL selected across tables.
-  // Each table's spend is summed and stamped independently (applyActualSpend is
-  // tid-scoped), which also makes attribution exact (no cross-table bucket).
+  // Key model (v7.0):
+  //  - SOURCE OF TRUTH is the session data, persisted to the DB at the TAB level
+  //    (tab.state.sessionCutoff) via the normal model.serialize/saveTabs path —
+  //    NOT localStorage. So a reload/another device restores instantly with no
+  //    fetch, and re-importing an already-imported table reuses it (amber pill).
+  //  - BASE buckets are clustered at a fixed 6h gap and are immutable until a
+  //    manual refresh. The user-facing "Group runs within Nh" gap only changes
+  //    how the base buckets are MERGED for display (>= 6h). Merging is computed
+  //    from the base buckets' start/last stamps + per-column rollups — never from
+  //    raw runs — so a gap change needs no refetch and is fully reversible.
+  //  - SELECTION lives at the base-bucket granularity, so changing the gap never
+  //    changes the counted total; it only regroups the display. A merged session
+  //    is checked when all its base children are selected, indeterminate when
+  //    some, unchecked when none.
+  //  - Per table, the default selection is the base buckets within the last
+  //    ACTUAL_IMPORT_DAYS (7); if none ran recently, the single most-recent base
+  //    bucket (the fallback drives the stamp — there is no "Expired" state).
   //
-  // Numbers model: credits/actions for any selection are summed LOCALLY from the
-  // per-session per-column rollup already carried in each bucketed session
-  // (run/recent has a full per-column breakdown, and summing runs equals
-  // byColumn exactly for credits/actions — verified). So selecting is instant:
-  // no byColumn fetch, no token race. The per-row DISPLAY denominator is
-  // coverage.ran (run-status, frozen at import) via cost-model.perRowCost.
-  //
-  // Default selection (per table): sessions within the last ACTUAL_IMPORT_DAYS
-  // (7), matching the import's initial 7-day stamp. If a table had no runs in
-  // the last 7 days, fall back to its single most-recent session.
+  // Cross-tab safety: fetches are keyed to a monotonic load token; switching
+  // tabs / refreshing supersedes an in-flight load so it can't clobber the tab
+  // you moved to (the "same table in two tabs" hazard).
   // ---------------------------------------------------------------------------
 
   const cb = (window.__cb = window.__cb || {});
 
-  const CACHE_TTL_MS = 60 * 60 * 1000; // sessions cache is good for 1h
+  // Base clustering gap (fixed) and the floor for the display gap. Importing
+  // always buckets at 6h; the gap can only be raised from here (merging), which
+  // is why a gap change never needs the raw runs.
+  const BASE_GAP_MS = 6 * 60 * 60 * 1000;
+  const MIN_GAP_MS = BASE_GAP_MS;
 
   let state = null;
-  // { tableIds:[tid], gapMs, loaded, loading, fetchStartedAt, fetchMs,
-  //   byTable: { [tid]: { runs (null when from cache), sessions, selectedIds:Set,
-  //                       loading, error } } }
-  // fetchStartedAt/fetchMs power the picker's load-timer pill (network loads
-  // only). Per-table loading/error drive progressive column reveal + retry.
-  let loadingPromise = null; // de-dupes concurrent ensureLoaded calls
+  // {
+  //   tableIds:[tid], gapMs, loaded, loading, fetchStartedAt, fetchMs,
+  //   byTable: { [tid]: {
+  //     base: [{ id, startTs, lastTs, runs, credits, actionExec, cells, perField }],
+  //     sessions: [displayed merge of base — see recomputeDisplayed],
+  //     selectedBaseIds: Set<baseId>,
+  //     loading, error, reused, lastFetchedAt
+  //   } }
+  // }
+  let loadToken = 0; // bumped on context change; in-flight loads bail if stale
+  const inFlight = new Set(); // tids currently being fetched (per-table dedupe)
   const listeners = new Set();
 
   function notify() {
@@ -64,10 +77,11 @@
       : Date.now();
   }
 
-  // A run/recent fetch can hang (connection opened, no response). Cap each
-  // table's fetch so one stalled request can't wedge the picker in a permanent
-  // "Loading sessions…" state — the table resolves to an error+retry instead.
-  const FETCH_TIMEOUT_MS = 30000;
+  // A run/recent fetch can hang. Cap it so one stalled request resolves to an
+  // error+retry instead of a permanent spinner. Pure backstop, not a latency
+  // budget (the query is server-side expensive — measured ~32s for a 2.6k-run /
+  // 365-day table); the footer pill shows live progress meanwhile.
+  const FETCH_TIMEOUT_MS = 120000;
   function withTimeout(promise) {
     return Promise.race([
       promise,
@@ -75,57 +89,6 @@
         setTimeout(() => reject(new Error("fetchRunSpend timeout")), FETCH_TIMEOUT_MS),
       ),
     ]);
-  }
-
-  function storageKey() {
-    const wb = cb.currentWorkbookId || cb.parseIdsFromUrl?.()?.workbookId || "";
-    const tab = cb.tabStore?.activeId || "";
-    return `cb-session-cutoff-${wb}-${tab}`;
-  }
-
-  function loadCache() {
-    try {
-      return JSON.parse(localStorage.getItem(storageKey()) || "null");
-    } catch {
-      return null;
-    }
-  }
-
-  // Persist per-table sessions (incl. per-column rollup) + selection + gap so a
-  // refresh is instant and selection can re-sum without re-fetching run/recent.
-  // The raw runs ride along too (when present) so a gap change after a refresh
-  // re-buckets locally instead of refetching every table — see setGapMs. They're
-  // the heaviest piece, so if the payload blows the localStorage quota we retry
-  // WITHOUT runs rather than lose the cache entirely (gap tweaks then refetch,
-  // i.e. the pre-runs-cache behavior).
-  function persist() {
-    if (!state) return;
-    const build = (withRuns) => {
-      const byTable = {};
-      for (const tid of state.tableIds) {
-        const t = state.byTable[tid];
-        if (!t) continue;
-        byTable[tid] = {
-          sessions: t.sessions,
-          selectedIds: [...t.selectedIds],
-          ...(withRuns ? { runs: t.runs || null } : {}),
-        };
-      }
-      return JSON.stringify({ byTable, gapMs: state.gapMs, ts: Date.now() });
-    };
-    try {
-      localStorage.setItem(storageKey(), build(true));
-    } catch {
-      try {
-        localStorage.setItem(storageKey(), build(false));
-      } catch {}
-    }
-  }
-
-  function clearCache() {
-    try {
-      localStorage.removeItem(storageKey());
-    } catch {}
   }
 
   function distinctTableIds() {
@@ -137,115 +100,172 @@
     return [...ids].sort();
   }
 
-  function sameSet(a, b) {
-    if (a.length !== b.length) return false;
-    const sb = new Set(b);
-    return a.every((x) => sb.has(x));
+  // Cluster a table's raw runs into immutable BASE buckets at the fixed 6h gap.
+  // Reuses cost-model's bucketer, then namespaces ids with the table id (+ a
+  // "base" marker) so they're globally unique and stable across reloads.
+  function bucketBase(tid, runs) {
+    const sessions = cb.cost.bucketRunsIntoSessions(runs || [], BASE_GAP_MS);
+    return sessions.map((s) => ({
+      id: `${tid}::base_${s.startTs}_${s.lastTs}`,
+      startTs: s.startTs,
+      lastTs: s.lastTs,
+      runs: s.runs || 0,
+      credits: s.credits || 0,
+      actionExec: s.actionExec || 0,
+      cells: s.cells || 0,
+      perField: s.perField || {},
+    }));
   }
 
-  // Bucket one table's runs into sessions, namespacing ids with the table id so
-  // they're globally unique (cache keys, submenu open-id) even if two tables
-  // ran at identical timestamps.
-  function bucketForTable(tid, runs, gapMs) {
-    const sessions = cb.cost.bucketRunsIntoSessions(runs || [], gapMs);
-    for (const s of sessions) s.id = `${tid}::${s.id}`;
-    return sessions;
+  // Merge BASE buckets into displayed sessions at the given gap (>= 6h). Adjacent
+  // base buckets whose inter-gap <= gapMs collapse into one session whose totals
+  // and per-column rollup are the sum of its children. `selected` is derived from
+  // the base-level selection set: all / some (indeterminate) / none.
+  function mergeBase(tid, base, gapMs, selectedBaseIds) {
+    const gapSec = Math.max(MIN_GAP_MS, gapMs || BASE_GAP_MS) / 1000;
+    const groups = [];
+    let cur = null;
+    for (const b of base) {
+      if (!cur || b.startTs - cur.lastTs > gapSec) {
+        cur = {
+          childIds: [],
+          startTs: b.startTs,
+          lastTs: b.lastTs,
+          runs: 0,
+          credits: 0,
+          actionExec: 0,
+          cells: 0,
+          perField: {},
+        };
+        groups.push(cur);
+      }
+      cur.lastTs = b.lastTs;
+      cur.childIds.push(b.id);
+      cur.runs += b.runs || 0;
+      cur.credits += b.credits || 0;
+      cur.actionExec += b.actionExec || 0;
+      cur.cells += b.cells || 0;
+      for (const fid of Object.keys(b.perField || {})) {
+        const v = b.perField[fid];
+        const e =
+          cur.perField[fid] ||
+          (cur.perField[fid] = { credits: 0, actionExecutions: 0, cellCount: 0 });
+        e.credits += Number(v.credits) || 0;
+        e.actionExecutions += Number(v.actionExecutions) || 0;
+        e.cellCount += Number(v.cellCount) || 0;
+      }
+    }
+    return groups.map((g) => {
+      const selCount = g.childIds.filter((id) => selectedBaseIds.has(id)).length;
+      return {
+        id: `${tid}::disp_${g.startTs}_${g.lastTs}`,
+        startTs: g.startTs,
+        lastTs: g.lastTs,
+        startISO: new Date(g.startTs * 1000).toISOString(),
+        endISO: new Date((g.lastTs + 1) * 1000).toISOString(),
+        runs: g.runs,
+        credits: g.credits,
+        actionExec: g.actionExec,
+        cells: g.cells,
+        columnsTouched: Object.keys(g.perField).length,
+        perField: g.perField,
+        childIds: g.childIds,
+        selected: selCount === 0 ? "none" : selCount === g.childIds.length ? "all" : "some",
+      };
+    });
   }
 
-  // Default = sessions active within the last ACTUAL_IMPORT_DAYS; if none ran
-  // recently, fall back to the single most-recent session (sessions are
-  // oldest→newest). Empty only when the table has no sessions at all.
-  function defaultSelection(sessions) {
-    if (!sessions.length) return new Set();
+  // Recompute the displayed (merged) sessions for one table (or all) from its
+  // base + the current gap + selection. Called after any load / selection / gap
+  // change, before notify, so the UI reads fresh `sessions`.
+  function recomputeDisplayed(tid) {
+    if (!state) return;
+    const ids = tid ? [tid] : state.tableIds;
+    for (const id of ids) {
+      const t = state.byTable[id];
+      if (!t) continue;
+      t.sessions = mergeBase(id, t.base || [], state.gapMs, t.selectedBaseIds);
+    }
+  }
+
+  // Default = base buckets within the last ACTUAL_IMPORT_DAYS; else the single
+  // most-recent base bucket (base is oldest→newest). The fallback is what makes
+  // the most-recent session drive the stamp when nothing ran in the window.
+  function defaultSelectionBase(base) {
+    if (!base.length) return new Set();
     const cutoffSec = Date.now() / 1000 - importDays() * 86400;
-    const recent = sessions.filter((s) => s.lastTs >= cutoffSec);
-    if (recent.length) return new Set(recent.map((s) => s.id));
-    return new Set([sessions[sessions.length - 1].id]);
+    const recent = base.filter((b) => b.lastTs >= cutoffSec);
+    if (recent.length) return new Set(recent.map((b) => b.id));
+    return new Set([base[base.length - 1].id]);
   }
 
   function hasAnySessions() {
-    return !!state && state.tableIds.some((tid) => state.byTable[tid]?.sessions?.length);
+    return !!state && state.tableIds.some((tid) => state.byTable[tid]?.base?.length);
   }
 
-  // Fetch run/recent for every imported table and bucket PER TABLE. Only called
-  // on a cache miss (or a forced refresh / gap change). Tables are fetched in
-  // PARALLEL and revealed progressively (each lands independently), and each is
-  // isolated (try/catch + timeout) so one failure/stall can't wedge the rest.
-  async function loadFromNetwork(tableIds, gapMs, prevByTableSel) {
-    // Don't lock in an empty result if the workspace isn't resolvable yet
-    // (ensureLoaded can fire on an early render before openCanvas sets it).
-    // Leave state null so the next ensureLoaded retries once ws is available.
-    const ws = workspaceId();
-    if (!ws) {
-      state = null;
-      return null;
+  // Scan every loaded tab's saved session blob for this table's base buckets, so
+  // a re-import (or a 2nd tab importing an already-imported table) reuses them
+  // with no fetch. Tab states come from the DB on a cold load, so this works
+  // cross-device too. Returns { base, lastFetchedAt } or null.
+  function findSavedBase(tid) {
+    for (const tab of cb.tabStore?.tabs || []) {
+      const ct = tab?.state?.sessionCutoff?.byTable?.[tid];
+      if (ct?.base?.length) {
+        return { base: ct.base, lastFetchedAt: ct.lastFetchedAt || null };
+      }
     }
+    return null;
+  }
 
-    state = {
-      tableIds,
-      gapMs,
-      loaded: false,
-      loading: true,
-      byTable: {},
-      fetchStartedAt: nowMs(), // drives the popover's load-timer pill
-      fetchMs: null,
-    };
-    for (const tid of tableIds) {
-      state.byTable[tid] = {
-        runs: [],
-        sessions: [],
-        selectedIds: new Set(),
-        loading: true,
-        error: false,
-      };
-    }
-    notify();
-
-    // Reveal each table the moment its runs land: fill its sessions, flip its
-    // per-table loading flag, notify (re-renders just that column), and stamp
-    // its spend — without waiting on slower tables. Spend is stamped but NOT
-    // persisted mid-stream (a partial cache would look complete on a refresh);
-    // the full cache is written once at the end.
-    const loadOne = async (tid) => {
-      const t = state.byTable[tid];
-      try {
-        const runs = await withTimeout(cb.fetchRunSpend(ws, tid, discoveryDays()));
-        t.runs = Array.isArray(runs) ? runs : [];
-        t.sessions = bucketForTable(tid, t.runs, gapMs);
-        const valid = new Set(t.sessions.map((s) => s.id));
-        const restored = (prevByTableSel?.[tid] || []).filter((id) => valid.has(id));
-        t.selectedIds = restored.length
-          ? new Set(restored)
-          : defaultSelection(t.sessions);
+  // Ensure one table has base data. Order: already in memory → reuse a saved
+  // blob from any tab (no fetch, amber) → fetch run/recent (fresh). Stamps that
+  // table's cards as soon as its data is ready (progressive reveal). `force`
+  // (manual refresh) skips the reuse path so it always hits the network.
+  async function loadOne(tid, token, force) {
+    if (!state || !state.byTable[tid]) return;
+    const t = state.byTable[tid];
+    if (t.base && t.base.length) return; // already have it (restored)
+    if (inFlight.has(tid)) return;
+    inFlight.add(tid);
+    try {
+      const saved = force ? null : findSavedBase(tid);
+      if (saved && saved.base.length) {
+        t.base = saved.base;
+        t.lastFetchedAt = saved.lastFetchedAt;
+        t.reused = true; // stale-ish (came from a prior fetch) → amber pill
+        t.selectedBaseIds = defaultSelectionBase(t.base); // fresh choice for this tab
         t.error = false;
-      } catch {
-        t.runs = [];
-        t.sessions = [];
-        t.selectedIds = new Set();
+      } else {
+        const ws = workspaceId();
+        if (!ws) return; // ws not ready yet — leave loading; a later call retries
+        const runs = await withTimeout(cb.fetchRunSpend(ws, tid, discoveryDays()));
+        if (token !== loadToken) return; // superseded (tab switch / refresh)
+        t.base = bucketBase(tid, Array.isArray(runs) ? runs : []);
+        t.lastFetchedAt = Date.now();
+        t.reused = false;
+        t.selectedBaseIds = defaultSelectionBase(t.base);
+        t.error = false;
+      }
+    } catch {
+      if (token === loadToken) {
+        t.base = [];
+        t.selectedBaseIds = new Set();
         t.error = true;
-      } finally {
+      }
+    } finally {
+      inFlight.delete(tid);
+      if (token === loadToken && state?.byTable?.[tid]) {
         t.loading = false;
+        recomputeDisplayed(tid);
         notify();
         applySelection({ silent: true, noPersist: true });
       }
-    };
-
-    await Promise.allSettled(tableIds.map(loadOne));
-
-    state.loaded = true;
-    state.loading = false;
-    state.fetchMs = nowMs() - state.fetchStartedAt;
-    persist();
-    notify();
-
-    // Final consistency pass over the full selection (recent default matches the
-    // import's 7-day stamp; most-recent fallback fills in the number).
-    if (hasAnySessions()) applySelection({ silent: true, noPersist: true });
-    return state;
+    }
   }
 
-  // Idempotent loader. Cache hit → instant (cards already carry the last applied
-  // spend, so no re-stamp). Cache miss → fetch + bucket + apply.
+  // Idempotent, INCREMENTAL loader. Seeds a state shell if needed, then fills any
+  // current table that lacks base data (restored tables are left untouched). New
+  // imports add their table here; tables removed from the canvas are dropped.
   function ensureLoaded(opts) {
     opts = opts || {};
     const tableIds = distinctTableIds();
@@ -254,63 +274,71 @@
       notify();
       return Promise.resolve(null);
     }
-    if (!opts.force && state && state.loaded && sameSet(state.tableIds, tableIds)) {
+
+    if (!state) {
+      state = {
+        tableIds: [],
+        gapMs: BASE_GAP_MS,
+        loaded: false,
+        loading: false,
+        byTable: {},
+        fetchStartedAt: null,
+        fetchMs: null,
+      };
+    }
+    state.tableIds = tableIds;
+
+    // Drop tables no longer on the canvas.
+    for (const tid of Object.keys(state.byTable)) {
+      if (!tableIds.includes(tid)) delete state.byTable[tid];
+    }
+
+    // Which tables still need base data?
+    const missing = tableIds.filter(
+      (tid) => opts.force || !state.byTable[tid] || !state.byTable[tid].base,
+    );
+    if (!missing.length && !opts.force) {
+      state.loaded = true;
       return Promise.resolve(state);
     }
-    if (loadingPromise && !opts.force) return loadingPromise;
 
-    loadingPromise = (async () => {
-      try {
-        const cache = loadCache();
-        const gapMs = opts.gapMs || cache?.gapMs || cb.cost.DEFAULT_SESSION_GAP_MS;
+    const token = ++loadToken;
+    const willFetch = opts.force || missing.some((tid) => !findSavedBase(tid));
+    state.loading = true;
+    if (willFetch) {
+      state.fetchStartedAt = nowMs();
+      state.fetchMs = null;
+    }
+    for (const tid of missing) {
+      state.byTable[tid] = {
+        base: null,
+        sessions: [],
+        selectedBaseIds: new Set(),
+        loading: true,
+        error: false,
+        reused: false,
+        lastFetchedAt: null,
+      };
+    }
+    recomputeDisplayed();
+    notify();
 
-        // Cache hit requires a per-table entry for EVERY current table, each
-        // carrying the per-column rollup (perField). Pre-v6.1 caches (flat
-        // `sessions`) and pre-v5 caches (no perField) fail this → network.
-        const cacheValid =
-          !opts.force &&
-          cache?.byTable &&
-          cache.ts &&
-          Date.now() - cache.ts < CACHE_TTL_MS &&
-          tableIds.every((tid) => {
-            const ct = cache.byTable[tid];
-            return ct?.sessions && (!ct.sessions.length || ct.sessions[0].perField);
-          });
-
-        if (cacheValid) {
-          state = { tableIds, gapMs, loaded: true, loading: false, byTable: {} };
-          for (const tid of tableIds) {
-            const ct = cache.byTable[tid];
-            const sessions = ct.sessions || [];
-            const valid = new Set(sessions.map((s) => s.id));
-            const sel = (ct.selectedIds || []).filter((id) => valid.has(id));
-            state.byTable[tid] = {
-              // Restored when cached (see persist) so a gap change rebuckets
-              // locally; null on older/quota-trimmed caches -> gap change
-              // refetches.
-              runs: ct.runs || null,
-              sessions,
-              selectedIds: sel.length ? new Set(sel) : defaultSelection(sessions),
-              loading: false,
-              error: false,
-            };
-          }
-          notify();
-          return state;
-        }
-
-        const prevSel = {};
-        if (cache?.byTable) {
-          for (const tid of Object.keys(cache.byTable)) {
-            prevSel[tid] = cache.byTable[tid]?.selectedIds;
-          }
-        }
-        return await loadFromNetwork(tableIds, gapMs, prevSel);
-      } finally {
-        loadingPromise = null;
+    return (async () => {
+      await Promise.allSettled(missing.map((tid) => loadOne(tid, token, opts.force)));
+      if (token !== loadToken) return null;
+      state.loaded = true;
+      state.loading = false;
+      if (state.fetchStartedAt != null && state.fetchMs == null) {
+        state.fetchMs = nowMs() - state.fetchStartedAt;
       }
+      recomputeDisplayed();
+      notify();
+      if (hasAnySessions()) applySelection({ silent: true, noPersist: true });
+      // Persist the freshly loaded sessions to the DB tab state so a reload /
+      // re-import reuses them with no refetch (the whole point of the cache).
+      persist();
+      return state;
     })();
-    return loadingPromise;
   }
 
   // Remove previously-stamped measured spend from a table's cards so a new
@@ -334,16 +362,16 @@
     }
   }
 
-  // Sum ONE table's selected sessions' per-column rollups into a fieldId -> spend
-  // map. fieldId is globally unique, so applyActualSpend(map, tid) safely filters
-  // to that table's cards.
+  // Sum ONE table's selected BASE buckets' per-column rollups into a fieldId ->
+  // spend map. Selection is at base granularity, so the gap (display merge) never
+  // affects this total.
   function buildSelectedSpendMapForTable(tid) {
     const merged = new Map();
     const t = state.byTable[tid];
-    if (!t) return merged;
-    for (const s of t.sessions) {
-      if (!t.selectedIds.has(s.id)) continue;
-      const pf = s.perField || {};
+    if (!t || !t.base) return merged;
+    for (const b of t.base) {
+      if (!t.selectedBaseIds.has(b.id)) continue;
+      const pf = b.perField || {};
       for (const fid of Object.keys(pf)) {
         const v = pf[fid];
         const e =
@@ -357,10 +385,11 @@
     return merged;
   }
 
+  // Count of selected base buckets across all tables (the Actual badge count).
   function totalSelected() {
     if (!state) return 0;
     let n = 0;
-    for (const tid of state.tableIds) n += state.byTable[tid]?.selectedIds?.size || 0;
+    for (const tid of state.tableIds) n += state.byTable[tid]?.selectedBaseIds?.size || 0;
     return n;
   }
 
@@ -368,13 +397,15 @@
     cb.actualSummaryNotice = notice || null;
   }
 
+  // Persist the active tab's session state to the DB (debounced, via saveTabs ->
+  // serialize). No localStorage anymore.
+  function persist() {
+    cb.debouncedSave?.();
+  }
+
   function refreshSummary(silent) {
-    // Recompute the Actual loading/expired flags BEFORE the recalc. The summary
-    // renderer (setSummaryNumber) reads __cb.actualSpendExpired synchronously,
-    // so if we recalc first the numbers paint against the PREVIOUS selection's
-    // flag — e.g. selecting a run right after clearing all shows a stale
-    // "Expired" until the next toggle catches the flag up. Matches the order in
-    // overlay.js setViewMode.
+    // Recompute the Actual loading flag BEFORE the recalc — the summary renderer
+    // reads it synchronously (matches overlay.js setViewMode order).
     cb.applyActualSummaryState?.();
     cb._animateSummary = true;
     try {
@@ -387,21 +418,16 @@
     if (!silent && cb.tableView?.refresh) cb.tableView.refresh();
   }
 
-  // Re-derive Actual spend from the selected sessions (local sum) and re-stamp,
-  // per table. Synchronous and instant — no network. No selection anywhere →
-  // clear + "—" notice.
+  // Re-derive Actual spend from the selected base buckets (local sum) and
+  // re-stamp, per table. Synchronous and instant — no network.
   function applySelection(opts) {
     opts = opts || {};
-    // Note: intentionally NOT gated on state.loaded — progressive loads call
-    // this per table as each lands (state.loaded is still false then) so spend
-    // appears incrementally.
     if (!state) return;
     cb.actualSpendApplying = false;
 
     if (totalSelected() === 0) {
       for (const tid of state.tableIds) clearTableSpend(tid);
-      // Mid-load with nothing resolved yet → stay quiet (no "—") to avoid a
-      // flash before the first table's default selection lands.
+      // Quiet while still loading (avoid a flash before defaults land).
       setNotice(
         state.loading
           ? null
@@ -427,11 +453,8 @@
         if (cb.applyActualSpend(map, tid)) stamped = true;
       }
     }
-    // The selection has spend but none of its columns are cost cards on this
-    // canvas — e.g. a session that only ran a since-deleted column. Show a clear
-    // "—" + tooltip rather than the "Expired" state (which means "no realtime
-    // data at all"), which would otherwise mislead. Suppressed mid-load: cards
-    // for a not-yet-resolved table would trip it transiently.
+    // Selection has spend but none of its columns are cost cards on this canvas
+    // (e.g. a since-deleted column). Show "—" rather than a misleading number.
     if (anySelected && !stamped && !state.loading) {
       setNotice({
         label: "\u2014",
@@ -444,6 +467,21 @@
     if (!opts.noPersist) persist();
   }
 
+  // Toggle a DISPLAYED session: flip ALL its base children together. If every
+  // child is already selected, clear them; otherwise select them all (so a
+  // partial/indeterminate session becomes fully selected on click).
+  function toggleDisplayed(tid, displayedId) {
+    const t = state?.byTable?.[tid];
+    if (!t) return;
+    const sess = (t.sessions || []).find((s) => s.id === displayedId);
+    if (!sess) return;
+    const allSelected = sess.childIds.every((id) => t.selectedBaseIds.has(id));
+    for (const id of sess.childIds) {
+      if (allSelected) t.selectedBaseIds.delete(id);
+      else t.selectedBaseIds.add(id);
+    }
+  }
+
   // ---- Public API (consumed by the picker UI in table-view.js) -------------
 
   cb.sessionCutoff = {
@@ -452,82 +490,190 @@
       return () => listeners.delete(fn);
     },
     ensureLoaded,
+
+    // Tab switch / canvas teardown: drop in-memory state (DB has the truth).
+    // Supersede any in-flight load so it can't stamp the tab we moved to.
     invalidate() {
+      loadToken++;
+      inFlight.clear();
       state = null;
-      loadingPromise = null;
       cb.actualSummaryNotice = null;
       cb.actualSpendApplying = false;
     },
-    invalidateCache() {
-      clearCache();
-      state = null;
-      loadingPromise = null;
+
+    // Rehydrate from a tab's saved blob (DB) — instant, no fetch. Cards already
+    // carry their persisted spend, but we re-stamp from the saved selection to
+    // stay consistent. Called on tab open / switch (see overlay.js, tabs.js).
+    restore(saved) {
+      loadToken++;
+      inFlight.clear();
       cb.actualSummaryNotice = null;
       cb.actualSpendApplying = false;
+      const tableIds = distinctTableIds();
+      if (!saved || !saved.byTable || !tableIds.length) {
+        state = null;
+        return;
+      }
+      state = {
+        tableIds,
+        gapMs: Math.max(MIN_GAP_MS, saved.gapMs || BASE_GAP_MS),
+        loaded: true,
+        loading: false,
+        byTable: {},
+        fetchStartedAt: null,
+        fetchMs: null,
+      };
+      for (const tid of tableIds) {
+        const ct = saved.byTable[tid];
+        if (ct && Array.isArray(ct.base)) {
+          const valid = new Set(ct.base.map((b) => b.id));
+          const sel = (ct.selectedBaseIds || []).filter((id) => valid.has(id));
+          state.byTable[tid] = {
+            base: ct.base,
+            sessions: [],
+            selectedBaseIds: sel.length
+              ? new Set(sel)
+              : defaultSelectionBase(ct.base),
+            loading: false,
+            error: false,
+            reused: false, // normal reopen is not a re-import → not amber
+            lastFetchedAt: ct.lastFetchedAt || null,
+          };
+        } else {
+          // On the canvas but not in the saved blob (e.g. imported in another
+          // session) — mark for ensureLoaded to fill.
+          state.byTable[tid] = {
+            base: null,
+            sessions: [],
+            selectedBaseIds: new Set(),
+            loading: true,
+            error: false,
+            reused: false,
+            lastFetchedAt: null,
+          };
+        }
+      }
+      recomputeDisplayed();
+      notify();
+      if (hasAnySessions()) applySelection({ silent: true, noPersist: true });
+      // Fill any table that wasn't in the saved blob.
+      if (tableIds.some((tid) => !state.byTable[tid].base)) ensureLoaded();
     },
-    // Manual refresh (the picker's "..." menu): drop the cache and refetch from
-    // the network, re-running the load timer and progressive reveal.
+
+    // Serialize the active tab's session state for tab.state (called by saveTabs).
+    // Stores the immutable base buckets + base-level selection + when it was
+    // fetched. No raw runs, no displayed merge (recomputed from base on restore).
+    serialize() {
+      if (!state) return null;
+      const byTable = {};
+      for (const tid of state.tableIds) {
+        const t = state.byTable[tid];
+        if (!t || !t.base) continue;
+        byTable[tid] = {
+          base: t.base,
+          selectedBaseIds: [...t.selectedBaseIds],
+          lastFetchedAt: t.lastFetchedAt || null,
+        };
+      }
+      if (!Object.keys(byTable).length) return null;
+      return { byTable, gapMs: state.gapMs };
+    },
+
+    // Manual refresh from the footer pill: refetch run/recent for all current
+    // tables (force), re-running the timer + progressive reveal.
     refresh() {
-      clearCache();
-      state = null;
-      loadingPromise = null;
-      cb.actualSummaryNotice = null;
-      cb.actualSpendApplying = false;
+      loadToken++;
+      inFlight.clear();
+      if (state) {
+        for (const tid of state.tableIds) {
+          const t = state.byTable[tid];
+          if (t) { t.base = null; t.reused = false; }
+        }
+      }
       return ensureLoaded({ force: true });
     },
+
+    // Called by table-import after (re)importing a table's cards. If we already
+    // have its base in memory, it's a re-import → mark amber + re-stamp the fresh
+    // cards. If not, ensureLoaded will fill it (reused/amber if found elsewhere).
+    noteImport(tid) {
+      if (!state || !state.byTable?.[tid]) return;
+      const t = state.byTable[tid];
+      if (t.base && t.base.length) {
+        t.reused = true;
+        recomputeDisplayed(tid);
+        notify();
+        applySelection({ silent: true });
+      }
+    },
+
     getState() {
       return state;
     },
-    // Total selected sessions across all tables (the Actual badge count).
+
+    // Footer pill: oldest fetch time across current tables + whether any table is
+    // a reuse (→ amber nudge) + whether a fetch is in flight.
+    fetchInfo() {
+      if (!state) return { lastFetchedAt: null, anyReused: false, loading: false };
+      let oldest = null;
+      let anyReused = false;
+      for (const tid of state.tableIds) {
+        const t = state.byTable[tid];
+        if (!t) continue;
+        if (t.reused) anyReused = true;
+        if (t.lastFetchedAt != null) {
+          oldest = oldest == null ? t.lastFetchedAt : Math.min(oldest, t.lastFetchedAt);
+        }
+      }
+      return { lastFetchedAt: oldest, anyReused, loading: !!state.loading };
+    },
+
     totalSelected,
-    toggle(tid, id) {
-      const t = state?.byTable?.[tid];
-      if (!t) return;
-      if (t.selectedIds.has(id)) t.selectedIds.delete(id);
-      else t.selectedIds.add(id);
-      persist();
+
+    toggle(tid, displayedId) {
+      toggleDisplayed(tid, displayedId);
+      recomputeDisplayed(tid);
       notify();
       applySelection();
     },
+
     setAll(tid, on) {
       const t = state?.byTable?.[tid];
-      if (!t) return;
-      t.selectedIds = on ? new Set(t.sessions.map((s) => s.id)) : new Set();
-      persist();
+      if (!t || !t.base) return;
+      t.selectedBaseIds = on ? new Set(t.base.map((b) => b.id)) : new Set();
+      recomputeDisplayed(tid);
       notify();
       applySelection();
     },
+
     setAllTables(on) {
       if (!state) return;
       for (const tid of state.tableIds) {
         const t = state.byTable[tid];
-        if (!t) continue;
-        t.selectedIds = on ? new Set(t.sessions.map((s) => s.id)) : new Set();
+        if (!t || !t.base) continue;
+        t.selectedBaseIds = on ? new Set(t.base.map((b) => b.id)) : new Set();
       }
-      persist();
+      recomputeDisplayed();
       notify();
       applySelection();
     },
+
+    // Change the display grouping. Floored at 6h and computed by re-merging the
+    // base buckets — never a refetch, fully reversible. Selection is at base
+    // granularity, so the counted total is unchanged; only the grouping shifts.
     setGapMs(gapMs) {
-      if (!state || !gapMs || gapMs <= 0 || gapMs === state.gapMs) return;
-      // Re-bucketing needs the raw runs. If any table loaded from cache (runs
-      // null), force a network reload with the new gap.
-      const haveRuns = state.tableIds.every((tid) =>
-        Array.isArray(state.byTable[tid]?.runs),
-      );
-      if (!haveRuns) {
-        ensureLoaded({ force: true, gapMs });
-        return;
-      }
-      state.gapMs = gapMs;
-      for (const tid of state.tableIds) {
-        const t = state.byTable[tid];
-        t.sessions = bucketForTable(tid, t.runs, gapMs);
-        t.selectedIds = defaultSelection(t.sessions); // ids change on re-bucket
-      }
-      persist();
+      if (!state) return;
+      const next = Math.max(MIN_GAP_MS, Number(gapMs) || BASE_GAP_MS);
+      if (next === state.gapMs) return;
+      state.gapMs = next;
+      recomputeDisplayed();
       notify();
+      // Re-stamp is a no-op for totals (base selection unchanged) but refreshes
+      // the table view; persist the new gap.
       applySelection();
     },
+
+    MIN_GAP_MS,
+    BASE_GAP_MS,
   };
 })();

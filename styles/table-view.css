@@ -2106,18 +2106,44 @@
   color: #6b7280;
 }
 
-/* Load-timer pill, bottom-right of the footer. Tabular numbers so the live
-   tick doesn't jitter. */
+/* Fetched-date / refresh pill, bottom-right of the footer. Shows when the runs
+   were last fetched; click to refetch. Tabular numbers so the live tick doesn't
+   jitter. */
 .cb-session-pop-timer {
   margin-left: auto;
   font-size: 11px;
   color: #9ca3af;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
+  cursor: pointer;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid transparent;
 }
 
-.cb-session-pop-timer-loading {
+.cb-session-pop-timer:hover {
+  color: #4b5563;
+  background: #f3f4f6;
+}
+
+.cb-session-pop-timer-loading,
+.cb-session-pop-timer-loading:hover {
   color: #6366f1;
+  background: transparent;
+  cursor: default;
+}
+
+/* Amber nudge after a re-import: the shown sessions are reused from a prior
+   fetch and may be stale — click to refresh. */
+.cb-session-pop-timer-amber {
+  color: #b45309;
+  background: #fffbeb;
+  border-color: #fde68a;
+}
+
+.cb-session-pop-timer-amber:hover {
+  color: #92400e;
+  background: #fef3c7;
 }
 
 /* Per-column fetch failure + retry. */

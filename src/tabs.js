@@ -420,6 +420,13 @@
         // canvases (brainstorming) and others as tables (review/scoping).
         // Defaults to "canvas" anywhere the field is absent.
         state.brainstormView = __cb.brainstormView === "table" ? "table" : "canvas";
+        // Actual-spend session picker: the bucketed sessions + selection + gap,
+        // so reloads/other devices restore instantly with no /run/recent fetch.
+        // Preserve the previously-saved blob when the controller has no live
+        // state yet (e.g. saved before Actual was ever opened) so we don't wipe
+        // it on an unrelated save.
+        const sc = __cb.sessionCutoff?.serialize?.();
+        state.sessionCutoff = sc || activeTab.state?.sessionCutoff || null;
         activeTab.state = state;
       }
     }
@@ -1266,17 +1273,16 @@
       if (__cb.tabStore) __cb.tabStore.viewMode = "projected";
       if (__cb.overlayEl) __cb.overlayEl.setAttribute("data-cb-view-mode", "projected");
     }
-    // Refresh the Actual loading/expired flags for the tab we just entered (its
-    // cards may already carry spend, or none) BEFORE the recalc below, so the
-    // summary doesn't blur known numbers using the previous tab's state. We do
-    // NOT clear _autoActualPending here: the settle() onThisTab gate already
-    // prevents a background fetch from flipping the wrong tab, and keeping it
-    // armed lets the auto-flip still fire if results land while on this tab.
+    // Refresh the Actual loading flag for the tab we just entered (its cards may
+    // already carry spend, or none) BEFORE the recalc below, so the summary
+    // doesn't blur known numbers using the previous tab's state.
     __cb.applyActualSummaryState?.();
 
-    // Session cutoff state is per tab — drop it so the picker reloads sessions
-    // for the tab we just switched into.
-    __cb.sessionCutoff?.invalidate();
+    // Session cutoff is per tab and DB-persisted — rehydrate from THIS tab's
+    // saved blob (no fetch; re-stamps from the saved selection). Cards were just
+    // restored above, so stamping has targets. Any imported table missing from
+    // the blob is filled (reuse/fetch) inside restore.
+    __cb.sessionCutoff?.restore?.(tab?.state?.sessionCutoff);
 
     const recordsInput = document.getElementById("cb-records-input");
     if (recordsInput) {
