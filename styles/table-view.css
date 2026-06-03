@@ -2262,7 +2262,7 @@
   display: inline-flex;
   align-items: center;
   color: #9ca3af;
-  cursor: default;
+  cursor: pointer;
   user-select: none;
 }
 
