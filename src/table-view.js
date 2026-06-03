@@ -1170,16 +1170,18 @@
     return pill;
   }
 
-  // ---- Hover submenu: which columns ran in a session ----
+  // ---- Click submenu: which columns ran in a session ----
   let sessionSubmenuEl = null;
-  let sessionSubmenuTimer = null;
+  let sessionSubmenuOpenId = null;
 
   function closeSessionSubmenu() {
-    if (sessionSubmenuTimer) { clearTimeout(sessionSubmenuTimer); sessionSubmenuTimer = null; }
+    sessionSubmenuOpenId = null;
     if (sessionSubmenuEl) { sessionSubmenuEl.remove(); sessionSubmenuEl = null; }
   }
 
-  function openSessionSubmenu(session, anchorRow) {
+  function openSessionSubmenu(session, anchorEl) {
+    // Toggle: clicking the same session's "N cols" trigger again closes it.
+    if (sessionSubmenuOpenId === session.id) { closeSessionSubmenu(); return; }
     closeSessionSubmenu();
     const pf = session.perField || {};
     const fids = Object.keys(pf);
@@ -1188,10 +1190,6 @@
     const el = document.createElement("div");
     el.className = "cb-session-submenu";
     el.addEventListener("mousedown", (e) => e.stopPropagation());
-    el.addEventListener("mouseenter", () => {
-      if (sessionSubmenuTimer) { clearTimeout(sessionSubmenuTimer); sessionSubmenuTimer = null; }
-    });
-    el.addEventListener("mouseleave", () => closeSessionSubmenu());
     // Sort columns by credits desc so the expensive ones lead.
     fids.sort((a, b) => (pf[b].credits || 0) - (pf[a].credits || 0));
     for (const fid of fids) {
@@ -1205,20 +1203,34 @@
       r.appendChild(buildCostBadges(v.credits || 0, v.actionExecutions || 0));
       el.appendChild(r);
     }
+    sessionSubmenuEl = el;
+    sessionSubmenuOpenId = session.id;
     document.body.appendChild(el);
-    const rect = anchorRow.getBoundingClientRect();
-    el.style.position = "fixed";
-    el.style.top = `${rect.top}px`;
-    el.style.zIndex = "10000000";
-    // Prefer opening to the right; flip left when there's no room (the popover
-    // sits near the toolbar's right edge, so right-open would crop).
+
+    // Position relative to the popover (anchored at the toolbar's right edge):
+    // prefer opening to the LEFT of the popover so it never runs off the right
+    // of the screen; flip right only when the left has no room. Vertically
+    // align to the trigger row, clamped into the viewport. The clamp is done
+    // here on purpose — NOT via clampSubmenu, which is built for the model
+    // picker's absolutely-positioned submenu and clears `top`, which would
+    // throw this fixed menu to the screen corner.
+    const popRect = sessionPopoverEl
+      ? sessionPopoverEl.getBoundingClientRect()
+      : anchorEl.getBoundingClientRect();
+    const aRect = anchorEl.getBoundingClientRect();
     const w = el.offsetWidth || 240;
-    if (rect.right + 6 + w <= window.innerWidth - 8) {
-      el.style.left = `${rect.right + 6}px`;
-    } else {
-      el.style.left = `${Math.max(8, rect.left - 6 - w)}px`;
+    const h = el.offsetHeight || 0;
+    const margin = 8;
+    el.style.position = "fixed";
+    el.style.zIndex = "10000000";
+    let left = popRect.left - 6 - w;
+    if (left < margin) left = popRect.right + 6;
+    el.style.left = `${Math.max(margin, left)}px`;
+    let top = aRect.top;
+    if (top + h > window.innerHeight - margin) {
+      top = window.innerHeight - margin - h;
     }
-    if (window.__cb.clampSubmenu) window.__cb.clampSubmenu(el);
+    el.style.top = `${Math.max(margin, top)}px`;
   }
 
   function renderSessionPopoverRows() {
@@ -1260,25 +1272,21 @@
       sub.className = "cb-session-pop-sub";
       sub.textContent =
         `${s.columnsTouched} col${s.columnsTouched === 1 ? "" : "s"}`;
+      // Click the "N cols" line to open/close a submenu listing which columns
+      // ran in this session. preventDefault stops the wrapping <label> from
+      // toggling the row's checkbox; stopPropagation keeps the popover backdrop
+      // from closing the whole picker.
+      sub.addEventListener("mousedown", (e) => e.stopPropagation());
+      sub.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        openSessionSubmenu(s, sub);
+      });
       meta.appendChild(date);
       meta.appendChild(sub);
       row.appendChild(cbx);
       row.appendChild(meta);
       row.appendChild(buildCostBadges(s.credits || 0, s.actionExec || 0));
-      // Hover → submenu of which columns ran in this session. Bound on the row
-      // (whole-row target) AND the "N cols" text (the labelled affordance), so
-      // it opens whichever the user aims at. A short grace period on leave lets
-      // the pointer travel to the submenu without it closing.
-      const openSub = () => {
-        if (sessionSubmenuTimer) { clearTimeout(sessionSubmenuTimer); sessionSubmenuTimer = null; }
-        openSessionSubmenu(s, row);
-      };
-      const scheduleClose = () => {
-        sessionSubmenuTimer = setTimeout(closeSessionSubmenu, 240);
-      };
-      row.addEventListener("mouseenter", openSub);
-      row.addEventListener("mouseleave", scheduleClose);
-      sub.addEventListener("mouseenter", openSub);
       body.appendChild(row);
     }
   }

@@ -301,9 +301,23 @@
 
     setNotice(null);
     const merged = buildSelectedSpendMap();
+    let stamped = false;
     for (const tid of state.tableIds) {
       clearTableSpend(tid);
-      if (merged.size) cb.applyActualSpend(merged, tid);
+      if (merged.size && cb.applyActualSpend(merged, tid)) stamped = true;
+    }
+    // The selection has spend (merged.size) but none of its columns are cost
+    // cards on this canvas — e.g. a session that only ran a column on another
+    // tab or a since-deleted one. Show a clear "—" + tooltip rather than the
+    // "Expired" state (which means "no realtime data at all"), which would
+    // otherwise mislead until another, mapping session is added.
+    if (merged.size && !stamped) {
+      setNotice({
+        label: "\u2014",
+        tooltip:
+          "The selected session(s) ran columns that aren't on this canvas. " +
+          "Pick a session that ran these enrichments to count its Actual spend.",
+      });
     }
     refreshSummary(opts.silent);
     persist();

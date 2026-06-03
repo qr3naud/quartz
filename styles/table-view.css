@@ -1907,18 +1907,19 @@
   white-space: nowrap;
 }
 
-/* The "N cols" line opens a hover submenu of the actual columns — signal it
-   with a dotted underline + help cursor. */
+/* The "N cols" line opens a click submenu of the actual columns — signal it
+   with a dotted underline + pointer cursor. */
 .cb-session-pop-sub {
   font-size: 11px;
   color: #6b7280;
   width: fit-content;
   text-decoration: underline dotted #cbd5e1;
   text-underline-offset: 2px;
-  cursor: help;
+  cursor: pointer;
 }
 
-.cb-session-pop-row:hover .cb-session-pop-sub {
+.cb-session-pop-row:hover .cb-session-pop-sub,
+.cb-session-pop-sub:hover {
   color: #4338ca;
   text-decoration-color: #a5b4fc;
 }
