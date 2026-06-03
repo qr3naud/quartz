@@ -312,6 +312,28 @@
     return cb.getCurrentFrequencyId ? cb.getCurrentFrequencyId() : cb.DEFAULT_FREQUENCY_ID;
   }
 
+  // Materialize each use case's records into its non-custom ERs' coverageRows,
+  // so cost AND the Coverage column share one source of truth and default to the
+  // per-table records. Needed because multi-table import seeds every ER's
+  // coverageRows from the global recordsActual (the last table's), and a
+  // persisted records override must re-apply on load. Skips "other" and per-ER
+  // manual coverage (coverageCustom). Returns whether anything changed.
+  function syncUseCaseCoverage() {
+    let changed = false;
+    for (const c of cb.model?.getNodes?.() || []) {
+      const d = c && c.data;
+      if (!d || isNonErType(d.type) || d.coverageCustom) continue;
+      const key = useCaseKeyForCard(c);
+      if (key === OTHER_USE_CASE) continue;
+      const recs = useCaseRecords(key);
+      if (d.coverageRows !== recs) {
+        d.coverageRows = recs;
+        changed = true;
+      }
+    }
+    return changed;
+  }
+
   // Grand total + per-use-case breakdown for the multi-use-case (2+ tables)
   // case. Each ER is multiplied by ITS use case's records + frequency; the
   // "other" bucket is excluded. Mirrors the single-mode math (weighted per-row
@@ -376,6 +398,7 @@
     useCaseCount,
     useCaseRecords,
     useCaseFrequencyId,
+    syncUseCaseCoverage,
     computeUseCaseTotals,
   };
 })();

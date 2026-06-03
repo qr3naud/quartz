@@ -24,11 +24,16 @@
       // Multi-use-case (2+ imported tables): compute the grand total + per-use-
       // case breakdown here (each ER x ITS table's records/frequency, "other"
       // excluded). recalcTotal consumes cb._multiTotals when set; at <= 1 use
-      // case it's null and the single-scope path below is unchanged.
-      cb._multiTotals =
-        cb.cost.useCaseCount() >= 2
-          ? cb.cost.computeUseCaseTotals(cardsRef(), { viewMode: cb.viewMode })
-          : null;
+      // case it's null and the single-scope path below is unchanged. First sync
+      // each table's records into its ERs' coverageRows so cost + the Coverage
+      // column agree (import seeds coverage from the global records, not per
+      // table).
+      if (cb.cost.useCaseCount() >= 2) {
+        cb.cost.syncUseCaseCoverage();
+        cb._multiTotals = cb.cost.computeUseCaseTotals(cardsRef(), { viewMode: cb.viewMode });
+      } else {
+        cb._multiTotals = null;
+      }
 
       if (isActual) {
         // Actual mode: per-row cost comes from measured spend
