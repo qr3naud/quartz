@@ -371,6 +371,26 @@
       versionPill.className = "cb-update-version cb-update-version-" + pill;
     };
 
+    // When an update is available, the pill reads "vCURRENT -> vLATEST" with the
+    // current version struck through; otherwise just the current version.
+    const renderVersionPill = (behind, current, latest) => {
+      versionPill.textContent = "";
+      if (behind && current && latest && current !== latest) {
+        const from = document.createElement("span");
+        from.className = "cb-update-version-from";
+        from.textContent = "v" + current;
+        const arrow = document.createElement("span");
+        arrow.className = "cb-update-version-arrow";
+        arrow.textContent = "\u2192";
+        const to = document.createElement("span");
+        to.className = "cb-update-version-to";
+        to.textContent = "v" + latest;
+        versionPill.append(from, arrow, to);
+      } else {
+        versionPill.textContent = current ? "v" + current : latest ? "v" + latest : "";
+      }
+    };
+
     // Body (timeline)
     const body = document.createElement("div");
     body.className = "cb-update-body";
@@ -486,6 +506,7 @@
         applyState("ok", "Up to date");
         updateBtn.disabled = true;
       }
+      renderVersionPill(behind, res.currentVersion || currentVersion, res.latestVersion);
       const ctx = {
         isAdmin,
         currentVersion,
