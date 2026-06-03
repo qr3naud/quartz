@@ -2118,3 +2118,72 @@
     animation: none;
   }
 }
+
+/* Per-use-case scope controls in the table (green) header — records + frequency
+ * + sub-total, shown when 2+ imported-table use cases exist. */
+.cb-uc-scope {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  margin-left: auto;
+  padding-left: 12px;
+}
+
+.cb-uc-scope-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.cb-uc-scope-label {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #6b7280;
+}
+
+.cb-uc-scope-records {
+  width: 72px;
+  height: 24px;
+  padding: 0 6px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  background: #ffffff;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  color: #111827;
+  text-align: right;
+}
+
+.cb-uc-scope-records:focus {
+  outline: none;
+  border-color: #6366f1;
+  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.15);
+}
+
+.cb-uc-scope-freq {
+  height: 24px;
+  padding: 0 8px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  background: #ffffff;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  color: #374151;
+  cursor: pointer;
+}
+
+.cb-uc-scope-freq:hover {
+  background: #f9fafb;
+  border-color: #9ca3af;
+}
+
+.cb-uc-scope-total {
+  font-size: 12px;
+  font-weight: 600;
+  color: #166534;
+  font-variant-numeric: tabular-nums;
+}

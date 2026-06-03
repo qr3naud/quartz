@@ -220,6 +220,144 @@
     }));
   }
 
+  // ---------------------------------------------------------------------------
+  // Use cases (Increment A): a use case = an imported table. The top-level
+  // scoping unit that owns its own records + frequency. Cards that don't belong
+  // to an imported table map to the "other" bucket, which is excluded from the
+  // grand total once there are 2+ table use cases.
+  // ---------------------------------------------------------------------------
+  const OTHER_USE_CASE = "other";
+
+  function importedTablesMap() {
+    return (cb.model && cb.model.getImportedTables && cb.model.getImportedTables()) || {};
+  }
+
+  // Is this card's tableId a real imported table (has resolvable metadata)?
+  function isImportedTableCard(card) {
+    const d = (card && card.data) || {};
+    if (!d.tableId) return false;
+    const meta = importedTablesMap()[d.tableId];
+    return !!(meta?.name || d.tableName);
+  }
+
+  // The use-case key that owns a card's COST. Increment A: imported table
+  // (`t-${tableId}`) else "other". A data point's cost belongs to its SOURCE
+  // ER's use case, so resolve a DP via its source ER when possible.
+  function useCaseKeyForCard(card) {
+    const d = (card && card.data) || {};
+    if (d.type === "dp") {
+      const srcKey = d.sourceEnrichmentFieldId;
+      if (srcKey != null) {
+        const er = (cb.model?.getNodes?.() || []).find(
+          (n) =>
+            n?.data &&
+            !isNonErType(n.data.type) &&
+            (n.data.fieldId === srcKey ||
+              (n.data.type === "waterfall" && `wf:${n.data.groupCluster}` === srcKey)),
+        );
+        if (er) return useCaseKeyForCard(er);
+      }
+    }
+    return isImportedTableCard(card) ? `t-${d.tableId}` : OTHER_USE_CASE;
+  }
+
+  // Distinct imported-table use cases that contain at least one cost-bearing ER.
+  // Returns [{ key, tableId, name, color, recordCount }], table order is the
+  // caller's concern (cost doesn't care). Excludes "other".
+  function listUseCases() {
+    const tables = importedTablesMap();
+    const seen = new Map();
+    for (const n of cb.model?.getNodes?.() || []) {
+      const d = n?.data;
+      if (!d || isNonErType(d.type)) continue;
+      if (!isImportedTableCard(n)) continue;
+      const key = `t-${d.tableId}`;
+      if (!seen.has(key)) {
+        const meta = tables[d.tableId] || {};
+        seen.set(key, {
+          key,
+          tableId: d.tableId,
+          name: meta.name || d.tableName || "Table",
+          color: meta.color || meta.importColor || d.importColor || null,
+          recordCount: meta.recordCount ?? null,
+        });
+      }
+    }
+    return [...seen.values()];
+  }
+
+  function useCaseCount() {
+    return listUseCases().length;
+  }
+
+  // Per-use-case records + frequency live on tab state (useCaseScope), keyed by
+  // use-case key. Falls back to the global records/frequency (the single-scope
+  // controls) so behavior is identical until 2+ tables exist.
+  function useCaseRecords(key) {
+    const scope = cb.useCaseScope?.[key];
+    if (scope && scope.records != null && Number(scope.records) >= 0) {
+      return Number(scope.records);
+    }
+    // Default: the table's imported row count, else the global records.
+    if (key && key.startsWith("t-")) {
+      const meta = importedTablesMap()[key.slice(2)];
+      if (meta?.recordCount > 0) return Number(meta.recordCount);
+    }
+    return cb.getRecordsCount ? Number(cb.getRecordsCount()) || 0 : 0;
+  }
+
+  function useCaseFrequencyId(key) {
+    const scope = cb.useCaseScope?.[key];
+    if (scope && scope.frequency) return scope.frequency;
+    return cb.getCurrentFrequencyId ? cb.getCurrentFrequencyId() : cb.DEFAULT_FREQUENCY_ID;
+  }
+
+  // Grand total + per-use-case breakdown for the multi-use-case (2+ tables)
+  // case. Each ER is multiplied by ITS use case's records + frequency; the
+  // "other" bucket is excluded. Mirrors the single-mode math (weighted per-row
+  // x records) but per use case. `cards` = all model nodes; returns
+  // { grandCredits, grandActions, perUseCase:[{key,name,credits,actions}] }.
+  function computeUseCaseTotals(cards, opts) {
+    opts = opts || {};
+    const projected = (opts.viewMode || cb.viewMode) !== "actual";
+    const erFillMap = projected ? buildErFillMap(cards) : null;
+    const freqMult = (id) => (cb.getFrequencyMultiplier ? cb.getFrequencyMultiplier(id) : 1);
+    const buckets = new Map(); // key -> { credits, actions }
+    for (const c of cards) {
+      const d = c && c.data;
+      if (!d || isNonErType(d.type)) continue;
+      const key = useCaseKeyForCard(c);
+      if (key === OTHER_USE_CASE) continue; // unscoped, excluded from the quote
+      const pr = perRowCost(
+        c,
+        projected
+          ? { viewMode: "projected" }
+          : { viewMode: "actual", fallbackToProjected: false },
+      );
+      if (pr.noSpend) continue;
+      const freqId = d.frequencyCustom ? d.frequency : d.frequency || useCaseFrequencyId(key);
+      const mult = freqMult(freqId);
+      const recs = useCaseRecords(key);
+      // billableFraction folds coverage x fill (projected only); x recs turns the
+      // per-row figure into the use case's absolute billable volume.
+      const billable = projected ? billableFraction(c, recs, erFillMap) : 1;
+      const b = buckets.get(key) || { credits: 0, actions: 0 };
+      b.credits += pr.credits * mult * billable * recs;
+      b.actions += pr.actions * mult * billable * recs;
+      buckets.set(key, b);
+    }
+    const meta = new Map(listUseCases().map((u) => [u.key, u]));
+    let grandCredits = 0;
+    let grandActions = 0;
+    const perUseCase = [];
+    for (const [key, b] of buckets) {
+      grandCredits += b.credits;
+      grandActions += b.actions;
+      perUseCase.push({ key, name: meta.get(key)?.name || key, credits: b.credits, actions: b.actions });
+    }
+    return { grandCredits, grandActions, perUseCase };
+  }
+
   cb.cost = {
     isNonErType,
     perRowCost,
@@ -231,5 +369,13 @@
     billableFraction,
     DEFAULT_SESSION_GAP_MS,
     bucketRunsIntoSessions,
+    OTHER_USE_CASE,
+    isImportedTableCard,
+    useCaseKeyForCard,
+    listUseCases,
+    useCaseCount,
+    useCaseRecords,
+    useCaseFrequencyId,
+    computeUseCaseTotals,
   };
 })();

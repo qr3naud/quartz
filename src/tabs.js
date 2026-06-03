@@ -395,6 +395,8 @@
         // The imported "actual" (POC) record count, so the indigo/override
         // styling survives reloads and tab switches.
         state.recordsActual = __cb.recordsActual ?? null;
+        // Per-use-case (per imported table) records/frequency overrides.
+        state.useCaseScope = __cb.useCaseScope ?? {};
         const creditCostInput = document.getElementById("cb-credit-cost-input");
         const actionCostInput = document.getElementById("cb-action-cost-input");
         const pricingGroup = document.querySelector(".cb-pricing-group");
@@ -549,6 +551,7 @@
       const { view: _ignoredView, ...stateForRestore } = active.state;
       __cb.model.restore(stateForRestore);
       __cb.recordsActual = active.state.recordsActual ?? null;
+      __cb.useCaseScope = active.state.useCaseScope ?? {};
       const recordsInput = document.getElementById("cb-records-input");
       if (recordsInput && active.state.records != null) {
         recordsInput.value = active.state.records;
@@ -677,6 +680,7 @@
       const { view: _ignoredView, ...stateForRestore } = newTab.state;
       __cb.model.restore(stateForRestore);
       __cb.recordsActual = stateForRestore.recordsActual ?? null;
+      __cb.useCaseScope = stateForRestore.useCaseScope ?? {};
       const recordsInput = document.getElementById("cb-records-input");
       if (recordsInput && stateForRestore.records != null) {
         recordsInput.value = stateForRestore.records;
@@ -1250,6 +1254,7 @@
     }
 
     __cb.recordsActual = tab?.state?.recordsActual ?? null;
+    __cb.useCaseScope = tab?.state?.useCaseScope ?? {};
     // Actual mode reads real spend, which only an imported tab has. Switching
     // to a non-imported tab (no recordsActual) must fall back to Projected —
     // otherwise the summary sits on Actual showing 0, with no toggle visible

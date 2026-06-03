@@ -21,6 +21,15 @@
       const cb = window.__cb;
       const isActual = cb.viewMode === "actual";
 
+      // Multi-use-case (2+ imported tables): compute the grand total + per-use-
+      // case breakdown here (each ER x ITS table's records/frequency, "other"
+      // excluded). recalcTotal consumes cb._multiTotals when set; at <= 1 use
+      // case it's null and the single-scope path below is unchanged.
+      cb._multiTotals =
+        cb.cost.useCaseCount() >= 2
+          ? cb.cost.computeUseCaseTotals(cardsRef(), { viewMode: cb.viewMode })
+          : null;
+
       if (isActual) {
         // Actual mode: per-row cost comes from measured spend
         // (data.stats.spend = credits/actions/cellCount from Clay's realtime

@@ -5538,6 +5538,76 @@
   // input to write through to). Clicking the chevron / icon / count
   // toggles collapse; clicking the label focuses the input. Drag handle
   // on the leftmost column reorders groups.
+  // Per-use-case (per imported table) scope controls shown in the table header
+  // when 2+ use cases exist: editable Records, a Frequency picker, and this use
+  // case's sub-total. Writes via __cb.setUseCaseScope (re-runs the roll-up).
+  function buildUseCaseScopeControls(ucKey) {
+    const cb = window.__cb;
+    const wrap = document.createElement("span");
+    wrap.className = "cb-uc-scope";
+    wrap.addEventListener("mousedown", (e) => e.stopPropagation());
+    wrap.addEventListener("click", (e) => e.stopPropagation());
+
+    // Records
+    const recWrap = document.createElement("span");
+    recWrap.className = "cb-uc-scope-field";
+    const recLbl = document.createElement("span");
+    recLbl.className = "cb-uc-scope-label";
+    recLbl.textContent = "Records";
+    const recInput = document.createElement("input");
+    recInput.type = "text";
+    recInput.inputMode = "numeric";
+    recInput.className = "cb-uc-scope-records";
+    recInput.value = Number(cb.cost.useCaseRecords(ucKey) || 0).toLocaleString();
+    const commitRecords = () => {
+      const n = parseInt(recInput.value.replace(/[^\d]/g, ""), 10);
+      if (Number.isFinite(n) && n >= 0) cb.setUseCaseScope?.(ucKey, { records: n });
+    };
+    recInput.addEventListener("keydown", (e) => { if (e.key === "Enter") e.target.blur(); });
+    recInput.addEventListener("blur", commitRecords);
+    recInput.addEventListener("focus", () => recInput.select());
+    recWrap.appendChild(recLbl);
+    recWrap.appendChild(recInput);
+    wrap.appendChild(recWrap);
+
+    // Frequency
+    const freqWrap = document.createElement("span");
+    freqWrap.className = "cb-uc-scope-field";
+    const freqLbl = document.createElement("span");
+    freqLbl.className = "cb-uc-scope-label";
+    freqLbl.textContent = "Frequency";
+    const freqBtn = document.createElement("button");
+    freqBtn.type = "button";
+    freqBtn.className = "cb-uc-scope-freq";
+    const freqId = cb.cost.useCaseFrequencyId(ucKey);
+    freqBtn.textContent = cb.getFrequencyLabel ? cb.getFrequencyLabel(freqId) : "Annually";
+    freqBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      cb.showFrequencyPicker?.(freqBtn, cb.cost.useCaseFrequencyId(ucKey), (picked) => {
+        cb.setUseCaseScope?.(ucKey, { frequency: picked });
+      });
+    });
+    freqWrap.appendChild(freqLbl);
+    freqWrap.appendChild(freqBtn);
+    wrap.appendChild(freqWrap);
+
+    // Sub-total for this use case (credits / actions / $), from the last roll-up.
+    const sub = (cb._multiTotals?.perUseCase || []).find((u) => u.key === ucKey);
+    if (sub) {
+      const creditCost = cb.getCreditCost ? cb.getCreditCost() : 0;
+      const actionCost = cb.getActionCost ? cb.getActionCost() : 0;
+      const dollars = sub.credits * creditCost + sub.actions * actionCost;
+      const tot = document.createElement("span");
+      tot.className = "cb-uc-scope-total";
+      tot.textContent =
+        `${Math.round(sub.credits).toLocaleString()} cr` +
+        (sub.actions > 0 ? ` \u00b7 ${Math.round(sub.actions).toLocaleString()} act` : "") +
+        (dollars > 0 ? ` \u00b7 $${Math.round(dollars).toLocaleString()}` : "");
+      wrap.appendChild(tot);
+    }
+    return wrap;
+  }
+
   function buildGroupHeaderRow(section, colSpan, isCollapsed, depth = 0, opts = {}) {
     const tr = document.createElement("tr");
     tr.className =
@@ -5700,6 +5770,15 @@
         when.textContent = `imported ${relativeTimeText(opts.importedAt)}`;
         when.title = new Date(opts.importedAt).toLocaleString();
         wrap.appendChild(when);
+      }
+
+      // Per-use-case scope controls — only when 2+ imported tables exist (the
+      // global Records/Frequency in the summary bar are hidden then, so each
+      // table owns its own here). section.groupId is the `t-<tableId>` use-case
+      // key. Stops propagation so editing doesn't toggle the section collapse.
+      const cb = window.__cb;
+      if (cb.cost?.useCaseCount?.() >= 2 && typeof section.groupId === "string") {
+        wrap.appendChild(buildUseCaseScopeControls(section.groupId));
       }
     }
 

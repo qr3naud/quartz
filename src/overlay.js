@@ -990,6 +990,19 @@
     // switches tabs. closeCanvas clears this again.
     __cb.setGlobalFrequency = setGlobalFrequency;
 
+    // Write a per-use-case (per imported table) records/frequency override. Used
+    // by the per-table header controls (table-view) when 2+ use cases exist.
+    // Re-runs the cost roll-up + table refresh + persist.
+    __cb.setUseCaseScope = function (key, patch) {
+      if (!key || key === __cb.cost.OTHER_USE_CASE || !patch) return;
+      __cb.useCaseScope = __cb.useCaseScope || {};
+      __cb.useCaseScope[key] = { ...(__cb.useCaseScope[key] || {}), ...patch };
+      if (__cb.canvas?.refreshCreditTotal) __cb.canvas.refreshCreditTotal();
+      if (__cb.canvas?.updateGroupCredits) __cb.canvas.updateGroupCredits();
+      if (__cb.tableView?.refresh) __cb.tableView.refresh();
+      if (__cb.debouncedSave) __cb.debouncedSave();
+    };
+
     freqTrigger.addEventListener("click", (evt) => {
       evt.stopPropagation();
       __cb.showFrequencyPicker(freqTrigger, __cb.getCurrentFrequencyId(), (picked) => {
@@ -1429,15 +1442,18 @@
     }
 
     function recalcTotal() {
+      // Multi-use-case (2+ imported tables): the grand totals are pre-computed
+      // per use case in notifyCreditTotal (each ER x its table's records), so
+      // we use them directly instead of weighted-per-row x one global records.
+      // At <= 1 use case __cb._multiTotals is null and this is unchanged.
+      const multi = __cb._multiTotals;
       const records = parseRecordsValue();
-      // Total = frequency-weighted per-row × records in BOTH modes.
-      // notifyCreditTotal builds the weighted per-row slot per ER (honoring
-      // per-card frequency overrides) for Projected (catalog estimate ×
-      // frequency × coverage) and Actual (measured spend/row × frequency)
-      // alike, so the math here is identical for both. Frequency is the GTME
-      // lever: it scales the total without touching the measured run stats.
-      const totalCredits = currentWeightedCreditsPerRow * records;
-      const totalActions = currentWeightedActionsPerRow * records;
+      const totalCredits = multi
+        ? multi.grandCredits
+        : currentWeightedCreditsPerRow * records;
+      const totalActions = multi
+        ? multi.grandActions
+        : currentWeightedActionsPerRow * records;
       // Totals are whole-number figures in the summary bar — at scoping
       // volumes the fractional tail (e.g. 15,458.4) is noise. The per-row
       // "Avg" boxes keep their decimals via formatNumber.
@@ -1450,6 +1466,31 @@
       setSummaryNumber(creditDollarValue, creditDollars, formatDollar);
       setSummaryNumber(actionDollarValue, actionDollars, formatDollar);
       setSummaryNumber(totalDollarValue, creditDollars + actionDollars, formatDollarRounded);
+
+      // Adaptive bar: with 2+ use cases, per-scope controls (Avg/Row, Records,
+      // Frequency) move to each table's header — hide them here and show the
+      // grand total + a per-use-case breakdown on hover.
+      const hideScope = !!multi;
+      creditsBox.classList.toggle("cb-summary-hidden", hideScope);
+      actionsBox.classList.toggle("cb-summary-hidden", hideScope);
+      recordsBox.classList.toggle("cb-summary-hidden", hideScope);
+      freqBox.classList.toggle("cb-summary-hidden", hideScope);
+      if (multi && Array.isArray(multi.perUseCase)) {
+        const lines = multi.perUseCase
+          .slice()
+          .sort((a, b) => b.credits - a.credits)
+          .map(
+            (u) =>
+              `${u.name}: ${Math.round(u.credits).toLocaleString()} cr` +
+              (u.actions > 0 ? ` / ${Math.round(u.actions).toLocaleString()} act` : ""),
+          );
+        const tip = "Total by use case:\n" + lines.join("\n");
+        totalBox.title = tip;
+        totalActionsBox.title = tip;
+      } else {
+        totalBox.removeAttribute("title");
+        totalActionsBox.removeAttribute("title");
+      }
     }
 
     function commitPricingInput(input, setter) {
@@ -2095,6 +2136,7 @@
       // builds zero .cb-card elements; canvas-view tabs mount as before.
       __cb.model.restore(activeTab.state, { mountDom: mountCanvasDom });
       __cb.recordsActual = activeTab.state.recordsActual ?? null;
+      __cb.useCaseScope = activeTab.state.useCaseScope ?? {};
       if (activeTab.state.records) {
         recordsInput.value = activeTab.state.records;
         recordsInput.dispatchEvent(new Event("input"));
@@ -2243,11 +2285,13 @@
     __cb.setBrainstormView = null;
     __cb.brainstormView = "canvas";
     __cb.setGlobalFrequency = null;
+    __cb.setUseCaseScope = null;
     __cb.getRecordsCount = null;
     __cb.getCreditCost = null;
     __cb.getActionCost = null;
     __cb.applyRecordsState = null;
     __cb.recordsActual = null;
+    __cb.useCaseScope = {};
     __cb._autoActualPending = false;
     __cb.actualSpendExpired = false;
     __cb.actualLoading = false;
