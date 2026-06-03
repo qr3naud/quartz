@@ -1318,8 +1318,21 @@
     return row;
   }
 
-  // A single table's column: header (color dot + name + All/Clear) + its rows.
-  function buildSessionColumn(cut, tableState, tid, meta) {
+  // Skeleton rows shown while a table's runs are still loading, so the columns
+  // (and their table names) appear immediately instead of one blanket spinner.
+  function buildSessionSkeleton(count) {
+    const wrap = document.createElement("div");
+    for (let i = 0; i < (count || 3); i++) {
+      const r = document.createElement("div");
+      r.className = "cb-session-pop-skel";
+      wrap.appendChild(r);
+    }
+    return wrap;
+  }
+
+  // A single table's column: header (color dot + name) + its rows. When
+  // `loading` (or no state yet) the rows are a skeleton placeholder.
+  function buildSessionColumn(cut, tableState, tid, meta, loading) {
     const col = document.createElement("div");
     col.className = "cb-session-pop-col";
 
@@ -1337,7 +1350,9 @@
 
     const list = document.createElement("div");
     list.className = "cb-session-pop-col-list";
-    if (!tableState.sessions.length) {
+    if (loading || !tableState) {
+      list.appendChild(buildSessionSkeleton(3));
+    } else if (!tableState.sessions.length) {
       const m = document.createElement("div");
       m.className = "cb-session-pop-empty";
       m.textContent = "No runs.";
@@ -1359,40 +1374,58 @@
     if (!body) return;
     closeSessionSubmenu();
     body.replaceChildren();
-    if (!st || st.loading) {
-      const m = document.createElement("div");
-      m.className = "cb-session-pop-empty";
-      m.textContent = "Loading sessions\u2026";
-      body.appendChild(m);
-      return;
+
+    const loading = !st || st.loading;
+
+    // Table list. When loaded, the controller's tableIds are authoritative.
+    // While loading (or before state exists), fall back to the known imported
+    // tables so the columns + table names render immediately ("pre-populated").
+    let tableIds = (st && st.tableIds) || [];
+    if (!tableIds.length) {
+      tableIds = (window.__cb.cost?.listUseCases?.() || []).map((u) => u.tableId);
     }
-    const tableIds = st.tableIds || [];
-    const anySessions = tableIds.some((tid) => st.byTable[tid]?.sessions?.length);
-    if (!anySessions) {
+
+    if (!tableIds.length) {
       const m = document.createElement("div");
       m.className = "cb-session-pop-empty";
-      m.textContent = "No realtime runs found.";
+      m.textContent = loading ? "Loading sessions\u2026" : "No realtime runs found.";
       body.appendChild(m);
       return;
     }
 
+    // Loaded with zero sessions across every table → nothing to scope.
+    if (!loading) {
+      const anySessions = tableIds.some((tid) => st.byTable[tid]?.sessions?.length);
+      if (!anySessions) {
+        const m = document.createElement("div");
+        m.className = "cb-session-pop-empty";
+        m.textContent = "No realtime runs found.";
+        body.appendChild(m);
+        return;
+      }
+    }
+
+    const names = importedTableMeta();
+
     // Single table: flat list (unchanged look). 2+ tables: one column each.
     if (tableIds.length <= 1) {
       const tid = tableIds[0];
-      const t = st.byTable[tid];
+      const t = st?.byTable?.[tid];
+      if (loading || !t) {
+        body.appendChild(buildSessionSkeleton(4));
+        return;
+      }
       for (const s of t.sessions.slice().reverse()) {
         body.appendChild(buildSessionRow(cut, t, tid, s));
       }
       return;
     }
 
-    const names = importedTableMeta();
     const cols = document.createElement("div");
     cols.className = "cb-session-pop-cols";
     for (const tid of tableIds) {
-      const t = st.byTable[tid];
-      if (!t) continue;
-      cols.appendChild(buildSessionColumn(cut, t, tid, names.get(tid)));
+      const t = st?.byTable?.[tid];
+      cols.appendChild(buildSessionColumn(cut, t, tid, names.get(tid), loading));
     }
     body.appendChild(cols);
   }

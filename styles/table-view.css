@@ -2010,6 +2010,26 @@
   padding: 0 2px;
 }
 
+/* Skeleton placeholder rows shown while runs load (columns appear up-front). */
+.cb-session-pop-skel {
+  height: 34px;
+  margin: 6px 8px;
+  border-radius: 6px;
+  background: #f1f5f9;
+  animation: cb-session-skel-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes cb-session-skel-pulse {
+  0%, 100% { opacity: 0.55; }
+  50% { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cb-session-pop-skel {
+    animation: none;
+  }
+}
+
 .cb-session-pop-row {
   display: flex;
   align-items: center;
