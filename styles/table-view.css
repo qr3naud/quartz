@@ -2132,11 +2132,26 @@
   color: #6b7280;
 }
 
+/* Right-aligned footer group: [took duration][Fetched pill]. */
+.cb-session-pop-foot-right {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Persisted fetch duration, shown left of the Fetched pill. */
+.cb-session-pop-took {
+  font-size: 11px;
+  color: #9ca3af;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
 /* Fetched-date / refresh pill, bottom-right of the footer. Shows when the runs
    were last fetched; click to refetch. Tabular numbers so the live tick doesn't
    jitter. */
 .cb-session-pop-timer {
-  margin-left: auto;
   font-size: 11px;
   color: #9ca3af;
   font-variant-numeric: tabular-nums;

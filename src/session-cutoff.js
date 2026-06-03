@@ -53,6 +53,8 @@
   let loadToken = 0; // bumped ONLY on context change (tab switch / restore /
   // refresh); in-flight loads bail if stale. NOT bumped per ensureLoaded call —
   // doing so orphaned in-flight fetches when a re-render re-entered ensureLoaded.
+  let loadSeq = 0; // monotonic; stamped on each table as its base lands so the
+  // picker can order columns by completion (first back → first column).
   const tableLoads = new Map(); // tid -> in-flight Promise (per-table dedupe)
   const listeners = new Set();
 
@@ -236,6 +238,7 @@
         t.reused = true; // stale-ish (came from a prior fetch) → amber pill
         t.selectedBaseIds = defaultSelectionBase(t.base); // fresh choice for this tab
         t.error = false;
+        t.loadedSeq = ++loadSeq; // completion order → first back, first column
       } else {
         const ws = workspaceId();
         if (!ws) throw new Error("no workspace");
@@ -246,6 +249,7 @@
         t.reused = false;
         t.selectedBaseIds = defaultSelectionBase(t.base);
         t.error = false;
+        t.loadedSeq = ++loadSeq;
       }
     } catch {
       if (token === loadToken) {
@@ -402,11 +406,18 @@
     return merged;
   }
 
-  // Count of selected base buckets across all tables (the Actual badge count).
+  // Count of selected DISPLAYED sessions across all tables (the Actual badge).
+  // Counts grouped sessions, not raw 6h base buckets — a merged session with any
+  // selected child counts once, so the badge matches what the user sees at the
+  // current gap.
   function totalSelected() {
     if (!state) return 0;
     let n = 0;
-    for (const tid of state.tableIds) n += state.byTable[tid]?.selectedBaseIds?.size || 0;
+    for (const tid of state.tableIds) {
+      const t = state.byTable[tid];
+      if (!t || !t.sessions) continue;
+      for (const s of t.sessions) if (s.selected && s.selected !== "none") n++;
+    }
     return n;
   }
 
@@ -538,7 +549,7 @@
         loading: false,
         byTable: {},
         fetchStartedAt: null,
-        fetchMs: null,
+        fetchMs: saved.fetchMs ?? null, // last fetch duration, for the pill
       };
       for (const tid of tableIds) {
         const ct = saved.byTable[tid];
@@ -555,6 +566,7 @@
             error: false,
             reused: false, // normal reopen is not a re-import → not amber
             lastFetchedAt: ct.lastFetchedAt || null,
+            loadedSeq: ++loadSeq, // keep saved order on reopen
           };
         } else {
           // On the canvas but not in the saved blob (e.g. imported in another
@@ -593,7 +605,7 @@
         };
       }
       if (!Object.keys(byTable).length) return null;
-      return { byTable, gapMs: state.gapMs };
+      return { byTable, gapMs: state.gapMs, fetchMs: state.fetchMs ?? null };
     },
 
     // Manual refresh from the footer pill: refetch run/recent for all current
@@ -632,7 +644,10 @@
     // a reuse (→ amber nudge) + whether any errored (→ red) + in-flight.
     fetchInfo() {
       if (!state) {
-        return { lastFetchedAt: null, anyReused: false, anyError: false, loading: false };
+        return {
+          lastFetchedAt: null, anyReused: false, anyError: false,
+          loading: false, fetchMs: null,
+        };
       }
       let oldest = null;
       let anyReused = false;
@@ -646,7 +661,10 @@
           oldest = oldest == null ? t.lastFetchedAt : Math.min(oldest, t.lastFetchedAt);
         }
       }
-      return { lastFetchedAt: oldest, anyReused, anyError, loading: !!state.loading };
+      return {
+        lastFetchedAt: oldest, anyReused, anyError,
+        loading: !!state.loading, fetchMs: state.fetchMs ?? null,
+      };
     },
 
     totalSelected,

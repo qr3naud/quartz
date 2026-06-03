@@ -1063,8 +1063,10 @@
   let sessionPopoverEl = null;
   let sessionPopoverBackdrop = null;
   // Load-timer pill (bottom-right of the popover): live-ticks while a network
-  // fetch is in flight, then settles to "Loaded in Xs". Cache hits show nothing.
+  // fetch is in flight, then settles to "Fetched <date>". Cache hits show
+  // nothing. sessionTookEl (to its left) shows the persisted fetch duration.
   let sessionTimerEl = null;
+  let sessionTookEl = null;
   let sessionTimerInterval = null;
 
   // Number of SELECTED run buckets (sessions) shown in the Actual button's
@@ -1134,6 +1136,7 @@
     closeSessionPillMenu();
     if (sessionTimerInterval) { clearInterval(sessionTimerInterval); sessionTimerInterval = null; }
     sessionTimerEl = null;
+    sessionTookEl = null;
     if (sessionPopoverEl) { sessionPopoverEl.remove(); sessionPopoverEl = null; }
     if (sessionPopoverBackdrop) { sessionPopoverBackdrop.remove(); sessionPopoverBackdrop = null; }
   }
@@ -1163,8 +1166,19 @@
     const cut = window.__cb.sessionCutoff;
     const st = cut?.getState?.();
     const info = cut?.fetchInfo?.() || {
-      lastFetchedAt: null, anyReused: false, anyError: false, loading: false,
+      lastFetchedAt: null, anyReused: false, anyError: false, loading: false, fetchMs: null,
     };
+    // Persisted fetch duration, left of the pill — only alongside a real
+    // "Fetched <date>" (hidden while loading / on error / when never fetched).
+    if (sessionTookEl) {
+      const showTook =
+        !info.loading && !info.anyError && info.fetchMs != null && info.lastFetchedAt != null;
+      sessionTookEl.style.display = showTook ? "" : "none";
+      if (showTook) {
+        sessionTookEl.textContent = `${(info.fetchMs / 1000).toFixed(1)}s`;
+        sessionTookEl.title = `Realtime runs took ${(info.fetchMs / 1000).toFixed(1)}s to fetch`;
+      }
+    }
     sessionTimerEl.classList.remove(
       "cb-session-pop-timer-loading",
       "cb-session-pop-timer-amber",
@@ -1260,14 +1274,20 @@
       cut.refresh?.(); // refetches every imported table in parallel
     });
     menu.appendChild(it);
-    sessionPopoverEl.appendChild(menu);
+    // Body-mounted + fixed so it isn't clipped by the popover and lands exactly
+    // under the pill (right edges aligned). Flips above only if there's no room
+    // below.
+    document.body.appendChild(menu);
     sessionPillMenuEl = menu;
-    // Open ABOVE the pill, right edges aligned (pill sits bottom-right).
     const aRect = anchorEl.getBoundingClientRect();
-    const pRect = sessionPopoverEl.getBoundingClientRect();
-    menu.style.position = "absolute";
-    menu.style.bottom = `${pRect.bottom - aRect.top + 4}px`;
-    menu.style.right = `${Math.max(8, pRect.right - aRect.right)}px`;
+    menu.style.position = "fixed";
+    menu.style.zIndex = "10000001";
+    const h = menu.offsetHeight || 0;
+    const w = menu.offsetWidth || 140;
+    let top = aRect.bottom + 4;
+    if (top + h > window.innerHeight - 8) top = aRect.top - 4 - h; // flip up if needed
+    menu.style.top = `${Math.max(8, top)}px`;
+    menu.style.left = `${Math.max(8, aRect.right - w)}px`;
   }
 
   // The header "..." overflow menu (Select all / Clear all, across every table).
@@ -1612,10 +1632,19 @@
 
     const cols = document.createElement("div");
     cols.className = "cb-session-pop-cols";
-    // Pass loading=false so each column reveals on ITS OWN per-table flag
-    // (progressive); the global `loading` would otherwise hold every column in
-    // a skeleton until the slowest table lands.
-    for (const tid of tableIds) {
+    // Order columns by completion (loadedSeq): a table whose runs come back
+    // first shows first. Still-loading tables (no loadedSeq) sort last, keeping
+    // their original order. Pass loading=false so each column reveals on ITS OWN
+    // per-table flag (progressive), not the global loading.
+    const ordered = tableIds.slice().sort((a, b) => {
+      const sa = st?.byTable?.[a]?.loadedSeq;
+      const sb = st?.byTable?.[b]?.loadedSeq;
+      const la = sa == null ? Infinity : sa;
+      const lb = sb == null ? Infinity : sb;
+      if (la !== lb) return la - lb;
+      return tableIds.indexOf(a) - tableIds.indexOf(b);
+    });
+    for (const tid of ordered) {
       const t = st?.byTable?.[tid];
       cols.appendChild(buildSessionColumn(cut, t, tid, names.get(tid), false));
     }
@@ -1698,9 +1727,17 @@
     footer.appendChild(gapLbl);
     footer.appendChild(gapInput);
     footer.appendChild(gapSuffix);
-    // Fetched-date / refresh pill, pushed to the bottom-right. Shows when the
-    // runs were last fetched (amber after a re-import), ticks while fetching,
-    // and refetches on click. Populated by syncSessionTimer.
+    // Right group: [took duration][Fetched pill], pushed to the bottom-right.
+    const footRight = document.createElement("div");
+    footRight.className = "cb-session-pop-foot-right";
+    // Persisted fetch duration (e.g. "30.5s"), shown left of the pill.
+    sessionTookEl = document.createElement("span");
+    sessionTookEl.className = "cb-session-pop-took";
+    sessionTookEl.style.display = "none";
+    footRight.appendChild(sessionTookEl);
+    // Fetched-date / refresh pill. Shows when the runs were last fetched (amber
+    // after a re-import), ticks while fetching, opens the Refresh import menu on
+    // click. Populated by syncSessionTimer.
     sessionTimerEl = document.createElement("span");
     sessionTimerEl.className = "cb-session-pop-timer";
     sessionTimerEl.style.display = "none";
@@ -1712,7 +1749,8 @@
       if (info && info.anyError) { cut.refresh?.(); return; } // error → retry directly
       openSessionPillMenu(sessionTimerEl); // otherwise a "Refresh import" menu
     });
-    footer.appendChild(sessionTimerEl);
+    footRight.appendChild(sessionTimerEl);
+    footer.appendChild(footRight);
     sessionPopoverEl.appendChild(footer);
 
     document.body.appendChild(sessionPopoverBackdrop);
