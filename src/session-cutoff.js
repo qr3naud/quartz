@@ -181,6 +181,7 @@
         if (
           !opts.force &&
           cache?.sessions?.length &&
+          cache.sessions[0].perField && // pre-v5 caches lack the per-column rollup
           cache.ts &&
           Date.now() - cache.ts < CACHE_TTL_MS
         ) {
