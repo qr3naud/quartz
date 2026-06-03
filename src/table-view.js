@@ -1161,8 +1161,15 @@
     if (!sessionTimerEl) return;
     const cut = window.__cb.sessionCutoff;
     const st = cut?.getState?.();
-    const info = cut?.fetchInfo?.() || { lastFetchedAt: null, anyReused: false, loading: false };
-    sessionTimerEl.classList.remove("cb-session-pop-timer-loading", "cb-session-pop-timer-amber");
+    const info = cut?.fetchInfo?.() || {
+      lastFetchedAt: null, anyReused: false, anyError: false, loading: false,
+    };
+    sessionTimerEl.classList.remove(
+      "cb-session-pop-timer-loading",
+      "cb-session-pop-timer-amber",
+      "cb-session-pop-timer-error",
+    );
+    // Loading: live elapsed tick.
     if (info.loading && st?.fetchStartedAt != null) {
       const now =
         typeof performance !== "undefined" && performance.now
@@ -1175,6 +1182,15 @@
       return;
     }
     if (sessionTimerInterval) { clearInterval(sessionTimerInterval); sessionTimerInterval = null; }
+    // Error: red pill, click to retry.
+    if (info.anyError) {
+      sessionTimerEl.style.display = "";
+      sessionTimerEl.textContent = "Fetch failed \u2014 retry";
+      sessionTimerEl.classList.add("cb-session-pop-timer-error");
+      sessionTimerEl.title =
+        "Couldn't fetch realtime runs (network or timeout). Click to retry.";
+      return;
+    }
     if (info.lastFetchedAt == null && !info.anyReused) {
       sessionTimerEl.style.display = "none";
       return;

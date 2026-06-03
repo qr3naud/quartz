@@ -50,8 +50,10 @@
   //     loading, error, reused, lastFetchedAt
   //   } }
   // }
-  let loadToken = 0; // bumped on context change; in-flight loads bail if stale
-  const inFlight = new Set(); // tids currently being fetched (per-table dedupe)
+  let loadToken = 0; // bumped ONLY on context change (tab switch / restore /
+  // refresh); in-flight loads bail if stale. NOT bumped per ensureLoaded call —
+  // doing so orphaned in-flight fetches when a re-render re-entered ensureLoaded.
+  const tableLoads = new Map(); // tid -> in-flight Promise (per-table dedupe)
   const listeners = new Set();
 
   function notify() {
@@ -217,16 +219,15 @@
     return null;
   }
 
-  // Ensure one table has base data. Order: already in memory → reuse a saved
-  // blob from any tab (no fetch, amber) → fetch run/recent (fresh). Stamps that
-  // table's cards as soon as its data is ready (progressive reveal). `force`
-  // (manual refresh) skips the reuse path so it always hits the network.
+  // Load one table's base data. Order: reuse a saved blob from any tab (no
+  // fetch, amber) → fetch run/recent (fresh). `force` (manual refresh) skips
+  // reuse so it always hits the network. Applies its result (stamp + notify) in
+  // the finally, as soon as it lands — progressive reveal. The token guards
+  // against a context change (tab switch / refresh) landing on the wrong tab.
+  // tableLoads (managed by ensureLoaded) dedupes, so loadOne never double-runs.
   async function loadOne(tid, token, force) {
     if (!state || !state.byTable[tid]) return;
     const t = state.byTable[tid];
-    if (t.base && t.base.length) return; // already have it (restored)
-    if (inFlight.has(tid)) return;
-    inFlight.add(tid);
     try {
       const saved = force ? null : findSavedBase(tid);
       if (saved && saved.base.length) {
@@ -237,7 +238,7 @@
         t.error = false;
       } else {
         const ws = workspaceId();
-        if (!ws) return; // ws not ready yet — leave loading; a later call retries
+        if (!ws) throw new Error("no workspace");
         const runs = await withTimeout(cb.fetchRunSpend(ws, tid, discoveryDays()));
         if (token !== loadToken) return; // superseded (tab switch / refresh)
         t.base = bucketBase(tid, Array.isArray(runs) ? runs : []);
@@ -248,12 +249,11 @@
       }
     } catch {
       if (token === loadToken) {
-        t.base = [];
+        t.base = null; // null (not []) so a retry re-attempts it
         t.selectedBaseIds = new Set();
         t.error = true;
       }
     } finally {
-      inFlight.delete(tid);
       if (token === loadToken && state?.byTable?.[tid]) {
         t.loading = false;
         recomputeDisplayed(tid);
@@ -263,9 +263,11 @@
     }
   }
 
-  // Idempotent, INCREMENTAL loader. Seeds a state shell if needed, then fills any
-  // current table that lacks base data (restored tables are left untouched). New
-  // imports add their table here; tables removed from the canvas are dropped.
+  // Idempotent, INCREMENTAL loader. Seeds a state shell, then starts a load for
+  // each current table that lacks base data and isn't already loading. Safe to
+  // call on every render: it never restarts an in-flight load or bumps the token
+  // (that was the v7.0 bug — re-entrant calls orphaned the fetch). New imports
+  // add their table; removed tables are dropped. `force` reloads from network.
   function ensureLoaded(opts) {
     opts = opts || {};
     const tableIds = distinctTableIds();
@@ -290,26 +292,26 @@
 
     // Drop tables no longer on the canvas.
     for (const tid of Object.keys(state.byTable)) {
-      if (!tableIds.includes(tid)) delete state.byTable[tid];
+      if (!tableIds.includes(tid)) {
+        delete state.byTable[tid];
+        tableLoads.delete(tid);
+      }
     }
 
-    // Which tables still need base data?
-    const missing = tableIds.filter(
-      (tid) => opts.force || !state.byTable[tid] || !state.byTable[tid].base,
-    );
-    if (!missing.length && !opts.force) {
-      state.loaded = true;
-      return Promise.resolve(state);
-    }
+    const token = loadToken; // current context — NOT bumped here
+    const wasLoading = tableLoads.size > 0;
+    let willFetch = false;
 
-    const token = ++loadToken;
-    const willFetch = opts.force || missing.some((tid) => !findSavedBase(tid));
-    state.loading = true;
-    if (willFetch) {
-      state.fetchStartedAt = nowMs();
-      state.fetchMs = null;
-    }
-    for (const tid of missing) {
+    for (const tid of tableIds) {
+      let t = state.byTable[tid];
+      if (opts.force) {
+        if (t) { t.base = null; t.reused = false; }
+        tableLoads.delete(tid); // allow a fresh load even if one was running
+      }
+      t = state.byTable[tid];
+      if (t && t.base && t.base.length) continue; // already loaded
+      if (tableLoads.has(tid)) continue; // already loading — don't restart
+      // (Re)skeleton this table and start its load.
       state.byTable[tid] = {
         base: null,
         sessions: [],
@@ -317,28 +319,43 @@
         loading: true,
         error: false,
         reused: false,
-        lastFetchedAt: null,
+        lastFetchedAt: t?.lastFetchedAt ?? null,
       };
+      if (opts.force || !findSavedBase(tid)) willFetch = true;
+      const p = loadOne(tid, token, opts.force).finally(() => tableLoads.delete(tid));
+      tableLoads.set(tid, p);
     }
+
+    state.loading = tableLoads.size > 0;
+    // Start the load-timer afresh only when a new fetch batch begins from idle.
+    if (willFetch && !wasLoading) {
+      state.fetchStartedAt = nowMs();
+      state.fetchMs = null;
+    }
+    if (!state.loading) state.loaded = true;
     recomputeDisplayed();
     notify();
 
-    return (async () => {
-      await Promise.allSettled(missing.map((tid) => loadOne(tid, token, opts.force)));
+    const pending = [...tableLoads.values()];
+    if (!pending.length) return Promise.resolve(state);
+
+    return Promise.allSettled(pending).then(() => {
       if (token !== loadToken) return null;
-      state.loaded = true;
-      state.loading = false;
-      if (state.fetchStartedAt != null && state.fetchMs == null) {
-        state.fetchMs = nowMs() - state.fetchStartedAt;
+      if (tableLoads.size === 0) {
+        state.loaded = true;
+        state.loading = false;
+        if (state.fetchStartedAt != null && state.fetchMs == null) {
+          state.fetchMs = nowMs() - state.fetchStartedAt;
+        }
+        recomputeDisplayed();
+        notify();
+        if (hasAnySessions()) applySelection({ silent: true, noPersist: true });
+        // Persist freshly loaded sessions to the DB so a reload/re-import reuses
+        // them with no refetch (the whole point of the cache).
+        persist();
       }
-      recomputeDisplayed();
-      notify();
-      if (hasAnySessions()) applySelection({ silent: true, noPersist: true });
-      // Persist the freshly loaded sessions to the DB tab state so a reload /
-      // re-import reuses them with no refetch (the whole point of the cache).
-      persist();
       return state;
-    })();
+    });
   }
 
   // Remove previously-stamped measured spend from a table's cards so a new
@@ -495,7 +512,7 @@
     // Supersede any in-flight load so it can't stamp the tab we moved to.
     invalidate() {
       loadToken++;
-      inFlight.clear();
+      tableLoads.clear();
       state = null;
       cb.actualSummaryNotice = null;
       cb.actualSpendApplying = false;
@@ -506,7 +523,7 @@
     // stay consistent. Called on tab open / switch (see overlay.js, tabs.js).
     restore(saved) {
       loadToken++;
-      inFlight.clear();
+      tableLoads.clear();
       cb.actualSummaryNotice = null;
       cb.actualSpendApplying = false;
       const tableIds = distinctTableIds();
@@ -583,7 +600,7 @@
     // tables (force), re-running the timer + progressive reveal.
     refresh() {
       loadToken++;
-      inFlight.clear();
+      tableLoads.clear();
       if (state) {
         for (const tid of state.tableIds) {
           const t = state.byTable[tid];
@@ -612,20 +629,24 @@
     },
 
     // Footer pill: oldest fetch time across current tables + whether any table is
-    // a reuse (→ amber nudge) + whether a fetch is in flight.
+    // a reuse (→ amber nudge) + whether any errored (→ red) + in-flight.
     fetchInfo() {
-      if (!state) return { lastFetchedAt: null, anyReused: false, loading: false };
+      if (!state) {
+        return { lastFetchedAt: null, anyReused: false, anyError: false, loading: false };
+      }
       let oldest = null;
       let anyReused = false;
+      let anyError = false;
       for (const tid of state.tableIds) {
         const t = state.byTable[tid];
         if (!t) continue;
         if (t.reused) anyReused = true;
+        if (t.error) anyError = true;
         if (t.lastFetchedAt != null) {
           oldest = oldest == null ? t.lastFetchedAt : Math.min(oldest, t.lastFetchedAt);
         }
       }
-      return { lastFetchedAt: oldest, anyReused, loading: !!state.loading };
+      return { lastFetchedAt: oldest, anyReused, anyError, loading: !!state.loading };
     },
 
     totalSelected,
