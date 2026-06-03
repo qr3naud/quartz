@@ -2003,10 +2003,6 @@
   text-overflow: ellipsis;
 }
 
-.cb-session-pop-col-all {
-  flex-shrink: 0;
-}
-
 .cb-session-pop-col-list {
   padding: 0 2px;
 }
@@ -2080,8 +2076,57 @@
   gap: 6px;
   padding: 8px 12px;
   border-top: 1px solid #f1f5f9;
+  /* Subtle grey for visual contrast — matches the enrichment (provider chain)
+     picker footer. */
+  background: #f9fafb;
   font-size: 12px;
   color: #6b7280;
+}
+
+/* Header "..." overflow menu (Select all / Clear all). */
+.cb-session-pop-menu-btn {
+  border: none;
+  background: none;
+  color: #6b7280;
+  font-size: 16px;
+  line-height: 1;
+  font-weight: 700;
+  cursor: pointer;
+  padding: 0 4px;
+  border-radius: 6px;
+}
+
+.cb-session-pop-menu-btn:hover {
+  background: #f3f4f6;
+  color: #374151;
+}
+
+.cb-session-pop-menu {
+  z-index: 10;
+  min-width: 120px;
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  box-shadow: 0 10px 25px rgba(15, 23, 42, 0.15), 0 4px 10px rgba(15, 23, 42, 0.08);
+  padding: 4px;
+}
+
+.cb-session-pop-menu-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: none;
+  font-family: inherit;
+  font-size: 12px;
+  color: #374151;
+  cursor: pointer;
+  padding: 6px 8px;
+  border-radius: 6px;
+}
+
+.cb-session-pop-menu-item:hover {
+  background: #f3f4f6;
 }
 
 .cb-session-pop-gap {

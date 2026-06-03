@@ -1126,8 +1126,45 @@
 
   function closeSessionPopover() {
     closeSessionSubmenu();
+    closeSessionHeaderMenu();
     if (sessionPopoverEl) { sessionPopoverEl.remove(); sessionPopoverEl = null; }
     if (sessionPopoverBackdrop) { sessionPopoverBackdrop.remove(); sessionPopoverBackdrop = null; }
+  }
+
+  // The header "..." overflow menu (Select all / Clear all, across every table).
+  let sessionHeaderMenuEl = null;
+  function closeSessionHeaderMenu() {
+    if (sessionHeaderMenuEl) { sessionHeaderMenuEl.remove(); sessionHeaderMenuEl = null; }
+  }
+  function openSessionHeaderMenu(anchorBtn) {
+    if (sessionHeaderMenuEl) { closeSessionHeaderMenu(); return; }
+    if (!sessionPopoverEl) return;
+    const cut = window.__cb.sessionCutoff;
+    const menu = document.createElement("div");
+    menu.className = "cb-session-pop-menu";
+    menu.addEventListener("mousedown", (e) => e.stopPropagation());
+    const mk = (label, fn) => {
+      const it = document.createElement("button");
+      it.type = "button";
+      it.className = "cb-session-pop-menu-item";
+      it.textContent = label;
+      it.addEventListener("click", (e) => {
+        e.stopPropagation();
+        fn();
+        closeSessionHeaderMenu();
+      });
+      return it;
+    };
+    menu.appendChild(mk("Select all", () => cut.setAllTables(true)));
+    menu.appendChild(mk("Clear all", () => cut.setAllTables(false)));
+    sessionPopoverEl.appendChild(menu);
+    sessionHeaderMenuEl = menu;
+    // Anchor under the "..." button, relative to the popover.
+    const aRect = anchorBtn.getBoundingClientRect();
+    const pRect = sessionPopoverEl.getBoundingClientRect();
+    menu.style.position = "absolute";
+    menu.style.top = `${aRect.bottom - pRect.top + 4}px`;
+    menu.style.right = "8px";
   }
 
   // fieldId -> column display name, from the live cards (for the hover submenu).
@@ -1295,17 +1332,8 @@
     nm.className = "cb-session-pop-col-name";
     nm.textContent = meta?.name || "Table";
     nm.title = nm.textContent;
-    const allOn =
-      tableState.sessions.length > 0 &&
-      tableState.selectedIds.size === tableState.sessions.length;
-    const allBtn = document.createElement("button");
-    allBtn.type = "button";
-    allBtn.className = "cb-session-pop-all cb-session-pop-col-all";
-    allBtn.textContent = allOn ? "Clear" : "All";
-    allBtn.addEventListener("click", (e) => { e.stopPropagation(); cut.setAll(tid, !allOn); });
     header.appendChild(dot);
     header.appendChild(nm);
-    header.appendChild(allBtn);
     col.appendChild(header);
 
     const list = document.createElement("div");
@@ -1389,14 +1417,17 @@
     header.className = "cb-session-pop-header";
     const title = document.createElement("span");
     title.className = "cb-session-pop-title";
-    title.textContent = "Count Actual spend from";
-    const allBtn = document.createElement("button");
-    allBtn.type = "button";
-    allBtn.className = "cb-session-pop-all";
-    allBtn.textContent = "Select all";
-    allBtn.addEventListener("click", (e) => { e.stopPropagation(); cut.setAllTables(true); });
+    title.textContent = "Actual spend from";
+    // Overflow "..." menu — houses the global Select all / Clear all that used
+    // to be inline (and the per-column buttons), keeping the header clean.
+    const menuBtn = document.createElement("button");
+    menuBtn.type = "button";
+    menuBtn.className = "cb-session-pop-menu-btn";
+    menuBtn.textContent = "\u22ef"; // horizontal ellipsis
+    menuBtn.setAttribute("aria-label", "Session options");
+    menuBtn.addEventListener("click", (e) => { e.stopPropagation(); openSessionHeaderMenu(menuBtn); });
     header.appendChild(title);
-    header.appendChild(allBtn);
+    header.appendChild(menuBtn);
     sessionPopoverEl.appendChild(header);
 
     const body = document.createElement("div");
