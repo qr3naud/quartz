@@ -1217,7 +1217,8 @@
     if (info.anyReused) {
       sessionTimerEl.classList.add("cb-session-pop-timer-amber");
       sessionTimerEl.title =
-        "Reusing previously fetched runs \u2014 click to refresh from Clay.";
+        "This data is cached (reused from a previous fetch). If you want fresher " +
+        "results, click and refresh.";
     } else {
       sessionTimerEl.title = "Click to refresh runs from Clay.";
     }

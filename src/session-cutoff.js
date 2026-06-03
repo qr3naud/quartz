@@ -564,7 +564,9 @@
               : defaultSelectionBase(ct.base),
             loading: false,
             error: false,
-            reused: false, // normal reopen is not a re-import → not amber
+            // Persisted amber "cached" state survives the reload (cleared only
+            // by an explicit refresh, which refetches fresh).
+            reused: !!ct.reused,
             lastFetchedAt: ct.lastFetchedAt || null,
             loadedSeq: ++loadSeq, // keep saved order on reopen
           };
@@ -602,6 +604,7 @@
           base: t.base,
           selectedBaseIds: [...t.selectedBaseIds],
           lastFetchedAt: t.lastFetchedAt || null,
+          reused: !!t.reused, // persist the amber "cached" state across reloads
         };
       }
       if (!Object.keys(byTable).length) return null;
