@@ -1278,7 +1278,7 @@
     const tables = window.__cb.model?.getImportedTables?.() || {};
     for (const tid of Object.keys(tables)) {
       const meta = tables[tid] || {};
-      m.set(tid, { name: meta.name || "Table", color: meta.color || meta.importColor || null });
+      m.set(tid, { name: meta.name || "Table" });
     }
     return m;
   }
@@ -1327,7 +1327,6 @@
     header.className = "cb-session-pop-col-header";
     const dot = document.createElement("span");
     dot.className = "cb-session-pop-col-dot";
-    if (meta?.color) dot.style.background = meta.color;
     const nm = document.createElement("span");
     nm.className = "cb-session-pop-col-name";
     nm.textContent = meta?.name || "Table";

@@ -1985,10 +1985,13 @@
 }
 
 .cb-session-pop-col-dot {
-  width: 8px;
-  height: 8px;
+  width: 9px;
+  height: 9px;
   border-radius: 50%;
-  background: #cbd5e1;
+  /* Matches the imported-table header (data-group-level=1 green palette):
+     #ecfdf5 fill + #a7f3d0 border, so the column ties to its green table block. */
+  background: #ecfdf5;
+  border: 1px solid #a7f3d0;
   flex-shrink: 0;
 }
 
