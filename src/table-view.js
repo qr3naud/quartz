@@ -5747,6 +5747,15 @@
     const sub = (cb._multiTotals?.perUseCase || []).find((u) => u.key === ucKey);
     if (sub) {
       wrap.appendChild(buildCostBadges(sub.credits || 0, sub.actions || 0));
+      // Dollar cost in its own badge ($ icon + amount), using the workbook's
+      // negotiated credit/action prices.
+      const creditCost = cb.getCreditCost ? cb.getCreditCost() : 0;
+      const actionCost = cb.getActionCost ? cb.getActionCost() : 0;
+      const dollars = (sub.credits || 0) * creditCost + (sub.actions || 0) * actionCost;
+      const dol = document.createElement("span");
+      dol.className = "cb-uc-scope-dollar";
+      dol.innerHTML = dollarSvg(12) + `<span>${Math.round(dollars).toLocaleString()}</span>`;
+      wrap.appendChild(dol);
     }
     return wrap;
   }
@@ -5895,12 +5904,14 @@
     wrap.appendChild(chevron);
     wrap.appendChild(icon);
     wrap.appendChild(labelEl);
-    wrap.appendChild(count);
+    // Non-table headers keep the inline "N data points" count; table headers
+    // tuck the counts behind an (i) icon next to the title (below).
+    if (!opts.isTable) wrap.appendChild(count);
 
-    // Per-table header extras (Import Clay Table): enrichment count, the SOURCE
-    // table's total row count, the per-use-case scope controls, and when it was
-    // imported (far right). The "N data points" count above is imported columns;
-    // "N enrichments" is the ER cards belonging to this table's use case.
+    // Per-table header (Import Clay Table): an (i) icon next to the title holds
+    // the counts (data points / enrichments / rows); the per-use-case scope
+    // controls (records / frequency / cost) stay left-aligned; only the
+    // imported-at stamp is pinned to the far right.
     if (opts.isTable) {
       const cb = window.__cb;
 
@@ -5910,37 +5921,34 @@
           !cb.cost.isNonErType(n.data.type) &&
           cb.cost.useCaseKeyForCard(n) === section.groupId,
       ).length;
-      if (erCount > 0) {
-        const enr = document.createElement("span");
-        enr.className = "cb-table-view-group-row-count";
-        enr.textContent = `${erCount} enrichment${erCount === 1 ? "" : "s"}`;
-        wrap.appendChild(enr);
-      }
-
+      const infoParts = [
+        `${dpCount} data point${dpCount === 1 ? "" : "s"}`,
+        `${erCount} enrichment${erCount === 1 ? "" : "s"}`,
+      ];
       if (Number.isFinite(opts.recordCount) && opts.recordCount > 0) {
-        const rows = document.createElement("span");
-        rows.className = "cb-table-view-group-row-meta";
-        rows.textContent = `${opts.recordCount.toLocaleString()} row${opts.recordCount === 1 ? "" : "s"}`;
-        wrap.appendChild(rows);
+        infoParts.push(`${opts.recordCount.toLocaleString()} row${opts.recordCount === 1 ? "" : "s"}`);
       }
+      const info = document.createElement("span");
+      info.className = "cb-uc-info";
+      info.innerHTML = infoSvg(14);
+      info.title = infoParts.join("   \u00b7   ");
+      info.setAttribute("aria-label", info.title);
+      // Don't let reading the tooltip toggle the section collapse.
+      info.addEventListener("click", (e) => e.stopPropagation());
+      info.addEventListener("mousedown", (e) => e.stopPropagation());
+      wrap.appendChild(info);
 
       // Per-use-case scope controls — only when 2+ imported tables exist (the
       // global Records/Frequency in the summary bar are hidden then, so each
-      // table owns its own here). section.groupId is the `t-<tableId>` use-case
-      // key. .cb-uc-scope carries margin-left:auto so it (and the imported
-      // stamp after it) sit at the right edge.
-      const multiUseCase =
-        cb.cost?.useCaseCount?.() >= 2 && typeof section.groupId === "string";
-      if (multiUseCase) {
+      // table owns its own here). Left-aligned, right after the title.
+      if (cb.cost?.useCaseCount?.() >= 2 && typeof section.groupId === "string") {
         wrap.appendChild(buildUseCaseScopeControls(section.groupId));
       }
 
-      // Imported-at, pinned to the far right. The scope controls already push to
-      // the right; when they're absent, this takes the auto margin itself.
+      // Imported-at, pinned to the far right (margin-left:auto via CSS).
       if (Number.isFinite(opts.importedAt) && opts.importedAt > 0) {
         const when = document.createElement("span");
         when.className = "cb-table-view-group-row-meta cb-table-view-group-row-imported";
-        if (!multiUseCase) when.style.marginLeft = "auto";
         when.textContent = `imported ${relativeTimeText(opts.importedAt)}`;
         when.title = new Date(opts.importedAt).toLocaleString();
         wrap.appendChild(when);
@@ -6143,6 +6151,34 @@
       '<path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>' +
       '<line x1="12" y1="9" x2="12" y2="13"/>' +
       '<line x1="12" y1="17" x2="12.01" y2="17"/>' +
+      '</svg>'
+    );
+  }
+
+  // Circle-"i" glyph — the info affordance that holds the per-table counts
+  // (data points / enrichments / rows) behind a hover tooltip.
+  function infoSvg(size) {
+    const s = String(size);
+    return (
+      `<svg xmlns="http://www.w3.org/2000/svg" width="${s}" height="${s}" viewBox="0 0 24 24" ` +
+      'fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" ' +
+      'stroke-linejoin="round" aria-hidden="true">' +
+      '<circle cx="12" cy="12" r="10"/>' +
+      '<line x1="12" y1="16" x2="12" y2="12"/>' +
+      '<line x1="12" y1="8" x2="12.01" y2="8"/>' +
+      '</svg>'
+    );
+  }
+
+  // Dollar-sign glyph for the per-use-case cost badge.
+  function dollarSvg(size) {
+    const s = String(size);
+    return (
+      `<svg xmlns="http://www.w3.org/2000/svg" width="${s}" height="${s}" viewBox="0 0 24 24" ` +
+      'fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" ' +
+      'stroke-linejoin="round" aria-hidden="true">' +
+      '<line x1="12" y1="1" x2="12" y2="23"/>' +
+      '<path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>' +
       '</svg>'
     );
   }

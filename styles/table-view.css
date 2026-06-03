@@ -2247,13 +2247,41 @@
 }
 
 /* Per-use-case scope controls in the table (green) header — records + frequency
- * + sub-total, shown when 2+ imported-table use cases exist. */
+ * + cost, shown when 2+ imported-table use cases exist. Left-aligned (right
+ * after the title); only the imported stamp sits on the right. */
 .cb-uc-scope {
   display: inline-flex;
   align-items: center;
   gap: 12px;
-  margin-left: auto;
-  padding-left: 12px;
+  padding-left: 4px;
+}
+
+/* Info (i) icon next to the table title — holds the data points / enrichments /
+ * rows counts behind a hover tooltip. */
+.cb-uc-info {
+  display: inline-flex;
+  align-items: center;
+  color: #9ca3af;
+  cursor: help;
+}
+
+.cb-uc-info:hover {
+  color: #16a34a;
+}
+
+/* Per-use-case dollar cost badge ($ icon + amount). */
+.cb-uc-scope-dollar {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: #ecfdf5;
+  color: #166534;
+  font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
 }
 
 .cb-uc-scope-field {
@@ -2315,7 +2343,9 @@
   width: 100%;
 }
 
-/* The imported-at stamp sits at the very right, just after the cost pill. */
+/* The imported-at stamp is the only right-aligned item — records / frequency /
+ * cost stay left, this takes the auto margin and sits at the far right. */
 .cb-table-view-group-row-imported {
+  margin-left: auto;
   white-space: nowrap;
 }
