@@ -119,16 +119,15 @@
     date.textContent = commit.date || "";
 
     const badge = document.createElement("span");
-    // Badge color: amber for incoming commits, green for the installed-latest
-    // commit when up to date, indigo for other commits in the most recent
-    // subgroup, grey for everything in the older (grey) subgroups.
+    // Status-driven color (assigned in renderTimeline): indigo = published,
+    // green = installed (your running version), amber = incoming, grey = default.
     const variantClass =
-      commit.badgeVariant === "new"
-        ? " cb-update-badge-new"
-        : commit.badgeVariant === "current"
-          ? " cb-update-badge-current"
-          : inRecent
-            ? " cb-update-badge-recent"
+      commit.badgeVariant === "published"
+        ? " cb-update-badge-published"
+        : commit.badgeVariant === "installed"
+          ? " cb-update-badge-installed"
+          : commit.badgeVariant === "new"
+            ? " cb-update-badge-new"
             : "";
     badge.className = "cb-update-badge" + variantClass;
     badge.textContent = commit.version ? "v" + commit.version.raw : "\u2014";
@@ -204,12 +203,22 @@
       commits.push({ ...c, isNew: newHashes.has(c.hash), version: parseVersion(c.subject) });
     }
 
-    // Badge variant per commit: "new" (amber) for incoming; "current" (green)
-    // for the latest installed commit when up to date; otherwise default.
+    // Badge variant is status-driven: "published" (indigo, admin only),
+    // "installed" (green, your running version), "new" (amber, incoming), else
+    // "default" (grey). Published takes precedence over installed.
     const behind = incoming.length > 0;
-    const latestHash = commits.length ? commits[0].hash : null;
+    const curVer = ctx && ctx.currentVersion;
+    const pubVer = ctx && ctx.isAdmin ? ctx.publishedVersion : null;
     for (const c of commits) {
-      c.badgeVariant = c.isNew ? "new" : (!behind && c.hash === latestHash ? "current" : "default");
+      const v = c.version ? c.version.raw : null;
+      c.badgeVariant =
+        v && pubVer && v === pubVer
+          ? "published"
+          : v && curVer && v === curVer
+            ? "installed"
+            : c.isNew
+              ? "new"
+              : "default";
     }
 
     // Group: major -> minor -> commits[]. Unversioned commits go to "other".
@@ -237,13 +246,14 @@
       const minors = majors.get(major);
       const majorCommits = [...minors.values()].flat();
       const majorHasNew = majorCommits.some((c) => c.isNew);
+      const majorHasPublished = !!pubVer && majorCommits.some((c) => c.version && c.version.raw === pubVer);
       // Major header: a white pill showing just the major number.
       const { wrap: majorWrap, childrenEl: majorChildren } = makeGroup(
         "major",
         String(major),
         majorCommits.length,
         "white",
-        !(firstMajor || majorHasNew),
+        !(firstMajor || majorHasNew || majorHasPublished),
       );
       bodyEl.appendChild(majorWrap);
 
@@ -252,17 +262,23 @@
       for (const minor of sortedMinors) {
         const rows = minors.get(minor).sort((a, b) => (b.version.patch - a.version.patch));
         const minorHasNew = rows.some((c) => c.isNew);
-        // The most recent subgroup (newest minor of the newest major) is green
-        // when up to date / amber when behind; every other subgroup is grey.
+        const minorHasPublished = !!pubVer && rows.some((c) => c.version && c.version.raw === pubVer);
+        // The group that holds the published version is indigo so it's easy to
+        // spot; otherwise the most-recent subgroup is green (up to date) / amber
+        // (behind), and every other subgroup is grey.
         const isMostRecent = firstMajor && firstMinor;
-        const tone = isMostRecent ? (behind ? "behind" : "ok") : "grey";
+        const tone = minorHasPublished
+          ? "published"
+          : isMostRecent
+            ? (behind ? "behind" : "ok")
+            : "grey";
         const { wrap: minorWrap, childrenEl: minorChildren } = makeGroup(
           "minor",
           "v" + major + "." + minor,
           rows.length,
           tone,
-          // Expand the newest minor of the newest major, or any with new commits.
-          !(isMostRecent || minorHasNew),
+          // Expand the newest minor, the published group, or any with new commits.
+          !(isMostRecent || minorHasNew || minorHasPublished),
         );
         for (const c of rows) minorChildren.appendChild(makeCommitRow(c, isMostRecent, ctx));
         majorChildren.appendChild(minorWrap);
