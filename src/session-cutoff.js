@@ -135,10 +135,13 @@
     const all = [];
     for (const tid of tableIds) {
       const runs = ws ? await cb.fetchRunSpend(ws, tid, discoveryDays()) : null;
+      console.log("[Clay Scoping][diag] loadFromNetwork", { ws, tid, days: discoveryDays(), runs: Array.isArray(runs) ? runs.length : runs });
       if (Array.isArray(runs)) for (const r of runs) all.push(r);
     }
+    console.log("[Clay Scoping][diag] tableIds", tableIds, "totalRuns", all.length);
     state.runs = all;
     rebucket();
+    console.log("[Clay Scoping][diag] sessions", state.sessions.length);
 
     const valid = new Set(state.sessions.map((s) => s.id));
     const restored = (prevSelectedIds || []).filter((id) => valid.has(id));
