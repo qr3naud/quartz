@@ -33,8 +33,11 @@
   const CACHE_TTL_MS = 60 * 60 * 1000; // sessions cache is good for 1h
 
   let state = null;
-  // { tableIds:[tid], gapMs, loaded, loading,
-  //   byTable: { [tid]: { runs (null when from cache), sessions, selectedIds:Set } } }
+  // { tableIds:[tid], gapMs, loaded, loading, fetchStartedAt, fetchMs,
+  //   byTable: { [tid]: { runs (null when from cache), sessions, selectedIds:Set,
+  //                       loading, error } } }
+  // fetchStartedAt/fetchMs power the picker's load-timer pill (network loads
+  // only). Per-table loading/error drive progressive column reveal + retry.
   let loadingPromise = null; // de-dupes concurrent ensureLoaded calls
   const listeners = new Set();
 
@@ -53,6 +56,25 @@
 
   function workspaceId() {
     return cb.currentWorkspaceId || cb.parseIdsFromUrl?.()?.workspaceId || null;
+  }
+
+  function nowMs() {
+    return typeof performance !== "undefined" && performance.now
+      ? performance.now()
+      : Date.now();
+  }
+
+  // A run/recent fetch can hang (connection opened, no response). Cap each
+  // table's fetch so one stalled request can't wedge the picker in a permanent
+  // "Loading sessions…" state — the table resolves to an error+retry instead.
+  const FETCH_TIMEOUT_MS = 30000;
+  function withTimeout(promise) {
+    return Promise.race([
+      promise,
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error("fetchRunSpend timeout")), FETCH_TIMEOUT_MS),
+      ),
+    ]);
   }
 
   function storageKey() {
@@ -146,7 +168,9 @@
   }
 
   // Fetch run/recent for every imported table and bucket PER TABLE. Only called
-  // on a cache miss (or a forced refresh / gap change).
+  // on a cache miss (or a forced refresh / gap change). Tables are fetched in
+  // PARALLEL and revealed progressively (each lands independently), and each is
+  // isolated (try/catch + timeout) so one failure/stall can't wedge the rest.
   async function loadFromNetwork(tableIds, gapMs, prevByTableSel) {
     // Don't lock in an empty result if the workspace isn't resolvable yet
     // (ensureLoaded can fire on an early render before openCanvas sets it).
@@ -157,31 +181,66 @@
       return null;
     }
 
-    state = { tableIds, gapMs, loaded: false, loading: true, byTable: {} };
+    state = {
+      tableIds,
+      gapMs,
+      loaded: false,
+      loading: true,
+      byTable: {},
+      fetchStartedAt: nowMs(), // drives the popover's load-timer pill
+      fetchMs: null,
+    };
     for (const tid of tableIds) {
-      state.byTable[tid] = { runs: [], sessions: [], selectedIds: new Set() };
+      state.byTable[tid] = {
+        runs: [],
+        sessions: [],
+        selectedIds: new Set(),
+        loading: true,
+        error: false,
+      };
     }
     notify();
 
-    for (const tid of tableIds) {
-      const runs = await cb.fetchRunSpend(ws, tid, discoveryDays());
+    // Reveal each table the moment its runs land: fill its sessions, flip its
+    // per-table loading flag, notify (re-renders just that column), and stamp
+    // its spend — without waiting on slower tables. Spend is stamped but NOT
+    // persisted mid-stream (a partial cache would look complete on a refresh);
+    // the full cache is written once at the end.
+    const loadOne = async (tid) => {
       const t = state.byTable[tid];
-      t.runs = Array.isArray(runs) ? runs : [];
-      t.sessions = bucketForTable(tid, t.runs, gapMs);
-      const valid = new Set(t.sessions.map((s) => s.id));
-      const restored = (prevByTableSel?.[tid] || []).filter((id) => valid.has(id));
-      t.selectedIds = restored.length ? new Set(restored) : defaultSelection(t.sessions);
-    }
+      try {
+        const runs = await withTimeout(cb.fetchRunSpend(ws, tid, discoveryDays()));
+        t.runs = Array.isArray(runs) ? runs : [];
+        t.sessions = bucketForTable(tid, t.runs, gapMs);
+        const valid = new Set(t.sessions.map((s) => s.id));
+        const restored = (prevByTableSel?.[tid] || []).filter((id) => valid.has(id));
+        t.selectedIds = restored.length
+          ? new Set(restored)
+          : defaultSelection(t.sessions);
+        t.error = false;
+      } catch {
+        t.runs = [];
+        t.sessions = [];
+        t.selectedIds = new Set();
+        t.error = true;
+      } finally {
+        t.loading = false;
+        notify();
+        applySelection({ silent: true, noPersist: true });
+      }
+    };
+
+    await Promise.allSettled(tableIds.map(loadOne));
 
     state.loaded = true;
     state.loading = false;
+    state.fetchMs = nowMs() - state.fetchStartedAt;
     persist();
     notify();
 
-    // Re-derive the number from the selected sessions (instant, local). For the
-    // recent default this matches the import's 7-day stamp (no visible jump);
-    // for the most-recent fallback it fills in the meaningful number.
-    if (hasAnySessions()) applySelection({ silent: true });
+    // Final consistency pass over the full selection (recent default matches the
+    // import's 7-day stamp; most-recent fallback fills in the number).
+    if (hasAnySessions()) applySelection({ silent: true, noPersist: true });
     return state;
   }
 
@@ -232,6 +291,8 @@
               runs: ct.runs || null,
               sessions,
               selectedIds: sel.length ? new Set(sel) : defaultSelection(sessions),
+              loading: false,
+              error: false,
             };
           }
           notify();
@@ -331,18 +392,27 @@
   // clear + "—" notice.
   function applySelection(opts) {
     opts = opts || {};
-    if (!state || !state.loaded) return;
+    // Note: intentionally NOT gated on state.loaded — progressive loads call
+    // this per table as each lands (state.loaded is still false then) so spend
+    // appears incrementally.
+    if (!state) return;
     cb.actualSpendApplying = false;
 
     if (totalSelected() === 0) {
       for (const tid of state.tableIds) clearTableSpend(tid);
-      setNotice({
-        label: "\u2014",
-        tooltip:
-          "No sessions selected \u2014 pick at least one session to count Actual spend.",
-      });
+      // Mid-load with nothing resolved yet → stay quiet (no "—") to avoid a
+      // flash before the first table's default selection lands.
+      setNotice(
+        state.loading
+          ? null
+          : {
+              label: "\u2014",
+              tooltip:
+                "No sessions selected \u2014 pick at least one session to count Actual spend.",
+            },
+      );
       refreshSummary(opts.silent);
-      persist();
+      if (!opts.noPersist) persist();
       return;
     }
 
@@ -360,8 +430,9 @@
     // The selection has spend but none of its columns are cost cards on this
     // canvas — e.g. a session that only ran a since-deleted column. Show a clear
     // "—" + tooltip rather than the "Expired" state (which means "no realtime
-    // data at all"), which would otherwise mislead.
-    if (anySelected && !stamped) {
+    // data at all"), which would otherwise mislead. Suppressed mid-load: cards
+    // for a not-yet-resolved table would trip it transiently.
+    if (anySelected && !stamped && !state.loading) {
       setNotice({
         label: "\u2014",
         tooltip:
@@ -370,7 +441,7 @@
       });
     }
     refreshSummary(opts.silent);
-    persist();
+    if (!opts.noPersist) persist();
   }
 
   // ---- Public API (consumed by the picker UI in table-view.js) -------------
@@ -393,6 +464,16 @@
       loadingPromise = null;
       cb.actualSummaryNotice = null;
       cb.actualSpendApplying = false;
+    },
+    // Manual refresh (the picker's "..." menu): drop the cache and refetch from
+    // the network, re-running the load timer and progressive reveal.
+    refresh() {
+      clearCache();
+      state = null;
+      loadingPromise = null;
+      cb.actualSummaryNotice = null;
+      cb.actualSpendApplying = false;
+      return ensureLoaded({ force: true });
     },
     getState() {
       return state;

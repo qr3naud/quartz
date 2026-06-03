@@ -1062,6 +1062,10 @@
   let sessionPickerSubscribed = false;
   let sessionPopoverEl = null;
   let sessionPopoverBackdrop = null;
+  // Load-timer pill (bottom-right of the popover): live-ticks while a network
+  // fetch is in flight, then settles to "Loaded in Xs". Cache hits show nothing.
+  let sessionTimerEl = null;
+  let sessionTimerInterval = null;
 
   // Number of SELECTED run buckets (sessions) shown in the Actual button's
   // badge. Empty until the session list has loaded, so the badge stays blank on
@@ -1127,8 +1131,67 @@
   function closeSessionPopover() {
     closeSessionSubmenu();
     closeSessionHeaderMenu();
+    if (sessionTimerInterval) { clearInterval(sessionTimerInterval); sessionTimerInterval = null; }
+    sessionTimerEl = null;
     if (sessionPopoverEl) { sessionPopoverEl.remove(); sessionPopoverEl = null; }
     if (sessionPopoverBackdrop) { sessionPopoverBackdrop.remove(); sessionPopoverBackdrop = null; }
+  }
+
+  // Render the load-timer pill from controller state. While a network fetch is
+  // in flight it ticks "Loading… X.Xs"; on completion it shows "Loaded in X.Xs".
+  // Cache hits (no fetchStartedAt) hide it. Called on a 100ms interval (started
+  // by syncSessionTimer) and on every popover re-render.
+  function updateSessionTimer() {
+    if (!sessionTimerEl) return;
+    const st = window.__cb.sessionCutoff?.getState?.();
+    const started = st?.fetchStartedAt;
+    if (started == null) {
+      sessionTimerEl.style.display = "none";
+      if (sessionTimerInterval) { clearInterval(sessionTimerInterval); sessionTimerInterval = null; }
+      return;
+    }
+    sessionTimerEl.style.display = "";
+    const now =
+      typeof performance !== "undefined" && performance.now
+        ? performance.now()
+        : Date.now();
+    if (st.loading) {
+      sessionTimerEl.textContent = `Loading\u2026 ${((now - started) / 1000).toFixed(1)}s`;
+      sessionTimerEl.classList.add("cb-session-pop-timer-loading");
+    } else {
+      const ms = st.fetchMs != null ? st.fetchMs : now - started;
+      sessionTimerEl.textContent = `Loaded in ${(ms / 1000).toFixed(1)}s`;
+      sessionTimerEl.classList.remove("cb-session-pop-timer-loading");
+      if (sessionTimerInterval) { clearInterval(sessionTimerInterval); sessionTimerInterval = null; }
+    }
+  }
+
+  // Start the ticker if a fetch is in flight (e.g. after a manual refresh) and
+  // refresh the pill text. Safe to call repeatedly.
+  function syncSessionTimer() {
+    const st = window.__cb.sessionCutoff?.getState?.();
+    if (st?.loading && st?.fetchStartedAt != null && !sessionTimerInterval) {
+      sessionTimerInterval = setInterval(updateSessionTimer, 100);
+    }
+    updateSessionTimer();
+  }
+
+  // Error + retry shown in a session column when its run/recent fetch failed or
+  // timed out. Retry refetches all tables (cheap; one stalled table is rare).
+  function buildSessionError(cut) {
+    const m = document.createElement("div");
+    m.className = "cb-session-pop-empty cb-session-pop-error";
+    const txt = document.createElement("span");
+    txt.textContent = "Couldn't load runs.";
+    const retry = document.createElement("button");
+    retry.type = "button";
+    retry.className = "cb-session-pop-retry";
+    retry.textContent = "Retry";
+    retry.addEventListener("mousedown", (e) => e.stopPropagation());
+    retry.addEventListener("click", (e) => { e.stopPropagation(); cut.refresh?.(); });
+    m.appendChild(txt);
+    m.appendChild(retry);
+    return m;
   }
 
   // The header "..." overflow menu (Select all / Clear all, across every table).
@@ -1157,6 +1220,7 @@
     };
     menu.appendChild(mk("Select all", () => cut.setAllTables(true)));
     menu.appendChild(mk("Clear all", () => cut.setAllTables(false)));
+    menu.appendChild(mk("Refresh sessions", () => cut.refresh?.()));
     sessionPopoverEl.appendChild(menu);
     sessionHeaderMenuEl = menu;
     // Anchor under the "..." button, relative to the popover.
@@ -1388,7 +1452,12 @@
 
     const list = document.createElement("div");
     list.className = "cb-session-pop-col-list";
-    if (loading || !tableState) {
+    // Per-table state drives progressive reveal: each column shows its own
+    // skeleton until ITS fetch lands, independent of the slower tables. The
+    // global `loading` only matters before per-table state exists.
+    if (tableState && tableState.error) {
+      list.appendChild(buildSessionError(cut));
+    } else if (loading || !tableState || tableState.loading) {
       list.appendChild(buildSessionSkeleton(3));
     } else if (!tableState.sessions.length) {
       const m = document.createElement("div");
@@ -1412,6 +1481,9 @@
     if (!body) return;
     closeSessionSubmenu();
     body.replaceChildren();
+    // Keep the load-timer pill in sync (and (re)start its ticker after a manual
+    // refresh kicks off a new fetch).
+    syncSessionTimer();
 
     const loading = !st || st.loading;
 
@@ -1449,21 +1521,31 @@
     if (tableIds.length <= 1) {
       const tid = tableIds[0];
       const t = st?.byTable?.[tid];
-      if (loading || !t) {
+      if (t && t.error) {
+        body.appendChild(buildSessionError(cut));
+      } else if (!t || t.loading) {
         body.appendChild(buildSessionSkeleton(4));
-        return;
-      }
-      for (const s of t.sessions.slice().reverse()) {
-        body.appendChild(buildSessionRow(cut, t, tid, s));
+      } else if (!t.sessions.length) {
+        const m = document.createElement("div");
+        m.className = "cb-session-pop-empty";
+        m.textContent = "No realtime runs found.";
+        body.appendChild(m);
+      } else {
+        for (const s of t.sessions.slice().reverse()) {
+          body.appendChild(buildSessionRow(cut, t, tid, s));
+        }
       }
       return;
     }
 
     const cols = document.createElement("div");
     cols.className = "cb-session-pop-cols";
+    // Pass loading=false so each column reveals on ITS OWN per-table flag
+    // (progressive); the global `loading` would otherwise hold every column in
+    // a skeleton until the slowest table lands.
     for (const tid of tableIds) {
       const t = st?.byTable?.[tid];
-      cols.appendChild(buildSessionColumn(cut, t, tid, names.get(tid), loading));
+      cols.appendChild(buildSessionColumn(cut, t, tid, names.get(tid), false));
     }
     body.appendChild(cols);
   }
@@ -1539,6 +1621,12 @@
     footer.appendChild(gapLbl);
     footer.appendChild(gapInput);
     footer.appendChild(gapSuffix);
+    // Load-timer pill, pushed to the bottom-right. Populated/ticked by
+    // syncSessionTimer (hidden on cache hits).
+    sessionTimerEl = document.createElement("span");
+    sessionTimerEl.className = "cb-session-pop-timer";
+    sessionTimerEl.style.display = "none";
+    footer.appendChild(sessionTimerEl);
     sessionPopoverEl.appendChild(footer);
 
     document.body.appendChild(sessionPopoverBackdrop);

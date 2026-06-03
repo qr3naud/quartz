@@ -2106,6 +2106,44 @@
   color: #6b7280;
 }
 
+/* Load-timer pill, bottom-right of the footer. Tabular numbers so the live
+   tick doesn't jitter. */
+.cb-session-pop-timer {
+  margin-left: auto;
+  font-size: 11px;
+  color: #9ca3af;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.cb-session-pop-timer-loading {
+  color: #6366f1;
+}
+
+/* Per-column fetch failure + retry. */
+.cb-session-pop-error {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  color: #b91c1c;
+}
+
+.cb-session-pop-retry {
+  border: 1px solid #fecaca;
+  background: #ffffff;
+  color: #b91c1c;
+  border-radius: 6px;
+  padding: 2px 8px;
+  font-family: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.cb-session-pop-retry:hover {
+  background: #fef2f2;
+}
+
 /* Header "..." overflow menu (Select all / Clear all). */
 .cb-session-pop-menu-btn {
   border: none;
