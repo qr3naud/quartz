@@ -2257,31 +2257,58 @@
 }
 
 /* Info (i) icon next to the table title — holds the data points / enrichments /
- * rows counts behind a hover tooltip. */
+ * rows counts behind a hover tooltip (cb-uc-info-tip). No special cursor. */
 .cb-uc-info {
   display: inline-flex;
   align-items: center;
   color: #9ca3af;
-  cursor: help;
+  cursor: default;
+  user-select: none;
 }
 
 .cb-uc-info:hover {
   color: #16a34a;
 }
 
-/* Per-use-case dollar cost badge ($ icon + amount). */
+/* Counts tooltip — fixed + body-appended so it shows above the overlay and
+ * regardless of whether the table section is expanded or collapsed. */
+.cb-uc-info-tip {
+  position: fixed;
+  z-index: 10000000;
+  background: #1f2937;
+  color: #f9fafb;
+  font-size: 11.5px;
+  line-height: 1.55;
+  padding: 6px 9px;
+  border-radius: 7px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18);
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+/* Per-use-case dollar cost badge — matches the cost pill (white bg, grey
+ * outline, muted grey text + $ icon). */
 .cb-uc-scope-dollar {
   display: inline-flex;
   align-items: center;
-  gap: 3px;
+  gap: 5px;
   height: 22px;
-  padding: 0 8px;
+  box-sizing: border-box;
+  padding: 0 10px;
+  border: 1px solid #e6e8ec;
   border-radius: 999px;
-  background: #ecfdf5;
-  color: #166534;
-  font-size: 12px;
-  font-weight: 600;
+  background: #ffffff;
+  color: #525a69;
+  font-size: 11.5px;
+  font-weight: 500;
   font-variant-numeric: tabular-nums;
+}
+
+.cb-uc-scope-dollar svg {
+  width: 12px;
+  height: 12px;
+  flex-shrink: 0;
+  color: #717989;
 }
 
 .cb-uc-scope-field {

@@ -1209,6 +1209,44 @@
     return pill;
   }
 
+  // Hover tooltip for the table header (i) icon. Body-appended + position:fixed
+  // (z-index above the overlay) so it shows regardless of whether the table
+  // section is expanded or collapsed, and isn't clipped by the table's overflow.
+  // The native `title` attribute is unreliable inside the overlay, so we build
+  // our own. `lines` render one per row.
+  function attachInfoTip(iconEl, lines) {
+    let tip = null;
+    const hide = () => {
+      if (tip) {
+        tip.remove();
+        tip = null;
+      }
+      document.removeEventListener("scroll", hide, true);
+    };
+    const show = () => {
+      hide();
+      tip = document.createElement("div");
+      tip.className = "cb-uc-info-tip";
+      for (const l of lines) {
+        const d = document.createElement("div");
+        d.textContent = l;
+        tip.appendChild(d);
+      }
+      document.body.appendChild(tip);
+      const r = iconEl.getBoundingClientRect();
+      const w = tip.offsetWidth;
+      let left = r.left + r.width / 2 - w / 2;
+      left = Math.max(8, Math.min(left, window.innerWidth - w - 8));
+      tip.style.left = `${Math.round(left)}px`;
+      tip.style.top = `${Math.round(r.bottom + 6)}px`;
+      // Hide if the table scrolls — the fixed tip would otherwise float away.
+      document.addEventListener("scroll", hide, true);
+    };
+    iconEl.addEventListener("mouseenter", show);
+    iconEl.addEventListener("mouseleave", hide);
+    iconEl.addEventListener("mousedown", hide);
+  }
+
   // ---- Click submenu: which columns ran in a session ----
   let sessionSubmenuEl = null;
   let sessionSubmenuOpenId = null;
@@ -5931,9 +5969,10 @@
       const info = document.createElement("span");
       info.className = "cb-uc-info";
       info.innerHTML = infoSvg(14);
-      info.title = infoParts.join("   \u00b7   ");
-      info.setAttribute("aria-label", info.title);
-      // Don't let reading the tooltip toggle the section collapse.
+      info.setAttribute("aria-label", infoParts.join(", "));
+      // Custom hover tooltip (native title is unreliable in the overlay).
+      attachInfoTip(info, infoParts);
+      // Don't let interacting with the icon toggle the section collapse.
       info.addEventListener("click", (e) => e.stopPropagation());
       info.addEventListener("mousedown", (e) => e.stopPropagation());
       wrap.appendChild(info);
