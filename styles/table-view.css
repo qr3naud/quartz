@@ -1962,43 +1962,14 @@
   box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.15);
 }
 
-/* Session row cost badges (credits coin + action sparkle), mirroring the ER
- * details menu. */
+/* Session rows reuse the ER details cost pill (.cb-table-view-er-cost-pill):
+ * action segment first, credit segment second. Just push it to the right. */
 .cb-session-pop-row {
   justify-content: space-between;
 }
 
-.cb-session-cost-badges {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
+.cb-session-cost-pill {
   margin-left: auto;
-}
-
-.cb-session-cost-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  padding: 1px 6px;
-  border-radius: 999px;
-  font-size: 11px;
-  font-weight: 600;
-  line-height: 1.5;
-  white-space: nowrap;
-}
-
-.cb-session-cost-badge svg {
-  flex-shrink: 0;
-}
-
-.cb-session-cost-badge-credit {
-  background: #eef2ff;
-  color: #4338ca;
-}
-
-.cb-session-cost-badge-action {
-  background: #ecfdf5;
-  color: #047857;
 }
 
 /* Hover submenu: which columns ran in a session. */

@@ -1128,13 +1128,6 @@
     if (sessionPopoverBackdrop) { sessionPopoverBackdrop.remove(); sessionPopoverBackdrop = null; }
   }
 
-  // Coin (credits) + sparkle (action executions) glyphs, matching the cost
-  // badges in the ER details menu / canvas cards.
-  const SESSION_COIN_SVG =
-    '<svg width="11" height="11" viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><path opacity="0.2" d="M232,104c0,24-40,48-104,48S24,128,24,104,64,56,128,56,232,80,232,104Z"/><path d="M207.58,63.84C186.85,53.48,159.33,48,128,48S69.15,53.48,48.42,63.84,16,88.78,16,104v48c0,15.22,11.82,29.85,32.42,40.16S96.67,208,128,208s58.85-5.48,79.58-15.84S240,167.22,240,152V104C240,88.78,228.18,74.15,207.58,63.84ZM128,64c62.64,0,96,23.23,96,40s-33.36,40-96,40-96-23.23-96-40S65.36,64,128,64Z"/></svg>';
-  const SESSION_SPARK_SVG =
-    '<svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2l2.2 5.8L20 10l-5.8 2.2L12 18l-2.2-5.8L4 10l5.8-2.2L12 2z"/></svg>';
-
   // fieldId -> column display name, from the live cards (for the hover submenu).
   function sessionFieldNameMap() {
     const m = new Map();
@@ -1155,20 +1148,26 @@
     return m;
   }
 
+  // Segmented action|credit pill identical to the ER details cost node
+  // (buildErMenuCostNode): StarFour glyph for action executions FIRST, Coin(s)
+  // glyph for credits SECOND. Values here are session totals (not "/ row").
   function buildCostBadges(credits, actions) {
-    const wrap = document.createElement("span");
-    wrap.className = "cb-session-cost-badges";
-    const cr = document.createElement("span");
-    cr.className = "cb-session-cost-badge cb-session-cost-badge-credit";
-    cr.innerHTML = SESSION_COIN_SVG + `<span>${Math.round(credits).toLocaleString()}</span>`;
-    wrap.appendChild(cr);
-    if (actions > 0) {
-      const ac = document.createElement("span");
-      ac.className = "cb-session-cost-badge cb-session-cost-badge-action";
-      ac.innerHTML = SESSION_SPARK_SVG + `<span>${Math.round(actions).toLocaleString()}</span>`;
-      wrap.appendChild(ac);
+    const pill = document.createElement("span");
+    pill.className = "cb-table-view-er-cost-pill cb-session-cost-pill";
+    const a = Math.round(Number(actions) || 0);
+    const c = Math.round(Number(credits) || 0);
+    if (a > 0) {
+      const seg = document.createElement("span");
+      seg.className = "cb-table-view-er-cost-seg cb-table-view-er-cost-actions";
+      seg.innerHTML = starFourSvg(12) + `<span>${a.toLocaleString()}</span>`;
+      pill.appendChild(seg);
     }
-    return wrap;
+    const credSeg = document.createElement("span");
+    credSeg.className = "cb-table-view-er-cost-seg cb-table-view-er-cost-credits";
+    const coin = Math.abs(c) <= 1 ? coinSvg(12) : coinsSvg(12);
+    credSeg.innerHTML = coin + `<span>${c.toLocaleString()}</span>`;
+    pill.appendChild(credSeg);
+    return pill;
   }
 
   // ---- Hover submenu: which columns ran in a session ----
