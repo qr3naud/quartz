@@ -14,15 +14,23 @@
   //
   // `feature` (optional): name of the feature flag that must be present in
   // the JWT for the row to render. Options without a `feature` field show
-  // for everyone. The runtime filter sits at the top of openExportMenu.
+  // for everyone. `ownerOnly` (optional): when true the row only renders for
+  // the maintainer's email (see OWNER_EMAIL) — a UX gate while these surfaces
+  // are still being iterated on. The runtime filter sits at the top of
+  // openExportMenu.
   const EXPORT_OPTIONS = [
     { id: "gtme",     label: "Export to GTME Calculator", enabled: true,  feature: "gtme_export" },
-    { id: "dealdesk", label: "Submit to deal desk",       enabled: true,  feature: "gtme_export" },
+    { id: "dealdesk", label: "Submit to deal desk",       enabled: true,  feature: "gtme_export", ownerOnly: true },
     { id: "dealops",  label: "Export to DealOps",         enabled: false, feature: "gtme_export" },
-    { id: "table",    label: "Export as Table",           enabled: true  },
+    { id: "table",    label: "Export as Table",           enabled: true,  ownerOnly: true },
     // "Import Inspector" (formerly "Export as JSON") moved to the three-dots
     // ("more") menu — see __cb.openMoreMenu in src/overlay.js.
   ];
+
+  // Maintainer allow-list for `ownerOnly` rows. UX gate, not a security
+  // boundary: the email comes from the JWT `email` claim (set on
+  // __cb.userEmail in src/auth.js), mirroring CANVAS_VIEW_ALLOWED_EMAILS.
+  const OWNER_EMAIL = "quentin.renaud@clay.com";
 
   // ---- Menu ----
 
@@ -51,11 +59,16 @@
     menuEl.addEventListener("mousedown", (evt) => evt.stopPropagation());
 
     // Filter options the JWT doesn't entitle this user to see. Internal
-    // GTMEs get every row; non-internal users get just `table`.
-    // The handler switch below doesn't need its own feature checks because
-    // gated branches are unreachable when the row isn't rendered.
+    // GTMEs get the feature-flagged rows; `ownerOnly` rows (Submit to deal
+    // desk, Export as Table) are further restricted to the maintainer's email.
+    // The handler switch below doesn't need its own checks because gated
+    // branches are unreachable when the row isn't rendered.
+    const isOwner =
+      (__cb.userEmail || "").trim().toLowerCase() === OWNER_EMAIL;
     const visibleOptions = EXPORT_OPTIONS.filter(
-      (opt) => !opt.feature || (__cb.hasFeature && __cb.hasFeature(opt.feature)),
+      (opt) =>
+        (!opt.feature || (__cb.hasFeature && __cb.hasFeature(opt.feature))) &&
+        (!opt.ownerOnly || isOwner),
     );
 
     for (const opt of visibleOptions) {
@@ -81,6 +94,19 @@
         });
       }
       menuEl.appendChild(item);
+    }
+
+    // With the export rows now gated (feature flags + owner-only), some users
+    // entitle to nothing. Show an inert placeholder so the menu doesn't render
+    // as an empty, broken-looking box.
+    if (visibleOptions.length === 0) {
+      const empty = document.createElement("button");
+      empty.type = "button";
+      empty.className = "cb-export-menu-option cb-export-menu-option-disabled";
+      empty.textContent = "No export options available";
+      empty.disabled = true;
+      empty.setAttribute("aria-disabled", "true");
+      menuEl.appendChild(empty);
     }
 
     document.body.appendChild(menuBackdrop);
