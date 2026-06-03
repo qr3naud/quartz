@@ -1265,14 +1265,20 @@
       row.appendChild(cbx);
       row.appendChild(meta);
       row.appendChild(buildCostBadges(s.credits || 0, s.actionExec || 0));
-      // Hover → submenu of which columns ran in this session.
-      row.addEventListener("mouseenter", () => {
+      // Hover → submenu of which columns ran in this session. Bound on the row
+      // (whole-row target) AND the "N cols" text (the labelled affordance), so
+      // it opens whichever the user aims at. A short grace period on leave lets
+      // the pointer travel to the submenu without it closing.
+      const openSub = () => {
         if (sessionSubmenuTimer) { clearTimeout(sessionSubmenuTimer); sessionSubmenuTimer = null; }
         openSessionSubmenu(s, row);
-      });
-      row.addEventListener("mouseleave", () => {
-        sessionSubmenuTimer = setTimeout(closeSessionSubmenu, 180);
-      });
+      };
+      const scheduleClose = () => {
+        sessionSubmenuTimer = setTimeout(closeSessionSubmenu, 240);
+      };
+      row.addEventListener("mouseenter", openSub);
+      row.addEventListener("mouseleave", scheduleClose);
+      sub.addEventListener("mouseenter", openSub);
       body.appendChild(row);
     }
   }

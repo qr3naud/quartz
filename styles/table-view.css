@@ -1879,7 +1879,7 @@
 .cb-session-pop-row {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 16px;
   padding: 7px 8px;
   border-radius: 6px;
   cursor: pointer;
