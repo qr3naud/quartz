@@ -382,10 +382,10 @@ async function quartzIconData(flip) {
 /** Promisified sendNativeMessage. Resolves {ok:false, error:"host-missing"}
  *  when the helper isn't installed (so the UI can show the one-time setup
  *  hint) instead of rejecting. */
-function quartzNative(cmd) {
+function quartzNative(cmd, extra) {
   return new Promise((resolve) => {
     try {
-      chrome.runtime.sendNativeMessage(QUARTZ_HOST, { cmd }, (res) => {
+      chrome.runtime.sendNativeMessage(QUARTZ_HOST, { cmd, ...(extra || {}) }, (res) => {
         if (chrome.runtime.lastError) {
           resolve({ ok: false, error: "host-missing", detail: chrome.runtime.lastError.message });
         } else {
@@ -491,6 +491,19 @@ async function quartzRunPull(cmd) {
   return res;
 }
 
+/** Installs a specific version by hard-resetting the clone to `ref` (the admin
+ *  version picker). Unlike quartzRunPull this may land on an OLDER commit, so we
+ *  don't assert behind:false — we just reload; the onInstalled("update") handler
+ *  reloads tabs and reruns quartzCheckStatus(), which recomputes the real cue. */
+async function quartzRunCheckout(ref) {
+  const res = await quartzNative("checkout", { ref });
+  if (res && res.ok && res.updated) {
+    await chrome.storage.local.set({ quartzPendingReload: true });
+    chrome.runtime.reload();
+  }
+  return res;
+}
+
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (!msg || typeof msg.type !== "string") return;
   if (msg.type === "cb:update:status") {
@@ -509,6 +522,10 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   }
   if (msg.type === "cb:update:forcePull") {
     quartzRunPull("forcePull").then(sendResponse);
+    return true;
+  }
+  if (msg.type === "cb:update:checkout") {
+    quartzRunCheckout(msg.ref).then(sendResponse);
     return true;
   }
 });

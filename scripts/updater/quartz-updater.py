@@ -10,9 +10,11 @@ framing (a 4-byte little-endian length prefix followed by UTF-8 JSON), runs the
 requested git command, writes one framed JSON response to stdout, and exits.
 
 Commands:
-  {"cmd": "status"}     -> {ok, behind, currentVersion, latestVersion}
-  {"cmd": "pull"}       -> {ok, updated, fromVersion, toVersion, output}
-  {"cmd": "forcePull"}  -> {ok, updated, ...}   # discards local changes
+  {"cmd": "status"}            -> {ok, behind, currentVersion, latestVersion}
+  {"cmd": "log"}              -> {ok, behind, incoming[], recent[], ...}
+  {"cmd": "pull"}             -> {ok, updated, fromVersion, toVersion, output}
+  {"cmd": "forcePull"}        -> {ok, updated, ...}        # discards local changes
+  {"cmd": "checkout", "ref"}  -> {ok, updated, ...}        # hard-reset to a commit
 
 The repo path is auto-detected from this script's own location (it lives at
 <repo>/scripts/updater/quartz-updater.py), so it works wherever the user cloned
@@ -21,6 +23,7 @@ the repo. Registered with Chrome by scripts/install-updater.sh.
 
 import json
 import os
+import re
 import struct
 import subprocess
 import sys
@@ -176,7 +179,7 @@ def do_log():
         "currentVersion": local_version(),
         "latestVersion": version_at("@{u}") or local_version(),
         "incoming": _parse_log("HEAD..@{u}"),
-        "recent": _parse_log("@{u}", limit=15),
+        "recent": _parse_log("@{u}", limit=50),
     }
 
 
@@ -210,6 +213,36 @@ def do_pull(force=False):
     }
 
 
+def do_checkout(ref):
+    """Hard-reset the clone to a specific commit (the in-modal version picker).
+    `ref` must be a commit hash from the timeline; validated as hex so it can't
+    smuggle extra git args. Discards any local drift (reset --hard), like
+    forcePull, so it never stalls on a dirty working tree."""
+    if not isinstance(ref, str) or not re.match(r"^[0-9a-f]{7,40}$", ref):
+        return {"ok": False, "error": "bad-ref", "detail": str(ref)}
+    before = local_version()
+    before_head = git("rev-parse", "HEAD").stdout.strip()
+    fetched = git("fetch", "origin", "--quiet")
+    if fetched.returncode != 0:
+        return {"ok": False, "error": "git fetch failed", "detail": fetched.stderr.strip()}
+    exists = git("cat-file", "-e", ref + "^{commit}")
+    if exists.returncode != 0:
+        return {"ok": False, "error": "unknown-ref", "detail": ref}
+    result = git("reset", "--hard", ref)
+    output = (result.stdout + result.stderr).strip()
+    after = local_version()
+    after_head = git("rev-parse", "HEAD").stdout.strip()
+    if result.returncode != 0:
+        return {"ok": False, "error": "reset", "output": output, "fromVersion": before, "toVersion": after}
+    return {
+        "ok": True,
+        "updated": before_head != after_head,
+        "fromVersion": before,
+        "toVersion": after,
+        "output": output,
+    }
+
+
 def main():
     try:
         msg = read_message()
@@ -228,6 +261,8 @@ def main():
             send_message(do_pull(force=False))
         elif cmd == "forcePull":
             send_message(do_pull(force=True))
+        elif cmd == "checkout":
+            send_message(do_checkout(msg.get("ref")))
         else:
             send_message({"ok": False, "error": "unknown-cmd", "detail": str(cmd)})
     except subprocess.TimeoutExpired:

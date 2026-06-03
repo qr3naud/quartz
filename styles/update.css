@@ -300,6 +300,41 @@
   color: #15803d;
 }
 
+/* Admin version picker: a hover-revealed "Install" button at the row's right
+   edge (reserves its space so the row doesn't jump on hover), plus a static
+   "Installed" marker on the currently-running version. */
+.cb-update-install {
+  flex-shrink: 0;
+  padding: 1px 9px;
+  font-size: 11px;
+  font-weight: 600;
+  border-radius: 9px;
+  border: 1px solid #c7d2fe;
+  background: #eef2ff;
+  color: #4f46e5;
+  cursor: pointer;
+  visibility: hidden;
+}
+
+.cb-update-item:hover .cb-update-install {
+  visibility: visible;
+}
+
+.cb-update-install:hover {
+  background: #6366f1;
+  border-color: #6366f1;
+  color: #ffffff;
+}
+
+.cb-update-installed {
+  flex-shrink: 0;
+  padding: 1px 9px;
+  font-size: 11px;
+  font-weight: 600;
+  border-radius: 9px;
+  color: #9ca3af;
+}
+
 .cb-update-empty {
   padding: 16px 6px;
   font-size: 13px;

@@ -105,7 +105,7 @@
     return { wrap, childrenEl };
   }
 
-  function makeCommitRow(commit, inRecent) {
+  function makeCommitRow(commit, inRecent, ctx) {
     const { message } = splitVersion(commit.subject);
     const row = document.createElement("div");
     row.className = "cb-update-item" + (commit.isNew ? " cb-update-item-new" : "");
@@ -136,10 +136,34 @@
     row.appendChild(msg);
     row.appendChild(date);
     row.appendChild(badge);
+
+    // Admin-only version picker: the currently-installed version shows a static
+    // "Installed" marker; every other version shows a hover-revealed "Install"
+    // button that hard-resets the clone to that commit (forward or rollback).
+    if (ctx && ctx.isAdmin) {
+      const ver = commit.version ? commit.version.raw : null;
+      if (ver && ctx.currentVersion && ver === ctx.currentVersion) {
+        const installed = document.createElement("span");
+        installed.className = "cb-update-installed";
+        installed.textContent = "Installed";
+        row.appendChild(installed);
+      } else {
+        const install = document.createElement("button");
+        install.type = "button";
+        install.className = "cb-update-install";
+        install.textContent = "Install";
+        install.title = ver ? "Install v" + ver : "Install this commit";
+        install.addEventListener("click", (evt) => {
+          evt.stopPropagation();
+          ctx.onInstall(commit.hash, ver || commit.hash.slice(0, 7));
+        });
+        row.appendChild(install);
+      }
+    }
     return row;
   }
 
-  function renderTimeline(bodyEl, data) {
+  function renderTimeline(bodyEl, data, ctx) {
     bodyEl.innerHTML = "";
 
     const incoming = Array.isArray(data.incoming) ? data.incoming : [];
@@ -215,7 +239,7 @@
           // Expand the newest minor of the newest major, or any with new commits.
           !(isMostRecent || minorHasNew),
         );
-        for (const c of rows) minorChildren.appendChild(makeCommitRow(c, isMostRecent));
+        for (const c of rows) minorChildren.appendChild(makeCommitRow(c, isMostRecent, ctx));
         majorChildren.appendChild(minorWrap);
         firstMinor = false;
       }
@@ -224,15 +248,15 @@
 
     if (other.length) {
       const { wrap, childrenEl } = makeGroup("major", "Other", other.length, "white", true);
-      for (const c of other) childrenEl.appendChild(makeCommitRow(c));
+      for (const c of other) childrenEl.appendChild(makeCommitRow(c, false, ctx));
       bodyEl.appendChild(wrap);
     }
   }
 
-  function sendUpdateMessage(type) {
+  function sendUpdateMessage(type, payload) {
     return new Promise((resolve) => {
       try {
-        chrome.runtime.sendMessage({ type }, (res) => {
+        chrome.runtime.sendMessage({ type, ...(payload || {}) }, (res) => {
           resolve({ lastError: chrome.runtime.lastError ? chrome.runtime.lastError.message : null, res: res || null });
         });
       } catch (err) {
@@ -243,6 +267,11 @@
 
   __cb.openUpdateModal = function openUpdateModal() {
     closeModal();
+
+    // Only the maintainer gets the per-version picker (install/rollback to any
+    // commit). Same email gate as the Archived menu in src/overlay.js.
+    const isAdmin =
+      (__cb.userEmail || "").trim().toLowerCase() === "quentin.renaud@clay.com";
 
     backdropEl = document.createElement("div");
     backdropEl.className = "cb-update-backdrop";
@@ -369,6 +398,25 @@
     }
     updateBtn.onclick = () => runPull("cb:update:pull");
 
+    // Admin version picker: install (or roll back to) a specific commit. Same
+    // "keep the spinner through the reload" handling as runPull.
+    function runCheckout(ref, label) {
+      if (busy) return;
+      busy = true;
+      updateBtn.disabled = true;
+      applyState("loading", "Installing v" + label + "\u2026");
+      sendUpdateMessage("cb:update:checkout", { ref }).then(({ lastError, res }) => {
+        if (lastError || (res && res.ok && res.updated)) return; // reload underway
+        busy = false;
+        if (!res || res.ok === false) {
+          applyState("error", res && res.error === "host-missing" ? "Setup needed" : "Install failed");
+          updateBtn.disabled = false;
+        } else if (res.ok && !res.updated) {
+          applyState("ok", "Already on that version");
+        }
+      });
+    }
+
     // Load the timeline.
     sendUpdateMessage("cb:update:log").then(({ lastError, res }) => {
       if (lastError || !res || res.ok === false) {
@@ -397,7 +445,16 @@
         applyState("ok", "Up to date");
         updateBtn.disabled = true;
       }
-      renderTimeline(body, res);
+      const ctx = {
+        isAdmin,
+        currentVersion,
+        onInstall: (hash, label) => {
+          if (window.confirm("Install v" + label + "? This reloads the extension.")) {
+            runCheckout(hash, label);
+          }
+        },
+      };
+      renderTimeline(body, res, ctx);
     });
   };
 })();
