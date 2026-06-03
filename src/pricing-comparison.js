@@ -725,7 +725,6 @@
       const firstValidation = steps.find((s) => s.validation)?.validation ?? null;
       let validationLegacy = 0;
       let validationModern = 0;
-      let validationActions = 0;
       let validationActive = false;
       let validationUsesPrivateKey = false;
       if (firstValidation) {
@@ -750,19 +749,12 @@
           validationModern = validationUsesPrivateKey
             ? (Number(vInfo.privateKeyCredits) || 0)
             : (Number(vInfo.credits) || 0);
-          // Action executions: counted regardless of private-key state
-          // (canvas/credits.js sums actionExecutions unconditionally),
-          // but only when the validator actually runs (validationActive).
-          // Read-only validators with no actionExecution catalog field
-          // contribute 0.
-          validationActions = modernActionsForField(vInfo);
           validationActive = true;
         }
       }
 
       let legacySum = 0;
       let modernSum = 0;
-      let modernActionsSum = 0;
       // Parallel "split" buckets for variable-priced AI vs everything
       // else, used by recomputeAiCredits to recompute legacyCredits /
       // modernCredits live from the rep's CPC inputs. Validators always
@@ -862,21 +854,11 @@
         aiCentsSum += stepAiCents;
         nonAiLegacySum += stepNonAiLegacy + validationLegacyContrib;
         nonAiModernSum += stepNonAiModern + validationModernContrib;
-        // Action-execution averaging mirrors the credit math: per step,
-        // sum the step's own actions + the validator's actions when the
-        // validator actually runs. Private-key state on the STEP doesn't
-        // suppress the validator's action count (the validator is a
-        // separate billed run); this matches how canvas/credits.js
-        // attributes actions per card. A waterfall of read-only lookups
-        // with a key-only validator now correctly reads as ~0 actions/row
-        // instead of the previous hardcoded 1.
-        modernActionsSum += modernActionsForField(info) + (validationActive ? validationActions : 0);
         if (!stepIsPrivateKey) allStepsPrivateKey = false;
       }
 
       const legacyAvg = Math.round((legacySum / steps.length) * 100) / 100;
       const modernAvg = Math.round((modernSum / steps.length) * 100) / 100;
-      const modernActionsAvg = Math.round((modernActionsSum / steps.length) * 100) / 100;
       const aiCentsAvg = aiCentsSum / steps.length;
       const nonAiLegacyAvg = nonAiLegacySum / steps.length;
       const nonAiModernAvg = nonAiModernSum / steps.length;
@@ -890,7 +872,10 @@
         subtitle: `Waterfall · ${steps.length} step${steps.length > 1 ? "s" : ""}`,
         legacyCredits: legacyAvg,
         modernCredits: modernAvg,
-        modernActions: modernActionsAvg,
+        // Hardcoded to match the canvas (config.js WATERFALL_ACTION_EXECUTIONS
+        // = 3). Real billed run data averages ~3 action-executions/row for
+        // email / phone waterfalls; the per-step average undercounted at ~2.
+        modernActions: __cb.WATERFALL_ACTION_EXECUTIONS,
         // Only chip the row when EVERY step is unbilled — a mixed
         // waterfall (some steps Clay-shared, some BYOK) bills credits
         // and shouldn't read as "free" at a glance.
