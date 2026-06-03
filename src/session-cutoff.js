@@ -267,6 +267,13 @@
   }
 
   function refreshSummary(silent) {
+    // Recompute the Actual loading/expired flags BEFORE the recalc. The summary
+    // renderer (setSummaryNumber) reads __cb.actualSpendExpired synchronously,
+    // so if we recalc first the numbers paint against the PREVIOUS selection's
+    // flag — e.g. selecting a run right after clearing all shows a stale
+    // "Expired" until the next toggle catches the flag up. Matches the order in
+    // overlay.js setViewMode.
+    cb.applyActualSummaryState?.();
     cb._animateSummary = true;
     try {
       cb.canvas?.refreshCreditTotal?.();
@@ -274,7 +281,6 @@
       cb._animateSummary = false;
     }
     cb.canvas?.updateGroupCredits?.();
-    cb.applyActualSummaryState?.();
     cb.model?.update?.();
     if (!silent && cb.tableView?.refresh) cb.tableView.refresh();
   }
