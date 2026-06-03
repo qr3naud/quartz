@@ -997,6 +997,19 @@
       if (!key || key === __cb.cost.OTHER_USE_CASE || !patch) return;
       __cb.useCaseScope = __cb.useCaseScope || {};
       __cb.useCaseScope[key] = { ...(__cb.useCaseScope[key] || {}), ...patch };
+      // Records drives cost through each ER's coverage (coverage defaults to the
+      // use case's records). Mirror the single-mode records handler: re-default
+      // coverageRows for this use case's non-custom ERs so the edit actually
+      // scales the total. Per-ER manual coverage (coverageCustom) is preserved.
+      if (patch.records != null) {
+        const recs = Number(patch.records) || 0;
+        for (const c of __cb.model?.getNodes?.() || []) {
+          if (!c.data || __cb.cost.isNonErType(c.data.type)) continue;
+          if (c.data.coverageCustom) continue;
+          if (__cb.cost.useCaseKeyForCard(c) !== key) continue;
+          c.data.coverageRows = recs;
+        }
+      }
       if (__cb.canvas?.refreshCreditTotal) __cb.canvas.refreshCreditTotal();
       if (__cb.canvas?.updateGroupCredits) __cb.canvas.updateGroupCredits();
       if (__cb.tableView?.refresh) __cb.tableView.refresh();
