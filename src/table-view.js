@@ -1131,6 +1131,7 @@
   function closeSessionPopover() {
     closeSessionSubmenu();
     closeSessionHeaderMenu();
+    closeSessionPillMenu();
     if (sessionTimerInterval) { clearInterval(sessionTimerInterval); sessionTimerInterval = null; }
     sessionTimerEl = null;
     if (sessionPopoverEl) { sessionPopoverEl.remove(); sessionPopoverEl = null; }
@@ -1176,7 +1177,7 @@
           ? performance.now()
           : Date.now();
       sessionTimerEl.style.display = "";
-      sessionTimerEl.textContent = `Loading\u2026 ${((now - st.fetchStartedAt) / 1000).toFixed(1)}s`;
+      sessionTimerEl.textContent = `${((now - st.fetchStartedAt) / 1000).toFixed(1)}s`;
       sessionTimerEl.classList.add("cb-session-pop-timer-loading");
       sessionTimerEl.title = "Fetching realtime runs\u2026";
       return;
@@ -1233,6 +1234,40 @@
     m.appendChild(txt);
     m.appendChild(retry);
     return m;
+  }
+
+  // The footer pill menu: clicking the "Fetched <date>" pill opens a small menu
+  // with "Refresh import", which refetches run/recent for ALL imported tables in
+  // parallel (so both tables come back together). Anchored above the pill.
+  let sessionPillMenuEl = null;
+  function closeSessionPillMenu() {
+    if (sessionPillMenuEl) { sessionPillMenuEl.remove(); sessionPillMenuEl = null; }
+  }
+  function openSessionPillMenu(anchorEl) {
+    if (sessionPillMenuEl) { closeSessionPillMenu(); return; }
+    if (!sessionPopoverEl) return;
+    const cut = window.__cb.sessionCutoff;
+    const menu = document.createElement("div");
+    menu.className = "cb-session-pop-menu cb-session-pill-menu";
+    menu.addEventListener("mousedown", (e) => e.stopPropagation());
+    const it = document.createElement("button");
+    it.type = "button";
+    it.className = "cb-session-pop-menu-item";
+    it.textContent = "Refresh import";
+    it.addEventListener("click", (e) => {
+      e.stopPropagation();
+      closeSessionPillMenu();
+      cut.refresh?.(); // refetches every imported table in parallel
+    });
+    menu.appendChild(it);
+    sessionPopoverEl.appendChild(menu);
+    sessionPillMenuEl = menu;
+    // Open ABOVE the pill, right edges aligned (pill sits bottom-right).
+    const aRect = anchorEl.getBoundingClientRect();
+    const pRect = sessionPopoverEl.getBoundingClientRect();
+    menu.style.position = "absolute";
+    menu.style.bottom = `${pRect.bottom - aRect.top + 4}px`;
+    menu.style.right = `${Math.max(8, pRect.right - aRect.right)}px`;
   }
 
   // The header "..." overflow menu (Select all / Clear all, across every table).
@@ -1674,7 +1709,8 @@
       e.stopPropagation();
       const info = cut.fetchInfo?.();
       if (info && info.loading) return; // already fetching
-      cut.refresh?.();
+      if (info && info.anyError) { cut.refresh?.(); return; } // error → retry directly
+      openSessionPillMenu(sessionTimerEl); // otherwise a "Refresh import" menu
     });
     footer.appendChild(sessionTimerEl);
     sessionPopoverEl.appendChild(footer);

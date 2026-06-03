@@ -2155,7 +2155,8 @@
 .cb-session-pop-timer-loading,
 .cb-session-pop-timer-loading:hover {
   color: #6366f1;
-  background: transparent;
+  background: #ffffff;
+  border-color: #e5e7eb;
   cursor: default;
 }
 
