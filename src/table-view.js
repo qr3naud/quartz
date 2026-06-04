@@ -540,7 +540,7 @@
         "Collapse groups (\u2318\u21E7E)",
         "Collapse groups",
         collapseAllSvg(15),
-        collapseGroupsStep,
+        () => (__cb.pricingMode ? pricingCollapseAll() : collapseGroupsStep()),
       ),
     );
     wrap.appendChild(
@@ -549,10 +549,23 @@
         "Expand groups (\u2318E)",
         "Expand groups",
         expandAllSvg(15),
-        expandGroupsStep,
+        () => (__cb.pricingMode ? pricingExpandAll() : expandGroupsStep()),
       ),
     );
     return wrap;
+  }
+
+  // Pricing mode: the collapse/expand-all buttons fold/unfold the use-case
+  // boxes (state in __cb._pricingCollapsed, keyed by use-case key).
+  function pricingCollapseAll() {
+    const collapsed = (__cb._pricingCollapsed = __cb._pricingCollapsed || new Set());
+    const ucs = __cb.cost?.computePricingUseCases?.({ viewMode: __cb.viewMode }) || [];
+    for (const uc of ucs) collapsed.add(uc.key);
+    refresh();
+  }
+  function pricingExpandAll() {
+    if (__cb._pricingCollapsed) __cb._pricingCollapsed.clear();
+    refresh();
   }
 
   // ---- Inline search ----
@@ -686,7 +699,11 @@
     wrap.className = "cb-pricing-body";
 
     const years = Math.min(3, Math.max(1, __cb.contractYears || 1));
-    const ucs = __cb.cost?.computePricingUseCases?.({ viewMode: __cb.viewMode }) || [];
+    // Reverse so the order matches the normal table view (cards iterate newest
+    // first; the table renders use cases in the opposite order).
+    const ucs = (__cb.cost?.computePricingUseCases?.({ viewMode: __cb.viewMode }) || [])
+      .slice()
+      .reverse();
     const yrMap = __cb.pricingYearRecords || {};
     const creditCost = __cb.getCreditCost ? __cb.getCreditCost() : 0.05;
     const actionCost = __cb.getActionCost ? __cb.getActionCost() : 0.008;
@@ -789,92 +806,98 @@
     return wrap;
   }
 
-  // One year column: label + a volumes row (Records / Actions / Credits, actions
-  // before credits) + a dollar-cost row (Action $ / Credit $).
+  // A labeled numeric input that resolves a value on commit. Shared by the
+  // Records driver + the per-metric volume inputs.
+  function mkPricingField(labelText, value, onCommit) {
+    const f = document.createElement("label");
+    f.className = "cb-pricing-field";
+    const t = document.createElement("span");
+    t.className = "cb-pricing-field-label";
+    t.textContent = labelText;
+    const inp = document.createElement("input");
+    inp.type = "text";
+    inp.inputMode = "numeric";
+    inp.className = "cb-pricing-field-input";
+    inp.value = pricingFmt(value);
+    const commit = () => {
+      const raw = parseInt(inp.value.replace(/[^\d]/g, ""), 10);
+      onCommit(Number.isFinite(raw) ? raw : 0);
+    };
+    inp.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        inp.blur();
+      }
+    });
+    inp.addEventListener("blur", commit);
+    inp.addEventListener("focus", () => inp.select());
+    f.appendChild(t);
+    f.appendChild(inp);
+    return f;
+  }
+
+  // One metric column: the volume input stacked over its dollar cost.
+  function buildPricingMetric(labelText, volume, dollar, cls, onCommit) {
+    const col = document.createElement("div");
+    col.className = "cb-pricing-metric " + cls;
+    col.appendChild(mkPricingField(labelText, volume, onCommit));
+    const cost = document.createElement("div");
+    cost.className = "cb-pricing-metric-cost";
+    cost.textContent = pricingDollar(dollar);
+    col.appendChild(cost);
+    return col;
+  }
+
+  // One year column: header (Year N + that year's total cost), the Records
+  // driver, then two metric columns (Actions, then Credits) each stacking the
+  // volume input over its dollar cost.
   function buildPricingYearCell(uc, yearIdx, records, creditCost, actionCost) {
     const cell = document.createElement("div");
     cell.className = "cb-pricing-year";
 
-    const label = document.createElement("div");
-    label.className = "cb-pricing-year-label";
-    label.textContent = `Year ${yearIdx + 1}`;
-    cell.appendChild(label);
-
     const credits = uc.perRowCredits * records;
     const actions = uc.perRowActions * records;
+    const yearTotal = credits * creditCost + actions * actionCost;
 
-    const mkField = (labelText, value, onCommit) => {
-      const f = document.createElement("label");
-      f.className = "cb-pricing-field";
-      const t = document.createElement("span");
-      t.className = "cb-pricing-field-label";
-      t.textContent = labelText;
-      const inp = document.createElement("input");
-      inp.type = "text";
-      inp.inputMode = "numeric";
-      inp.className = "cb-pricing-field-input";
-      inp.value = pricingFmt(value);
-      const commit = () => {
-        const raw = parseInt(inp.value.replace(/[^\d]/g, ""), 10);
-        onCommit(Number.isFinite(raw) ? raw : 0);
-      };
-      inp.addEventListener("keydown", (e) => {
-        if (e.key === "Enter") {
-          e.preventDefault();
-          inp.blur();
-        }
-      });
-      inp.addEventListener("blur", commit);
-      inp.addEventListener("focus", () => inp.select());
-      f.appendChild(t);
-      f.appendChild(inp);
-      return f;
-    };
+    const label = document.createElement("div");
+    label.className = "cb-pricing-year-label";
+    const lt = document.createElement("span");
+    lt.textContent = `Year ${yearIdx + 1}`;
+    const lv = document.createElement("span");
+    lv.className = "cb-pricing-year-total";
+    lv.textContent = pricingDollar(yearTotal);
+    label.appendChild(lt);
+    label.appendChild(lv);
+    cell.appendChild(label);
 
-    // Volumes row — Records, then Actions, then Credits.
-    const volRow = document.createElement("div");
-    volRow.className = "cb-pricing-year-fields";
-    volRow.appendChild(
-      mkField("Records", records, (v) => __cb.setPricingYearRecords(uc.key, yearIdx, v)),
+    const recField = mkPricingField("Records", records, (v) =>
+      __cb.setPricingYearRecords(uc.key, yearIdx, v),
     );
-    volRow.appendChild(
-      mkField("Actions", actions, (v) => {
+    recField.classList.add("cb-pricing-field-records");
+    cell.appendChild(recField);
+
+    // Actions then credits; each column stacks volume over $ cost.
+    const metrics = document.createElement("div");
+    metrics.className = "cb-pricing-year-metrics";
+    metrics.appendChild(
+      buildPricingMetric("Actions", actions, actions * actionCost, "cb-pricing-metric-action", (v) => {
         const r = uc.perRowActions > 0 ? Math.round(v / uc.perRowActions) : 0;
         __cb.setPricingYearRecords(uc.key, yearIdx, r);
       }),
     );
-    volRow.appendChild(
-      mkField("Credits", credits, (v) => {
+    metrics.appendChild(
+      buildPricingMetric("Credits", credits, credits * creditCost, "cb-pricing-metric-credit", (v) => {
         const r = uc.perRowCredits > 0 ? Math.round(v / uc.perRowCredits) : 0;
         __cb.setPricingYearRecords(uc.key, yearIdx, r);
       }),
     );
-    cell.appendChild(volRow);
-
-    // Dollar-cost row — action $ then credit $.
-    const costRow = document.createElement("div");
-    costRow.className = "cb-pricing-year-costs";
-    const mkCost = (labelText, value, cls) => {
-      const d = document.createElement("div");
-      d.className = "cb-pricing-cost-cell " + cls;
-      const t = document.createElement("span");
-      t.className = "cb-pricing-cost-cell-label";
-      t.textContent = labelText;
-      const v = document.createElement("span");
-      v.className = "cb-pricing-cost-cell-value";
-      v.textContent = pricingDollar(value);
-      d.appendChild(t);
-      d.appendChild(v);
-      return d;
-    };
-    costRow.appendChild(mkCost("Action $", actions * actionCost, "cb-pricing-cost-cell-action"));
-    costRow.appendChild(mkCost("Credit $", credits * creditCost, "cb-pricing-cost-cell-credit"));
-    cell.appendChild(costRow);
+    cell.appendChild(metrics);
 
     return cell;
   }
 
-  // Grand total box: total action $, total credit $, total cost, savings vs list.
+  // Grand total box: per-year total cost (when multi-year) + total action $,
+  // total credit $, total cost, and savings vs list.
   function buildPricingTotalBox(grand, creditCost, actionCost, years) {
     let totalCredits = 0;
     let totalActions = 0;
@@ -898,6 +921,27 @@
     head.className = "cb-pricing-total-head";
     head.textContent = years > 1 ? `Total \u00b7 ${years}-year contract` : "Total";
     box.appendChild(head);
+
+    // Per-year total cost (multi-year only).
+    if (years > 1) {
+      const yearRow = document.createElement("div");
+      yearRow.className = "cb-pricing-total-years";
+      grand.forEach((y, i) => {
+        const yc = y.credits * creditCost + y.actions * actionCost;
+        const card = document.createElement("div");
+        card.className = "cb-pricing-total-year";
+        const l = document.createElement("span");
+        l.className = "cb-pricing-total-year-label";
+        l.textContent = `Year ${i + 1}`;
+        const v = document.createElement("span");
+        v.className = "cb-pricing-total-year-value";
+        v.textContent = pricingDollar(yc);
+        card.appendChild(l);
+        card.appendChild(v);
+        yearRow.appendChild(card);
+      });
+      box.appendChild(yearRow);
+    }
 
     const cards = document.createElement("div");
     cards.className = "cb-pricing-total-cards";
@@ -4841,10 +4885,13 @@
     // Cmd+Shift+E / Cmd+E. In pricing mode the body is headers-only, so the
     // group toggles + search are replaced by the internal-only "View Bands"
     // control.
+    // Collapse / expand-all buttons sit next to presence in both modes; in
+    // pricing mode they fold/unfold the use-case boxes. Search becomes the
+    // internal-only "View Bands" control.
+    introLead.appendChild(buildGroupToggleControls());
     if (__cb.pricingMode) {
       introLead.appendChild(buildViewBandsControl());
     } else {
-      introLead.appendChild(buildGroupToggleControls());
       // Collapsed search affordance — sits to the right of the collaborators
       // pill, expands inline on click or Cmd/Ctrl+F. State is module-scoped so
       // applySearchHighlight() (end of render) restores highlights afterwards.

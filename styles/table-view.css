@@ -2739,12 +2739,14 @@
   display: inline-flex;
 }
 
-/* Per-use-case, per-year volume body. */
+/* Per-use-case, per-year volume body. No horizontal padding: it lives inside
+   .cb-table-view-wrap (which already pads 24px), so the use-case boxes line up
+   exactly with the normal table's width. */
 .cb-pricing-body {
   display: flex;
   flex-direction: column;
   gap: 14px;
-  padding: 16px 20px 28px;
+  padding: 0;
 }
 
 .cb-pricing-body-empty {
@@ -2833,24 +2835,34 @@
   padding: 10px 12px;
 }
 
+/* Year header: "Year N" on the left, that year's total cost on the right. */
 .cb-pricing-year-label {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
   font-size: 12px;
   font-weight: 700;
   color: #6b7280;
-  margin-bottom: 8px;
+  margin-bottom: 10px;
 }
 
-.cb-pricing-year-fields {
-  display: flex;
-  gap: 8px;
+.cb-pricing-year-total {
+  font-size: 13px;
+  font-weight: 700;
+  color: #111827;
+  font-variant-numeric: tabular-nums;
 }
 
 .cb-pricing-field {
   display: flex;
   flex-direction: column;
   gap: 3px;
-  flex: 1;
   min-width: 0;
+}
+
+.cb-pricing-field-records {
+  margin-bottom: 10px;
 }
 
 .cb-pricing-field-label {
@@ -2881,43 +2893,33 @@
   box-shadow: 0 0 0 2px rgba(4, 120, 87, 0.15);
 }
 
-/* Second row: the per-year dollar cost of actions + credits. */
-.cb-pricing-year-costs {
-  display: flex;
-  gap: 8px;
-  margin-top: 8px;
-  padding-top: 8px;
-  border-top: 1px dashed #e5e7eb;
+/* Two metric columns side by side: Actions then Credits, each stacking the
+   volume input over its dollar cost. */
+.cb-pricing-year-metrics {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
 }
 
-.cb-pricing-cost-cell {
-  flex: 1;
+.cb-pricing-metric {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
   min-width: 0;
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 6px;
 }
 
-.cb-pricing-cost-cell-label {
-  font-size: 10px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.02em;
-  color: #9ca3af;
-}
-
-.cb-pricing-cost-cell-value {
+.cb-pricing-metric-cost {
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 700;
   font-variant-numeric: tabular-nums;
+  text-align: right;
 }
 
-.cb-pricing-cost-cell-action .cb-pricing-cost-cell-value {
+.cb-pricing-metric-action .cb-pricing-metric-cost {
   color: #4338ca;
 }
 
-.cb-pricing-cost-cell-credit .cb-pricing-cost-cell-value {
+.cb-pricing-metric-credit .cb-pricing-metric-cost {
   color: #047857;
 }
 
@@ -2936,6 +2938,37 @@
   letter-spacing: 0.03em;
   color: #6b7280;
   margin-bottom: 10px;
+}
+
+/* Per-year total cost row (multi-year only). */
+.cb-pricing-total-years {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.cb-pricing-total-year {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 5px 10px;
+  border: 1px solid #e5e7eb;
+  border-radius: 999px;
+  background: #f9fafb;
+}
+
+.cb-pricing-total-year-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: #6b7280;
+}
+
+.cb-pricing-total-year-value {
+  font-size: 13px;
+  font-weight: 700;
+  color: #111827;
+  font-variant-numeric: tabular-nums;
 }
 
 .cb-pricing-total-cards {

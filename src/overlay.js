@@ -1495,7 +1495,9 @@
     summaryBar.appendChild(totalActionsBox);
     summaryBar.appendChild(totalBox);
     summaryBar.appendChild(pricingGroup);
-    summaryBar.appendChild(pricingStrip);
+    // pricingStrip is appended as a SIBLING below the summary bar (see the
+    // overlay append below) so the whole summary bar can fold up and disappear
+    // in pricing mode while the slim cost strip slides in beneath it.
 
     // Per-row numbers (unweighted) for the "Avg / Row" boxes.
     let currentCreditsPerRow = 0;
@@ -2490,6 +2492,7 @@
 
     __cb.overlayEl.appendChild(topBar);
     __cb.overlayEl.appendChild(summaryBar);
+    __cb.overlayEl.appendChild(pricingStrip);
     __cb.overlayEl.appendChild(mainArea);
     document.body.appendChild(__cb.overlayEl);
 
