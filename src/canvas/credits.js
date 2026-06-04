@@ -30,6 +30,9 @@
       // table).
       if (cb.cost.useCaseCount() >= 2) {
         cb.cost.syncUseCaseCoverage();
+        // Also push each table's frequency onto its non-custom ERs so their
+        // chips + details reflect the per-table frequency (not the global).
+        cb.cost.syncUseCaseFrequency();
         cb._multiTotals = cb.cost.computeUseCaseTotals(cardsRef(), { viewMode: cb.viewMode });
       } else {
         cb._multiTotals = null;

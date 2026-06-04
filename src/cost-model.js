@@ -351,6 +351,28 @@
     return changed;
   }
 
+  // Materialize each use case's frequency onto its non-custom ERs' d.frequency,
+  // so the per-ER chips + details popover (which read d.frequency) reflect the
+  // table's frequency instead of the stale global default. Mirrors
+  // syncUseCaseCoverage. Skips "other" and per-ER overrides (frequencyCustom).
+  // Without this, a table set to e.g. Monthly shows x12 in its header sub-total
+  // but x1 on its ERs' details. Returns whether anything changed.
+  function syncUseCaseFrequency() {
+    let changed = false;
+    for (const c of cb.model?.getNodes?.() || []) {
+      const d = c && c.data;
+      if (!d || isNonErType(d.type) || d.frequencyCustom) continue;
+      const key = useCaseKeyForCard(c);
+      if (key === OTHER_USE_CASE) continue;
+      const freqId = useCaseFrequencyId(key);
+      if (d.frequency !== freqId) {
+        d.frequency = freqId;
+        changed = true;
+      }
+    }
+    return changed;
+  }
+
   // Grand total + per-use-case breakdown for the multi-use-case (2+ tables)
   // case. Each ER is multiplied by ITS use case's records + frequency; the
   // "other" bucket is excluded. Mirrors the single-mode math (weighted per-row
@@ -501,6 +523,7 @@
     useCaseRecordsActual,
     useCaseFrequencyId,
     syncUseCaseCoverage,
+    syncUseCaseFrequency,
     computeUseCaseTotals,
     computeTabTotals,
   };

@@ -852,10 +852,24 @@
   //   Fill is per DATA POINT (dpCard, optional): projected = editable %;
   //   actual = nonNull(from nullPercentage) / ER attempts, with a loading flag
   //   while the full-table profile is still being fetched.
+  // The record count an ER's coverage divides against by default: ITS use case's
+  // records (per imported table) — not the global Records input, which the most
+  // recent import overwrites (so otherwise every table would inherit the last
+  // table's count). Falls back to the global count for non-table ("other") cards.
+  function erDefaultRecords(erCard) {
+    const cb = window.__cb;
+    const globalRows = Number(cb?.getRecordsCount?.()) || Number(cb?.recordsActual) || 0;
+    if (erCard && cb?.cost?.useCaseRecords && cb?.cost?.useCaseKeyForCard) {
+      const r = Number(cb.cost.useCaseRecords(cb.cost.useCaseKeyForCard(erCard)));
+      if (r > 0) return r;
+    }
+    return globalRows;
+  }
+
   function coverageFillFor(erCard, dpCard) {
     const cb = window.__cb;
     const actual = cb?.viewMode === "actual";
-    const totalRows = Number(cb?.getRecordsCount?.()) || Number(cb?.recordsActual) || 0;
+    const totalRows = erDefaultRecords(erCard);
 
     let coverage;
     if (actual) {
@@ -891,8 +905,12 @@
           const tot = Number(dpCard.data.stats?.totalRecords) || 0;
           if (np != null && tot > 0) {
             const nonNull = ((100 - Number(np)) / 100) * tot;
-            const ran = Number(erCard?.data?.stats?.coverage?.ran) || 0;
-            const denom = ran > 0 ? ran : tot;
+            // Fill divides by rows ATTEMPTED (not coverage.ran, which is now
+            // success-only) so the fill % is unchanged by the success-only
+            // coverage numerator.
+            const cov = erCard?.data?.stats?.coverage;
+            const attempted = Number(cov?.attempted ?? cov?.ran) || 0;
+            const denom = attempted > 0 ? attempted : tot;
             fill = { mode: "actual", pct: Math.min(100, Math.max(0, Math.round((nonNull / denom) * 100))) };
           } else {
             fill = { mode: "actual", pct: null };
@@ -909,9 +927,7 @@
   // run, drives cost), Y = coverageTotal (attempted total). Both default to /
   // track the global records total, mirroring coverageFillFor.
   function erCoveragePair(er) {
-    const cb = window.__cb;
-    const records =
-      Number(cb.getRecordsCount?.()) || Number(cb.recordsActual) || 0;
+    const records = erDefaultRecords(er);
     const x = er.data.coverageRows != null ? Number(er.data.coverageRows) : records;
     const y = er.data.coverageTotalCustom
       ? Number(er.data.coverageTotal) || 0
@@ -1055,7 +1071,7 @@
       wrap.appendChild(mkRo(coverage.ran));
       wrap.appendChild(sep);
       wrap.appendChild(mkRo(coverage.total));
-      td.title = `${Math.round(((coverage.ran || 0) / coverage.total) * 100)}% of rows attempted`;
+      td.title = `${Math.round(((coverage.ran || 0) / coverage.total) * 100)}% of rows succeeded`;
       td.appendChild(wrap);
     } else {
       td.className = "col-coverage cb-table-view-cell-muted";
@@ -1443,6 +1459,12 @@
     pill.appendChild(credSeg);
     return pill;
   }
+
+  // Exposed so other modules (e.g. the GTME export modal in export.js) can
+  // render the same segmented actions|credits cost pill and the $ glyph without
+  // duplicating the markup. dollarSvg is a hoisted declaration defined below.
+  window.__cb.buildCostBadges = buildCostBadges;
+  window.__cb.dollarSvg = dollarSvg;
 
   // Hover tooltip for the table header (i) icon. Body-appended + position:fixed
   // (z-index above the overlay) so it shows regardless of whether the table
@@ -5856,23 +5878,21 @@
     menu.appendChild(header);
 
     // Cost section, mode-dependent: only the active view's "Cost per row" +
-    // "Total", labeled (proj.)/(actual). The editable ×N frequency badge rides
-    // inline with the per-row pill (no separate Frequency / Per year rows); when
-    // frequency is overridden both pills annualize + turn amber. The model row
-    // (AI columns only) stays an editable pill in this same section.
+    // "Total", labeled (proj.)/(actual). Frequency is its own row BELOW the two
+    // pills (editable ×N badge); changing it annualizes + ambers both pills
+    // above. The model row (AI columns only) stays an editable pill here.
     const costSection = document.createElement("div");
     costSection.className = "cb-table-view-er-menu-section";
     const which = window.__cb?.viewMode === "actual" ? "actual" : "projected";
     const modeLabel = which === "actual" ? " (actual)" : " (proj.)";
 
-    const perRowWrap = document.createElement("span");
-    perRowWrap.className = "cb-table-view-er-menu-costrow";
-    perRowWrap.appendChild(buildErMenuCostNode(er));
-    perRowWrap.appendChild(buildErMenuFrequencyNode(er)); // inline editable ×N
-    costSection.appendChild(erMenuRow("Cost per row" + modeLabel, perRowWrap));
+    costSection.appendChild(erMenuRow("Cost per row" + modeLabel, buildErMenuCostNode(er)));
 
     const totalNode = buildErMenuTotalNode(er, which);
     if (totalNode) costSection.appendChild(erMenuRow("Total" + modeLabel, totalNode));
+
+    // Frequency on its own row, beneath the two pills it drives.
+    costSection.appendChild(erMenuRow("Frequency", buildErMenuFrequencyNode(er)));
 
     if (er.isAi && er.model) {
       costSection.appendChild(erMenuRow("Model", buildErMenuModelNode(er)));

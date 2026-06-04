@@ -1672,10 +1672,96 @@
     // Exposed so the table-view per-use-case dollar pill can reuse it.
     __cb.openTargetCostEditor = openTargetCostEditor;
 
+    // Multi-table Total Cost editor: lists every use case (imported table) with
+    // its current total cost, each editable. Typing a target for a table sets
+    // that table's records to fit it (and pins its budget) — same back-calc as
+    // the per-table dollar pill, just gathered in one place off the summary bar.
+    function openUseCaseCostEditor(anchorEl) {
+      closeTotalCostEditor();
+      const rows = __cb._multiTotals?.perUseCase || [];
+
+      const backdrop = document.createElement("div");
+      backdrop.style.cssText = "position:fixed;inset:0;z-index:9999998;";
+      backdrop.addEventListener("mousedown", (evt) => {
+        evt.stopPropagation();
+        closeTotalCostEditor();
+      });
+
+      const menu = document.createElement("div");
+      menu.className = "cb-total-cost-editor cb-uc-cost-editor";
+      menu.addEventListener("mousedown", (evt) => evt.stopPropagation());
+
+      const title = document.createElement("div");
+      title.className = "cb-total-cost-editor-title";
+      title.textContent = "Edit cost by use case";
+      const help = document.createElement("p");
+      help.className = "cb-total-cost-editor-help";
+      help.textContent =
+        "Type a target spend for any table; we'll set its records to fit at that table's current cost per record.";
+      menu.appendChild(title);
+      menu.appendChild(help);
+
+      for (const u of rows.slice().sort((a, b) => b.credits - a.credits)) {
+        const dollars = (u.credits || 0) * creditCost + (u.actions || 0) * actionCost;
+        const recs = __cb.cost?.useCaseRecords ? Number(__cb.cost.useCaseRecords(u.key)) || 0 : 0;
+        const perRecord = recs > 0 ? dollars / recs : 0;
+
+        const row = document.createElement("div");
+        row.className = "cb-uc-cost-editor-row";
+        const label = document.createElement("span");
+        label.className = "cb-uc-cost-editor-label";
+        label.textContent = u.name;
+        label.title = u.name;
+        const input = document.createElement("input");
+        input.type = "text";
+        input.inputMode = "decimal";
+        input.className = "cb-total-cost-editor-input cb-uc-cost-editor-input";
+        input.value = "$" + Math.round(dollars).toLocaleString();
+        if (perRecord > 0) {
+          const commit = () => {
+            const target = parseDollar(input.value);
+            if (target > 0) {
+              const newRecords = Math.max(1, Math.round(target / perRecord));
+              __cb.setUseCaseScope?.(u.key, { records: newRecords, budget: target });
+            }
+          };
+          input.addEventListener("keydown", (e) => {
+            if (e.key === "Enter") { e.preventDefault(); commit(); closeTotalCostEditor(); }
+            else if (e.key === "Escape") { e.preventDefault(); closeTotalCostEditor(); }
+          });
+          input.addEventListener("blur", commit);
+          input.addEventListener("focus", () => input.select());
+        } else {
+          input.disabled = true;
+          input.title = "Add an enrichment with a non-zero cost per row first";
+        }
+        row.appendChild(label);
+        row.appendChild(input);
+        menu.appendChild(row);
+      }
+
+      document.body.appendChild(backdrop);
+      document.body.appendChild(menu);
+      const rect = anchorEl.getBoundingClientRect();
+      const width = 320;
+      menu.style.position = "fixed";
+      menu.style.zIndex = "9999999";
+      menu.style.top = (rect.bottom + 6) + "px";
+      menu.style.left = Math.max(8, rect.right - width) + "px";
+      totalCostEditorEl = menu;
+      totalCostEditorBackdrop = backdrop;
+    }
+
     // Single-table (global) Total Cost editor: back-calculate the global Records
     // field from a target spend, and PIN that budget so a later frequency / unit-
-    // price change re-derives Records instead of inflating the total.
+    // price change re-derives Records instead of inflating the total. In multi-
+    // table mode it defers to the per-use-case editor instead (the global Records
+    // field is hidden there).
     function openTotalCostEditor(anchorEl) {
+      if (__cb._multiTotals && (__cb._multiTotals.perUseCase || []).length) {
+        openUseCaseCostEditor(anchorEl);
+        return;
+      }
       openTargetCostEditor({
         anchorEl,
         currentText: totalDollarValue.textContent,

@@ -29,6 +29,7 @@
   function aggregateWaterfallStats(providers) {
     let coverageRan = 0;
     let coverageTotal = 0;
+    let coverageAttempted = 0;
     let fillSuccess = 0;
     let spendCredits = 0;
     let spendActions = 0;
@@ -46,6 +47,10 @@
       if (s.coverage) {
         coverageRan = Math.max(coverageRan, Number(s.coverage.ran) || 0);
         coverageTotal = Math.max(coverageTotal, Number(s.coverage.total) || 0);
+        coverageAttempted = Math.max(
+          coverageAttempted,
+          Number(s.coverage.attempted ?? s.coverage.ran) || 0,
+        );
       }
 
       // Only count fill-rate success from providers backed by runstatus
@@ -63,12 +68,12 @@
     }
     if (!any) return null;
     const out = { source, fetchedAt };
-    if (coverageRan > 0 && coverageTotal > 0) {
-      out.coverage = { ran: coverageRan, total: coverageTotal };
-      // Fill rate denominator = waterfall coverage. "Of the records the
-      // waterfall attempted, how many got a result." Both popover sections
-      // (coverage + fill rate) now share the same record count.
-      out.fillRate = { success: fillSuccess, ran: coverageRan };
+    if (coverageAttempted > 0 && coverageTotal > 0) {
+      // Coverage numerator = success only (matches deriveActionStatsFromDataProfile);
+      // `attempted` is carried for the fill-rate denominator so fill % is
+      // "of the records the waterfall attempted, how many got a result."
+      out.coverage = { ran: coverageRan, total: coverageTotal, attempted: coverageAttempted };
+      out.fillRate = { success: fillSuccess, ran: coverageAttempted };
     }
     if (spendCredits > 0 || spendActions > 0 || spendCells > 0) {
       out.spend = {
@@ -306,12 +311,16 @@
 
     const adjustedSuccess = Math.max(0, success - condNotMet);
     const adjustedError = Math.max(0, error - inputMissing);
-    const ran = adjustedSuccess + adjustedError + inProgress;
+    // `attempted` = rows that ran at all (success + error + in-progress). The
+    // coverage NUMERATOR counts SUCCESS only (errored / in-progress rows aren't
+    // "covered"); `attempted` is kept as the fill-rate denominator so fill % is
+    // unaffected by the success-only coverage numerator.
+    const attempted = adjustedSuccess + adjustedError + inProgress;
 
-    if (ran <= 0 || total <= 0) return null;
+    if (attempted <= 0 || total <= 0) return null;
     return {
-      coverage: { ran, total },
-      fillRate: { success: adjustedSuccess, ran },
+      coverage: { ran: adjustedSuccess, total, attempted },
+      fillRate: { success: adjustedSuccess, ran: attempted },
       condNotMet: condNotMet + inputMissing,
     };
   }
