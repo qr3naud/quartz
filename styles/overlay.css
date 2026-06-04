@@ -750,9 +750,13 @@
   min-width: 120px;
   /* Keep each box at its natural size; the bar scrolls when they don't fit. */
   flex-shrink: 0;
-  /* Smooth horizontal collapse when a scope box is added/removed on import
-     (driven by setSummaryBoxHidden in overlay.js — max-width is set inline). */
-  transition: max-width 0.26s ease, opacity 0.2s ease, transform 0.26s ease;
+  /* Smooth horizontal collapse when a scope box is added/removed on import.
+     setSummaryBoxHidden (overlay.js) drives width / padding / border / margin
+     inline; collapsing all of them (plus a negative margin that absorbs the
+     bar's gap) lets the box shrink to a true zero footprint so neighbors slide
+     in continuously — no end-snap when display:none is finally applied. */
+  transition: width 0.28s ease, padding 0.28s ease,
+    border-width 0.28s ease, margin 0.28s ease, opacity 0.18s ease;
 }
 
 /* Adaptive bar: per-scope boxes (Avg/Row, Records, Frequency) are hidden when

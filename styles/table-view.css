@@ -1639,9 +1639,8 @@
    Group sections appear when an imported cluster has a titled comment card
    (POC importer or basic-group table import). Clicking anywhere on the
    header toggles collapse: the chevron rotates from pointing-down (open)
-   to pointing-right (collapsed) and the DP rows below animate out (lift +
-   fade) before the re-render drops them; expanding plays them back in
-   (staggered). See animatedGroupToggle() in table-view.js. State is tracked
+   to pointing-right (collapsed) and the DP rows below are removed from
+   the DOM entirely (no animation — re-render is cheap). State is tracked
    in `collapsedGroups: Set<groupId>` at table-view.js module scope so
    re-renders triggered by canvas state changes preserve the rep's choice. */
 .cb-table-view-group-row {
@@ -1693,53 +1692,6 @@
 
 .cb-table-view-group-row-collapsed td {
   border-bottom-color: #ede9fe;
-}
-
-/* Group expand/collapse body-row animation. The table is rebuilt on every
-   toggle, so these run as one-shot animations on the <tr>: expanding tags the
-   freshly-rendered rows (.cb-table-view-row-entering, staggered via inline
-   animation-delay) before the first paint; collapsing tags the live rows
-   (.cb-table-view-row-leaving) and the re-render is deferred ~180ms so they
-   finish lifting out first. transform-origin keeps the lift subtle. */
-.cb-table-view-row-entering {
-  animation: cb-tv-row-enter 0.24s cubic-bezier(0.22, 1, 0.36, 1) both;
-}
-
-.cb-table-view-row-leaving {
-  animation: cb-tv-row-leave 0.16s ease forwards;
-  pointer-events: none;
-}
-
-@keyframes cb-tv-row-enter {
-  from {
-    opacity: 0;
-    transform: translateY(-6px);
-  }
-
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-@keyframes cb-tv-row-leave {
-  from {
-    opacity: 1;
-    transform: translateY(0);
-  }
-
-  to {
-    opacity: 0;
-    transform: translateY(-6px);
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-
-  .cb-table-view-row-entering,
-  .cb-table-view-row-leaving {
-    animation: none;
-  }
 }
 
 .cb-table-view-group-row-icon {

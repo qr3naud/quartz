@@ -4416,19 +4416,6 @@
     contextMenuEl.style.top = `${top}px`;
   }
 
-  // ---- Group expand / collapse animation ----
-  //
-  // Collapse/expand goes through a full render() (the table is rebuilt from
-  // scratch), so we animate around that re-render: on collapse we play the body
-  // rows OUT of the live DOM first, then flip state + render(); on expand we
-  // render() (rows land in the DOM) and play them IN before the first paint.
-  //
-  // `justExpandedGroupKey` is consumed at the end of render() to tag the freshly
-  // revealed block. `collapsingGroupKeys` guards a header against re-triggering
-  // while its out-animation is in flight.
-  let justExpandedGroupKey = null;
-  const collapsingGroupKeys = new Set();
-
   // One-shot guard: animate the Projected/Actual toggle in the first time it
   // appears (an import populated the header). Not reset on unmount, so flipping
   // between canvas/table view doesn't replay it.
@@ -4439,84 +4426,6 @@
       window.matchMedia &&
       window.matchMedia("(prefers-reduced-motion: reduce)").matches
     );
-  }
-
-  // The contiguous body rows belonging to a header: every following sibling up
-  // to (but not including) the next header at the same or shallower depth. This
-  // captures a super-group's direct rows AND its deeper sub-headers + their rows.
-  function groupBodyRowsAfter(headerTr) {
-    const headerDepth = parseInt(headerTr.getAttribute("data-depth") || "0", 10);
-    const rows = [];
-    let el = headerTr.nextElementSibling;
-    while (el) {
-      if (el.classList.contains("cb-table-view-group-row")) {
-        const d = parseInt(el.getAttribute("data-depth") || "0", 10);
-        if (d <= headerDepth) break;
-      }
-      rows.push(el);
-      el = el.nextElementSibling;
-    }
-    return rows;
-  }
-
-  // Shared collapse/expand entry point for every section header (real groups,
-  // "Other", orphan). `headerTr` is the live header element in the closure.
-  function animatedGroupToggle(key, headerTr) {
-    if (collapsingGroupKeys.has(key)) return; // out-animation in flight
-    const collapsing = !collapsedGroups.has(key);
-
-    if (!collapsing) {
-      // Expanding: flip state, let render() rebuild the rows, then tag the new
-      // block so it animates in (consumed at the end of render()).
-      collapsedGroups.delete(key);
-      if (!prefersReducedMotion()) justExpandedGroupKey = key;
-      render();
-      return;
-    }
-
-    // Collapsing.
-    const block = prefersReducedMotion() ? [] : groupBodyRowsAfter(headerTr);
-    if (block.length === 0) {
-      collapsedGroups.add(key);
-      render();
-      return;
-    }
-    // Rotate the chevron now (immediate feedback) while the body lifts out.
-    headerTr.classList.add("cb-table-view-group-row-collapsed");
-    headerTr.setAttribute("aria-expanded", "false");
-    collapsingGroupKeys.add(key);
-    block.forEach((r) => r.classList.add("cb-table-view-row-leaving"));
-    setTimeout(() => {
-      collapsingGroupKeys.delete(key);
-      collapsedGroups.add(key);
-      render();
-    }, 180);
-  }
-
-  // Post-render hook: tag the just-expanded header's block so CSS plays the
-  // enter animation. Runs synchronously at the end of render() (before paint) so
-  // the rows don't flash at full opacity first. Staggered for a cascade feel.
-  function consumeJustExpandedGroup() {
-    if (justExpandedGroupKey == null) return;
-    const key = justExpandedGroupKey;
-    justExpandedGroupKey = null;
-    const header = hostEl?.querySelector(
-      `.cb-table-view-group-row[data-row-id="${key}"]`,
-    );
-    if (!header) return;
-    const block = groupBodyRowsAfter(header);
-    block.forEach((r, idx) => {
-      r.style.animationDelay = `${Math.min(idx * 18, 120)}ms`;
-      r.classList.add("cb-table-view-row-entering");
-      r.addEventListener(
-        "animationend",
-        () => {
-          r.classList.remove("cb-table-view-row-entering");
-          r.style.animationDelay = "";
-        },
-        { once: true },
-      );
-    });
   }
 
   // ---- Rendering ----
@@ -4891,8 +4800,6 @@
       }
       pendingRenameCardId = null;
     }
-    // Play the just-expanded group's body rows in (synchronous, pre-paint).
-    consumeJustExpandedGroup();
     // Re-apply search highlights against the freshly-built rows. No scroll —
     // a background model update shouldn't yank the user's scroll position.
     if (searchQuery.trim()) applySearchHighlight({ scroll: false });
@@ -4959,7 +4866,6 @@
       "cb-table-view-group-row cb-table-view-orphan-group-row" +
       (isCollapsed ? " cb-table-view-group-row-collapsed" : "");
     tr.setAttribute("data-group-id", ORPHAN_SECTION_KEY);
-    tr.setAttribute("data-row-id", ORPHAN_SECTION_KEY);
     tr.setAttribute("role", "button");
     tr.setAttribute("aria-expanded", isCollapsed ? "false" : "true");
     tr.tabIndex = 0;
@@ -4993,7 +4899,14 @@
     td.appendChild(wrap);
     tr.appendChild(td);
 
-    const toggle = () => animatedGroupToggle(ORPHAN_SECTION_KEY, tr);
+    const toggle = () => {
+      if (collapsedGroups.has(ORPHAN_SECTION_KEY)) {
+        collapsedGroups.delete(ORPHAN_SECTION_KEY);
+      } else {
+        collapsedGroups.add(ORPHAN_SECTION_KEY);
+      }
+      render();
+    };
     tr.addEventListener("click", toggle);
     tr.addEventListener("keydown", (evt) => {
       if (evt.key === "Enter" || evt.key === " ") {
@@ -5049,7 +4962,14 @@
     td.appendChild(wrap);
     tr.appendChild(td);
 
-    const toggle = () => animatedGroupToggle(OTHER_SECTION_KEY, tr);
+    const toggle = () => {
+      if (collapsedGroups.has(OTHER_SECTION_KEY)) {
+        collapsedGroups.delete(OTHER_SECTION_KEY);
+      } else {
+        collapsedGroups.add(OTHER_SECTION_KEY);
+      }
+      render();
+    };
     tr.addEventListener("click", (evt) => {
       if (evt.button !== 0) return;
       toggle();
@@ -6324,7 +6244,14 @@
     td.appendChild(wrap);
     tr.appendChild(td);
 
-    const toggle = () => animatedGroupToggle(section.groupId, tr);
+    const toggle = () => {
+      if (collapsedGroups.has(section.groupId)) {
+        collapsedGroups.delete(section.groupId);
+      } else {
+        collapsedGroups.add(section.groupId);
+      }
+      render();
+    };
 
     // Click toggles collapse. Header rows intentionally don't enter the
     // row-selection state — there's no Group / Link action that applies

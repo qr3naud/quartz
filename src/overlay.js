@@ -1403,11 +1403,17 @@
       el._cbTween = requestAnimationFrame(tick);
     }
 
+    // Bar gap (px) — must match `.cb-summary-bar { gap }` in overlay.css. A
+    // collapsing box animates its margin to -GAP so it cancels the flex gap it
+    // would otherwise reserve; combined with collapsing width + padding +
+    // border to zero, its footprint reaches exactly the display:none footprint,
+    // so neighbors slide in continuously with no snap at the end.
+    const SUMMARY_BAR_GAP = 10;
+
     // Slide a scope box out (hidden) or in (shown) when the adaptive bar flips
-    // on a multi-import. Animates max-width so neighbors slide left to fill,
-    // plus opacity + a small x-shift. The resting hidden state is display:none,
-    // set only after the slide-out finishes. Only animates on a real change —
-    // recalcTotal() runs on every recompute, so unchanged calls are no-ops.
+    // on a multi-import. The resting hidden state is display:none, applied only
+    // after the slide-out finishes. Only animates on a real change — recalcTotal
+    // runs on every recompute, so unchanged calls are no-ops.
     function setSummaryBoxHidden(box, hidden) {
       if (!box) return;
       const first = box._cbHidden === undefined;
@@ -1417,9 +1423,13 @@
         window.matchMedia &&
         window.matchMedia("(prefers-reduced-motion: reduce)").matches;
       const clearInline = () => {
-        box.style.maxWidth = "";
-        box.style.opacity = "";
-        box.style.transform = "";
+        for (const p of [
+          "width", "opacity", "marginLeft",
+          "paddingLeft", "paddingRight",
+          "borderLeftWidth", "borderRightWidth",
+        ]) {
+          box.style[p] = "";
+        }
       };
       // Drop any in-flight slide listener so a mid-animation flip can't apply a
       // stale final state.
@@ -1434,30 +1444,48 @@
         box.classList.toggle("cb-summary-hidden", hidden);
         return;
       }
+      // Measure the natural geometry while the box is laid out at full size
+      // (before min-width is zeroed by the animating class).
+      box.classList.remove("cb-summary-hidden");
+      const cs = getComputedStyle(box);
+      const padL = cs.paddingLeft;
+      const padR = cs.paddingRight;
+      const bL = cs.borderLeftWidth;
+      const bR = cs.borderRightWidth;
+      const contentW =
+        box.clientWidth -
+        (parseFloat(padL) || 0) -
+        (parseFloat(padR) || 0);
+      const setNatural = () => {
+        box.style.width = contentW + "px";
+        box.style.paddingLeft = padL;
+        box.style.paddingRight = padR;
+        box.style.borderLeftWidth = bL;
+        box.style.borderRightWidth = bR;
+        box.style.marginLeft = "0px";
+        box.style.opacity = "1";
+      };
+      const setCollapsed = () => {
+        box.style.width = "0px";
+        box.style.paddingLeft = "0px";
+        box.style.paddingRight = "0px";
+        box.style.borderLeftWidth = "0px";
+        box.style.borderRightWidth = "0px";
+        box.style.marginLeft = -SUMMARY_BAR_GAP + "px";
+        box.style.opacity = "0";
+      };
       box.classList.add("cb-summary-animating");
       if (hidden) {
-        box.classList.remove("cb-summary-hidden");
-        const w = box.scrollWidth;
-        box.style.maxWidth = w + "px";
-        box.style.opacity = "1";
-        box.style.transform = "translateX(0)";
+        setNatural();
         void box.offsetWidth; // commit the start (natural) state
-        box.style.maxWidth = "0px";
-        box.style.opacity = "0";
-        box.style.transform = "translateX(-8px)";
+        setCollapsed();
       } else {
-        box.classList.remove("cb-summary-hidden");
-        const w = box.scrollWidth; // natural width, now that it's shown
-        box.style.maxWidth = "0px";
-        box.style.opacity = "0";
-        box.style.transform = "translateX(-8px)";
+        setCollapsed();
         void box.offsetWidth; // commit the collapsed start state
-        box.style.maxWidth = w + "px";
-        box.style.opacity = "1";
-        box.style.transform = "translateX(0)";
+        setNatural();
       }
       const onEnd = (e) => {
-        if (e.target !== box || e.propertyName !== "max-width") return;
+        if (e.target !== box || e.propertyName !== "width") return;
         box.removeEventListener("transitionend", onEnd);
         box._cbAnimEnd = null;
         box.classList.remove("cb-summary-animating");
