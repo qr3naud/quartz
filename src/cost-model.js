@@ -52,7 +52,7 @@
   //                                  total — the canvas summary's behavior)
   //
   // `creditsUnknown` is set when a function's projected cost hasn't resolved
-  // yet (fetchSubroutineCostsInBackground still in flight) so callers can show
+  // yet (resolveSubroutineCostsForCards still in flight) so callers can show
   // a placeholder instead of a misleading 0.
   function perRowCost(card, opts) {
     opts = opts || {};

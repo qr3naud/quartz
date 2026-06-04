@@ -2569,7 +2569,7 @@
   //   Actual: real spend (data.stats.spend) averaged over its cellCount; falls
   //     back to the projected value when an ER has no spend yet so the column
   //     never blanks. `creditsUnknown` is set when a function's projected cost
-  //     hasn't resolved yet (fetchSubroutineCostsInBackground still in flight)
+  //     hasn't resolved yet (resolveSubroutineCostsForCards still in flight)
   //     so the cell can show a placeholder instead of a misleading 0.
   function erPerRowCost(er) {
     // Shared cost model (src/cost-model.js). Default fallbackToProjected:true

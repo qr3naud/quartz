@@ -326,6 +326,12 @@
       ]))
       .catch((err) => console.error("[Clay Scoping] enrichment prefetch failed:", err));
     __cb.fetchModelPricing(ids.workspaceId);
+    // Functions (subroutines) carry no catalog cost — their projected cost +
+    // referenced table live in the workspace subroutine list. Prefetch it so a
+    // picked function resolves to a real cost + "Open function" target without
+    // a per-pick round-trip. The picker has its own prefetch (it doesn't go
+    // through ensureStaticData), so kick it off here alongside model pricing.
+    __cb.fetchSubroutines(ids.workspaceId);
 
     watchForDialog();
 
@@ -678,6 +684,85 @@
   // the picker uses.
   __cb.getValidationInfoForAttribute = getValidationInfoForAttribute;
 
+  // ---- Subroutine (function) detection ----
+  //
+  // Functions show up in the picker's "Functions" tab (and search) as rows
+  // labeled with the function table's name. Their cost lives in the table they
+  // reference, not the action catalog, so the standard path would emit a
+  // costless card with no way to open the underlying table. We resolve them
+  // against the workspace subroutine list prefetched in startPickerMode
+  // (__cb.subroutineByTableId / subroutineByName).
+
+  // The referenced table id, scraped from the row's "open function" link.
+  // EnrichmentRow renders an <a href=".../tables/t_xxxx"> whenever a row has a
+  // referencedTableId, which (on the Functions tab) is the function table.
+  function scrapeReferencedTableId(row) {
+    const link = row.querySelector('a[href*="/tables/t_"]');
+    const href = link?.getAttribute("href") || "";
+    const m = href.match(/\/tables\/(t_[a-zA-Z0-9]+)/);
+    return m ? m[1] : null;
+  }
+
+  // Resolve a picker row to a subroutine entry { tableId, name, cost,
+  // actionExecutionCost }. The scraped table-id link is itself a reliable
+  // function signal — only function rows render a /tables/ link — so detection
+  // works straight from the DOM even before the subroutine cache has loaded:
+  //   - scraped id IN the cache → return the cached entry (carries cost)
+  //   - scraped id NOT in the cache (cold cache, or a function created after
+  //     prefetch) → synthesize a cost-less entry; resolveSubroutineCostsForCards
+  //     backfills the cost after the card lands.
+  // Name match is the fallback for rows with no link (e.g. search results), and
+  // only when the row isn't a known catalog action — functions are never in the
+  // action catalog, so a catalog hit means a normal action, not a function.
+  function matchSubroutineForRow(row, lname) {
+    const byTableId = __cb.subroutineByTableId;
+    const byName = __cb.subroutineByName;
+    const refId = scrapeReferencedTableId(row);
+    if (refId) {
+      return (
+        (byTableId && byTableId[refId]) ||
+        { tableId: refId, name: null, cost: null, actionExecutionCost: null }
+      );
+    }
+    if (byName && byName[lname] && !__cb.enrichmentLookup?.[lname]) return byName[lname];
+    return null;
+  }
+
+  // Build an execute-subroutine card from a resolved subroutine entry. Mirrors
+  // the function-card shape table-import.js produces (actionKey
+  // "execute-subroutine" + referencedTableId + cost) so the table view's
+  // "Function" chip, the "Open function" action, and the shared cost model all
+  // work. `cost` may be null (the subroutine list omits it for some functions)
+  // — that's fine: cost-model renders execute-subroutine + null credits as
+  // "calculating", and resolveSubroutineCostsForCards (called from finishPicker)
+  // backfills it from the per-table endpoint.
+  function buildSubroutineCardData(sub, name, row) {
+    const contentDiv = row.querySelector("div.flex.min-w-0");
+    const iconImg = contentDiv?.querySelector("img") ?? null;
+    const iconSvg = !iconImg ? (contentDiv?.querySelector("svg") ?? null) : null;
+    const cost = sub.cost != null ? Number(sub.cost) : null;
+    return {
+      actionKey: "execute-subroutine",
+      packageId: "clay",
+      displayName: name || sub.name || "Run function",
+      packageName: "Function",
+      credits: cost,
+      actionExecutions: sub.actionExecutionCost != null ? Number(sub.actionExecutionCost) : 0,
+      iconUrl: iconImg?.src ?? null,
+      iconSvgHtml: iconSvg ? iconSvg.outerHTML : null,
+      creditText: cost != null ? `~${cost} / row` : null,
+      badges: [],
+      isAi: false,
+      modelOptions: null,
+      selectedModel: null,
+      requiresApiKey: false,
+      usePrivateKey: false,
+      // Referenced "main function" table — powers "Open function" and lets
+      // resolveSubroutineCostsForCards backfill cost on a cache miss.
+      referencedTableId: sub.tableId,
+    };
+  }
+
   function extractVisualData(row, name) {
     const lname = name.toLowerCase();
 
@@ -737,6 +822,16 @@
           actionExecutions: __cb.WATERFALL_ACTION_EXECUTIONS,
         });
       }
+    }
+
+    // ---- Subroutine (function) detection ----
+    //
+    // Checked after waterfalls (a function name can't shadow a waterfall) and
+    // before the standard path so a picked function emits an execute-subroutine
+    // card carrying its referencedTableId + cost instead of a costless action.
+    const sub = matchSubroutineForRow(row, lname);
+    if (sub) {
+      return buildSubroutineCardData(sub, name, row);
     }
 
     // ---- Standard action-row path ----
@@ -1104,6 +1199,25 @@
     }];
   }
 
+  // Backfill projected cost for any picked function (subroutine) cards that
+  // didn't resolve at pick time (cold subroutine cache, or a function created
+  // after the prefetch) once they're on the canvas. No-op when none were
+  // picked or the warm cache already stamped them. Fire-and-forget — the
+  // resolver re-renders the canvas / table when it stamps anything.
+  function maybeResolvePickedSubroutines(cards) {
+    if (
+      !Array.isArray(cards) ||
+      !cards.some((c) => c?.actionKey === "execute-subroutine") ||
+      typeof __cb.resolveSubroutineCostsForCards !== "function"
+    ) {
+      return;
+    }
+    const ids = __cb.parseIdsFromUrl();
+    const workspaceId = ids?.workspaceId ?? __cb.currentWorkspaceId;
+    if (!workspaceId) return;
+    __cb.resolveSubroutineCostsForCards(workspaceId);
+  }
+
   async function finishPicker() {
     const cards = [...selectedEnrichments.values()];
     closePicker();
@@ -1166,9 +1280,15 @@
           }
         }
       }
+      // Cards are on the canvas now (addCard is synchronous), so backfill any
+      // unresolved function costs.
+      maybeResolvePickedSubroutines(cards);
     } else {
       __cb.tabStore = await __cb.loadTabs();
-      __cb.openCanvas(cards);
+      // Await so the picked cards are mounted (openCanvas adds initialCards
+      // before resolving) before we backfill function costs.
+      await __cb.openCanvas(cards);
+      maybeResolvePickedSubroutines(cards);
     }
   }
 })();

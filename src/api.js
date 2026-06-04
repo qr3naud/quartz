@@ -19,6 +19,7 @@
     actions: (ws) => `cb-cache-actions-${ws}`,
     modelpricing: (ws) => `cb-cache-modelpricing-${ws}`,
     plan: (ws) => `cb-cache-plan-${ws}`,
+    subroutines: (ws) => `cb-cache-subroutines-${ws}`,
   };
 
   function extVersion() {
@@ -89,6 +90,7 @@
     const actionsCache = __cb.readStaticCache(CACHE_KEYS.actions(workspaceId), workspaceId);
     const modelCache = __cb.readStaticCache(CACHE_KEYS.modelpricing(workspaceId), workspaceId);
     const planCache = __cb.readStaticCache(CACHE_KEYS.plan(workspaceId), workspaceId);
+    const subroutinesCache = __cb.readStaticCache(CACHE_KEYS.subroutines(workspaceId), workspaceId);
 
     // 1. Hydrate in-memory state from cache (instant, no network).
     if (Object.keys(__cb.actionByIdLookup || {}).length === 0 && Array.isArray(actionsCache?.data)) {
@@ -99,6 +101,14 @@
     }
     if (!__cb.currentPlanPricing && planCache && "data" in planCache) {
       __cb.currentPlanPricing = planCache.data;
+    }
+    // A workspace can legitimately have zero functions, so an empty map is a
+    // valid "loaded" state — key the hydrate off the map being unset (vs the
+    // emptiness test used for actions / pricing) and off cache presence for the
+    // fetch decision below (mirrors the `plan` path, whose data can be null).
+    if (!__cb.subroutineByTableId && subroutinesCache && subroutinesCache.data) {
+      __cb.subroutineByTableId = subroutinesCache.data.byTableId || {};
+      __cb.subroutineByName = subroutinesCache.data.byName || {};
     }
 
     // 2. Decide what to fetch now (no usable value) vs in the background (stale).
@@ -121,6 +131,12 @@
       mustAwait.push(__cb.fetchCurrentPlanPricing(workspaceId));
     } else if (!isCacheFresh(planCache)) {
       background.push(() => __cb.fetchCurrentPlanPricing(workspaceId));
+    }
+
+    if (!subroutinesCache) {
+      mustAwait.push(__cb.fetchSubroutines(workspaceId));
+    } else if (!isCacheFresh(subroutinesCache)) {
+      background.push(() => __cb.fetchSubroutines(workspaceId));
     }
 
     for (const run of background) {
@@ -229,6 +245,67 @@
       __cb.writeStaticCache(CACHE_KEYS.modelpricing(workspaceId), workspaceId, __cb.livePricingByModel);
     } catch (err) {
       console.warn("[Clay Scoping] model pricing fetch failed, using defaults:", err);
+    }
+  };
+
+  // Fetches EVERY function (subroutine) in the workspace in one unfiltered call
+  // to the same endpoint Clay's column editor uses for a single function
+  // (GET /v3/workspaces/:ws/subroutines). Omitting the subroutineTableIds[]
+  // filter returns all non-managed subroutine tables (see
+  // apps/api/v3/tables/endpoints/subroutines.endpoints.ts). We index them by
+  // referenced table id AND lowercased name so the picker can resolve a picked
+  // function's projected cost + referenced table without a per-function
+  // round-trip, and the import flow can stamp cost synchronously. Cached like
+  // model pricing (24h stale-while-revalidate). `cost` is the same
+  // getRunCostEstimate number __cb.fetchSubroutineCosts returns for a single
+  // table (standalone sub-columns summed, waterfall steps averaged), so the
+  // cached value and the per-table fetch agree.
+  __cb.fetchSubroutines = async function (workspaceId) {
+    // Instant hydrate from the localStorage cache so the picker can resolve a
+    // function's cost the moment it's picked, even before this network refetch
+    // returns. This runs synchronously (before the first await), so a caller
+    // that doesn't await fetchSubroutines (the picker) still sees the warm map
+    // immediately. Detection itself doesn't need this (it scrapes the row's
+    // table-id link), but it makes the cost show without waiting on the network.
+    if (!__cb.subroutineByTableId) {
+      const cached = __cb.readStaticCache(CACHE_KEYS.subroutines(workspaceId), workspaceId);
+      if (cached && cached.data) {
+        __cb.subroutineByTableId = cached.data.byTableId || {};
+        __cb.subroutineByName = cached.data.byName || {};
+      }
+    }
+    try {
+      const res = await fetch(
+        `https://api.clay.com/v3/workspaces/${workspaceId}/subroutines`,
+        { credentials: "include" }
+      );
+      if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
+      const body = await res.json();
+      const arr = Array.isArray(body) ? body : body?.subroutines || [];
+      const byTableId = {};
+      const byName = {};
+      for (const s of arr) {
+        const t = s?.table;
+        if (!t?.id) continue;
+        const entry = {
+          tableId: t.id,
+          name: t.name ?? null,
+          sourceId: s.sourceId ?? null,
+          cost: s.cost ?? null,
+          actionExecutionCost: s.actionExecutionCost ?? null,
+        };
+        byTableId[t.id] = entry;
+        if (t.name) byName[t.name.toLowerCase()] = entry;
+      }
+      __cb.subroutineByTableId = byTableId;
+      __cb.subroutineByName = byName;
+      __cb.writeStaticCache(CACHE_KEYS.subroutines(workspaceId), workspaceId, { byTableId, byName });
+    } catch (err) {
+      console.warn("[Clay Scoping] subroutines fetch failed:", err);
+      // Keep any previously-hydrated map; ensure the lookups exist so callers
+      // can read them with optional chaining without an undefined guard.
+      __cb.subroutineByTableId = __cb.subroutineByTableId || {};
+      __cb.subroutineByName = __cb.subroutineByName || {};
     }
   };
 

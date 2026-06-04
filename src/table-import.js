@@ -159,6 +159,22 @@
     return null;
   }
 
+  // Pulls the referenced "main function" table id out of an execute-subroutine
+  // field's inputsBinding. `referencedTableId` is NOT a serialized field
+  // property (the API never returns it — see
+  // apps/api/v3/tables/domain/fields/field-types/action-field.ts); Clay only
+  // stores the target inside the `tableId` input binding as a quoted literal
+  // (formulaText: `"t_xxxx"`). We read that binding and regex the id out,
+  // mirroring extractTargetTableId in libs/shared/src/fields/action-field.ts.
+  // Returns the `t_...` id or null.
+  function extractSubroutineTableId(inputsBinding) {
+    const raw = readInputBindingValue(inputsBinding, "tableId");
+    if (typeof raw !== "string") return null;
+    const m = raw.match(/t_[a-zA-Z0-9]+/);
+    return m ? m[0] : null;
+  }
+  __cb.extractSubroutineTableId = extractSubroutineTableId;
+
   // Strips surrounding quotes + whitespace, the same way the server's
   // findModelOption does in libs/shared/src/ai/models.ts line 1280. Bindings
   // sometimes arrive as `"\"gpt-5.4\""` (quoted JSON literal) instead of
@@ -649,6 +665,27 @@
       }
     }
 
+    // Subroutine ("Run function") fields have NO catalog or /context cost of
+    // their own — their projected cost lives in the table they reference. The
+    // referenced table id isn't a serialized field property; it lives in the
+    // `tableId` input binding (extractSubroutineTableId). Prefer the startup
+    // subroutine cache (warmed by ensureStaticData before the import runs) so
+    // the cost is known the moment the card is built, instead of blanking until
+    // the background resolver returns. resolveSubroutineCostsForCards still
+    // backfills any cache miss after the cards land.
+    const referencedTableId =
+      actionKey === "execute-subroutine"
+        ? extractSubroutineTableId(field?.typeSettings?.inputsBinding)
+        : null;
+    let actionExecutions = planAwareActionExecutions(info);
+    if (referencedTableId) {
+      const sub = __cb.subroutineByTableId?.[referencedTableId];
+      if (sub) {
+        if (sub.cost != null) credits = sub.cost;
+        if (sub.actionExecutionCost != null) actionExecutions = sub.actionExecutionCost;
+      }
+    }
+
     return {
       actionKey: actionKey ?? (displayName || "field").toLowerCase().replace(/[^a-z0-9]+/g, "_"),
       packageId: packageId ?? "clay",
@@ -668,7 +705,9 @@
       // records-* source action in the canvas's "Total Actions" / "Avg
       // Actions / Row" headlines. Plan-aware: legacy plans have no
       // actionExecution dimension, so this resolves to 0 there.
-      actionExecutions: planAwareActionExecutions(info),
+      // For subroutines this is overridden above with the function's own
+      // actionExecutionCost from the subroutine cache.
+      actionExecutions,
       iconUrl,
       iconSvgHtml: null,
       creditText:
@@ -694,12 +733,11 @@
       fieldId: fieldId ?? field?.id,
       tableId: tableId ?? null,
       viewId: viewId ?? null,
-      // Subroutine ("Run function") fields reference a "main function" table.
-      // Carried so fetchSubroutineCostsInBackground can resolve the projected
-      // cost (sum of that table's per-field credit costs — what Clay shows in
-      // the Edit-column panel) and stamp it onto data.credits. Persists with
-      // the card, so a reload keeps the resolved cost.
-      referencedTableId: field?.typeSettings?.referencedTableId ?? null,
+      // Subroutine ("Run function") fields reference a "main function" table,
+      // resolved above from the `tableId` input binding. Carried so the
+      // subroutine resolver (and the "Open function" action) can find the
+      // referenced table, and so a reload keeps the resolved cost.
+      referencedTableId,
       stats: stats || null,
       groupCluster: groupCluster || null,
     };
@@ -2122,8 +2160,11 @@
       __cb.sessionCutoff?.noteImport?.(tableId);
       __cb.sessionCutoff?.ensureLoaded?.();
       // Resolve projected cost for "Run function" (subroutine) cards, whose
-      // cost lives in the table they reference rather than the catalog.
-      fetchSubroutineCostsInBackground(workspaceId, tableId);
+      // cost lives in the table they reference rather than the catalog. Most
+      // cards are already stamped synchronously in buildErCardData from the
+      // warm subroutine cache; this backfills any referenced table that wasn't
+      // in the cache (e.g. a function created after it was built).
+      __cb.resolveSubroutineCostsForCards(workspaceId, { tableId });
       // Accurate per-DP fill rate (full-table nullPercentage). The import's
       // sampled profile is only ~50 rows, so actual fill needs sampleSize 0.
       fetchFullProfileInBackground(workspaceId, tableId);
@@ -2134,40 +2175,69 @@
 
   // Subroutine ("Run function") fields have no catalog or /context cost of
   // their own — their projected credits + actions live in the table they
-  // reference (data.referencedTableId). Resolve them via the SAME endpoint
-  // Clay's column editor uses (__cb.fetchSubroutineCosts -> listSubroutines),
-  // which returns the authoritative per-row cost (standalone sub-columns summed,
-  // waterfall steps averaged). The old approach flat-summed every sub-table
-  // field's creditCost, which overcounted waterfalls (e.g. 33.9 vs Clay's 17.4).
-  async function fetchSubroutineCostsInBackground(workspaceId, tableId) {
-    if (!__cb.canvas || typeof __cb.fetchSubroutineCosts !== "function") return;
+  // reference (data.referencedTableId). This resolves every canvas function
+  // card (or just one imported table's, via opts.tableId) and stamps the cost.
+  //
+  // Source order: the startup subroutine cache (__cb.subroutineByTableId,
+  // warmed by ensureStaticData / fetchSubroutines) first — so most cards
+  // resolve with NO network — then the single-table endpoint Clay's column
+  // editor uses (__cb.fetchSubroutineCosts -> listSubroutines) for any
+  // referenced table not in the cache. Both return the authoritative per-row
+  // cost (standalone sub-columns summed, waterfall steps averaged), so a flat
+  // sum of sub-table creditCosts (which overcounts waterfalls) is avoided.
+  //
+  // Shared by the import flow (scoped to the just-imported table) and the
+  // picker (all cards), so a function added either way ends up with a cost.
+  __cb.resolveSubroutineCostsForCards = async function (workspaceId, opts) {
+    if (!__cb.canvas) return;
+    const scopeTableId = opts && opts.tableId;
 
     const fnCards = [];
     const refIds = new Set();
     for (const card of __cb.canvas.getCards()) {
       const d = card.data;
-      if (!d || d.tableId !== tableId) continue;
-      if (d.actionKey !== "execute-subroutine" || !d.referencedTableId) continue;
+      if (!d || d.actionKey !== "execute-subroutine" || !d.referencedTableId) continue;
+      if (scopeTableId && d.tableId !== scopeTableId) continue;
       fnCards.push(card);
       refIds.add(d.referencedTableId);
     }
     if (refIds.size === 0) return;
 
+    // Per-referenced-table cost map { credits, actions }, memoized across calls.
+    // Seed misses from the startup cache (no network), then fetch what's left.
     __cb._subroutineCostCache = __cb._subroutineCostCache || new Map();
     const cache = __cb._subroutineCostCache;
+    const byTableId = __cb.subroutineByTableId || {};
 
-    await Promise.all(
-      Array.from(refIds).map(async (refId) => {
-        if (cache.has(refId)) return;
-        const v = await __cb.fetchSubroutineCosts(workspaceId, refId);
-        if (v) cache.set(refId, { credits: v.cost, actions: v.actionExecutionCost });
-      })
-    );
+    const toFetch = [];
+    for (const refId of refIds) {
+      if (cache.has(refId)) continue;
+      const hit = byTableId[refId];
+      if (hit) {
+        cache.set(refId, { credits: hit.cost, actions: hit.actionExecutionCost });
+      } else {
+        toFetch.push(refId);
+      }
+    }
+
+    if (toFetch.length > 0 && typeof __cb.fetchSubroutineCosts === "function") {
+      await Promise.all(
+        toFetch.map(async (refId) => {
+          if (cache.has(refId)) return;
+          const v = await __cb.fetchSubroutineCosts(workspaceId, refId);
+          if (v) cache.set(refId, { credits: v.cost, actions: v.actionExecutionCost });
+        })
+      );
+    }
 
     let stamped = false;
     for (const card of fnCards) {
       const v = cache.get(card.data.referencedTableId);
       if (v == null) continue;
+      // Skip cards already carrying the resolved value (e.g. stamped in
+      // buildErCardData from the same cache) so repeated calls are cheap and
+      // don't trigger needless re-renders.
+      if (card.data.credits === v.credits && card.data.actionExecutions === v.actions) continue;
       card.data.credits = v.credits;
       card.data.creditText = v.credits != null ? `~${v.credits} / row` : null;
       card.data.actionExecutions = v.actions;
@@ -2178,7 +2248,7 @@
     if (typeof __cb.canvas.updateGroupCredits === "function") __cb.canvas.updateGroupCredits();
     __cb.model.update();
     if (__cb.tableView?.refresh) __cb.tableView.refresh();
-  }
+  };
 
   // Convert a byColumn / column-recent response (array of
   // {fieldId, creditsSpent, actionExecutionCreditsSpent, cellCount}) into the
