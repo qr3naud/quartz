@@ -1363,21 +1363,29 @@
   // Segmented action|credit pill identical to the ER details cost node
   // (buildErMenuCostNode): StarFour glyph for action executions FIRST, Coin(s)
   // glyph for credits SECOND. Values here are session totals (not "/ row").
-  function buildCostBadges(credits, actions) {
+  function buildCostBadges(credits, actions, opts) {
+    opts = opts || {};
     const pill = document.createElement("span");
     pill.className = "cb-table-view-er-cost-pill cb-session-cost-pill";
-    const a = Math.round(Number(actions) || 0);
-    const c = Math.round(Number(credits) || 0);
-    if (a > 0) {
+    const aNum = Number(actions) || 0;
+    const cNum = Number(credits) || 0;
+    // Per-record values are small fractions, so show up to 2 decimals instead of
+    // rounding to whole units (which would collapse e.g. 0.2 credits to "0").
+    // Default (session/year totals) keeps the original whole-number formatting.
+    const fmt = opts.perRecord
+      ? (n) => n.toLocaleString(undefined, { maximumFractionDigits: 2 })
+      : (n) => Math.round(n).toLocaleString();
+    const showAction = opts.perRecord ? aNum > 0 : Math.round(aNum) > 0;
+    if (showAction) {
       const seg = document.createElement("span");
       seg.className = "cb-table-view-er-cost-seg cb-table-view-er-cost-actions";
-      seg.innerHTML = starFourSvg(12) + `<span>${a.toLocaleString()}</span>`;
+      seg.innerHTML = starFourSvg(12) + `<span>${fmt(aNum)}</span>`;
       pill.appendChild(seg);
     }
     const credSeg = document.createElement("span");
     credSeg.className = "cb-table-view-er-cost-seg cb-table-view-er-cost-credits";
-    const coin = Math.abs(c) <= 1 ? coinSvg(12) : coinsSvg(12);
-    credSeg.innerHTML = coin + `<span>${c.toLocaleString()}</span>`;
+    const coin = Math.abs(cNum) <= 1 ? coinSvg(12) : coinsSvg(12);
+    credSeg.innerHTML = coin + `<span>${fmt(cNum)}</span>`;
     pill.appendChild(credSeg);
     return pill;
   }
@@ -4548,8 +4556,8 @@
       { label: "Data point", cls: "col-dp" },
       { label: "Coverage", cls: "col-coverage" },
       { label: "Fill rate (%)", cls: "col-fill" },
-      { label: "Credits / row", cls: "col-credits" },
       { label: "Actions / row", cls: "col-actions" },
+      { label: "Credits / row", cls: "col-credits" },
       { label: "Enrichments", cls: "col-ers" },
       { label: "", cls: "col-actions-end" },
     ];
@@ -5125,6 +5133,11 @@
     orphanFillTd.className = "col-fill";
     tr.appendChild(orphanFillTd);
 
+    const actionsCell = document.createElement("td");
+    actionsCell.className = "col-actions cb-table-view-cell-readonly";
+    actionsCell.textContent = formatNumber(row.actions);
+    tr.appendChild(actionsCell);
+
     const creditsCell = document.createElement("td");
     creditsCell.className = "col-credits cb-table-view-cell-readonly";
     if (row.creditsUnknown) {
@@ -5134,11 +5147,6 @@
       creditsCell.textContent = formatNumber(row.credits);
     }
     tr.appendChild(creditsCell);
-
-    const actionsCell = document.createElement("td");
-    actionsCell.className = "col-actions cb-table-view-cell-readonly";
-    actionsCell.textContent = formatNumber(row.actions);
-    tr.appendChild(actionsCell);
 
     const ersCell = document.createElement("td");
     ersCell.className = "col-ers";
@@ -5318,10 +5326,15 @@
     // (read-only), spinner while the full profile loads.
     tr.appendChild(buildFillCell(row.coverageFill?.fill, row.cardId));
 
-    // Credits / actions render per DP row — each carries its own split share
+    // Actions / credits render per DP row — each carries its own split share
     // (ER credits ÷ #DPs the ER feeds), so a merge run still sums to the ER's
     // true per-row cost. Only the ERs chips collapse into the "first" row of a
     // merge run via rowspan; followers ("skip") omit just that one cell.
+    const actionsCell = document.createElement("td");
+    actionsCell.className = "col-actions cb-table-view-cell-readonly";
+    actionsCell.textContent = formatNumber(row.actions);
+    tr.appendChild(actionsCell);
+
     const creditsCell = document.createElement("td");
     creditsCell.className = "col-credits cb-table-view-cell-readonly";
     if (row.creditsUnknown) {
@@ -5331,11 +5344,6 @@
       creditsCell.textContent = formatNumber(row.credits);
     }
     tr.appendChild(creditsCell);
-
-    const actionsCell = document.createElement("td");
-    actionsCell.className = "col-actions cb-table-view-cell-readonly";
-    actionsCell.textContent = formatNumber(row.actions);
-    tr.appendChild(actionsCell);
 
     if (mergeMode !== "skip") {
       const ersCell = document.createElement("td");
@@ -5976,8 +5984,81 @@
   // Per-use-case (per imported table) scope controls shown in the table header
   // when 2+ use cases exist: editable Records, a Frequency picker, and this use
   // case's sub-total. Writes via __cb.setUseCaseScope (re-runs the roll-up).
+  // Global cost-display unit for the per-use-case credit/action cost badges:
+  // "year" (the annualized totals) or "record" (one row's share for the year).
+  // Persisted in page localStorage so the rep's choice survives reloads.
+  function getCostUnit() {
+    const cb = window.__cb;
+    if (cb.costUnit == null) {
+      try { cb.costUnit = localStorage.getItem("cb-cost-unit") || "year"; }
+      catch (_) { cb.costUnit = "year"; }
+    }
+    return cb.costUnit === "record" ? "record" : "year";
+  }
+  function setCostUnit(unit) {
+    const cb = window.__cb;
+    cb.costUnit = unit === "record" ? "record" : "year";
+    try { localStorage.setItem("cb-cost-unit", cb.costUnit); } catch (_) {}
+  }
+
+  // Dropdown to switch the credit/action cost badges between "Per year" and
+  // "Per record". Mounted on body + fixed-positioned like the other overlay
+  // popovers; toggling re-renders the table so every use case stays in sync.
+  let costUnitMenuEl = null;
+  let costUnitMenuBackdrop = null;
+  function closeCostUnitMenu() {
+    if (costUnitMenuEl) { costUnitMenuEl.remove(); costUnitMenuEl = null; }
+    if (costUnitMenuBackdrop) { costUnitMenuBackdrop.remove(); costUnitMenuBackdrop = null; }
+  }
+  function showCostUnitMenu(anchorEl, opts) {
+    const cb = window.__cb;
+    opts = opts || {};
+    closeCostUnitMenu();
+
+    const backdrop = document.createElement("div");
+    backdrop.style.cssText = "position:fixed;inset:0;z-index:9999998;";
+    backdrop.addEventListener("mousedown", (e) => { e.stopPropagation(); closeCostUnitMenu(); });
+
+    const menu = document.createElement("div");
+    menu.className = "cb-uc-cost-menu";
+    menu.addEventListener("mousedown", (e) => e.stopPropagation());
+
+    const current = getCostUnit();
+    const mkOption = (unit, label) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className =
+        "cb-uc-cost-menu-option" +
+        (current === unit ? " cb-uc-cost-menu-option-active" : "");
+      b.innerHTML =
+        `<span class="cb-uc-cost-menu-check">${current === unit ? "\u2713" : ""}</span>` +
+        `<span>${label}</span>`;
+      b.addEventListener("click", (e) => {
+        e.stopPropagation();
+        setCostUnit(unit);
+        closeCostUnitMenu();
+        if (cb.tableView?.refresh) cb.tableView.refresh();
+      });
+      return b;
+    };
+    menu.appendChild(mkOption("year", "Per year"));
+    menu.appendChild(mkOption("record", "Per record"));
+
+    document.body.appendChild(backdrop);
+    document.body.appendChild(menu);
+    const rect = anchorEl.getBoundingClientRect();
+    const width = 180;
+    menu.style.position = "fixed";
+    menu.style.zIndex = "9999999";
+    menu.style.top = (rect.bottom + 6) + "px";
+    menu.style.left = Math.max(8, rect.right - width) + "px";
+    costUnitMenuEl = menu;
+    costUnitMenuBackdrop = backdrop;
+  }
+
   function buildUseCaseScopeControls(ucKey) {
     const cb = window.__cb;
+    const scope = cb.useCaseScope?.[ucKey] || {};
     const wrap = document.createElement("span");
     wrap.className = "cb-uc-scope";
     wrap.addEventListener("mousedown", (e) => e.stopPropagation());
@@ -5994,16 +6075,57 @@
     recInput.inputMode = "numeric";
     recInput.className = "cb-uc-scope-records";
     recInput.value = Number(cb.cost.useCaseRecords(ucKey) || 0).toLocaleString();
+
+    // Amber "override" outline when the records differ from the table's as-
+    // imported row count — same affordance as the single-table summary Records
+    // box (cb-records-override). recordsActual is null when there's no resolvable
+    // imported count, in which case we never highlight.
+    const recordsActual = cb.cost.useCaseRecordsActual
+      ? cb.cost.useCaseRecordsActual(ucKey)
+      : null;
+    const applyRecOverride = () => {
+      if (recordsActual == null) {
+        recInput.classList.remove("cb-uc-scope-records-override");
+        resetBtn.classList.remove("cb-uc-scope-reset-shown");
+        return;
+      }
+      const cur = parseInt(recInput.value.replace(/[^\d]/g, ""), 10);
+      const isOverride = Number.isFinite(cur) && cur !== recordsActual;
+      recInput.classList.toggle("cb-uc-scope-records-override", isOverride);
+      resetBtn.classList.toggle("cb-uc-scope-reset-shown", isOverride);
+    };
+
+    // Reset-to-imported affordance (hidden until overridden). Clears the records
+    // override AND any pinned budget so the table falls back to its imported count.
+    const resetBtn = document.createElement("button");
+    resetBtn.type = "button";
+    resetBtn.className = "cb-uc-scope-reset";
+    resetBtn.title = "Reset to imported record count";
+    resetBtn.setAttribute("aria-label", "Reset to imported record count");
+    resetBtn.innerHTML =
+      '<svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" ' +
+      'stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">' +
+      '<polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>';
+    resetBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      cb.setUseCaseScope?.(ucKey, { records: null, budget: null });
+    });
+
     const commitRecords = () => {
       const n = parseInt(recInput.value.replace(/[^\d]/g, ""), 10);
-      if (Number.isFinite(n) && n >= 0) cb.setUseCaseScope?.(ucKey, { records: n });
+      // A manual records edit clears any pinned budget for this use case (Total
+      // Cost goes back to derived = perRow × records × frequency).
+      if (Number.isFinite(n) && n >= 0) cb.setUseCaseScope?.(ucKey, { records: n, budget: null });
     };
     recInput.addEventListener("keydown", (e) => { if (e.key === "Enter") e.target.blur(); });
+    recInput.addEventListener("input", applyRecOverride);
     recInput.addEventListener("blur", commitRecords);
     recInput.addEventListener("focus", () => recInput.select());
     recWrap.appendChild(recLbl);
     recWrap.appendChild(recInput);
+    recWrap.appendChild(resetBtn);
     wrap.appendChild(recWrap);
+    applyRecOverride();
 
     // Frequency
     const freqWrap = document.createElement("span");
@@ -6016,10 +6138,33 @@
     freqBtn.className = "cb-uc-scope-freq";
     const freqId = cb.cost.useCaseFrequencyId(ucKey);
     freqBtn.textContent = cb.getFrequencyLabel ? cb.getFrequencyLabel(freqId) : "Annually";
+    // Amber when the frequency differs from the as-imported default (annually) —
+    // signals "this knob has been touched", same idea as the records override.
+    const defaultFreqId = cb.DEFAULT_FREQUENCY_ID || "annually";
+    freqBtn.classList.toggle("cb-uc-scope-freq-override", freqId !== defaultFreqId);
     freqBtn.addEventListener("click", (e) => {
       e.stopPropagation();
       cb.showFrequencyPicker?.(freqBtn, cb.cost.useCaseFrequencyId(ucKey), (picked) => {
+        // If a target budget is pinned, hold the dollar figure: change the
+        // frequency, then re-derive records from the refreshed per-use-case
+        // total so total cost ≈ budget and records absorb the frequency change.
+        const budget = cb.useCaseScope?.[ucKey]?.budget;
         cb.setUseCaseScope?.(ucKey, { frequency: picked });
+        if (budget > 0) {
+          // setUseCaseScope synchronously refreshed cb._multiTotals.
+          const fresh = (cb._multiTotals?.perUseCase || []).find((u) => u.key === ucKey);
+          const recs = cb.cost.useCaseRecords(ucKey);
+          if (fresh && recs > 0) {
+            const creditCost = cb.getCreditCost ? cb.getCreditCost() : 0;
+            const actionCost = cb.getActionCost ? cb.getActionCost() : 0;
+            const dollars = (fresh.credits || 0) * creditCost + (fresh.actions || 0) * actionCost;
+            const perRecord = dollars / recs;
+            if (perRecord > 0) {
+              const newRecords = Math.max(1, Math.round(budget / perRecord));
+              cb.setUseCaseScope?.(ucKey, { records: newRecords, budget });
+            }
+          }
+        }
       });
     });
     freqWrap.appendChild(freqLbl);
@@ -6031,15 +6176,65 @@
     // credits second).
     const sub = (cb._multiTotals?.perUseCase || []).find((u) => u.key === ucKey);
     if (sub) {
-      wrap.appendChild(buildCostBadges(sub.credits || 0, sub.actions || 0));
-      // Dollar cost in its own badge ($ icon + amount), using the workbook's
-      // negotiated credit/action prices.
+      const recs = cb.cost.useCaseRecords(ucKey);
+      // "Per year" (annualized totals) vs "Per record" (one row's share for the
+      // year). The toggle governs the CREDIT + ACTION cost badges; clicking the
+      // label text opens the unit menu.
+      const unit = getCostUnit();
+      const perRecordView = unit === "record" && recs > 0;
+      const unitBtn = document.createElement("button");
+      unitBtn.type = "button";
+      unitBtn.className = "cb-uc-scope-unit";
+      unitBtn.title = "Show credits & actions per year or per record";
+      unitBtn.innerHTML =
+        `<span>${unit === "record" ? "Per record" : "Per year"}</span>` + chevronDownSvg(11);
+      unitBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        showCostUnitMenu(unitBtn, {});
+      });
+      wrap.appendChild(unitBtn);
+
+      // Credit + action cost badges, in the chosen unit. Per record divides the
+      // annual totals by this use case's records.
+      const badgeCredits = perRecordView ? (sub.credits || 0) / recs : sub.credits || 0;
+      const badgeActions = perRecordView ? (sub.actions || 0) / recs : sub.actions || 0;
+      wrap.appendChild(buildCostBadges(badgeCredits, badgeActions, { perRecord: perRecordView }));
+
+      // Dollar pill = this use case's total cost (always the per-year total).
+      // Clicking it opens the target-cost editor to back-calculate records.
       const creditCost = cb.getCreditCost ? cb.getCreditCost() : 0;
       const actionCost = cb.getActionCost ? cb.getActionCost() : 0;
       const dollars = (sub.credits || 0) * creditCost + (sub.actions || 0) * actionCost;
+      const perRecord = recs > 0 ? dollars / recs : 0;
       const dol = document.createElement("span");
       dol.className = "cb-uc-scope-dollar";
+      const budgetPinned = scope.budget > 0;
+      if (budgetPinned) dol.classList.add("cb-uc-scope-dollar-pinned");
       dol.innerHTML = dollarSvg(12) + `<span>${Math.round(dollars).toLocaleString()}</span>`;
+      // Only interactive when we can derive records (non-zero per-record cost
+      // and a working editor).
+      if (perRecord > 0 && cb.openTargetCostEditor) {
+        dol.classList.add("cb-uc-scope-dollar-editable");
+        dol.setAttribute("role", "button");
+        dol.tabIndex = 0;
+        dol.title = "Set a target cost for this table to back-calculate its records";
+        const openEditor = () => {
+          cb.openTargetCostEditor({
+            anchorEl: dol,
+            title: "Edit table cost",
+            currentText: "$" + Math.round(dollars).toLocaleString(),
+            perRecordDollar: perRecord,
+            onApply: (target) => {
+              const newRecords = Math.max(1, Math.round(target / perRecord));
+              cb.setUseCaseScope?.(ucKey, { records: newRecords, budget: target });
+            },
+          });
+        };
+        dol.addEventListener("click", (e) => { e.stopPropagation(); openEditor(); });
+        dol.addEventListener("keydown", (e) => {
+          if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openEditor(); }
+        });
+      }
       wrap.appendChild(dol);
     }
     return wrap;

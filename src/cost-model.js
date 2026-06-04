@@ -312,6 +312,19 @@
     return cb.getCurrentFrequencyId ? cb.getCurrentFrequencyId() : cb.DEFAULT_FREQUENCY_ID;
   }
 
+  // The "as-imported" baseline records for a use case (the table's own row
+  // count), independent of any user override in useCaseScope. Used by the header
+  // controls to decide whether the records field is in an "override" (amber)
+  // state — mirrors __cb.recordsActual for the single-table summary bar. Returns
+  // null when there is no resolvable imported count.
+  function useCaseRecordsActual(key) {
+    if (key && key.startsWith("t-")) {
+      const meta = importedTablesMap()[key.slice(2)];
+      if (meta && meta.recordCount > 0) return Number(meta.recordCount);
+    }
+    return null;
+  }
+
   // Materialize each use case's records into its non-custom ERs' coverageRows,
   // so cost AND the Coverage column share one source of truth and default to the
   // per-table records. Needed because multi-table import seeds every ER's
@@ -357,7 +370,13 @@
           : { viewMode: "actual", fallbackToProjected: false },
       );
       if (pr.noSpend) continue;
-      const freqId = d.frequencyCustom ? d.frequency : d.frequency || useCaseFrequencyId(key);
+      // A per-ER override (frequencyCustom) wins; otherwise the ER inherits its
+      // use case's frequency. We deliberately do NOT fall back to the per-card
+      // d.frequency here: import seeds every ER's d.frequency to the global
+      // default (never null), so the old `d.frequency || useCaseFrequencyId(key)`
+      // always short-circuited and the per-table frequency picker had no effect
+      // on the totals.
+      const freqId = d.frequencyCustom ? d.frequency : useCaseFrequencyId(key);
       const mult = freqMult(freqId);
       const recs = useCaseRecords(key);
       // billableFraction folds coverage x fill (projected only); x recs turns the
@@ -397,6 +416,7 @@
     listUseCases,
     useCaseCount,
     useCaseRecords,
+    useCaseRecordsActual,
     useCaseFrequencyId,
     syncUseCaseCoverage,
     computeUseCaseTotals,

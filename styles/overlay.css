@@ -1024,6 +1024,23 @@
   box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.2);
 }
 
+/* Amber "pinned" outline while a target Total Cost budget is held: a later
+   frequency / unit-price change re-derives Records instead of changing this
+   figure. Mirrors the Records override outline (.cb-records-override). */
+.cb-total-cost-editable.cb-total-cost-pinned {
+  border-color: #f59e0b;
+  box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.15);
+}
+
+.cb-total-cost-editable.cb-total-cost-pinned:hover {
+  border-color: #d97706;
+  box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.2);
+}
+
+.cb-total-cost-editable.cb-total-cost-pinned .cb-summary-value {
+  color: #92400e;
+}
+
 .cb-total-cost-edit-icon {
   position: absolute;
   top: 8px;
@@ -1069,6 +1086,12 @@
 
 .cb-total-cost-editor-help-muted {
   margin-bottom: 0;
+}
+
+/* Semi-bold emphasis for the "cost per row ($N/record)" phrase. */
+.cb-total-cost-editor-emph {
+  font-weight: 600;
+  color: #4b5563;
 }
 
 .cb-total-cost-editor-row {

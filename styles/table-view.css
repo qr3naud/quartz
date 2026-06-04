@@ -2492,6 +2492,158 @@
   border-color: #9ca3af;
 }
 
+/* Amber "override" outline on the records input once it differs from the
+ * table's as-imported row count — mirrors the single-table summary Records box
+ * (.cb-summary-box.cb-records-override in overlay.css). */
+.cb-uc-scope-records.cb-uc-scope-records-override,
+.cb-uc-scope-records.cb-uc-scope-records-override:focus {
+  border-color: #f59e0b;
+  box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.15);
+}
+
+/* Reset-to-imported affordance next to the records input. Hidden until the
+ * value is overridden (cb-uc-scope-reset-shown). */
+.cb-uc-scope-reset {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: 5px;
+  background: none;
+  color: #b45309;
+  cursor: pointer;
+}
+
+.cb-uc-scope-reset:hover {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.cb-uc-scope-reset.cb-uc-scope-reset-shown {
+  display: inline-flex;
+}
+
+/* Amber outline on the frequency button when it differs from the as-imported
+ * default — signals the knob has been touched. */
+.cb-uc-scope-freq.cb-uc-scope-freq-override {
+  border-color: #f59e0b;
+  color: #92400e;
+  box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.15);
+}
+
+.cb-uc-scope-freq.cb-uc-scope-freq-override:hover {
+  border-color: #d97706;
+}
+
+/* Clickable dollar pill (target-cost editor). Hover/focus telegraph that it's
+ * interactive. */
+.cb-uc-scope-dollar.cb-uc-scope-dollar-editable {
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, box-shadow 0.15s;
+}
+
+.cb-uc-scope-dollar.cb-uc-scope-dollar-editable:hover {
+  background: #f9fafb;
+  border-color: #9ca3af;
+}
+
+.cb-uc-scope-dollar.cb-uc-scope-dollar-editable:focus-visible {
+  outline: none;
+  border-color: #818cf8;
+  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.2);
+}
+
+/* Amber "pinned" outline once a target budget is set for this table. */
+.cb-uc-scope-dollar.cb-uc-scope-dollar-pinned {
+  border-color: #f59e0b;
+  color: #92400e;
+  box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.15);
+}
+
+.cb-uc-scope-dollar.cb-uc-scope-dollar-pinned svg {
+  color: #d97706;
+}
+
+/* Clickable "Per year" / "Per record" toggle that governs the credit + action
+ * cost badges. Reads like a small caption with a dropdown caret. */
+.cb-uc-scope-unit {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 4px;
+  border: none;
+  border-radius: 5px;
+  background: none;
+  font-family: inherit;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #6b7280;
+  cursor: pointer;
+}
+
+.cb-uc-scope-unit:hover {
+  background: #f3f4f6;
+  color: #374151;
+}
+
+.cb-uc-scope-unit svg {
+  width: 11px;
+  height: 11px;
+  color: #9ca3af;
+}
+
+/* Cost-unit dropdown (Per year / Per record + Edit target cost), mounted on
+ * body + fixed-positioned like the frequency picker. */
+.cb-uc-cost-menu {
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.14);
+  padding: 5px;
+  min-width: 168px;
+  box-sizing: border-box;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+
+.cb-uc-cost-menu-option {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 7px 8px;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  font-family: inherit;
+  font-size: 12.5px;
+  color: #374151;
+  text-align: left;
+  cursor: pointer;
+}
+
+.cb-uc-cost-menu-option:hover {
+  background: #f3f4f6;
+}
+
+.cb-uc-cost-menu-option-active {
+  color: #111827;
+  font-weight: 600;
+}
+
+.cb-uc-cost-menu-check {
+  display: inline-flex;
+  justify-content: center;
+  width: 14px;
+  flex-shrink: 0;
+  color: #16a34a;
+  font-size: 12px;
+}
+
 /* Table headers fill the row so margin-left:auto on the scope controls (and the
  * imported stamp) right-aligns them. Non-table group headers stay inline. */
 .cb-table-view-table-row .cb-table-view-group-row-inner {

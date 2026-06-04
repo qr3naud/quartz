@@ -989,6 +989,11 @@
       } else {
         recalcTotal();
       }
+      // If a target Total Cost is pinned, hold the dollar figure and let Records
+      // absorb the new frequency (records = budget / per-record cost) instead of
+      // the total ballooning. Runs after the recompute above so perRowDollarCost
+      // reflects the new frequency weight.
+      if (__cb.applyTotalCostTarget) __cb.applyTotalCostTarget();
       // Table view shows the effective frequency on each ER chip and (in
       // Projected) frequency-weighted group totals — refresh so it tracks the
       // new default the same way the canvas badges do.
@@ -1462,6 +1467,14 @@
       setSummaryNumber(actionDollarValue, actionDollars, formatDollar);
       setSummaryNumber(totalDollarValue, creditDollars + actionDollars, formatDollarRounded);
 
+      // Amber "pinned" outline on Total Cost while a target budget is held
+      // (single-table only — in multi mode the per-use-case pills own the
+      // budget). Mirrors the Records override outline.
+      totalDollarBox.classList.toggle(
+        "cb-total-cost-pinned",
+        !multi && __cb.totalCostTarget > 0,
+      );
+
       // Adaptive bar: with 2+ use cases, per-scope controls (Avg/Row, Records,
       // Frequency) move to each table's header — hide them here and show the
       // grand total + a per-use-case breakdown on hover.
@@ -1490,6 +1503,9 @@
       setter(parsed);
       input.value = formatDollar(parsed);
       recalcTotal();
+      // A pinned target Total Cost holds the dollar budget when the unit prices
+      // change too: re-derive Records at the new per-record cost.
+      if (__cb.applyTotalCostTarget) __cb.applyTotalCostTarget();
       if (__cb.canvas?.updateGroupCredits) {
         __cb.canvas.updateGroupCredits();
       }
@@ -1522,6 +1538,26 @@
       );
     }
 
+    // Re-derive the global Records from a pinned target budget. Called after
+    // anything that changes the per-record dollar cost (frequency, unit prices)
+    // so a pinned Total Cost stays put and Records absorbs the change instead.
+    // No-op unless a budget is pinned, we're in single-table mode, and the per-
+    // record cost is computable. The guard stops the records `input` handler
+    // from treating this programmatic write as a manual un-pin.
+    function applyTotalCostTarget() {
+      const target = __cb.totalCostTarget;
+      if (!(target > 0) || __cb._multiTotals) return;
+      const per = perRowDollarCost();
+      if (per <= 0) return;
+      const records = Math.max(1, Math.round(target / per));
+      if (records === parseRecordsValue()) return;
+      __cb._applyingTargetBudget = true;
+      recordsInput.value = records.toLocaleString();
+      recordsInput.dispatchEvent(new Event("input"));
+      __cb._applyingTargetBudget = false;
+    }
+    __cb.applyTotalCostTarget = applyTotalCostTarget;
+
     let totalCostEditorEl = null;
     let totalCostEditorBackdrop = null;
     function closeTotalCostEditor() {
@@ -1530,7 +1566,18 @@
     }
     __cb.closeTotalCostEditor = closeTotalCostEditor;
 
-    function openTotalCostEditor(anchorEl) {
+    // Generic "edit total cost" popover, reused by the global summary-bar Total
+    // Cost box AND the per-use-case dollar pill in the table header. The caller
+    // supplies the anchor, the prefilled text, the dollar cost of ONE record at
+    // the current scope (perRecordDollar), and an onApply(targetDollars, perRow)
+    // that does the actual back-calculation / state write. Keeps the same
+    // .cb-total-cost-editor markup + CSS regardless of caller.
+    function openTargetCostEditor(opts) {
+      opts = opts || {};
+      const anchorEl = opts.anchorEl;
+      if (!anchorEl) return;
+      const perRow = Number(opts.perRecordDollar) || 0;
+      const onApply = typeof opts.onApply === "function" ? opts.onApply : () => {};
       closeTotalCostEditor();
 
       const backdrop = document.createElement("div");
@@ -1546,23 +1593,25 @@
 
       const title = document.createElement("div");
       title.className = "cb-total-cost-editor-title";
-      title.textContent = "Edit total cost";
+      title.textContent = opts.title || "Edit total cost";
       const help = document.createElement("p");
       help.className = "cb-total-cost-editor-help";
       menu.appendChild(title);
       menu.appendChild(help);
 
-      const perRow = perRowDollarCost();
       // Records drive the total in BOTH modes — Actual measures spend/row and
       // still multiplies by Records — so back-calculating Records from a target
       // total works identically. Gate only on having a non-zero per-row cost.
       const canDerive = perRow > 0;
 
       if (canDerive) {
-        help.textContent =
+        // Semi-bold the "cost per row ($N/record)" phrase so the rate the
+        // derivation keys off stands out. formatDollar yields a safe "$N" string.
+        help.innerHTML =
           "Type your target spend. We'll back-calculate the number of records " +
-          "needed at the current cost per row (" + formatDollar(perRow) +
-          "/record) and update the Records field.";
+          'needed at the current <strong class="cb-total-cost-editor-emph">cost per row (' +
+          formatDollar(perRow) +
+          "/record)</strong> and update the Records field.";
 
         const row = document.createElement("div");
         row.className = "cb-total-cost-editor-row";
@@ -1570,7 +1619,7 @@
         input.type = "text";
         input.inputMode = "decimal";
         input.className = "cb-total-cost-editor-input";
-        input.value = totalDollarValue.textContent;
+        input.value = opts.currentText || "";
         const applyBtn = document.createElement("button");
         applyBtn.type = "button";
         applyBtn.className = "cb-total-cost-editor-apply";
@@ -1581,13 +1630,7 @@
 
         const apply = () => {
           const target = parseDollar(input.value);
-          const per = perRowDollarCost();
-          if (per > 0 && target > 0) {
-            const records = Math.max(1, Math.round(target / per));
-            recordsInput.value = records.toLocaleString();
-            recordsInput.dispatchEvent(new Event("input"));
-            if (__cb.debouncedSave) __cb.debouncedSave();
-          }
+          if (perRow > 0 && target > 0) onApply(target, perRow);
           closeTotalCostEditor();
         };
         applyBtn.addEventListener("click", (e) => { e.stopPropagation(); apply(); });
@@ -1599,14 +1642,16 @@
       } else {
         help.classList.add("cb-total-cost-editor-help-muted");
         help.textContent =
+          opts.emptyHelp ||
           "Add at least one enrichment with a non-zero cost per row before setting a target total cost.";
       }
 
       document.body.appendChild(backdrop);
       document.body.appendChild(menu);
 
-      // Right-align under the card so the menu stays within the viewport
-      // (Total Cost is the right-most summary box).
+      // Right-align under the anchor so the menu stays within the viewport
+      // (Total Cost is the right-most summary box; the pill sits at the far
+      // right of the table header).
       const rect = anchorEl.getBoundingClientRect();
       const width = 280;
       menu.style.position = "fixed";
@@ -1616,6 +1661,33 @@
 
       totalCostEditorEl = menu;
       totalCostEditorBackdrop = backdrop;
+    }
+    // Exposed so the table-view per-use-case dollar pill can reuse it.
+    __cb.openTargetCostEditor = openTargetCostEditor;
+
+    // Single-table (global) Total Cost editor: back-calculate the global Records
+    // field from a target spend, and PIN that budget so a later frequency / unit-
+    // price change re-derives Records instead of inflating the total.
+    function openTotalCostEditor(anchorEl) {
+      openTargetCostEditor({
+        anchorEl,
+        currentText: totalDollarValue.textContent,
+        perRecordDollar: perRowDollarCost(),
+        onApply: (target) => {
+          const per = perRowDollarCost();
+          if (per <= 0 || target <= 0) return;
+          __cb._applyingTargetBudget = true;
+          const records = Math.max(1, Math.round(target / per));
+          recordsInput.value = records.toLocaleString();
+          recordsInput.dispatchEvent(new Event("input"));
+          __cb._applyingTargetBudget = false;
+          // Pin AFTER the input dispatch: the records handler clears the pin on
+          // a (non-programmatic) edit, so we set it once the derive has settled.
+          __cb.totalCostTarget = target;
+          recalcTotal();
+          if (__cb.debouncedSave) __cb.debouncedSave();
+        },
+      });
     }
 
     pricingToggleBox.addEventListener("click", () => {
@@ -1645,6 +1717,11 @@
     };
 
     recordsInput.addEventListener("input", () => {
+      // A manual edit to Records un-pins any target-cost budget: from here on
+      // Total Cost is derived (perRow × records) again. Programmatic edits made
+      // while deriving records FROM a budget set the guard, so they don't clear
+      // the pin they just established.
+      if (!__cb._applyingTargetBudget) __cb.totalCostTarget = null;
       const raw = recordsInput.value.replace(/[^\d]/g, "");
       const formatted = formatWithCommas(raw);
       const prevLen = recordsInput.value.length;
