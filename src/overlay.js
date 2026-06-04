@@ -911,7 +911,7 @@
     creditsBox.className = "cb-summary-box";
     const creditsLabel = document.createElement("span");
     creditsLabel.className = "cb-summary-label";
-    creditsLabel.textContent = "Avg Credits / Row";
+    creditsLabel.textContent = "Credits / Row";
     const creditsValue = document.createElement("span");
     creditsValue.className = "cb-summary-value";
     creditsValue.id = "cb-credits-value";

@@ -764,10 +764,13 @@
   display: grid;
   grid-template-columns: 1fr;
   align-self: stretch;
+  /* Slower than the nominal pricing-card 280ms: this is a single-axis
+     horizontal wipe (pricing reveals on two axes), so it needs more time to
+     read as smooth rather than snappy. Same easing as pricing. */
   transition:
-    grid-template-columns 280ms cubic-bezier(0.22, 1, 0.36, 1),
-    margin 280ms cubic-bezier(0.22, 1, 0.36, 1),
-    opacity 180ms ease;
+    grid-template-columns 440ms cubic-bezier(0.22, 1, 0.36, 1),
+    margin 440ms cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 300ms ease;
 }
 
 .cb-summary-scope.cb-summary-scope-collapsed {
