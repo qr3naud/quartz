@@ -1396,3 +1396,242 @@ body:has(.cb-overlay) [data-floating-ui-portal] {
     transition: none;
   }
 }
+
+/* ==========================================================================
+   MULTI-YEAR PRICING VIEW
+   ========================================================================== */
+
+/* Amber "Pricing" toolbar button (between Import and Export). */
+.cb-toolbar-pricing {
+  gap: 6px;
+  background: #fffbeb;
+  color: #b45309;
+  border-color: #fcd34d;
+}
+
+.cb-toolbar-pricing:hover {
+  background: #fef3c7;
+  border-color: #f59e0b;
+}
+
+.cb-toolbar-pricing.cb-toolbar-pricing-active {
+  background: #f59e0b;
+  color: #ffffff;
+  border-color: #f59e0b;
+}
+
+.cb-toolbar-pricing.cb-toolbar-pricing-active:hover {
+  background: #d97706;
+  border-color: #d97706;
+}
+
+/* In pricing mode the scope group + Total Credits/Actions + the Pricing
+   Show/Hide group give way to the cost/savings strip. */
+.cb-summary-bar.cb-summary-pricing .cb-summary-total,
+.cb-summary-bar.cb-summary-pricing .cb-pricing-group {
+  display: none;
+}
+
+/* The strip is height-collapsed + offset until pricing mode, then it slides up
+   from the bottom of the summary bar (grid-rows 0fr<->1fr + translateY). */
+.cb-pricing-strip {
+  display: grid;
+  grid-template-columns: 0fr;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  transform: translateY(8px);
+  transition:
+    grid-template-columns 320ms cubic-bezier(0.22, 1, 0.36, 1),
+    grid-template-rows 320ms cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 220ms ease,
+    transform 320ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.cb-summary-bar.cb-summary-pricing .cb-pricing-strip {
+  grid-template-columns: 1fr;
+  grid-template-rows: 1fr;
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.cb-pricing-strip-inner {
+  display: inline-flex;
+  gap: 10px;
+  align-items: stretch;
+  overflow: hidden;
+  min-width: 0;
+  min-height: 0;
+}
+
+.cb-pricing-card.cb-pricing-savings .cb-summary-value {
+  color: #047857;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cb-pricing-strip {
+    transition: none;
+  }
+}
+
+/* ---- View Bands floating overlay (internal) ---- */
+.cb-bands-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 10000040;
+  background: transparent;
+}
+
+.cb-bands-panel {
+  position: fixed;
+  z-index: 10000041;
+  width: 540px;
+  max-width: calc(100vw - 24px);
+  max-height: 70vh;
+  overflow: auto;
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.22);
+  padding: 14px 16px;
+  font-family: inherit;
+}
+
+.cb-bands-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.cb-bands-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: #111827;
+}
+
+.cb-bands-close {
+  border: none;
+  background: transparent;
+  color: #6b7280;
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 6px;
+}
+
+.cb-bands-close:hover {
+  background: #f3f4f6;
+  color: #111827;
+}
+
+.cb-bands-status {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.cb-bands-badge {
+  font-size: 12px;
+  font-weight: 600;
+  padding: 3px 9px;
+  border-radius: 999px;
+}
+
+.cb-bands-badge-red {
+  background: #fee2e2;
+  color: #b91c1c;
+}
+
+.cb-bands-badge-amber {
+  background: #ffedd5;
+  color: #c2410c;
+}
+
+.cb-bands-badge-green {
+  background: #dcfce7;
+  color: #15803d;
+}
+
+.cb-bands-avg {
+  font-size: 12px;
+  color: #6b7280;
+  font-variant-numeric: tabular-nums;
+}
+
+.cb-bands-reasons {
+  margin: 0 0 12px;
+  padding-left: 18px;
+  color: #6b7280;
+  font-size: 12px;
+}
+
+.cb-bands-reasons li {
+  margin: 2px 0;
+}
+
+.cb-bands-section {
+  margin-top: 12px;
+}
+
+.cb-bands-section-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: #374151;
+  margin-bottom: 6px;
+}
+
+.cb-bands-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.cb-bands-table th {
+  text-align: right;
+  font-weight: 500;
+  color: #9ca3af;
+  padding: 3px 8px;
+  border-bottom: 1px solid #f3f4f6;
+}
+
+.cb-bands-table th:first-child {
+  text-align: left;
+}
+
+.cb-bands-table td {
+  text-align: right;
+  padding: 3px 8px;
+  color: #374151;
+  font-variant-numeric: tabular-nums;
+}
+
+.cb-bands-table td:first-child {
+  text-align: left;
+  font-weight: 600;
+}
+
+.cb-bands-row-selected td {
+  background: #fffbeb;
+  color: #92400e;
+}
+
+.cb-bands-note {
+  margin-top: 6px;
+  font-size: 12px;
+  color: #6b7280;
+}
+
+.cb-bands-price-ok {
+  color: #047857;
+  font-weight: 600;
+}
+
+.cb-bands-price-amber {
+  color: #c2410c;
+  font-weight: 600;
+}
+
+.cb-bands-price-red {
+  color: #b91c1c;
+  font-weight: 600;
+}

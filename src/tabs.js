@@ -423,6 +423,12 @@
         // Projected/Actual is per-tab so a multi-tab export can mix modes — each
         // tab remembers the view it was last left in (restored in switchTab).
         state.viewMode = __cb.viewMode === "actual" ? "actual" : "projected";
+        // Multi-year pricing view: whether the tab is in pricing mode, the
+        // selected contract length, and the per-use-case per-year records, so a
+        // saved quote restores exactly.
+        state.pricingMode = !!__cb.pricingMode;
+        state.contractYears = Math.min(3, Math.max(1, __cb.contractYears || 1));
+        state.pricingYearRecords = __cb.pricingYearRecords ?? {};
         // Actual-spend session picker: the bucketed sessions + selection + gap,
         // so reloads/other devices restore instantly with no /run/recent fetch.
         // Preserve the previously-saved blob when the controller has no live
@@ -562,6 +568,8 @@
       __cb.model.restore(stateForRestore);
       __cb.recordsActual = active.state.recordsActual ?? null;
       __cb.useCaseScope = active.state.useCaseScope ?? {};
+      __cb.contractYears = Math.min(3, Math.max(1, active.state.contractYears || 1));
+      __cb.pricingYearRecords = active.state.pricingYearRecords ?? {};
       const recordsInput = document.getElementById("cb-records-input");
       if (recordsInput && active.state.records != null) {
         recordsInput.value = active.state.records;
@@ -691,6 +699,8 @@
       __cb.model.restore(stateForRestore);
       __cb.recordsActual = stateForRestore.recordsActual ?? null;
       __cb.useCaseScope = stateForRestore.useCaseScope ?? {};
+      __cb.contractYears = Math.min(3, Math.max(1, stateForRestore.contractYears || 1));
+      __cb.pricingYearRecords = stateForRestore.pricingYearRecords ?? {};
       const recordsInput = document.getElementById("cb-records-input");
       if (recordsInput && stateForRestore.records != null) {
         recordsInput.value = stateForRestore.records;
@@ -1311,6 +1321,17 @@
       pricingGroup.classList.toggle("is-expanded", expanded);
       if (chevronEl) chevronEl.classList.toggle("cb-chevron-open", expanded);
       if (pricingToggleText) pricingToggleText.textContent = expanded ? "Hide" : "Show";
+    }
+
+    // Multi-year pricing view: restore contract length + per-year records first,
+    // then apply the mode (setPricingMode reads both and re-renders the strip +
+    // table). Falls back to plain assignment before the summary bar exists.
+    __cb.contractYears = Math.min(3, Math.max(1, tab?.state?.contractYears || 1));
+    __cb.pricingYearRecords = tab?.state?.pricingYearRecords ?? {};
+    if (__cb.setPricingMode) {
+      __cb.setPricingMode(!!tab?.state?.pricingMode);
+    } else {
+      __cb.pricingMode = !!tab?.state?.pricingMode;
     }
 
     // Apply the tab's saved global frequency. setGlobalFrequency walks the

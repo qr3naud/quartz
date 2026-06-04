@@ -25,10 +25,11 @@
 
   const __cb = (window.__cb = window.__cb || {});
 
-  // Reference list prices used when a rep hasn't set an adjusted price. Mirrors
-  // the calculator's $0.05 CPC reference and $0.0083 CPA list.
+  // Reference list prices used when a rep hasn't set an adjusted price, and as
+  // the "savings vs list" baseline in the pricing view. Matches the GTME
+  // calculator's enterprise defaults: $0.05 / credit, $0.008 / action.
   const LIST_CPC = 0.05;
-  const LIST_CPA = 0.0083;
+  const LIST_CPA = 0.008;
 
   // --------------------------------------------------------------------------
   // In-bundle fallback (kept in sync with the phase5 seed). Used when the DB
@@ -289,6 +290,84 @@
     return { status: hasManagerFloorViolation ? "pending_exception" : "pending_standard", reasons };
   }
 
+  /**
+   * Multi-year contract approval. Tier + floors are chosen from the AVERAGE
+   * volume across the active years (matching the calculator), while the special
+   * per-year rules (credits < 1.2M, XS action tier) are checked on each year.
+   *
+   * @param {object} q
+   * @param {Array<{credits:number, actions:number}>} q.years per-year grand volumes
+   * @param {number} q.contractYears 1..3
+   * @param {number} q.cpc contract credit price
+   * @param {number} q.cpa contract action price
+   * @param {number} [q.creditListPrice] for the $0.06 rule
+   * @returns {{ status, reasons, creditTier, actionTier, floors }}
+   */
+  function approvalForContract(q) {
+    const reasons = [];
+    const years = Array.isArray(q.years) ? q.years : [];
+    const n = Math.min(3, Math.max(1, Number(q.contractYears) || years.length || 1));
+    const active = years.slice(0, n);
+    const avg = (arr) => (arr.length ? arr.reduce((s, x) => s + x, 0) / arr.length : 0);
+    const avgCredits = avg(active.map((y) => Number(y.credits) || 0));
+    const avgActions = avg(active.map((y) => Number(y.actions) || 0));
+
+    const creditSet = get("enterprise_credit_floors");
+    const actionSet = get("enterprise_action_floors");
+    const creditTier = creditSet ? selectBand(creditSet, avgCredits) : null;
+    const actionTier = actionSet ? selectBand(actionSet, avgActions) : null;
+    const creditFloors = creditTier ? resolveFloors(creditTier, n) : null;
+    const actionFloors = actionTier ? resolveFloors(actionTier, n) : null;
+
+    const cpc = Number(q.cpc);
+    const cpa = Number(q.cpa);
+
+    if (creditFloors && Number.isFinite(cpc)) {
+      if (cpc < creditFloors.manager) {
+        reasons.push(`CPC ${cpc.toFixed(4)} is below manager floor ${creditFloors.manager.toFixed(4)} (${pct(creditFloors.manager, cpc)}% below)`);
+      } else if (cpc < creditFloors.rep) {
+        reasons.push(`CPC ${cpc.toFixed(4)} is below rep floor ${creditFloors.rep.toFixed(4)} (${pct(creditFloors.rep, cpc)}% below)`);
+      }
+    }
+    if (actionFloors && Number.isFinite(cpa)) {
+      if (cpa < actionFloors.manager) {
+        reasons.push(`CPA ${cpa.toFixed(4)} is below manager floor ${actionFloors.manager.toFixed(4)} (${pct(actionFloors.manager, cpa)}% below)`);
+      } else if (cpa < actionFloors.rep) {
+        reasons.push(`CPA ${cpa.toFixed(4)} is below rep floor ${actionFloors.rep.toFixed(4)} (${pct(actionFloors.rep, cpa)}% below)`);
+      }
+    }
+
+    // Per-year special-cases.
+    active.forEach((y, i) => {
+      const c = Number(y.credits) || 0;
+      if (c > 0 && c < 1200000) reasons.push(`XS credits tier (Year ${i + 1} < 1,200,000)`);
+      if (actionSet) {
+        const a = Number(y.actions) || 0;
+        if (a > 0 && String(selectBand(actionSet, a)?.tier) === "XS") {
+          reasons.push(`XS action tier (Year ${i + 1})`);
+        }
+      }
+    });
+    if (q.creditListPrice === 0.06) reasons.push("CPC list price set to $0.06 (not recommended)");
+
+    let status = null;
+    if (reasons.length > 0) {
+      status = reasons.some((r) => r.includes("below manager floor"))
+        ? "pending_exception"
+        : "pending_standard";
+    }
+    return {
+      status,
+      reasons,
+      avgCredits,
+      avgActions,
+      creditTier,
+      actionTier,
+      creditFloors,
+      actionFloors,
+    };
+  }
+
   __cb.pricing = {
     LIST_CPC,
     LIST_CPA,
@@ -308,6 +387,7 @@
     deriveFloorForYears,
     resolveFloors,
     approvalFor,
+    approvalForContract,
   };
 
   // Warm the cache once the page is interactive. Fire-and-forget; getters work

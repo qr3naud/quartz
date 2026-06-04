@@ -530,6 +530,27 @@
       " Import Clay Table";
     importBtn.addEventListener("click", () => __cb.startImport(importBtn));
 
+    // Amber "Pricing" button — enters the customer-facing multi-year pricing
+    // view: the scope summary collapses into cost/savings cards, the
+    // Projected/Actual toggle becomes a 1/2/3-year term toggle, and the table
+    // collapses to per-use-case per-year volume editors. Internal-only (same
+    // gate as Export-to-GTME); the bands + approval stay behind the in-view
+    // "View Bands" control so the main view is safe to screen-share.
+    let pricingBtn = null;
+    if (__cb.hasFeature?.("gtme_export")) {
+      pricingBtn = document.createElement("button");
+      pricingBtn.className = "cb-toolbar-btn cb-toolbar-pricing";
+      pricingBtn.type = "button";
+      pricingBtn.title = "Multi-year pricing view";
+      pricingBtn.innerHTML =
+        '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>' +
+        "<span>Pricing</span>";
+      pricingBtn.addEventListener("click", (evt) => {
+        evt.stopPropagation();
+        if (__cb.setPricingMode) __cb.setPricingMode(!__cb.pricingMode);
+      });
+    }
+
     // Overflow ("more") trigger — sits to the right of Export. Surfaces
     // the secondary toggles (Pro Mode + Old vs New Pricing) that used to
     // each occupy a topbar slot of their own. See __cb.openMoreMenu at
@@ -927,6 +948,82 @@
       if (__cb.debouncedSave) __cb.debouncedSave();
     };
 
+    // ---- Contract-term toggle (1y / 2y / 3y) -------------------------------
+    // Visual clone of buildViewModeToggle, but a 3-segment pill. Shown in the
+    // table intro INSTEAD of Projected/Actual while pricing mode is on. The
+    // selected term N is both the contract length (drives floor derivation and
+    // the savings sum) and the number of per-year record columns shown per use
+    // case. State on __cb.contractYears (1..3), persisted per tab.
+    if (typeof __cb.contractYears !== "number") __cb.contractYears = 1;
+
+    __cb.buildContractTermToggle = function () {
+      const wrap = document.createElement("div");
+      wrap.className = "cb-view-mode-toggle cb-term-toggle";
+      const defs = [
+        { n: 1, t: "1 year" },
+        { n: 2, t: "2 year" },
+        { n: 3, t: "3 year" },
+      ];
+      const btns = defs.map(({ n, t }) => {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.className = "cb-view-mode-btn cb-term-btn";
+        b.dataset.years = String(n);
+        b.textContent = t;
+        return b;
+      });
+      const active = Math.min(3, Math.max(1, __cb.contractYears || 1));
+      const thumb = document.createElement("span");
+      thumb.className = "cb-view-mode-thumb";
+      const from = __cb._termSlideFrom;
+      const animate = from >= 1 && from <= 3 && from !== active;
+      const startIdx = (animate ? from : active) - 1;
+      const applyActive = (idx) =>
+        btns.forEach((b, i) => b.classList.toggle("cb-view-mode-btn-active", i === idx));
+      const moveThumbTo = (idx) => {
+        const padL = parseFloat(getComputedStyle(wrap).paddingLeft) || 0;
+        let left = padL;
+        for (let i = 0; i < idx; i++) left += btns[i].getBoundingClientRect().width;
+        thumb.style.left = `${left}px`;
+        thumb.style.width = `${btns[idx].getBoundingClientRect().width}px`;
+      };
+      applyActive(startIdx);
+      btns.forEach((b, i) => b.addEventListener("click", () => __cb.setContractYears(i + 1)));
+      wrap.appendChild(thumb);
+      btns.forEach((b) => wrap.appendChild(b));
+      requestAnimationFrame(() => {
+        __cb._termSlideFrom = null;
+        wrap.classList.add("cb-view-mode-no-anim");
+        moveThumbTo(startIdx);
+        if (animate) {
+          requestAnimationFrame(() => {
+            void wrap.offsetWidth;
+            wrap.classList.remove("cb-view-mode-no-anim");
+            applyActive(active - 1);
+            moveThumbTo(active - 1);
+          });
+        } else {
+          requestAnimationFrame(() => wrap.classList.remove("cb-view-mode-no-anim"));
+        }
+      });
+      return wrap;
+    };
+
+    __cb.setContractYears = function (n) {
+      const next = Math.min(3, Math.max(1, Number(n) || 1));
+      const prev = Math.min(3, Math.max(1, __cb.contractYears || 1));
+      if (prev !== next) __cb._termSlideFrom = prev;
+      __cb.contractYears = next;
+      if (__cb.tabStore) {
+        __cb.tabStore.contractYears = next;
+        const at = __cb.tabStore.tabs?.find((t) => t.id === __cb.tabStore.activeId);
+        if (at?.state) at.state.contractYears = next;
+      }
+      recalcTotal();
+      if (__cb.tableView?.refresh) __cb.tableView.refresh();
+      if (__cb.debouncedSave) __cb.debouncedSave();
+    };
+
     // Salesforce opportunity link — leads the action-button cluster
     // (Link opp → Generate POC → Import → Export). The element
     // internally swaps between a "Link opportunity" button and a
@@ -949,6 +1046,7 @@
     }
     if (dustBtn) rightGroup.appendChild(dustBtn);
     rightGroup.appendChild(importBtn);
+    if (pricingBtn) rightGroup.appendChild(pricingBtn);
     rightGroup.appendChild(exportBtn);
     rightGroup.appendChild(moreBtn);
     rightGroup.appendChild(closeBtn);
@@ -1249,6 +1347,70 @@
     pricingGroup.appendChild(pricingToggleBox);
     pricingGroup.appendChild(pricingCards);
 
+    // ---- Pricing view strip (multi-year cost + savings) --------------------
+    // Hidden until pricing mode (CSS keys off .cb-summary-pricing); slides up
+    // from the bottom of the summary bar. The Action/Credit Cost inputs mirror
+    // the creditCost/actionCost state (kept in sync with the Pricing Show cards
+    // via syncStripInputs). The four read-only cards are the derived totals.
+    const pricingStrip = document.createElement("div");
+    pricingStrip.className = "cb-pricing-strip";
+    const pricingStripInner = document.createElement("div");
+    pricingStripInner.className = "cb-pricing-strip-inner";
+
+    function makeStripInput(id, labelText, value) {
+      const box = document.createElement("div");
+      box.className = "cb-summary-box cb-pricing-card";
+      const lab = document.createElement("label");
+      lab.className = "cb-summary-label";
+      lab.textContent = labelText;
+      lab.htmlFor = id;
+      const inp = document.createElement("input");
+      inp.type = "text";
+      inp.inputMode = "decimal";
+      inp.className = "cb-pricing-input";
+      inp.id = id;
+      inp.value = value;
+      box.appendChild(lab);
+      box.appendChild(inp);
+      return { box, inp };
+    }
+    function makeStripCard(labelText, extraClass) {
+      const box = document.createElement("div");
+      box.className = "cb-summary-box cb-pricing-card" + (extraClass ? " " + extraClass : "");
+      const lab = document.createElement("span");
+      lab.className = "cb-summary-label";
+      lab.textContent = labelText;
+      const val = document.createElement("span");
+      val.className = "cb-summary-value";
+      val.textContent = "$0";
+      box.appendChild(lab);
+      box.appendChild(val);
+      return { box, val };
+    }
+
+    const stripActionCost = makeStripInput("cb-strip-action-cost", "Action Cost", "$0.008");
+    const stripCreditCost = makeStripInput("cb-strip-credit-cost", "Credit Cost", "$0.05");
+    const stripActionTotalCard = makeStripCard("Total Action Cost");
+    const stripCreditTotalCard = makeStripCard("Total Credit Cost");
+    const stripTotalCard = makeStripCard("Total Cost", "cb-pricing-total");
+    const stripSavingsCard = makeStripCard("Savings vs List", "cb-pricing-savings");
+    const stripActionInput = stripActionCost.inp;
+    const stripCreditInput = stripCreditCost.inp;
+
+    pricingStripInner.appendChild(stripActionCost.box);
+    pricingStripInner.appendChild(stripCreditCost.box);
+    pricingStripInner.appendChild(stripActionTotalCard.box);
+    pricingStripInner.appendChild(stripCreditTotalCard.box);
+    pricingStripInner.appendChild(stripTotalCard.box);
+    pricingStripInner.appendChild(stripSavingsCard.box);
+    pricingStrip.appendChild(pricingStripInner);
+
+    // wirePricingInput + commitPricingInput are hoisted function declarations
+    // below; they set the shared creditCost/actionCost and call recalcTotal
+    // (which re-syncs every cost input via syncStripInputs).
+    wirePricingInput(stripCreditInput, (v) => { creditCost = v; });
+    wirePricingInput(stripActionInput, (v) => { actionCost = v; });
+
     // --- Actual-mode loading state ------------------------------------------
     // Every summary number that reflects real spend in Actual mode. While the
     // session list is being fetched AND nothing has been stamped yet, these
@@ -1333,6 +1495,7 @@
     summaryBar.appendChild(totalActionsBox);
     summaryBar.appendChild(totalBox);
     summaryBar.appendChild(pricingGroup);
+    summaryBar.appendChild(pricingStrip);
 
     // Per-row numbers (unweighted) for the "Avg / Row" boxes.
     let currentCreditsPerRow = 0;
@@ -1540,8 +1703,9 @@
 
       // Adaptive bar: with 2+ use cases, per-scope controls (Avg/Row, Records,
       // Frequency) move to each table's header — hide them here and show the
-      // grand total + a per-use-case breakdown on hover.
-      const hideScope = !!multi;
+      // grand total + a per-use-case breakdown on hover. Pricing mode also
+      // collapses the scope group (the cost/savings strip takes over).
+      const hideScope = !!multi || !!__cb.pricingMode;
       setScopeCollapsed(hideScope);
       if (multi && Array.isArray(multi.perUseCase)) {
         const lines = multi.perUseCase
@@ -1559,7 +1723,96 @@
         totalBox.removeAttribute("title");
         totalActionsBox.removeAttribute("title");
       }
+
+      // Pricing mode: refresh the cost/savings strip from the per-year volumes
+      // and keep every cost input in sync with the shared creditCost/actionCost.
+      if (__cb.pricingMode) updatePricingStrip();
+      syncStripInputs();
     }
+
+    // --- Pricing view strip computation -------------------------------------
+
+    function syncStripInputs() {
+      const setIf = (inp, val) => {
+        if (inp && document.activeElement !== inp) inp.value = formatDollar(val);
+      };
+      setIf(stripCreditInput, creditCost);
+      setIf(stripActionInput, actionCost);
+      setIf(creditCostInput, creditCost);
+      setIf(actionCostInput, actionCost);
+    }
+
+    function computePricingResult() {
+      const contractYears = Math.min(3, Math.max(1, __cb.contractYears || 1));
+      return __cb.cost.computeContractTotals({
+        contractYears,
+        yearRecordsByUc: __cb.pricingYearRecords || {},
+      });
+    }
+    __cb.getPricingResult = computePricingResult;
+
+    function updatePricingStrip() {
+      if (!__cb.pricingMode) return;
+      const res = computePricingResult();
+      let totalCredits = 0;
+      let totalActions = 0;
+      for (const y of res.years) {
+        totalCredits += y.credits;
+        totalActions += y.actions;
+      }
+      const creditDollars = totalCredits * creditCost;
+      const actionDollars = totalActions * actionCost;
+      const total = creditDollars + actionDollars;
+      const listCpc = __cb.pricing?.LIST_CPC ?? 0.05;
+      const listCpa = __cb.pricing?.LIST_CPA ?? 0.008;
+      const listTotal = totalCredits * listCpc + totalActions * listCpa;
+      const savings = Math.max(0, listTotal - total);
+      const savingsPct = listTotal > 0 ? (savings / listTotal) * 100 : 0;
+      setSummaryNumber(stripActionTotalCard.val, actionDollars, formatDollarRounded);
+      setSummaryNumber(stripCreditTotalCard.val, creditDollars, formatDollarRounded);
+      setSummaryNumber(stripTotalCard.val, total, formatDollarRounded);
+      stripSavingsCard.val.textContent = `${formatDollarRounded(savings)} \u00b7 ${savingsPct.toFixed(0)}%`;
+      if (__cb.pricingBands?.refresh) __cb.pricingBands.refresh(res);
+    }
+    __cb.updatePricingStrip = updatePricingStrip;
+
+    // Enter/leave the multi-year pricing view. Collapses the scope summary into
+    // the cost/savings strip (CSS keys off .cb-summary-pricing) and flips the
+    // table view (term toggle + per-use-case year editors + View Bands).
+    __cb.setPricingMode = function (on) {
+      const next = !!on;
+      __cb.pricingMode = next;
+      if (__cb.overlayEl) __cb.overlayEl.setAttribute("data-cb-pricing-mode", next ? "on" : "off");
+      summaryBar.classList.toggle("cb-summary-pricing", next);
+      if (pricingBtn) pricingBtn.classList.toggle("cb-toolbar-pricing-active", next);
+      if (__cb.tabStore) {
+        __cb.tabStore.pricingMode = next;
+        const at = __cb.tabStore.tabs?.find((t) => t.id === __cb.tabStore.activeId);
+        if (at?.state) at.state.pricingMode = next;
+      }
+      if (!next && __cb.pricingBands?.close) __cb.pricingBands.close();
+      recalcTotal();
+      if (__cb.tableView?.refresh) __cb.tableView.refresh();
+      if (__cb.debouncedSave) __cb.debouncedSave();
+    };
+
+    // Set a use case's records for one year (0-based) in the pricing view.
+    // Re-runs the strip + table so the derived volumes / tier / approval track.
+    __cb.setPricingYearRecords = function (ucKey, yearIdx, value) {
+      if (!ucKey) return;
+      __cb.pricingYearRecords = __cb.pricingYearRecords || {};
+      const arr = (__cb.pricingYearRecords[ucKey] || []).slice();
+      arr[yearIdx] = Math.max(0, Math.round(Number(value) || 0));
+      __cb.pricingYearRecords[ucKey] = arr;
+      if (__cb.tabStore) {
+        __cb.tabStore.pricingYearRecords = __cb.pricingYearRecords;
+        const at = __cb.tabStore.tabs?.find((t) => t.id === __cb.tabStore.activeId);
+        if (at?.state) at.state.pricingYearRecords = __cb.pricingYearRecords;
+      }
+      updatePricingStrip();
+      if (__cb.tableView?.refresh) __cb.tableView.refresh();
+      if (__cb.debouncedSave) __cb.debouncedSave();
+    };
 
     function commitPricingInput(input, setter) {
       const parsed = parseDollar(input.value);

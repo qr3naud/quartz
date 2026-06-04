@@ -502,6 +502,94 @@
     };
   }
 
+  // ---------------------------------------------------------------------------
+  // Pricing view (multi-year): per-use-case per-ROW credits/actions, decoupled
+  // from records, so a per-year records value can be multiplied in to get that
+  // year's volume. Mirrors computeUseCaseTotals' weighting (frequency x
+  // coverage baseline) but divides out records so the result is a stable
+  // per-record figure. When no imported-table use case exists, the unscoped
+  // ("other") cards collapse into a single synthetic "Scope" use case so a
+  // canvas-only scope still prices.
+  // ---------------------------------------------------------------------------
+  function computePricingUseCases() {
+    const cards = cb.model?.getNodes?.() || [];
+    const freqMult = (id) => (cb.getFrequencyMultiplier ? cb.getFrequencyMultiplier(id) : 1);
+    const hasImported = listUseCases().length > 0;
+    const buckets = new Map(); // key -> { perRowCredits, perRowActions }
+    for (const c of cards) {
+      const d = c && c.data;
+      if (!d || isNonErType(d.type)) continue;
+      const key = useCaseKeyForCard(c);
+      // When imported tables exist, unscoped canvas cards are excluded from the
+      // quote (same as computeUseCaseTotals). With no tables, "other" IS the
+      // scope, so keep it.
+      if (key === OTHER_USE_CASE && hasImported) continue;
+      const pr = perRowCost(c, { viewMode: "projected" });
+      const freqId = d.frequencyCustom
+        ? d.frequency
+        : key === OTHER_USE_CASE
+          ? cb.getCurrentFrequencyId?.()
+          : useCaseFrequencyId(key);
+      const mult = freqMult(freqId);
+      const baseRecs =
+        key === OTHER_USE_CASE
+          ? cb.getRecordsCount?.() || 0
+          : useCaseRecords(key);
+      // Coverage baseline at the use case's own records (defaults to 1 after
+      // syncUseCaseCoverage; <1 only when the rep set a custom coverage).
+      const billable = billableFraction(c, baseRecs);
+      const b = buckets.get(key) || { perRowCredits: 0, perRowActions: 0 };
+      b.perRowCredits += pr.credits * mult * billable;
+      b.perRowActions += pr.actions * mult * billable;
+      buckets.set(key, b);
+    }
+    const meta = new Map(listUseCases().map((u) => [u.key, u]));
+    const out = [];
+    for (const [key, b] of buckets) {
+      out.push({
+        key,
+        name: key === OTHER_USE_CASE ? "Scope" : meta.get(key)?.name || key,
+        perRowCredits: b.perRowCredits,
+        perRowActions: b.perRowActions,
+        baselineRecords:
+          key === OTHER_USE_CASE ? cb.getRecordsCount?.() || 0 : useCaseRecords(key),
+      });
+    }
+    return out;
+  }
+
+  // Per-year contract totals for the pricing view. `yearRecordsByUc` maps a use
+  // case key to a [y1, y2, y3] records array (any missing entry defaults to that
+  // use case's baseline records). Returns per-year grand {credits, actions} for
+  // years 1..contractYears, the cross-year averages (which drive tier
+  // selection), and the resolved use cases (with perRow + baseline). Pure.
+  function computeContractTotals(opts) {
+    opts = opts || {};
+    const contractYears = Math.min(3, Math.max(1, Number(opts.contractYears) || 1));
+    const yearRecordsByUc = opts.yearRecordsByUc || {};
+    const useCases = Array.isArray(opts.useCases) ? opts.useCases : computePricingUseCases();
+    const years = [];
+    for (let i = 0; i < contractYears; i++) {
+      let credits = 0;
+      let actions = 0;
+      const perUseCase = [];
+      for (const uc of useCases) {
+        const arr = yearRecordsByUc[uc.key];
+        const recs = arr && arr[i] != null ? Number(arr[i]) : uc.baselineRecords;
+        const ucCredits = uc.perRowCredits * recs;
+        const ucActions = uc.perRowActions * recs;
+        credits += ucCredits;
+        actions += ucActions;
+        perUseCase.push({ key: uc.key, records: recs, credits: ucCredits, actions: ucActions });
+      }
+      years.push({ year: i + 1, credits, actions, perUseCase });
+    }
+    const n = years.length || 1;
+    const avgCredits = years.reduce((s, y) => s + y.credits, 0) / n;
+    const avgActions = years.reduce((s, y) => s + y.actions, 0) / n;
+    return { contractYears, useCases, years, avgCredits, avgActions };
+  }
+
   cb.cost = {
     isNonErType,
     perRowCost,
@@ -526,5 +614,7 @@
     syncUseCaseFrequency,
     computeUseCaseTotals,
     computeTabTotals,
+    computePricingUseCases,
+    computeContractTotals,
   };
 })();

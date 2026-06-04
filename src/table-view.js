@@ -643,6 +643,155 @@
     return wrap;
   }
 
+  // ---- Pricing mode: View Bands control + per-year volume body -------------
+
+  // Replaces the search affordance in pricing mode. Opens the internal-only
+  // floating bands/approval overlay (src/pricing-bands.js). Deliberately a
+  // separate click so the customer-facing view never shows floors/approval
+  // until the GTME asks for them.
+  function buildViewBandsControl() {
+    const wrap = document.createElement("div");
+    wrap.className = "cb-table-view-bands";
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "cb-table-view-bands-toggle";
+    btn.title = "View pricing bands + approval (internal only)";
+    btn.innerHTML =
+      '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>' +
+      "<span>View Bands</span>";
+    btn.addEventListener("mousedown", (e) => e.stopPropagation());
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      if (__cb.pricingBands?.toggle) __cb.pricingBands.toggle(btn);
+    });
+    wrap.appendChild(btn);
+    return wrap;
+  }
+
+  function pricingFmt(n) {
+    return Math.max(0, Math.round(Number(n) || 0)).toLocaleString();
+  }
+
+  // The simplified pricing body: one card per use case, each with N per-year
+  // volume editors (N = __cb.contractYears). Each year cell exposes Records,
+  // Credits, and Actions inputs — editing any one resolves the year's records
+  // (volume = perRow x records), so the rep can drive from records OR volume.
+  function buildPricingBody() {
+    const wrap = document.createElement("div");
+    wrap.className = "cb-pricing-body";
+
+    const ucs = __cb.cost?.computePricingUseCases?.() || [];
+    const years = Math.min(3, Math.max(1, __cb.contractYears || 1));
+    const yrMap = __cb.pricingYearRecords || {};
+
+    if (ucs.length === 0) {
+      const empty = document.createElement("div");
+      empty.className = "cb-pricing-body-empty";
+      empty.textContent =
+        "Scope some enrichments first, then set per-year records to price the deal.";
+      wrap.appendChild(empty);
+      return wrap;
+    }
+
+    const hint = document.createElement("div");
+    hint.className = "cb-pricing-body-hint";
+    hint.textContent =
+      years > 1
+        ? `Set each year's volume per use case. Edit records or credits/actions \u2014 the others follow. Pricing uses the ${years}-year average to pick the tier.`
+        : "Set each use case's volume. Edit records or credits/actions \u2014 the others follow.";
+    wrap.appendChild(hint);
+
+    for (const uc of ucs) {
+      const card = document.createElement("div");
+      card.className = "cb-pricing-uc";
+
+      const head = document.createElement("div");
+      head.className = "cb-pricing-uc-head";
+      const nm = document.createElement("span");
+      nm.className = "cb-pricing-uc-name";
+      nm.textContent = uc.name;
+      const per = document.createElement("span");
+      per.className = "cb-pricing-uc-per";
+      per.textContent = `${uc.perRowCredits.toFixed(1)} cr \u00b7 ${uc.perRowActions.toFixed(1)} act / record`;
+      head.appendChild(nm);
+      head.appendChild(per);
+      card.appendChild(head);
+
+      const yearsWrap = document.createElement("div");
+      yearsWrap.className = "cb-pricing-uc-years";
+      const arr = yrMap[uc.key] || [];
+      for (let i = 0; i < years; i++) {
+        const recs = arr[i] != null ? Number(arr[i]) : uc.baselineRecords;
+        yearsWrap.appendChild(buildPricingYearCell(uc, i, recs));
+      }
+      card.appendChild(yearsWrap);
+      wrap.appendChild(card);
+    }
+    return wrap;
+  }
+
+  function buildPricingYearCell(uc, yearIdx, records) {
+    const cell = document.createElement("div");
+    cell.className = "cb-pricing-year";
+
+    const label = document.createElement("div");
+    label.className = "cb-pricing-year-label";
+    label.textContent = `Year ${yearIdx + 1}`;
+    cell.appendChild(label);
+
+    const credits = uc.perRowCredits * records;
+    const actions = uc.perRowActions * records;
+
+    const fields = document.createElement("div");
+    fields.className = "cb-pricing-year-fields";
+
+    const mkField = (labelText, value, onCommit) => {
+      const f = document.createElement("label");
+      f.className = "cb-pricing-field";
+      const t = document.createElement("span");
+      t.className = "cb-pricing-field-label";
+      t.textContent = labelText;
+      const inp = document.createElement("input");
+      inp.type = "text";
+      inp.inputMode = "numeric";
+      inp.className = "cb-pricing-field-input";
+      inp.value = pricingFmt(value);
+      const commit = () => {
+        const raw = parseInt(inp.value.replace(/[^\d]/g, ""), 10);
+        onCommit(Number.isFinite(raw) ? raw : 0);
+      };
+      inp.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          inp.blur();
+        }
+      });
+      inp.addEventListener("blur", commit);
+      inp.addEventListener("focus", () => inp.select());
+      f.appendChild(t);
+      f.appendChild(inp);
+      return f;
+    };
+
+    fields.appendChild(
+      mkField("Records", records, (v) => __cb.setPricingYearRecords(uc.key, yearIdx, v)),
+    );
+    fields.appendChild(
+      mkField("Credits", credits, (v) => {
+        const r = uc.perRowCredits > 0 ? Math.round(v / uc.perRowCredits) : 0;
+        __cb.setPricingYearRecords(uc.key, yearIdx, r);
+      }),
+    );
+    fields.appendChild(
+      mkField("Actions", actions, (v) => {
+        const r = uc.perRowActions > 0 ? Math.round(v / uc.perRowActions) : 0;
+        __cb.setPricingYearRecords(uc.key, yearIdx, r);
+      }),
+    );
+    cell.appendChild(fields);
+    return cell;
+  }
+
   // Focuses the search input within the currently-mounted control, if any.
   function focusSearchInput() {
     if (!hostEl) return;
@@ -4556,12 +4705,18 @@
     }
     // Collapse / expand-all group controls, sitting just left of the search
     // affordance. Wired to the same two-step collapse / expand-all behavior as
-    // Cmd+Shift+E / Cmd+E.
-    introLead.appendChild(buildGroupToggleControls());
-    // Collapsed search affordance — sits to the right of the collaborators
-    // pill, expands inline on click or Cmd/Ctrl+F. State is module-scoped so
-    // applySearchHighlight() (end of render) restores highlights afterwards.
-    introLead.appendChild(buildSearchControl());
+    // Cmd+Shift+E / Cmd+E. In pricing mode the body is headers-only, so the
+    // group toggles + search are replaced by the internal-only "View Bands"
+    // control.
+    if (__cb.pricingMode) {
+      introLead.appendChild(buildViewBandsControl());
+    } else {
+      introLead.appendChild(buildGroupToggleControls());
+      // Collapsed search affordance — sits to the right of the collaborators
+      // pill, expands inline on click or Cmd/Ctrl+F. State is module-scoped so
+      // applySearchHighlight() (end of render) restores highlights afterwards.
+      introLead.appendChild(buildSearchControl());
+    }
 
     const introActions = document.createElement("div");
     introActions.className = "cb-table-view-intro-actions";
@@ -4579,7 +4734,14 @@
     // same flag the Records box uses for its "actual / POC" state.
     const importedYet =
       typeof __cb.recordsActual === "number" && __cb.recordsActual > 0;
-    if (importedYet && typeof __cb.buildViewModeToggle === "function") {
+    if (__cb.pricingMode && typeof __cb.buildContractTermToggle === "function") {
+      // Pricing mode: the Projected/Actual toggle becomes a 1y/2y/3y contract
+      // term toggle (same pill design). Shown even before an import, since
+      // pricing works off the scoped enrichments, not just imported tables.
+      const termToggle = __cb.buildContractTermToggle();
+      termToggle.classList.add("cb-table-view-mode-toggle");
+      intro.appendChild(termToggle);
+    } else if (importedYet && typeof __cb.buildViewModeToggle === "function") {
       const viewToggle = __cb.buildViewModeToggle();
       viewToggle.classList.add("cb-table-view-mode-toggle");
       // Slide it in the first time it appears (import just populated the header).
@@ -4596,42 +4758,51 @@
       if (__cb.sessionCutoff) wireActualSessionUI();
     }
 
-    // "Scope Ads" / "Scope Audiences" lead the action row as scoping
-    // quick-starts. ("Upload POC" used to sit to their left; it now lives in
-    // the topbar overflow ("more") menu — see __cb.openMoreMenu in
-    // src/overlay.js — so the header stays compact.)
-    const scopeAdsBtn = document.createElement("button");
-    scopeAdsBtn.type = "button";
-    scopeAdsBtn.className = "cb-table-view-add-er-btn";
-    scopeAdsBtn.title = "Scope an Ads use case";
-    scopeAdsBtn.innerHTML = targetSvg(12) + "<span>Scope Ads</span>";
-    scopeAdsBtn.addEventListener("click", () => startScope("ads"));
-    introActions.appendChild(scopeAdsBtn);
+    // "Scope Ads" / "Scope Audiences" / "Add" lead the action row as scoping
+    // quick-starts. Hidden in pricing mode (the view is for pricing an
+    // already-built scope, not adding to it).
+    if (!__cb.pricingMode) {
+      const scopeAdsBtn = document.createElement("button");
+      scopeAdsBtn.type = "button";
+      scopeAdsBtn.className = "cb-table-view-add-er-btn";
+      scopeAdsBtn.title = "Scope an Ads use case";
+      scopeAdsBtn.innerHTML = targetSvg(12) + "<span>Scope Ads</span>";
+      scopeAdsBtn.addEventListener("click", () => startScope("ads"));
+      introActions.appendChild(scopeAdsBtn);
 
-    const scopeAudiencesBtn = document.createElement("button");
-    scopeAudiencesBtn.type = "button";
-    scopeAudiencesBtn.className = "cb-table-view-add-er-btn";
-    scopeAudiencesBtn.title = "Scope an Audiences use case";
-    scopeAudiencesBtn.innerHTML = targetSvg(12) + "<span>Scope Audiences</span>";
-    scopeAudiencesBtn.addEventListener("click", () => startScope("audiences"));
-    introActions.appendChild(scopeAudiencesBtn);
+      const scopeAudiencesBtn = document.createElement("button");
+      scopeAudiencesBtn.type = "button";
+      scopeAudiencesBtn.className = "cb-table-view-add-er-btn";
+      scopeAudiencesBtn.title = "Scope an Audiences use case";
+      scopeAudiencesBtn.innerHTML = targetSvg(12) + "<span>Scope Audiences</span>";
+      scopeAudiencesBtn.addEventListener("click", () => startScope("audiences"));
+      introActions.appendChild(scopeAudiencesBtn);
 
-    // Single "Add" control — opens a dropdown with the two granular add
-    // actions (data point / enrichment) so the header stays compact now that
-    // the sticky footer row is gone.
-    const addBtn = document.createElement("button");
-    addBtn.type = "button";
-    addBtn.className = "cb-table-view-add-er-btn";
-    addBtn.title = "Add a data point or enrichment";
-    addBtn.innerHTML = plusSvg(12) + "<span>Add</span>" + chevronDownSvg(12);
-    addBtn.addEventListener("click", (evt) => {
-      evt.stopPropagation();
-      openAddMenu(addBtn);
-    });
-    introActions.appendChild(addBtn);
+      // Single "Add" control — opens a dropdown with the two granular add
+      // actions (data point / enrichment) so the header stays compact now that
+      // the sticky footer row is gone.
+      const addBtn = document.createElement("button");
+      addBtn.type = "button";
+      addBtn.className = "cb-table-view-add-er-btn";
+      addBtn.title = "Add a data point or enrichment";
+      addBtn.innerHTML = plusSvg(12) + "<span>Add</span>" + chevronDownSvg(12);
+      addBtn.addEventListener("click", (evt) => {
+        evt.stopPropagation();
+        openAddMenu(addBtn);
+      });
+      introActions.appendChild(addBtn);
+    }
     intro.appendChild(introActions);
 
     wrap.appendChild(intro);
+
+    // Pricing mode renders a dedicated, simplified body (use-case headers with
+    // per-year volume editors) instead of the full data-point table.
+    if (__cb.pricingMode) {
+      wrap.appendChild(buildPricingBody());
+      hostEl.appendChild(wrap);
+      return;
+    }
 
     const tableContainer = document.createElement("div");
     tableContainer.className = "cb-table-view-table-container";
