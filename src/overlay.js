@@ -1173,8 +1173,8 @@
     pricingCards.className = "cb-pricing-cards";
     const pricingCardsInner = document.createElement("div");
     pricingCardsInner.className = "cb-pricing-cards-inner";
-    pricingCardsInner.appendChild(creditCostBox);
     pricingCardsInner.appendChild(actionCostBox);
+    pricingCardsInner.appendChild(creditCostBox);
     pricingCardsInner.appendChild(totalDollarBox);
     pricingCards.appendChild(pricingCardsInner);
 
@@ -1245,12 +1245,25 @@
       }
     };
 
-    summaryBar.appendChild(creditsBox);
-    summaryBar.appendChild(actionsBox);
-    summaryBar.appendChild(recordsBox);
-    summaryBar.appendChild(freqBox);
-    summaryBar.appendChild(totalBox);
+    // The per-scope boxes (Actions/Row, Avg Credits/Row, Records, Frequency)
+    // hide together on a multi-import. Group them in one grid collapsible (the
+    // .cb-pricing-cards 0fr<->1fr trick) so they wipe out/in smoothly as a unit
+    // instead of each box animating its own width. scopeInner clips with
+    // overflow:hidden so content is wiped, not squished.
+    const scopeWrap = document.createElement("div");
+    scopeWrap.className = "cb-summary-scope";
+    const scopeInner = document.createElement("div");
+    scopeInner.className = "cb-summary-scope-inner";
+    // Actions-first ordering, applied to every credit/action pair in the bar.
+    scopeInner.appendChild(actionsBox);
+    scopeInner.appendChild(creditsBox);
+    scopeInner.appendChild(recordsBox);
+    scopeInner.appendChild(freqBox);
+    scopeWrap.appendChild(scopeInner);
+
+    summaryBar.appendChild(scopeWrap);
     summaryBar.appendChild(totalActionsBox);
+    summaryBar.appendChild(totalBox);
     summaryBar.appendChild(pricingGroup);
 
     // Per-row numbers (unweighted) for the "Avg / Row" boxes.
@@ -1403,98 +1416,24 @@
       el._cbTween = requestAnimationFrame(tick);
     }
 
-    // Bar gap (px) — must match `.cb-summary-bar { gap }` in overlay.css. A
-    // collapsing box animates its margin to -GAP so it cancels the flex gap it
-    // would otherwise reserve; combined with collapsing width + padding +
-    // border to zero, its footprint reaches exactly the display:none footprint,
-    // so neighbors slide in continuously with no snap at the end.
-    const SUMMARY_BAR_GAP = 10;
-
-    // Slide a scope box out (hidden) or in (shown) when the adaptive bar flips
-    // on a multi-import. The resting hidden state is display:none, applied only
-    // after the slide-out finishes. Only animates on a real change — recalcTotal
-    // runs on every recompute, so unchanged calls are no-ops.
-    function setSummaryBoxHidden(box, hidden) {
-      if (!box) return;
-      const first = box._cbHidden === undefined;
-      if (!first && box._cbHidden === hidden) return;
-      box._cbHidden = hidden;
-      const reduce =
-        window.matchMedia &&
-        window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-      const clearInline = () => {
-        for (const p of [
-          "width", "opacity", "marginLeft",
-          "paddingLeft", "paddingRight",
-          "borderLeftWidth", "borderRightWidth",
-        ]) {
-          box.style[p] = "";
-        }
-      };
-      // Drop any in-flight slide listener so a mid-animation flip can't apply a
-      // stale final state.
-      if (box._cbAnimEnd) {
-        box.removeEventListener("transitionend", box._cbAnimEnd);
-        box._cbAnimEnd = null;
-      }
-      // First paint or reduced motion: snap, no animation.
-      if (first || reduce) {
-        box.classList.remove("cb-summary-animating");
-        clearInline();
-        box.classList.toggle("cb-summary-hidden", hidden);
+    // Collapse / reveal the whole scope-box group on a multi-import. Uses the
+    // .cb-pricing-cards grid 0fr<->1fr trick (see overlay.css) — one class
+    // toggle, no JS measuring. The first application snaps (no transition) via a
+    // one-frame guard so the initial state doesn't animate from a cold render.
+    let scopeCollapseReady = false;
+    function setScopeCollapsed(collapsed) {
+      if (!scopeWrap) return;
+      if (!scopeCollapseReady) {
+        // Snap to the initial state without animating.
+        scopeWrap.classList.add("cb-summary-scope-no-anim");
+        scopeWrap.classList.toggle("cb-summary-scope-collapsed", collapsed);
+        requestAnimationFrame(() => {
+          scopeWrap.classList.remove("cb-summary-scope-no-anim");
+        });
+        scopeCollapseReady = true;
         return;
       }
-      // Measure the natural geometry while the box is laid out at full size
-      // (before min-width is zeroed by the animating class).
-      box.classList.remove("cb-summary-hidden");
-      const cs = getComputedStyle(box);
-      const padL = cs.paddingLeft;
-      const padR = cs.paddingRight;
-      const bL = cs.borderLeftWidth;
-      const bR = cs.borderRightWidth;
-      const contentW =
-        box.clientWidth -
-        (parseFloat(padL) || 0) -
-        (parseFloat(padR) || 0);
-      const setNatural = () => {
-        box.style.width = contentW + "px";
-        box.style.paddingLeft = padL;
-        box.style.paddingRight = padR;
-        box.style.borderLeftWidth = bL;
-        box.style.borderRightWidth = bR;
-        box.style.marginLeft = "0px";
-        box.style.opacity = "1";
-      };
-      const setCollapsed = () => {
-        box.style.width = "0px";
-        box.style.paddingLeft = "0px";
-        box.style.paddingRight = "0px";
-        box.style.borderLeftWidth = "0px";
-        box.style.borderRightWidth = "0px";
-        box.style.marginLeft = -SUMMARY_BAR_GAP + "px";
-        box.style.opacity = "0";
-      };
-      box.classList.add("cb-summary-animating");
-      if (hidden) {
-        setNatural();
-        void box.offsetWidth; // commit the start (natural) state
-        setCollapsed();
-      } else {
-        setCollapsed();
-        void box.offsetWidth; // commit the collapsed start state
-        setNatural();
-      }
-      const onEnd = (e) => {
-        if (e.target !== box || e.propertyName !== "width") return;
-        box.removeEventListener("transitionend", onEnd);
-        box._cbAnimEnd = null;
-        box.classList.remove("cb-summary-animating");
-        // Re-read the latest intent in case it flipped mid-slide.
-        if (box._cbHidden) box.classList.add("cb-summary-hidden");
-        clearInline();
-      };
-      box._cbAnimEnd = onEnd;
-      box.addEventListener("transitionend", onEnd);
+      scopeWrap.classList.toggle("cb-summary-scope-collapsed", collapsed);
     }
 
     function recalcTotal() {
@@ -1527,10 +1466,7 @@
       // Frequency) move to each table's header — hide them here and show the
       // grand total + a per-use-case breakdown on hover.
       const hideScope = !!multi;
-      setSummaryBoxHidden(creditsBox, hideScope);
-      setSummaryBoxHidden(actionsBox, hideScope);
-      setSummaryBoxHidden(recordsBox, hideScope);
-      setSummaryBoxHidden(freqBox, hideScope);
+      setScopeCollapsed(hideScope);
       if (multi && Array.isArray(multi.perUseCase)) {
         const lines = multi.perUseCase
           .slice()
