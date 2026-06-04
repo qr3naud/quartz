@@ -779,21 +779,27 @@
       recTier: clampActionVolume(r.actionsRaw).tier,
     }));
 
-    // Options (1-3); each is an independent override over `recommended`.
-    // Option A (index 0) is the source of truth for the Summary.
+    // Options (1-3); each is an independent override over `recommended`, plus a
+    // rep-entered discount price (CPC/CPA) that defaults to list. Option A
+    // (index 0) is the source of truth for the Summary.
+    const LIST_CPC = __cb.pricing?.LIST_CPC ?? 0.05;
+    const LIST_CPA = __cb.pricing?.LIST_CPA ?? 0.008;
     const options = __cb.getPricingOptions
       ? __cb.getPricingOptions()
       : [{ id: "a", name: "Option A", override: { credits: {}, actionTier: {} } }];
     const optionsData = options.map((opt) => ({
       opt,
       perYear: effectivePerYear(recommended, opt.override, years),
+      cpc: opt.override && opt.override.cpc != null ? Number(opt.override.cpc) : LIST_CPC,
+      cpa: opt.override && opt.override.cpa != null ? Number(opt.override.cpa) : LIST_CPA,
     }));
 
     // ---- Summary box FIRST (top), from Option A's effective values --------
-    wrap.appendChild(buildPricingSummaryBox(optionsData[0].perYear, creditCost, actionCost, years));
+    const optA = optionsData[0];
+    wrap.appendChild(buildPricingSummaryBox(optA.perYear, optA.cpc, optA.cpa, years));
 
     // ---- Editable "Options" group (deal-level source of truth) -----------
-    wrap.appendChild(buildPricingOptionsGroup(optionsData, creditCost, actionCost, years));
+    wrap.appendChild(buildPricingOptionsGroup(optionsData, years));
 
     for (const { uc, yearRecs, ucCredits, ucActions } of ucData) {
       const box = document.createElement("div");
@@ -977,18 +983,18 @@
     return cell;
   }
 
-  // Summary box: derives entirely from the effective Total values (perYear =
-  // [{ credits, actionVolume }]). Per-year total cost (multi-year) + total
-  // action $, total credit $, total cost, and savings vs list.
-  function buildPricingSummaryBox(perYear, creditCost, actionCost, years) {
+  // Summary box: derives from Option A's effective volumes (perYear) priced at
+  // its discount CPC/CPA. Per-year total cost (multi-year) + total action $,
+  // total credit $, total cost, and savings vs list.
+  function buildPricingSummaryBox(perYear, cpc, cpa, years) {
     let totalCredits = 0;
     let totalActions = 0;
     for (const y of perYear) {
       totalCredits += y.credits;
       totalActions += y.actionVolume;
     }
-    const creditDollars = totalCredits * creditCost;
-    const actionDollars = totalActions * actionCost;
+    const creditDollars = totalCredits * cpc;
+    const actionDollars = totalActions * cpa;
     const total = creditDollars + actionDollars;
     const listCpc = __cb.pricing?.LIST_CPC ?? 0.05;
     const listCpa = __cb.pricing?.LIST_CPA ?? 0.008;
@@ -1009,7 +1015,7 @@
       const yearRow = document.createElement("div");
       yearRow.className = "cb-pricing-total-years";
       perYear.forEach((y, i) => {
-        const yc = y.credits * creditCost + y.actionVolume * actionCost;
+        const yc = y.credits * cpc + y.actionVolume * cpa;
         const card = document.createElement("div");
         card.className = "cb-pricing-total-year";
         const l = document.createElement("span");
@@ -1155,8 +1161,15 @@
     });
   }
 
-  // The years-rows grid for ONE option (Actions + Credits columns + Discount).
-  function buildOptionGrid(perYear, optIdx, years) {
+  // The years-rows grid for ONE option: Actions + Credits columns, the per-year
+  // volume rows, then the price rows — List, Discount (rep-entered, defaults to
+  // list), Authorized (rep floor). Discount + Authorized show % off list.
+  function buildOptionGrid(perYear, optIdx, years, cpc, cpa) {
+    const LIST_CPC = __cb.pricing?.LIST_CPC ?? 0.05;
+    const LIST_CPA = __cb.pricing?.LIST_CPA ?? 0.008;
+    const pctOffList = (price, list) =>
+      list > 0 ? `${Math.round(((list - price) / list) * 100)}% off` : "";
+
     const grid = document.createElement("div");
     grid.className = "cb-pricing-totalgrp-grid";
 
@@ -1213,29 +1226,83 @@
       grid.appendChild(cCell);
     });
 
-    // Discount row — rep floors from the avg-volume tier (derived for N years).
+    // Rep floors from the avg-volume tier (derived for N years) → Authorized.
     const n = perYear.length || 1;
     const avgCredits = perYear.reduce((s, y) => s + y.credits, 0) / n;
     const avgActions = perYear.reduce((s, y) => s + y.actionVolume, 0) / n;
     const actionRep = pricingRepFloor("action", avgActions, years);
     const creditRep = pricingRepFloor("credit", avgCredits, years);
 
-    const dl = document.createElement("div");
-    dl.className = "cb-ptg-rowlabel cb-ptg-rowlabel-discount";
-    dl.textContent = "Discount";
-    grid.appendChild(dl);
-
-    const repCell = (rate) => {
+    // ---- Price rows: List, Discount (editable), Authorized (rep floor) ----
+    const mkRowLabel = (text, cls) => {
+      const d = document.createElement("div");
+      d.className = "cb-ptg-rowlabel" + (cls ? " " + cls : "");
+      d.textContent = text;
+      return d;
+    };
+    // Read-only price box (+ optional % off list).
+    const priceBox = (rate, list, opts) => {
       const cell = document.createElement("div");
-      cell.className = "cb-ptg-cell";
+      cell.className = "cb-ptg-cell cb-ptg-pricecell" + (opts?.sep ? " cb-ptg-rowtop" : "");
       const b = document.createElement("div");
-      b.className = "cb-ptg-repfloor";
+      b.className = "cb-ptg-repfloor" + (opts?.list ? " cb-ptg-listbox" : "");
       b.textContent = rate != null ? pricingRate(rate) : "\u2014";
       cell.appendChild(b);
+      if (opts?.showPct && rate != null) {
+        const pct = document.createElement("span");
+        pct.className = "cb-ptg-pct";
+        pct.textContent = pctOffList(rate, list);
+        cell.appendChild(pct);
+      }
       return cell;
     };
-    grid.appendChild(repCell(actionRep));
-    grid.appendChild(repCell(creditRep));
+    // Editable discount price input (+ % off list).
+    const priceInput = (value, list, onCommit) => {
+      const cell = document.createElement("div");
+      cell.className = "cb-ptg-cell cb-ptg-pricecell";
+      const inp = document.createElement("input");
+      inp.type = "text";
+      inp.inputMode = "decimal";
+      inp.className = "cb-ptg-input cb-ptg-price-input";
+      inp.value = pricingRate(value);
+      const commit = () => {
+        const raw = parseFloat(inp.value.replace(/[^\d.]/g, ""));
+        onCommit(Number.isFinite(raw) ? raw : 0);
+      };
+      inp.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          inp.blur();
+        }
+      });
+      inp.addEventListener("blur", commit);
+      inp.addEventListener("focus", () => inp.select());
+      cell.appendChild(inp);
+      const pct = document.createElement("span");
+      pct.className = "cb-ptg-pct";
+      pct.textContent = pctOffList(value, list);
+      cell.appendChild(pct);
+      return cell;
+    };
+
+    // List (read-only reference; a separator sits above it).
+    grid.appendChild(mkRowLabel("List", "cb-ptg-rowtop"));
+    grid.appendChild(priceBox(LIST_CPA, LIST_CPA, { list: true, sep: true }));
+    grid.appendChild(priceBox(LIST_CPC, LIST_CPC, { list: true, sep: true }));
+
+    // Discount (rep-entered; defaults to list).
+    grid.appendChild(mkRowLabel("Discount", "cb-ptg-rowlabel-discount"));
+    grid.appendChild(
+      priceInput(cpa, LIST_CPA, (v) => __cb.setPricingOptionPrice(optIdx, "action", v)),
+    );
+    grid.appendChild(
+      priceInput(cpc, LIST_CPC, (v) => __cb.setPricingOptionPrice(optIdx, "credit", v)),
+    );
+
+    // Authorized (rep floor).
+    grid.appendChild(mkRowLabel("Authorized"));
+    grid.appendChild(priceBox(actionRep, LIST_CPA, { showPct: true }));
+    grid.appendChild(priceBox(creditRep, LIST_CPC, { showPct: true }));
 
     return grid;
   }
@@ -1294,7 +1361,7 @@
   }
 
   // One option box: name header (right-click → rename / delete) + its grid.
-  function buildPricingOptionBox(opt, optIdx, perYear, years, total) {
+  function buildPricingOptionBox(opt, optIdx, perYear, years, total, cpc, cpa) {
     const box = document.createElement("div");
     box.className = "cb-pricing-option";
     box.dataset.optId = opt.id;
@@ -1341,7 +1408,7 @@
       nameRow.appendChild(hint);
     }
     box.appendChild(nameRow);
-    box.appendChild(buildOptionGrid(perYear, optIdx, years));
+    box.appendChild(buildOptionGrid(perYear, optIdx, years, cpc, cpa));
 
     box.addEventListener("contextmenu", (e) => {
       e.preventDefault();
@@ -1354,7 +1421,7 @@
 
   // The collapsible grey "Options" group: a header (with a + to add an option,
   // up to 3) and a horizontal row of option boxes. Option A feeds the Summary.
-  function buildPricingOptionsGroup(optionsData, creditCost, actionCost, years) {
+  function buildPricingOptionsGroup(optionsData, years) {
     const box = document.createElement("div");
     box.className = "cb-pricing-totalgrp";
     const collapsed = !!__cb._pricingTotalCollapsed;
@@ -1411,8 +1478,10 @@
 
     const row = document.createElement("div");
     row.className = "cb-pricing-options-row";
-    optionsData.forEach(({ opt, perYear }, idx) => {
-      row.appendChild(buildPricingOptionBox(opt, idx, perYear, years, optionsData.length));
+    optionsData.forEach(({ opt, perYear, cpc, cpa }, idx) => {
+      row.appendChild(
+        buildPricingOptionBox(opt, idx, perYear, years, optionsData.length, cpc, cpa),
+      );
     });
     box.appendChild(row);
     return box;

@@ -3203,7 +3203,7 @@
   flex-shrink: 0;
 }
 
-/* Read-only rep-floor box in the Discount row. */
+/* Read-only price/floor box (List + Authorized rows). */
 .cb-ptg-repfloor {
   box-sizing: border-box;
   height: 32px;
@@ -3217,6 +3217,34 @@
   font-weight: 600;
   color: #374151;
   font-variant-numeric: tabular-nums;
+}
+
+/* List row box: a touch more muted (pure reference). */
+.cb-ptg-listbox {
+  background: #f3f4f6;
+  color: #6b7280;
+}
+
+/* Price cell stacks the box/input over the "% off list" caption. */
+.cb-ptg-pricecell {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.cb-ptg-pct {
+  font-size: 10px;
+  font-weight: 600;
+  color: #9ca3af;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Separator above the List row, dividing volumes from prices. */
+.cb-ptg-rowtop {
+  border-top: 1px solid #e5e7eb;
+  padding-top: 10px;
+  margin-top: 2px;
 }
 
 /* Custom volume dropdown menu (body-appended, position: fixed). */

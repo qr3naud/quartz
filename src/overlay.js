@@ -1866,6 +1866,17 @@
       o.override.actionTier[yearIdx] = tierId;
       afterPricingOptionsChange();
     };
+    // The rep-entered discount price (contract-wide CPC/CPA) for one option.
+    // metric: "credit" -> cpc, "action" -> cpa. Defaults to list when unset.
+    __cb.setPricingOptionPrice = function (optIdx, metric, value) {
+      const o = __cb.getPricingOptions()[optIdx];
+      if (!o) return;
+      o.override = o.override || { credits: {}, actionTier: {} };
+      const v = Math.max(0, Number(value) || 0);
+      if (metric === "credit") o.override.cpc = v;
+      else o.override.cpa = v;
+      afterPricingOptionsChange();
+    };
     __cb.addPricingOption = function () {
       const opts = __cb.getPricingOptions();
       if (opts.length >= 3) return null;
