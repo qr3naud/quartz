@@ -1808,6 +1808,37 @@
       if (__cb.debouncedSave) __cb.debouncedSave();
     };
 
+    // Deal-level Total overrides (the editable "Total" group that is the source
+    // of truth for the Summary). Per-year-index overrides for credits and the
+    // action tier; absent entries fall back to the recommended rollup from the
+    // use cases. Editing these NEVER cascades down to the use cases.
+    function persistPricingTotalOverride() {
+      if (!__cb.tabStore) return;
+      __cb.tabStore.pricingTotalOverride = __cb.pricingTotalOverride;
+      const at = __cb.tabStore.tabs?.find((t) => t.id === __cb.tabStore.activeId);
+      if (at?.state) at.state.pricingTotalOverride = __cb.pricingTotalOverride;
+    }
+
+    __cb.setPricingTotalCredits = function (yearIdx, value) {
+      __cb.pricingTotalOverride = __cb.pricingTotalOverride || { credits: {}, actionTier: {} };
+      __cb.pricingTotalOverride.credits = __cb.pricingTotalOverride.credits || {};
+      __cb.pricingTotalOverride.credits[yearIdx] = Math.max(0, Math.round(Number(value) || 0));
+      persistPricingTotalOverride();
+      updatePricingStrip();
+      if (__cb.tableView?.refresh) __cb.tableView.refresh();
+      if (__cb.debouncedSave) __cb.debouncedSave();
+    };
+
+    __cb.setPricingTotalActionTier = function (yearIdx, tierId) {
+      __cb.pricingTotalOverride = __cb.pricingTotalOverride || { credits: {}, actionTier: {} };
+      __cb.pricingTotalOverride.actionTier = __cb.pricingTotalOverride.actionTier || {};
+      __cb.pricingTotalOverride.actionTier[yearIdx] = tierId;
+      persistPricingTotalOverride();
+      updatePricingStrip();
+      if (__cb.tableView?.refresh) __cb.tableView.refresh();
+      if (__cb.debouncedSave) __cb.debouncedSave();
+    };
+
     function commitPricingInput(input, setter) {
       const parsed = parseDollar(input.value);
       setter(parsed);

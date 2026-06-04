@@ -429,6 +429,7 @@
         state.pricingMode = !!__cb.pricingMode;
         state.contractYears = Math.min(3, Math.max(1, __cb.contractYears || 1));
         state.pricingYearRecords = __cb.pricingYearRecords ?? {};
+        state.pricingTotalOverride = __cb.pricingTotalOverride ?? { credits: {}, actionTier: {} };
         // Actual-spend session picker: the bucketed sessions + selection + gap,
         // so reloads/other devices restore instantly with no /run/recent fetch.
         // Preserve the previously-saved blob when the controller has no live
@@ -570,6 +571,7 @@
       __cb.useCaseScope = active.state.useCaseScope ?? {};
       __cb.contractYears = Math.min(3, Math.max(1, active.state.contractYears || 1));
       __cb.pricingYearRecords = active.state.pricingYearRecords ?? {};
+      __cb.pricingTotalOverride = active.state.pricingTotalOverride ?? { credits: {}, actionTier: {} };
       const recordsInput = document.getElementById("cb-records-input");
       if (recordsInput && active.state.records != null) {
         recordsInput.value = active.state.records;
@@ -701,6 +703,7 @@
       __cb.useCaseScope = stateForRestore.useCaseScope ?? {};
       __cb.contractYears = Math.min(3, Math.max(1, stateForRestore.contractYears || 1));
       __cb.pricingYearRecords = stateForRestore.pricingYearRecords ?? {};
+      __cb.pricingTotalOverride = stateForRestore.pricingTotalOverride ?? { credits: {}, actionTier: {} };
       const recordsInput = document.getElementById("cb-records-input");
       if (recordsInput && stateForRestore.records != null) {
         recordsInput.value = stateForRestore.records;
@@ -1328,6 +1331,7 @@
     // table). Falls back to plain assignment before the summary bar exists.
     __cb.contractYears = Math.min(3, Math.max(1, tab?.state?.contractYears || 1));
     __cb.pricingYearRecords = tab?.state?.pricingYearRecords ?? {};
+    __cb.pricingTotalOverride = tab?.state?.pricingTotalOverride ?? { credits: {}, actionTier: {} };
     if (__cb.setPricingMode) {
       __cb.setPricingMode(!!tab?.state?.pricingMode);
     } else {

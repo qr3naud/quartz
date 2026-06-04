@@ -705,6 +705,20 @@
     return { volume: top.volume, tier: top.tier };
   }
 
+  // Action tier helpers for the editable Total group.
+  function actionVolumeForTier(tierId) {
+    if (tierId == null) return 0;
+    const set = __cb.pricing?.enterpriseActionFloors?.();
+    const bands = set && Array.isArray(set.bands) ? set.bands : null;
+    const b = bands && bands.find((x) => String(x.tier) === String(tierId));
+    return b ? b.volume : 0;
+  }
+  function actionTierOptions() {
+    const set = __cb.pricing?.enterpriseActionFloors?.();
+    const bands = set && Array.isArray(set.bands) ? set.bands : [];
+    return bands.slice().sort((a, b) => a.volume - b.volume);
+  }
+
   // The pricing body: a total box at the TOP, then one collapsible box per use
   // case (reusing the green super-group header look), each with N per-year
   // columns (N = contractYears). Each year column: Records driver + Actions
@@ -735,9 +749,10 @@
 
     const collapsed = (__cb._pricingCollapsed = __cb._pricingCollapsed || new Set());
 
-    // First pass: resolve per-UC per-year records + tier-clamped action volumes,
-    // and the per-year grand totals (actions billed at their tier).
-    const grand = Array.from({ length: years }, () => ({ credits: 0, actions: 0 }));
+    // First pass: resolve per-UC per-year records + RAW per-year volumes, and
+    // the per-year recommended rollup (sum of credits; sum of raw actions).
+    // Actions are tier-quantized at the DEAL level (the Total group), not per UC.
+    const rec = Array.from({ length: years }, () => ({ credits: 0, actionsRaw: 0 }));
     const ucData = [];
     for (const uc of ucs) {
       const arr = yrMap[uc.key] || [];
@@ -748,17 +763,42 @@
         const recs = arr[i] != null ? Number(arr[i]) : uc.baselineRecords;
         yearRecs.push(recs);
         const c = uc.perRowCredits * recs;
-        const a = clampActionVolume(uc.perRowActions * recs).volume;
+        const a = uc.perRowActions * recs;
         ucCredits += c;
         ucActions += a;
-        grand[i].credits += c;
-        grand[i].actions += a;
+        rec[i].credits += c;
+        rec[i].actionsRaw += a;
       }
       ucData.push({ uc, yearRecs, ucCredits, ucActions });
     }
 
-    // ---- Total box FIRST (at the top) -----------------------------------
-    wrap.appendChild(buildPricingTotalBox(grand, creditCost, actionCost, years));
+    // Per-year recommended (rollup) + effective (Total override) values. The
+    // Total group is the source of truth for the Summary; overrides do NOT
+    // cascade back into the use cases.
+    const override = __cb.pricingTotalOverride || { credits: {}, actionTier: {} };
+    const perYear = rec.map((r, i) => {
+      const recTier = clampActionVolume(r.actionsRaw).tier;
+      const recCredits = Math.round(r.credits);
+      const ovCredits = override.credits ? override.credits[i] : undefined;
+      const ovTier = override.actionTier ? override.actionTier[i] : undefined;
+      const credits = ovCredits != null ? Number(ovCredits) : recCredits;
+      const tier = ovTier != null ? ovTier : recTier;
+      return {
+        recCredits,
+        recTier,
+        credits,
+        tier,
+        actionVolume: actionVolumeForTier(tier),
+        creditsOverridden: ovCredits != null && Number(ovCredits) !== recCredits,
+        tierOverridden: ovTier != null && String(ovTier) !== String(recTier),
+      };
+    });
+
+    // ---- Summary box FIRST (top), from the effective Total values --------
+    wrap.appendChild(buildPricingSummaryBox(perYear, creditCost, actionCost, years));
+
+    // ---- Editable "Total" group (deal-level source of truth) ------------
+    wrap.appendChild(buildPricingTotalGroup(perYear, creditCost, actionCost, years));
 
     for (const { uc, yearRecs, ucCredits, ucActions } of ucData) {
       const box = document.createElement("div");
@@ -876,14 +916,15 @@
 
   // One year column: a header line (Year N + Records input + year total cost),
   // then two metric cards (Actions, then Credits). Records is the single
-  // editable driver; the cards are display-only. Actions bill at a tier.
+  // editable driver; the cards are display-only. These are the per-use-case
+  // RAW contributions — action tiering happens at the deal level (Total group).
   function buildPricingYearCell(uc, yearIdx, records, creditCost, actionCost) {
     const cell = document.createElement("div");
     cell.className = "cb-pricing-year";
 
     const credits = uc.perRowCredits * records;
-    const clamped = clampActionVolume(uc.perRowActions * records);
-    const actionDollars = clamped.volume * actionCost;
+    const actions = uc.perRowActions * records;
+    const actionDollars = actions * actionCost;
     const creditDollars = credits * creditCost;
     const yearTotal = creditDollars + actionDollars;
 
@@ -929,26 +970,27 @@
     head.appendChild(total);
     cell.appendChild(head);
 
-    // Metric cards: Actions first, then Credits.
+    // Metric cards: Actions first, then Credits (raw per-use-case volumes).
     const cards = document.createElement("div");
     cards.className = "cb-pricing-year-cards";
     const starIcon = typeof starFourSvg === "function" ? starFourSvg(18) : "";
     const coinIcon = typeof coinsSvg === "function" ? coinsSvg(18) : "";
-    cards.appendChild(buildPricingMetricCard(starIcon, clamped.tier, clamped.volume, actionDollars));
+    cards.appendChild(buildPricingMetricCard(starIcon, null, actions, actionDollars));
     cards.appendChild(buildPricingMetricCard(coinIcon, null, credits, creditDollars));
     cell.appendChild(cards);
 
     return cell;
   }
 
-  // Grand total box: per-year total cost (when multi-year) + total action $,
-  // total credit $, total cost, and savings vs list.
-  function buildPricingTotalBox(grand, creditCost, actionCost, years) {
+  // Summary box: derives entirely from the effective Total values (perYear =
+  // [{ credits, actionVolume }]). Per-year total cost (multi-year) + total
+  // action $, total credit $, total cost, and savings vs list.
+  function buildPricingSummaryBox(perYear, creditCost, actionCost, years) {
     let totalCredits = 0;
     let totalActions = 0;
-    for (const y of grand) {
+    for (const y of perYear) {
       totalCredits += y.credits;
-      totalActions += y.actions;
+      totalActions += y.actionVolume;
     }
     const creditDollars = totalCredits * creditCost;
     const actionDollars = totalActions * actionCost;
@@ -964,15 +1006,15 @@
 
     const head = document.createElement("div");
     head.className = "cb-pricing-total-head";
-    head.textContent = years > 1 ? `Total \u00b7 ${years}-year contract` : "Total";
+    head.textContent = years > 1 ? `Summary \u00b7 ${years}-year contract` : "Summary";
     box.appendChild(head);
 
     // Per-year total cost (multi-year only).
     if (years > 1) {
       const yearRow = document.createElement("div");
       yearRow.className = "cb-pricing-total-years";
-      grand.forEach((y, i) => {
-        const yc = y.credits * creditCost + y.actions * actionCost;
+      perYear.forEach((y, i) => {
+        const yc = y.credits * creditCost + y.actionVolume * actionCost;
         const card = document.createElement("div");
         card.className = "cb-pricing-total-year";
         const l = document.createElement("span");
@@ -1011,6 +1053,122 @@
       mk("Savings vs List", `${pricingDollar(savings)} \u00b7 ${savingsPct.toFixed(0)}%`, "cb-pricing-total-card-savings"),
     );
     box.appendChild(cards);
+    return box;
+  }
+
+  // Editable, collapsible grey "Total" group — the deal-level source of truth
+  // for the Summary. N year columns, each with Actions (tier <select>) and
+  // Credits (number input), no records. Defaults = the recommended rollup from
+  // the use cases; a value that deviates from the recommendation gets an amber
+  // outline. Editing here NEVER cascades back into the use cases.
+  function buildPricingTotalGroup(perYear, creditCost, actionCost, years) {
+    const box = document.createElement("div");
+    box.className = "cb-pricing-totalgrp";
+    const collapsed = !!__cb._pricingTotalCollapsed;
+    if (collapsed) box.classList.add("cb-pricing-totalgrp-collapsed");
+
+    // ---- Collapsible grey header ----
+    const header = document.createElement("div");
+    header.className = "cb-pricing-totalgrp-header";
+    header.setAttribute("role", "button");
+    header.tabIndex = 0;
+    header.addEventListener("mousedown", (e) => e.stopPropagation());
+    const chevron = document.createElement("span");
+    chevron.className = "cb-pricing-totalgrp-chevron";
+    chevron.innerHTML = chevronDownSvg(12);
+    const nm = document.createElement("span");
+    nm.className = "cb-pricing-totalgrp-name";
+    nm.textContent = "Total";
+    header.appendChild(chevron);
+    header.appendChild(nm);
+    const toggle = () => {
+      __cb._pricingTotalCollapsed = !__cb._pricingTotalCollapsed;
+      render();
+    };
+    header.addEventListener("click", (e) => {
+      e.stopPropagation();
+      toggle();
+    });
+    header.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        toggle();
+      }
+    });
+    box.appendChild(header);
+
+    if (!collapsed) {
+      const yearsWrap = document.createElement("div");
+      yearsWrap.className = "cb-pricing-totalgrp-years";
+      yearsWrap.style.gridTemplateColumns = `repeat(${years}, minmax(0, 1fr))`;
+      const tierOpts = actionTierOptions();
+      perYear.forEach((y, i) => {
+        const col = document.createElement("div");
+        col.className = "cb-pricing-totalgrp-col";
+
+        const yl = document.createElement("div");
+        yl.className = "cb-pricing-totalgrp-yearlabel";
+        yl.textContent = years > 1 ? `Year ${i + 1}` : "Contract";
+        col.appendChild(yl);
+
+        // Actions: tier <select> (amber outline when deviating from rec).
+        const aField = document.createElement("label");
+        aField.className = "cb-pricing-totalgrp-field";
+        const aLab = document.createElement("span");
+        aLab.className = "cb-pricing-totalgrp-field-label";
+        aLab.innerHTML =
+          (typeof starFourSvg === "function" ? starFourSvg(11) : "") + "<span>Actions</span>";
+        const sel = document.createElement("select");
+        sel.className = "cb-pricing-totalgrp-select";
+        if (y.tierOverridden) sel.classList.add("cb-pricing-overridden");
+        for (const b of tierOpts) {
+          const opt = document.createElement("option");
+          opt.value = String(b.tier);
+          opt.textContent = `${b.tier} \u00b7 ${pricingFmt(b.volume)}`;
+          if (String(b.tier) === String(y.tier)) opt.selected = true;
+          sel.appendChild(opt);
+        }
+        sel.addEventListener("mousedown", (e) => e.stopPropagation());
+        sel.addEventListener("change", () =>
+          __cb.setPricingTotalActionTier(i, sel.value),
+        );
+        aField.appendChild(aLab);
+        aField.appendChild(sel);
+        col.appendChild(aField);
+
+        // Credits: number input (amber outline when deviating from rec).
+        const cField = document.createElement("label");
+        cField.className = "cb-pricing-totalgrp-field";
+        const cLab = document.createElement("span");
+        cLab.className = "cb-pricing-totalgrp-field-label";
+        cLab.innerHTML =
+          (typeof coinsSvg === "function" ? coinsSvg(11) : "") + "<span>Credits</span>";
+        const cInput = document.createElement("input");
+        cInput.type = "text";
+        cInput.inputMode = "numeric";
+        cInput.className = "cb-pricing-totalgrp-input";
+        if (y.creditsOverridden) cInput.classList.add("cb-pricing-overridden");
+        cInput.value = pricingFmt(y.credits);
+        const commitCredits = () => {
+          const raw = parseInt(cInput.value.replace(/[^\d]/g, ""), 10);
+          __cb.setPricingTotalCredits(i, Number.isFinite(raw) ? raw : 0);
+        };
+        cInput.addEventListener("keydown", (e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            cInput.blur();
+          }
+        });
+        cInput.addEventListener("blur", commitCredits);
+        cInput.addEventListener("focus", () => cInput.select());
+        cField.appendChild(cLab);
+        cField.appendChild(cInput);
+        col.appendChild(cField);
+
+        yearsWrap.appendChild(col);
+      });
+      box.appendChild(yearsWrap);
+    }
     return box;
   }
 

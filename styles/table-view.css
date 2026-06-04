@@ -3059,3 +3059,118 @@
   color: #047857;
   font-size: 15px;
 }
+
+/* Editable, collapsible grey "Total" group (deal-level source of truth). */
+.cb-pricing-totalgrp {
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  background: #ffffff;
+  overflow: hidden;
+}
+
+.cb-pricing-totalgrp-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  background: #f3f4f6;
+  border-bottom: 1px solid #e5e7eb;
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.12s;
+}
+
+.cb-pricing-totalgrp-header:hover {
+  background: #e5e7eb;
+}
+
+.cb-pricing-totalgrp-collapsed .cb-pricing-totalgrp-header {
+  border-bottom-color: transparent;
+}
+
+.cb-pricing-totalgrp-chevron {
+  display: inline-flex;
+  align-items: center;
+  color: #6b7280;
+  transition: transform 0.18s ease;
+}
+
+.cb-pricing-totalgrp-collapsed .cb-pricing-totalgrp-chevron {
+  transform: rotate(-90deg);
+}
+
+.cb-pricing-totalgrp-name {
+  font-size: 13px;
+  font-weight: 700;
+  color: #374151;
+  letter-spacing: 0.01em;
+}
+
+.cb-pricing-totalgrp-years {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+}
+
+.cb-pricing-totalgrp-col {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+.cb-pricing-totalgrp-yearlabel {
+  font-size: 12px;
+  font-weight: 700;
+  color: #6b7280;
+}
+
+.cb-pricing-totalgrp-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.cb-pricing-totalgrp-field-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10px;
+  font-weight: 600;
+  color: #9ca3af;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.cb-pricing-totalgrp-field-label svg {
+  color: #9ca3af;
+}
+
+.cb-pricing-totalgrp-select,
+.cb-pricing-totalgrp-input {
+  width: 100%;
+  box-sizing: border-box;
+  height: 32px;
+  padding: 0 8px;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  background: #ffffff;
+  font-family: inherit;
+  font-size: 13px;
+  color: #111827;
+  font-variant-numeric: tabular-nums;
+}
+
+.cb-pricing-totalgrp-select:focus,
+.cb-pricing-totalgrp-input:focus {
+  outline: none;
+  border-color: #6366f1;
+  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.15);
+}
+
+/* Amber outline when a Total value deviates from the recommended rollup. */
+.cb-pricing-overridden {
+  border-color: #f59e0b !important;
+  box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.18) !important;
+}
