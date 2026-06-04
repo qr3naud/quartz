@@ -301,6 +301,34 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     return true;
   }
 
+  // cb:pocrequest:submit — { account_name, requester_name?, arr_estimate?,
+  // workspace_id?, workbook_id?, workbook_url?, sfdc_opportunity_url?,
+  // comments?, loom_url?, needed_by? }. Posts a one-way "Request POC" message to
+  // the Slack channel configured in app_settings via the poc-request-submit
+  // Edge Function (identity is set server-side from the JWT) and records the
+  // request in public.poc_requests.
+  if (msg.type === "cb:pocrequest:submit") {
+    (async () => {
+      try {
+        if (!msg.body || typeof msg.body !== "object") {
+          sendResponse({ ok: false, error: "missing submission body" });
+          return;
+        }
+        const res = await callProxy("poc-request-submit", {
+          method: "POST",
+          body: msg.body,
+        });
+        const text = await res.text();
+        let envelope = null;
+        try { envelope = text ? JSON.parse(text) : null; } catch {}
+        sendResponse({ ok: res.ok, status: res.status, data: envelope, rawText: text || undefined });
+      } catch (err) {
+        sendResponse({ ok: false, error: err?.message || String(err) });
+      }
+    })();
+    return true;
+  }
+
   // cb:dust:createConversation — { body } (apiKey/workspaceId no longer
   // accepted; the proxy holds both server-side).
   if (msg.type === "cb:dust:createConversation") {

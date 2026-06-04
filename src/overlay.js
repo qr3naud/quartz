@@ -98,6 +98,24 @@
     'fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" ' +
     'stroke-linejoin="round" aria-hidden="true"><polyline points="15 18 9 12 15 6"/></svg>';
 
+  // Paper-plane "send" glyph for the Request POC row — reads as "send a request".
+  const REQUEST_POC_ICON_SVG =
+    '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" ' +
+    'fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" ' +
+    'stroke-linejoin="round" aria-hidden="true">' +
+    '<line x1="22" y1="2" x2="11" y2="13"/>' +
+    '<polygon points="22 2 15 22 11 13 2 9 22 2"/>' +
+    '</svg>';
+
+  // Gear glyph for the maintainer-only Admin (settings) row.
+  const ADMIN_ICON_SVG =
+    '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" ' +
+    'fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" ' +
+    'stroke-linejoin="round" aria-hidden="true">' +
+    '<circle cx="12" cy="12" r="3"/>' +
+    '<path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>' +
+    '</svg>';
+
   let moreMenuEl = null;
   let moreMenuBackdrop = null;
   let moreSubmenuEl = null;
@@ -194,6 +212,25 @@
       moreMenuEl.appendChild(uploadItem);
     }
 
+    // Request POC — internal-only (gtme_export). Opens the Request POC modal
+    // (src/request-poc.js), which posts a one-way request to the POC Slack
+    // channel via the poc-request-submit Edge Function. Plain action row.
+    if (__cb.hasFeature?.("gtme_export") && __cb.startRequestPoc) {
+      const requestPocItem = document.createElement("button");
+      requestPocItem.type = "button";
+      requestPocItem.className = "cb-export-menu-option cb-more-menu-option";
+      requestPocItem.title = "Request a POC from the team (posts to Slack)";
+      requestPocItem.innerHTML =
+        `<span class="cb-more-menu-icon">${REQUEST_POC_ICON_SVG}</span>` +
+        `<span class="cb-more-menu-label">Request POC</span>`;
+      requestPocItem.addEventListener("click", (evt) => {
+        evt.stopPropagation();
+        closeMoreMenu();
+        __cb.startRequestPoc();
+      });
+      moreMenuEl.appendChild(requestPocItem);
+    }
+
     // Old vs New Pricing — gated by the pricing_comparison feature flag,
     // same gate the standalone toolbar button used to carry. When the
     // flag is off the menu shrinks to a single Pro Mode row (still
@@ -239,6 +276,25 @@
     const isArchiveAdmin =
       (__cb.userEmail || "").trim().toLowerCase() === "quentin.renaud@clay.com";
     if (isArchiveAdmin) {
+      // Admin — maintainer-only settings. Edits public.app_settings in Supabase
+      // (e.g. the POC request Slack channel) so operational config lives in the
+      // DB, not code or secrets. Opens the modal in src/admin-settings.js.
+      if (__cb.openAdminSettings) {
+        const adminItem = document.createElement("button");
+        adminItem.type = "button";
+        adminItem.className = "cb-export-menu-option cb-more-menu-option";
+        adminItem.title = "Edit Quartz operational settings";
+        adminItem.innerHTML =
+          `<span class="cb-more-menu-icon">${ADMIN_ICON_SVG}</span>` +
+          `<span class="cb-more-menu-label">Admin</span>`;
+        adminItem.addEventListener("click", (evt) => {
+          evt.stopPropagation();
+          closeMoreMenu();
+          __cb.openAdminSettings();
+        });
+        moreMenuEl.appendChild(adminItem);
+      }
+
       // View (Canvas / Tables) toggle. Canvas is allow-listed; otherwise the
       // row is locked to Tables.
       const canUseCanvas = __cb.canUseCanvasView?.() ?? false;
