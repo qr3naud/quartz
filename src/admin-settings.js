@@ -145,20 +145,20 @@
 
     // ---- Footer ----
     const footer = document.createElement("div");
-    footer.className = "cb-export-modal-footer";
+    footer.className = "cb-modal-footer";
     const footerHint = document.createElement("div");
     footerHint.className = "cb-export-modal-footer-hint";
     footerHint.textContent = "Stored in Supabase \u00b7 maintainer only.";
     const footerActions = document.createElement("div");
-    footerActions.className = "cb-export-footer-actions";
+    footerActions.className = "cb-modal-footer-actions";
     const cancelBtn = document.createElement("button");
     cancelBtn.type = "button";
-    cancelBtn.className = "cb-export-modal-done";
+    cancelBtn.className = "cb-modal-btn cb-modal-btn-ghost";
     cancelBtn.textContent = "Cancel";
     cancelBtn.addEventListener("click", close);
     const saveBtn = document.createElement("button");
     saveBtn.type = "button";
-    saveBtn.className = "cb-export-submit";
+    saveBtn.className = "cb-modal-btn cb-modal-btn-primary";
     saveBtn.textContent = "Save";
     saveBtn.addEventListener("click", onSave);
     footerActions.appendChild(cancelBtn);

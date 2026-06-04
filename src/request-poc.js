@@ -172,13 +172,17 @@
     wsInput.style.opacity = "0.7";
 
     const docInput = buildInput(workbookUrl, "link to the workbook");
+    docInput.style.textOverflow = "ellipsis";
 
     const sfdcInput = buildInput(sfdcUrl, "link to the SFDC opportunity");
+    sfdcInput.style.textOverflow = "ellipsis";
     sfdcInput.addEventListener("input", () => { sfdcUrl = sfdcInput.value; sfdcTouched = true; });
 
     // Prefilled group — collapsed by default. Everything we could derive from
     // the workbook + linked SFDC opp lives here, so the rep's eye lands on the
-    // fields that actually need input (due date, comments, Loom).
+    // fields that actually need input (due date, comments, Loom). Laid out as
+    // two equal columns per row; the body scrolls internally so the expanded
+    // group never blows out the modal height.
     const prefill = document.createElement("details");
     prefill.style.cssText =
       "border:1px solid #e5e7eb;border-radius:8px;background:#f9fafb;overflow:hidden;";
@@ -190,22 +194,27 @@
 
     const prefillBody = document.createElement("div");
     prefillBody.style.cssText =
-      "display:flex;flex-direction:column;gap:14px;padding:12px;border-top:1px solid #e5e7eb;background:#ffffff;";
+      "display:flex;flex-direction:column;gap:14px;padding:12px;max-height:200px;overflow-y:auto;border-top:1px solid #e5e7eb;background:#ffffff;";
 
+    // Each row is two equal-weight columns (both fields grow from a 0 basis).
     const row1 = document.createElement("div");
     row1.className = "cb-gtme-fields";
-    row1.appendChild(buildField("Your name", nameInput));
-    row1.appendChild(buildField("Customer / account name", accountInput, { grow: true }));
+    row1.appendChild(buildField("Your name", nameInput, { grow: true }));
+    row1.appendChild(buildField("Customer name", accountInput, { grow: true }));
 
     const row2 = document.createElement("div");
     row2.className = "cb-gtme-fields";
     row2.appendChild(buildField("ARR (best estimate)", arrInput, { grow: true }));
-    row2.appendChild(buildField("Workspace ID", wsInput));
+    row2.appendChild(buildField("Workspace ID", wsInput, { grow: true }));
+
+    const row3 = document.createElement("div");
+    row3.className = "cb-gtme-fields";
+    row3.appendChild(buildField("Quartz Link", docInput, { grow: true }));
+    row3.appendChild(buildField("SFDC opportunity", sfdcInput, { grow: true }));
 
     prefillBody.appendChild(row1);
     prefillBody.appendChild(row2);
-    prefillBody.appendChild(buildField("Link to POC scoping doc (opens Quartz)", docInput, { grow: true }));
-    prefillBody.appendChild(buildField("Link to SFDC opportunity", sfdcInput, { grow: true }));
+    prefillBody.appendChild(row3);
     prefill.appendChild(prefillBody);
     body.appendChild(prefill);
 
@@ -319,20 +328,20 @@
     body.appendChild(errorEl);
 
     const footer = document.createElement("div");
-    footer.className = "cb-export-modal-footer";
+    footer.className = "cb-modal-footer";
     const footerHint = document.createElement("div");
     footerHint.className = "cb-export-modal-footer-hint";
     footerHint.textContent = "Posts to the POC team's Slack channel.";
     const footerActions = document.createElement("div");
-    footerActions.className = "cb-export-footer-actions";
+    footerActions.className = "cb-modal-footer-actions";
     const cancelBtn = document.createElement("button");
     cancelBtn.type = "button";
-    cancelBtn.className = "cb-export-modal-done";
+    cancelBtn.className = "cb-modal-btn cb-modal-btn-ghost";
     cancelBtn.textContent = "Cancel";
     cancelBtn.addEventListener("click", close);
     const submitBtn = document.createElement("button");
     submitBtn.type = "button";
-    submitBtn.className = "cb-export-submit";
+    submitBtn.className = "cb-modal-btn cb-modal-btn-primary";
     submitBtn.textContent = "Send request";
     submitBtn.addEventListener("click", onSubmit);
     footerActions.appendChild(cancelBtn);
