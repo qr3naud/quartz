@@ -1403,6 +1403,72 @@
       el._cbTween = requestAnimationFrame(tick);
     }
 
+    // Slide a scope box out (hidden) or in (shown) when the adaptive bar flips
+    // on a multi-import. Animates max-width so neighbors slide left to fill,
+    // plus opacity + a small x-shift. The resting hidden state is display:none,
+    // set only after the slide-out finishes. Only animates on a real change —
+    // recalcTotal() runs on every recompute, so unchanged calls are no-ops.
+    function setSummaryBoxHidden(box, hidden) {
+      if (!box) return;
+      const first = box._cbHidden === undefined;
+      if (!first && box._cbHidden === hidden) return;
+      box._cbHidden = hidden;
+      const reduce =
+        window.matchMedia &&
+        window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      const clearInline = () => {
+        box.style.maxWidth = "";
+        box.style.opacity = "";
+        box.style.transform = "";
+      };
+      // Drop any in-flight slide listener so a mid-animation flip can't apply a
+      // stale final state.
+      if (box._cbAnimEnd) {
+        box.removeEventListener("transitionend", box._cbAnimEnd);
+        box._cbAnimEnd = null;
+      }
+      // First paint or reduced motion: snap, no animation.
+      if (first || reduce) {
+        box.classList.remove("cb-summary-animating");
+        clearInline();
+        box.classList.toggle("cb-summary-hidden", hidden);
+        return;
+      }
+      box.classList.add("cb-summary-animating");
+      if (hidden) {
+        box.classList.remove("cb-summary-hidden");
+        const w = box.scrollWidth;
+        box.style.maxWidth = w + "px";
+        box.style.opacity = "1";
+        box.style.transform = "translateX(0)";
+        void box.offsetWidth; // commit the start (natural) state
+        box.style.maxWidth = "0px";
+        box.style.opacity = "0";
+        box.style.transform = "translateX(-8px)";
+      } else {
+        box.classList.remove("cb-summary-hidden");
+        const w = box.scrollWidth; // natural width, now that it's shown
+        box.style.maxWidth = "0px";
+        box.style.opacity = "0";
+        box.style.transform = "translateX(-8px)";
+        void box.offsetWidth; // commit the collapsed start state
+        box.style.maxWidth = w + "px";
+        box.style.opacity = "1";
+        box.style.transform = "translateX(0)";
+      }
+      const onEnd = (e) => {
+        if (e.target !== box || e.propertyName !== "max-width") return;
+        box.removeEventListener("transitionend", onEnd);
+        box._cbAnimEnd = null;
+        box.classList.remove("cb-summary-animating");
+        // Re-read the latest intent in case it flipped mid-slide.
+        if (box._cbHidden) box.classList.add("cb-summary-hidden");
+        clearInline();
+      };
+      box._cbAnimEnd = onEnd;
+      box.addEventListener("transitionend", onEnd);
+    }
+
     function recalcTotal() {
       // Multi-use-case (2+ imported tables): the grand totals are pre-computed
       // per use case in notifyCreditTotal (each ER x its table's records), so
@@ -1433,10 +1499,10 @@
       // Frequency) move to each table's header — hide them here and show the
       // grand total + a per-use-case breakdown on hover.
       const hideScope = !!multi;
-      creditsBox.classList.toggle("cb-summary-hidden", hideScope);
-      actionsBox.classList.toggle("cb-summary-hidden", hideScope);
-      recordsBox.classList.toggle("cb-summary-hidden", hideScope);
-      freqBox.classList.toggle("cb-summary-hidden", hideScope);
+      setSummaryBoxHidden(creditsBox, hideScope);
+      setSummaryBoxHidden(actionsBox, hideScope);
+      setSummaryBoxHidden(recordsBox, hideScope);
+      setSummaryBoxHidden(freqBox, hideScope);
       if (multi && Array.isArray(multi.perUseCase)) {
         const lines = multi.perUseCase
           .slice()

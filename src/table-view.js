@@ -1081,19 +1081,32 @@
     return String(cut.totalSelected?.() ?? 0);
   }
 
+  // Last value shown in the Actual badge, tracked at module scope so the pulse
+  // fires only on a genuine change. render() rebuilds the badge node (empty)
+  // every time, so comparing against the fresh DOM node's text would re-pulse on
+  // every group expand/collapse — we compare against this persisted value.
+  let lastActualRunsBadgeValue = null;
+
+  // Replay the badge's pop animation. Used on a real count change (loading -> a
+  // number, or a new selection count) and when the session-run popover opens.
+  function pulseActualBadge() {
+    const badge = hostEl?.querySelector(".cb-view-mode-actual-badge");
+    if (!badge || !badge.textContent) return;
+    badge.classList.remove("cb-view-mode-actual-badge-pulse");
+    void badge.offsetWidth; // restart the animation
+    badge.classList.add("cb-view-mode-actual-badge-pulse");
+  }
+
   function refreshActualRunsBadge() {
     const badge = hostEl?.querySelector(".cb-view-mode-actual-badge");
     if (!badge) return;
     const next = actualRunsBadgeText();
-    const prev = badge.textContent || "";
     badge.textContent = next;
-    // Pulse when the count first resolves (loading "" -> a number), so the user
-    // sees the sessions landing without a jarring number swap.
-    if (next && next !== prev) {
-      badge.classList.remove("cb-view-mode-actual-badge-pulse");
-      void badge.offsetWidth;
-      badge.classList.add("cb-view-mode-actual-badge-pulse");
-    }
+    // Pulse only when the count actually changes — NOT on every re-render. The
+    // badge is rebuilt empty on each render(), so we diff against the persisted
+    // last value (not the fresh node) to avoid bouncing on every group toggle.
+    if (next && next !== lastActualRunsBadgeValue) pulseActualBadge();
+    if (next) lastActualRunsBadgeValue = next;
   }
 
   // Wire the Actual button's session UI: lazy-load the session list, subscribe
@@ -1654,6 +1667,10 @@
 
   function toggleSessionPopover(anchorBtn) {
     if (sessionPopoverEl) { closeSessionPopover(); return; }
+    // Opening the session run: bounce the Actual badge. Deferred a frame because
+    // clicking Actual-while-active re-renders the toggle (rebuilding the badge
+    // empty); the badge-fill rAF runs first, so by our frame it has its count.
+    requestAnimationFrame(pulseActualBadge);
     const cut = window.__cb.sessionCutoff;
 
     sessionPopoverBackdrop = document.createElement("div");
@@ -4399,6 +4416,109 @@
     contextMenuEl.style.top = `${top}px`;
   }
 
+  // ---- Group expand / collapse animation ----
+  //
+  // Collapse/expand goes through a full render() (the table is rebuilt from
+  // scratch), so we animate around that re-render: on collapse we play the body
+  // rows OUT of the live DOM first, then flip state + render(); on expand we
+  // render() (rows land in the DOM) and play them IN before the first paint.
+  //
+  // `justExpandedGroupKey` is consumed at the end of render() to tag the freshly
+  // revealed block. `collapsingGroupKeys` guards a header against re-triggering
+  // while its out-animation is in flight.
+  let justExpandedGroupKey = null;
+  const collapsingGroupKeys = new Set();
+
+  // One-shot guard: animate the Projected/Actual toggle in the first time it
+  // appears (an import populated the header). Not reset on unmount, so flipping
+  // between canvas/table view doesn't replay it.
+  let viewToggleSeen = false;
+
+  function prefersReducedMotion() {
+    return (
+      window.matchMedia &&
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches
+    );
+  }
+
+  // The contiguous body rows belonging to a header: every following sibling up
+  // to (but not including) the next header at the same or shallower depth. This
+  // captures a super-group's direct rows AND its deeper sub-headers + their rows.
+  function groupBodyRowsAfter(headerTr) {
+    const headerDepth = parseInt(headerTr.getAttribute("data-depth") || "0", 10);
+    const rows = [];
+    let el = headerTr.nextElementSibling;
+    while (el) {
+      if (el.classList.contains("cb-table-view-group-row")) {
+        const d = parseInt(el.getAttribute("data-depth") || "0", 10);
+        if (d <= headerDepth) break;
+      }
+      rows.push(el);
+      el = el.nextElementSibling;
+    }
+    return rows;
+  }
+
+  // Shared collapse/expand entry point for every section header (real groups,
+  // "Other", orphan). `headerTr` is the live header element in the closure.
+  function animatedGroupToggle(key, headerTr) {
+    if (collapsingGroupKeys.has(key)) return; // out-animation in flight
+    const collapsing = !collapsedGroups.has(key);
+
+    if (!collapsing) {
+      // Expanding: flip state, let render() rebuild the rows, then tag the new
+      // block so it animates in (consumed at the end of render()).
+      collapsedGroups.delete(key);
+      if (!prefersReducedMotion()) justExpandedGroupKey = key;
+      render();
+      return;
+    }
+
+    // Collapsing.
+    const block = prefersReducedMotion() ? [] : groupBodyRowsAfter(headerTr);
+    if (block.length === 0) {
+      collapsedGroups.add(key);
+      render();
+      return;
+    }
+    // Rotate the chevron now (immediate feedback) while the body lifts out.
+    headerTr.classList.add("cb-table-view-group-row-collapsed");
+    headerTr.setAttribute("aria-expanded", "false");
+    collapsingGroupKeys.add(key);
+    block.forEach((r) => r.classList.add("cb-table-view-row-leaving"));
+    setTimeout(() => {
+      collapsingGroupKeys.delete(key);
+      collapsedGroups.add(key);
+      render();
+    }, 180);
+  }
+
+  // Post-render hook: tag the just-expanded header's block so CSS plays the
+  // enter animation. Runs synchronously at the end of render() (before paint) so
+  // the rows don't flash at full opacity first. Staggered for a cascade feel.
+  function consumeJustExpandedGroup() {
+    if (justExpandedGroupKey == null) return;
+    const key = justExpandedGroupKey;
+    justExpandedGroupKey = null;
+    const header = hostEl?.querySelector(
+      `.cb-table-view-group-row[data-row-id="${key}"]`,
+    );
+    if (!header) return;
+    const block = groupBodyRowsAfter(header);
+    block.forEach((r, idx) => {
+      r.style.animationDelay = `${Math.min(idx * 18, 120)}ms`;
+      r.classList.add("cb-table-view-row-entering");
+      r.addEventListener(
+        "animationend",
+        () => {
+          r.classList.remove("cb-table-view-row-entering");
+          r.style.animationDelay = "";
+        },
+        { once: true },
+      );
+    });
+  }
+
   // ---- Rendering ----
 
   function render() {
@@ -4451,6 +4571,11 @@
     if (importedYet && typeof __cb.buildViewModeToggle === "function") {
       const viewToggle = __cb.buildViewModeToggle();
       viewToggle.classList.add("cb-table-view-mode-toggle");
+      // Slide it in the first time it appears (import just populated the header).
+      if (!viewToggleSeen && !prefersReducedMotion()) {
+        viewToggle.classList.add("cb-view-mode-toggle-intro");
+      }
+      viewToggleSeen = true;
       // Centered in the intro row (grid column 2) instead of leading the action
       // cluster.
       intro.appendChild(viewToggle);
@@ -4766,6 +4891,8 @@
       }
       pendingRenameCardId = null;
     }
+    // Play the just-expanded group's body rows in (synchronous, pre-paint).
+    consumeJustExpandedGroup();
     // Re-apply search highlights against the freshly-built rows. No scroll —
     // a background model update shouldn't yank the user's scroll position.
     if (searchQuery.trim()) applySearchHighlight({ scroll: false });
@@ -4832,6 +4959,7 @@
       "cb-table-view-group-row cb-table-view-orphan-group-row" +
       (isCollapsed ? " cb-table-view-group-row-collapsed" : "");
     tr.setAttribute("data-group-id", ORPHAN_SECTION_KEY);
+    tr.setAttribute("data-row-id", ORPHAN_SECTION_KEY);
     tr.setAttribute("role", "button");
     tr.setAttribute("aria-expanded", isCollapsed ? "false" : "true");
     tr.tabIndex = 0;
@@ -4865,14 +4993,7 @@
     td.appendChild(wrap);
     tr.appendChild(td);
 
-    const toggle = () => {
-      if (collapsedGroups.has(ORPHAN_SECTION_KEY)) {
-        collapsedGroups.delete(ORPHAN_SECTION_KEY);
-      } else {
-        collapsedGroups.add(ORPHAN_SECTION_KEY);
-      }
-      render();
-    };
+    const toggle = () => animatedGroupToggle(ORPHAN_SECTION_KEY, tr);
     tr.addEventListener("click", toggle);
     tr.addEventListener("keydown", (evt) => {
       if (evt.key === "Enter" || evt.key === " ") {
@@ -4928,14 +5049,7 @@
     td.appendChild(wrap);
     tr.appendChild(td);
 
-    const toggle = () => {
-      if (collapsedGroups.has(OTHER_SECTION_KEY)) {
-        collapsedGroups.delete(OTHER_SECTION_KEY);
-      } else {
-        collapsedGroups.add(OTHER_SECTION_KEY);
-      }
-      render();
-    };
+    const toggle = () => animatedGroupToggle(OTHER_SECTION_KEY, tr);
     tr.addEventListener("click", (evt) => {
       if (evt.button !== 0) return;
       toggle();
@@ -6210,14 +6324,7 @@
     td.appendChild(wrap);
     tr.appendChild(td);
 
-    const toggle = () => {
-      if (collapsedGroups.has(section.groupId)) {
-        collapsedGroups.delete(section.groupId);
-      } else {
-        collapsedGroups.add(section.groupId);
-      }
-      render();
-    };
+    const toggle = () => animatedGroupToggle(section.groupId, tr);
 
     // Click toggles collapse. Header rows intentionally don't enter the
     // row-selection state — there's no Group / Link action that applies
@@ -6583,6 +6690,8 @@
       searchQuery = "";
       searchMatchIds = [];
       searchActiveIdx = 0;
+      // Reset so a fresh mount pulses the Actual badge on first resolve again.
+      lastActualRunsBadgeValue = null;
       if (hostEl) hostEl.innerHTML = "";
       hostEl = null;
       tableEl = null;

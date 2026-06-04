@@ -579,6 +579,30 @@
   transition: none;
 }
 
+/* One-shot intro: the toggle slides + fades in the first time it appears, i.e.
+   when an import first populates the header (added once by table-view.js). */
+.cb-view-mode-toggle.cb-view-mode-toggle-intro {
+  animation: cb-view-mode-toggle-intro 0.32s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes cb-view-mode-toggle-intro {
+  from {
+    opacity: 0;
+    transform: translateX(-10px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cb-view-mode-toggle.cb-view-mode-toggle-intro {
+    animation: none;
+  }
+}
+
 .cb-view-mode-btn {
   position: relative;
   z-index: 1;
@@ -726,13 +750,31 @@
   min-width: 120px;
   /* Keep each box at its natural size; the bar scrolls when they don't fit. */
   flex-shrink: 0;
+  /* Smooth horizontal collapse when a scope box is added/removed on import
+     (driven by setSummaryBoxHidden in overlay.js — max-width is set inline). */
+  transition: max-width 0.26s ease, opacity 0.2s ease, transform 0.26s ease;
 }
 
 /* Adaptive bar: per-scope boxes (Avg/Row, Records, Frequency) are hidden when
    there are 2+ imported-table use cases — those controls move to each table's
-   header. Total + prices stay. */
+   header. Total + prices stay. The slide-out/in is animated; display:none is
+   the resting hidden state, applied only after the slide-out finishes. */
 .cb-summary-box.cb-summary-hidden {
   display: none !important;
+}
+
+/* Held for the duration of a slide so the width can collapse to 0 (neighbors
+   fill the gap) instead of being floored by min-width. */
+.cb-summary-box.cb-summary-animating {
+  overflow: hidden;
+  min-width: 0;
+  white-space: nowrap;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cb-summary-box {
+    transition: none;
+  }
 }
 
 .cb-summary-label {
