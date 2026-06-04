@@ -654,11 +654,6 @@
       .replace(/=+$/, "");
   }
 
-  function formatVolumeNumber(n) {
-    if (!Number.isFinite(n)) return "0";
-    return n.toLocaleString();
-  }
-
   // ---- Modal ----
 
   __cb.openGtmeExportModal = function openGtmeExportModal() {
@@ -810,25 +805,59 @@
 
         const meta = document.createElement("div");
         meta.className = "cb-gtme-tab-meta";
+
+        const hasVolume =
+          row.volumes.creditsPerYear !== 0 || row.volumes.actionsPerYear !== 0;
+
+        // Title row: tab name + an inline mode pill (white, indigo for Projected
+        // / green for Actual) so the rep sees at a glance how each tab exports.
+        const titleRow = document.createElement("div");
+        titleRow.className = "cb-gtme-tab-title";
         const nm = document.createElement("div");
         nm.className = "cb-gtme-tab-name";
         nm.textContent = tab.name || "Scoping";
-        const stats = document.createElement("div");
-        stats.className = "cb-gtme-tab-stats";
-        if (row.volumes.creditsPerYear === 0 && row.volumes.actionsPerYear === 0) {
-          stats.textContent = "No volume yet — add records and enrichments to this tab.";
-          stats.classList.add("cb-gtme-tab-stats-empty");
-        } else {
-          // The mode tag tells the rep whether this tab's numbers are the
-          // Projected catalog estimate or the Actual measured spend (each tab
-          // exports in the view it was last left in).
-          const modeTag = row.volumes.mode === "actual" ? " · Actual" : " · Projected";
-          stats.textContent =
-            `${formatVolumeNumber(row.volumes.creditsPerYear)} credits / yr · ` +
-            `${formatVolumeNumber(row.volumes.actionsPerYear)} actions / yr${modeTag}`;
+        titleRow.appendChild(nm);
+        if (hasVolume) {
+          const isActual = row.volumes.mode === "actual";
+          const modePill = document.createElement("span");
+          modePill.className =
+            "cb-gtme-mode-pill " +
+            (isActual ? "cb-gtme-mode-pill-actual" : "cb-gtme-mode-pill-projected");
+          modePill.textContent = isActual ? "Actual" : "Projected";
+          titleRow.appendChild(modePill);
         }
-        meta.appendChild(nm);
-        meta.appendChild(stats);
+        meta.appendChild(titleRow);
+
+        if (!hasVolume) {
+          const stats = document.createElement("div");
+          stats.className = "cb-gtme-tab-stats cb-gtme-tab-stats-empty";
+          stats.textContent = "No volume yet — add records and enrichments to this tab.";
+          meta.appendChild(stats);
+        } else {
+          // Reuse the canvas/table cost pill (actions | credits) plus a $ total
+          // pill, so the modal reads the same as the table. Total uses the tab's
+          // negotiated credit/action prices (defaults match the summary bar).
+          const pills = document.createElement("div");
+          pills.className = "cb-gtme-tab-pills";
+          if (__cb.buildCostBadges) {
+            pills.appendChild(
+              __cb.buildCostBadges(row.volumes.creditsPerYear, row.volumes.actionsPerYear),
+            );
+          }
+          const creditPrice = row.volumes.creditPrice != null ? row.volumes.creditPrice : 0.05;
+          const actionPrice = row.volumes.actionPrice != null ? row.volumes.actionPrice : 0.008;
+          const dollars =
+            row.volumes.creditsPerYear * creditPrice +
+            row.volumes.actionsPerYear * actionPrice;
+          const dol = document.createElement("span");
+          dol.className = "cb-gtme-tab-dollar";
+          dol.title = "Total cost / yr at the tab's credit & action prices";
+          dol.innerHTML =
+            (__cb.dollarSvg ? __cb.dollarSvg(12) : "$") +
+            `<span>${Math.round(dollars).toLocaleString()}</span>`;
+          pills.appendChild(dol);
+          meta.appendChild(pills);
+        }
 
         // Surface the per-tab credit/action prices we'll inject into the
         // calculator's adjusted (year-1) price fields. Only render when at

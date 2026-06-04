@@ -48,9 +48,6 @@
     if (evt.key === "Escape") { evt.stopPropagation(); close(); }
   }
 
-  function fmt(n) {
-    return Number.isFinite(n) ? n.toLocaleString() : "0";
-  }
   function money(n) {
     return "$" + Math.round(Number(n) || 0).toLocaleString();
   }
@@ -288,20 +285,46 @@
         const meta = document.createElement("div");
         meta.className = "cb-gtme-tab-meta";
         meta.style.cssText = "flex:1;min-width:0;";
+
+        // Title line: name + left-aligned mode pill (indigo Projected / green
+        // Actual), matching the GTME export modal.
+        const titleRow = document.createElement("div");
+        titleRow.className = "cb-gtme-tab-title";
         const nm = document.createElement("div");
         nm.className = "cb-gtme-tab-name";
         nm.textContent = tab.name || "Scoping";
-        const stats = document.createElement("div");
-        stats.className = "cb-gtme-tab-stats";
-        const modeTag = row.volumes.mode === "actual" ? " · Actual" : " · Projected";
-        stats.textContent =
-          `${fmt(row.volumes.creditsPerYear)} credits / yr · ${fmt(row.volumes.actionsPerYear)} actions / yr · ${money(acv)} ACV${modeTag}`;
-        meta.appendChild(nm);
-        meta.appendChild(stats);
+        titleRow.appendChild(nm);
+        const isActual = row.volumes.mode === "actual";
+        const modePill = document.createElement("span");
+        modePill.className =
+          "cb-gtme-mode-pill " +
+          (isActual ? "cb-gtme-mode-pill-actual" : "cb-gtme-mode-pill-projected");
+        modePill.textContent = isActual ? "Actual" : "Projected";
+        titleRow.appendChild(modePill);
+        meta.appendChild(titleRow);
+
+        // Cost pill (actions | credits) + the $ ACV total, reusing the shared
+        // components so the deal-desk modal reads like the table / GTME modal.
+        const pills = document.createElement("div");
+        pills.className = "cb-gtme-tab-pills";
+        if (__cb.buildCostBadges) {
+          pills.appendChild(
+            __cb.buildCostBadges(row.volumes.creditsPerYear, row.volumes.actionsPerYear),
+          );
+        }
+        const dol = document.createElement("span");
+        dol.className = "cb-gtme-tab-dollar";
+        dol.title = `${money(acv)} ACV / yr`;
+        dol.innerHTML =
+          (__cb.dollarSvg ? __cb.dollarSvg(12) : "$") +
+          `<span>${Math.round(acv).toLocaleString()}</span>`;
+        pills.appendChild(dol);
+        meta.appendChild(pills);
+
         if (approval.status && approval.reasons.length) {
           const why = document.createElement("div");
           why.className = "cb-gtme-tab-stats";
-          why.style.cssText = "opacity:.75;";
+          why.style.cssText = "opacity:.75;margin-top:2px;";
           why.textContent = approval.reasons[0];
           why.title = approval.reasons.join("\n");
           meta.appendChild(why);
