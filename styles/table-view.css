@@ -3106,53 +3106,68 @@
   letter-spacing: 0.01em;
 }
 
-.cb-pricing-totalgrp-years {
+/* Years are ROWS; Actions + Credits are the two COLUMNS. Grid: label | actions
+   | credits. */
+.cb-pricing-totalgrp-grid {
   display: grid;
-  gap: 12px;
+  grid-template-columns: auto 1fr 1fr;
+  gap: 8px 12px;
+  align-items: center;
   padding: 14px;
 }
 
-.cb-pricing-totalgrp-col {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  min-width: 0;
+.cb-ptg-corner {
+  min-width: 56px;
 }
 
-.cb-pricing-totalgrp-yearlabel {
-  font-size: 12px;
-  font-weight: 700;
-  color: #6b7280;
-}
-
-.cb-pricing-totalgrp-field {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  min-width: 0;
-}
-
-.cb-pricing-totalgrp-field-label {
+/* Column headers — colored icon + label (matches the dual-tone icon accent). */
+.cb-ptg-colhead {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  font-size: 10px;
-  font-weight: 600;
-  color: #9ca3af;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 700;
   text-transform: uppercase;
-  letter-spacing: 0.02em;
+  letter-spacing: 0.03em;
 }
 
-.cb-pricing-totalgrp-field-label svg {
-  color: #9ca3af;
+.cb-ptg-colhead svg {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
 }
 
-.cb-pricing-totalgrp-select,
-.cb-pricing-totalgrp-input {
+.cb-ptg-actions {
+  color: #717989;
+}
+
+.cb-ptg-credits {
+  color: #0dac65;
+}
+
+.cb-ptg-rowlabel {
+  font-size: 12px;
+  font-weight: 600;
+  color: #6b7280;
+  white-space: nowrap;
+}
+
+.cb-ptg-rowlabel-discount {
+  font-weight: 700;
+  color: #374151;
+}
+
+.cb-ptg-cell {
+  min-width: 0;
+}
+
+/* Credits input + custom Actions volume dropdown trigger share a look. */
+.cb-ptg-input,
+.cb-ptg-vol {
   width: 100%;
   box-sizing: border-box;
   height: 32px;
-  padding: 0 8px;
+  padding: 0 10px;
   border: 1px solid #e5e7eb;
   border-radius: 6px;
   background: #ffffff;
@@ -3162,11 +3177,83 @@
   font-variant-numeric: tabular-nums;
 }
 
-.cb-pricing-totalgrp-select:focus,
-.cb-pricing-totalgrp-input:focus {
+.cb-ptg-input:focus {
   outline: none;
   border-color: #6366f1;
   box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.15);
+}
+
+.cb-ptg-vol {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.cb-ptg-vol:hover {
+  border-color: #cbd5e1;
+}
+
+.cb-ptg-vol-chevron {
+  display: inline-flex;
+  align-items: center;
+  color: #9ca3af;
+  flex-shrink: 0;
+}
+
+/* Read-only rep-floor box in the Discount row. */
+.cb-ptg-repfloor {
+  box-sizing: border-box;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  padding: 0 10px;
+  border: 1px solid #f3f4f6;
+  border-radius: 6px;
+  background: #f9fafb;
+  font-size: 13px;
+  font-weight: 600;
+  color: #374151;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Custom volume dropdown menu (body-appended, position: fixed). */
+.cb-ptg-volmenu {
+  z-index: 10000060;
+  max-height: 260px;
+  overflow: auto;
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.18);
+  padding: 4px;
+}
+
+.cb-ptg-volmenu-opt {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 7px 10px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  font-family: inherit;
+  font-size: 13px;
+  color: #111827;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+
+.cb-ptg-volmenu-opt:hover {
+  background: #f3f4f6;
+}
+
+.cb-ptg-volmenu-opt-active {
+  background: #eef2ff;
+  color: #3730a3;
+  font-weight: 600;
 }
 
 /* Amber outline when a Total value deviates from the recommended rollup. */

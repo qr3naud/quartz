@@ -1056,11 +1056,94 @@
     return box;
   }
 
+  // 4-decimal rate ($0.0360) for the floor cells.
+  function pricingRate(n) {
+    return "$" + (Number(n) || 0).toFixed(4);
+  }
+
+  // Rep floor for a metric, from the tier the AVERAGE volume across years lands
+  // in, derived for the contract length. Used by the Discount row.
+  function pricingRepFloor(metric, avgVolume, years) {
+    if (!__cb.pricing) return null;
+    const set =
+      metric === "credit"
+        ? __cb.pricing.enterpriseCreditFloors?.()
+        : __cb.pricing.enterpriseActionFloors?.();
+    if (!set) return null;
+    const tier = __cb.pricing.selectBand(set, avgVolume);
+    if (!tier) return null;
+    const floors = __cb.pricing.resolveFloors(tier, years);
+    return floors ? floors.rep : null;
+  }
+
+  // Custom volume dropdown (replaces the native <select>; shows the volume only,
+  // no tier letter). Trigger + a body-appended menu listing the tier volumes.
+  let pricingVolMenuEl = null;
+  function closePricingVolMenu() {
+    if (pricingVolMenuEl) {
+      pricingVolMenuEl.remove();
+      pricingVolMenuEl = null;
+    }
+    document.removeEventListener("mousedown", onPricingVolMenuDocClick, true);
+  }
+  function onPricingVolMenuDocClick(e) {
+    if (pricingVolMenuEl && !pricingVolMenuEl.contains(e.target)) closePricingVolMenu();
+  }
+  function openPricingVolMenu(anchor, currentTier, onPick) {
+    closePricingVolMenu();
+    const menu = document.createElement("div");
+    menu.className = "cb-ptg-volmenu";
+    menu.addEventListener("mousedown", (e) => e.stopPropagation());
+    for (const b of actionTierOptions()) {
+      const opt = document.createElement("button");
+      opt.type = "button";
+      opt.className =
+        "cb-ptg-volmenu-opt" +
+        (String(b.tier) === String(currentTier) ? " cb-ptg-volmenu-opt-active" : "");
+      opt.textContent = pricingFmt(b.volume);
+      opt.addEventListener("click", (e) => {
+        e.stopPropagation();
+        closePricingVolMenu();
+        onPick(String(b.tier));
+      });
+      menu.appendChild(opt);
+    }
+    document.body.appendChild(menu);
+    const r = anchor.getBoundingClientRect();
+    menu.style.position = "fixed";
+    menu.style.left = `${Math.round(r.left)}px`;
+    menu.style.top = `${Math.round(r.bottom + 4)}px`;
+    menu.style.minWidth = `${Math.round(r.width)}px`;
+    pricingVolMenuEl = menu;
+    document.addEventListener("mousedown", onPricingVolMenuDocClick, true);
+  }
+
+  function buildPricingVolDropdown(tier, overridden, onPick) {
+    const trigger = document.createElement("button");
+    trigger.type = "button";
+    trigger.className = "cb-ptg-vol";
+    if (overridden) trigger.classList.add("cb-pricing-overridden");
+    const volSpan = document.createElement("span");
+    volSpan.textContent = pricingFmt(actionVolumeForTier(tier));
+    trigger.appendChild(volSpan);
+    const chev = document.createElement("span");
+    chev.className = "cb-ptg-vol-chevron";
+    chev.innerHTML = chevronDownSvg(11);
+    trigger.appendChild(chev);
+    trigger.addEventListener("mousedown", (e) => e.stopPropagation());
+    trigger.addEventListener("click", (e) => {
+      e.stopPropagation();
+      openPricingVolMenu(trigger, tier, onPick);
+    });
+    return trigger;
+  }
+
   // Editable, collapsible grey "Total" group — the deal-level source of truth
-  // for the Summary. N year columns, each with Actions (tier <select>) and
-  // Credits (number input), no records. Defaults = the recommended rollup from
-  // the use cases; a value that deviates from the recommendation gets an amber
-  // outline. Editing here NEVER cascades back into the use cases.
+  // for the Summary. Years are ROWS; Actions + Credits are the two COLUMNS.
+  // Each year: an Actions volume dropdown + a Credits number input (defaults =
+  // the recommended rollup; amber outline on deviation). A final "Discount" row
+  // shows the rep floor for each metric, picked from the tier the AVERAGE volume
+  // across years lands in. Editing here NEVER cascades into the use cases.
   function buildPricingTotalGroup(perYear, creditCost, actionCost, years) {
     const box = document.createElement("div");
     box.className = "cb-pricing-totalgrp";
@@ -1097,78 +1180,91 @@
     });
     box.appendChild(header);
 
-    if (!collapsed) {
-      const yearsWrap = document.createElement("div");
-      yearsWrap.className = "cb-pricing-totalgrp-years";
-      yearsWrap.style.gridTemplateColumns = `repeat(${years}, minmax(0, 1fr))`;
-      const tierOpts = actionTierOptions();
-      perYear.forEach((y, i) => {
-        const col = document.createElement("div");
-        col.className = "cb-pricing-totalgrp-col";
+    if (collapsed) return box;
 
-        const yl = document.createElement("div");
-        yl.className = "cb-pricing-totalgrp-yearlabel";
-        yl.textContent = years > 1 ? `Year ${i + 1}` : "Contract";
-        col.appendChild(yl);
+    const grid = document.createElement("div");
+    grid.className = "cb-pricing-totalgrp-grid";
 
-        // Actions: tier <select> (amber outline when deviating from rec).
-        const aField = document.createElement("label");
-        aField.className = "cb-pricing-totalgrp-field";
-        const aLab = document.createElement("span");
-        aLab.className = "cb-pricing-totalgrp-field-label";
-        aLab.innerHTML =
-          (typeof starFourSvg === "function" ? starFourSvg(11) : "") + "<span>Actions</span>";
-        const sel = document.createElement("select");
-        sel.className = "cb-pricing-totalgrp-select";
-        if (y.tierOverridden) sel.classList.add("cb-pricing-overridden");
-        for (const b of tierOpts) {
-          const opt = document.createElement("option");
-          opt.value = String(b.tier);
-          opt.textContent = `${b.tier} \u00b7 ${pricingFmt(b.volume)}`;
-          if (String(b.tier) === String(y.tier)) opt.selected = true;
-          sel.appendChild(opt);
+    // Column header row: corner + Actions + Credits (colored icons + labels).
+    grid.appendChild(document.createElement("div")).className = "cb-ptg-corner";
+    const colHead = (labelText, iconSvg, cls) => {
+      const h = document.createElement("div");
+      h.className = "cb-ptg-colhead " + cls;
+      h.innerHTML = iconSvg + `<span>${labelText}</span>`;
+      return h;
+    };
+    grid.appendChild(
+      colHead("Actions", typeof starFourSvg === "function" ? starFourSvg(13) : "", "cb-ptg-actions"),
+    );
+    grid.appendChild(
+      colHead("Credits", typeof coinsSvg === "function" ? coinsSvg(13) : "", "cb-ptg-credits"),
+    );
+
+    // Year rows.
+    perYear.forEach((y, i) => {
+      const lbl = document.createElement("div");
+      lbl.className = "cb-ptg-rowlabel";
+      lbl.textContent = years > 1 ? `Year ${i + 1}` : "Contract";
+      grid.appendChild(lbl);
+
+      const aCell = document.createElement("div");
+      aCell.className = "cb-ptg-cell";
+      aCell.appendChild(
+        buildPricingVolDropdown(y.tier, y.tierOverridden, (tierId) =>
+          __cb.setPricingTotalActionTier(i, tierId),
+        ),
+      );
+      grid.appendChild(aCell);
+
+      const cCell = document.createElement("div");
+      cCell.className = "cb-ptg-cell";
+      const cInput = document.createElement("input");
+      cInput.type = "text";
+      cInput.inputMode = "numeric";
+      cInput.className = "cb-ptg-input";
+      if (y.creditsOverridden) cInput.classList.add("cb-pricing-overridden");
+      cInput.value = pricingFmt(y.credits);
+      const commitCredits = () => {
+        const raw = parseInt(cInput.value.replace(/[^\d]/g, ""), 10);
+        __cb.setPricingTotalCredits(i, Number.isFinite(raw) ? raw : 0);
+      };
+      cInput.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          cInput.blur();
         }
-        sel.addEventListener("mousedown", (e) => e.stopPropagation());
-        sel.addEventListener("change", () =>
-          __cb.setPricingTotalActionTier(i, sel.value),
-        );
-        aField.appendChild(aLab);
-        aField.appendChild(sel);
-        col.appendChild(aField);
-
-        // Credits: number input (amber outline when deviating from rec).
-        const cField = document.createElement("label");
-        cField.className = "cb-pricing-totalgrp-field";
-        const cLab = document.createElement("span");
-        cLab.className = "cb-pricing-totalgrp-field-label";
-        cLab.innerHTML =
-          (typeof coinsSvg === "function" ? coinsSvg(11) : "") + "<span>Credits</span>";
-        const cInput = document.createElement("input");
-        cInput.type = "text";
-        cInput.inputMode = "numeric";
-        cInput.className = "cb-pricing-totalgrp-input";
-        if (y.creditsOverridden) cInput.classList.add("cb-pricing-overridden");
-        cInput.value = pricingFmt(y.credits);
-        const commitCredits = () => {
-          const raw = parseInt(cInput.value.replace(/[^\d]/g, ""), 10);
-          __cb.setPricingTotalCredits(i, Number.isFinite(raw) ? raw : 0);
-        };
-        cInput.addEventListener("keydown", (e) => {
-          if (e.key === "Enter") {
-            e.preventDefault();
-            cInput.blur();
-          }
-        });
-        cInput.addEventListener("blur", commitCredits);
-        cInput.addEventListener("focus", () => cInput.select());
-        cField.appendChild(cLab);
-        cField.appendChild(cInput);
-        col.appendChild(cField);
-
-        yearsWrap.appendChild(col);
       });
-      box.appendChild(yearsWrap);
-    }
+      cInput.addEventListener("blur", commitCredits);
+      cInput.addEventListener("focus", () => cInput.select());
+      cCell.appendChild(cInput);
+      grid.appendChild(cCell);
+    });
+
+    // Discount row — rep floors from the avg-volume tier (derived for N years).
+    const n = perYear.length || 1;
+    const avgCredits = perYear.reduce((s, y) => s + y.credits, 0) / n;
+    const avgActions = perYear.reduce((s, y) => s + y.actionVolume, 0) / n;
+    const actionRep = pricingRepFloor("action", avgActions, years);
+    const creditRep = pricingRepFloor("credit", avgCredits, years);
+
+    const dl = document.createElement("div");
+    dl.className = "cb-ptg-rowlabel cb-ptg-rowlabel-discount";
+    dl.textContent = "Discount";
+    grid.appendChild(dl);
+
+    const repCell = (rate) => {
+      const cell = document.createElement("div");
+      cell.className = "cb-ptg-cell";
+      const b = document.createElement("div");
+      b.className = "cb-ptg-repfloor";
+      b.textContent = rate != null ? pricingRate(rate) : "\u2014";
+      cell.appendChild(b);
+      return cell;
+    };
+    grid.appendChild(repCell(actionRep));
+    grid.appendChild(repCell(creditRep));
+
+    box.appendChild(grid);
     return box;
   }
 
@@ -7444,6 +7540,7 @@
       closeErChipMenu();
       closeNotePopover();
       hideNotePreview();
+      closePricingVolMenu();
       selectedRowIds.clear();
       selectionAnchorId = null;
       visibleRowOrder = [];
