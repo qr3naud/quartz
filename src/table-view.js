@@ -831,71 +831,52 @@
     return wrap;
   }
 
-  // A labeled numeric input that resolves a value on commit. Shared by the
-  // Records driver + the per-metric volume inputs.
-  function mkPricingField(labelText, value, onCommit) {
-    const f = document.createElement("label");
-    f.className = "cb-pricing-field";
-    const t = document.createElement("span");
-    t.className = "cb-pricing-field-label";
-    t.textContent = labelText;
-    const inp = document.createElement("input");
-    inp.type = "text";
-    inp.inputMode = "numeric";
-    inp.className = "cb-pricing-field-input";
-    inp.value = pricingFmt(value);
-    const commit = () => {
-      const raw = parseInt(inp.value.replace(/[^\d]/g, ""), 10);
-      onCommit(Number.isFinite(raw) ? raw : 0);
-    };
-    inp.addEventListener("keydown", (e) => {
-      if (e.key === "Enter") {
-        e.preventDefault();
-        inp.blur();
-      }
-    });
-    inp.addEventListener("blur", commit);
-    inp.addEventListener("focus", () => inp.select());
-    f.appendChild(t);
-    f.appendChild(inp);
-    return f;
-  }
+  // A metric card (summary-card style): icon at top, divider, total volume,
+  // divider, total cost — all centered. The icon (StarFour = actions, Coins =
+  // credits) is the only differentiator; no color coding. `tier` (actions only)
+  // shows as a tiny caption under the icon.
+  function buildPricingMetricCard(iconSvg, tier, volume, dollar) {
+    const card = document.createElement("div");
+    card.className = "cb-pricing-metric-card";
 
-  // One editable metric column: the volume input stacked over its dollar cost.
-  function buildPricingMetric(labelText, volume, dollar, cls, onCommit) {
-    const col = document.createElement("div");
-    col.className = "cb-pricing-metric " + cls;
-    col.appendChild(mkPricingField(labelText, volume, onCommit));
+    const iconWrap = document.createElement("div");
+    iconWrap.className = "cb-pricing-metric-iconwrap";
+    const icon = document.createElement("span");
+    icon.className = "cb-pricing-metric-icon";
+    icon.innerHTML = iconSvg;
+    iconWrap.appendChild(icon);
+    if (tier) {
+      const t = document.createElement("span");
+      t.className = "cb-pricing-metric-tier";
+      t.textContent = `Tier ${tier}`;
+      iconWrap.appendChild(t);
+    }
+    card.appendChild(iconWrap);
+
+    const div1 = document.createElement("div");
+    div1.className = "cb-pricing-metric-divider";
+    card.appendChild(div1);
+
+    const vol = document.createElement("div");
+    vol.className = "cb-pricing-metric-vol";
+    vol.textContent = pricingFmt(volume);
+    card.appendChild(vol);
+
+    const div2 = document.createElement("div");
+    div2.className = "cb-pricing-metric-divider";
+    card.appendChild(div2);
+
     const cost = document.createElement("div");
     cost.className = "cb-pricing-metric-cost";
     cost.textContent = pricingDollar(dollar);
-    col.appendChild(cost);
-    return col;
+    card.appendChild(cost);
+
+    return card;
   }
 
-  // One read-only metric column: a tier-quantized volume (with its tier label)
-  // stacked over its dollar cost. Used for Actions, which bill at a tier.
-  function buildPricingMetricStatic(labelText, volume, tier, dollar, cls) {
-    const col = document.createElement("div");
-    col.className = "cb-pricing-metric " + cls;
-    const head = document.createElement("span");
-    head.className = "cb-pricing-field-label";
-    head.textContent = tier ? `${labelText} \u00b7 ${tier}` : labelText;
-    const val = document.createElement("div");
-    val.className = "cb-pricing-metric-static";
-    val.textContent = pricingFmt(volume);
-    col.appendChild(head);
-    col.appendChild(val);
-    const cost = document.createElement("div");
-    cost.className = "cb-pricing-metric-cost";
-    cost.textContent = pricingDollar(dollar);
-    col.appendChild(cost);
-    return col;
-  }
-
-  // One year column: header (Year N + that year's total cost), the Records
-  // driver, then Actions (tier-quantized, read-only) and Credits (editable),
-  // each stacking the volume over its dollar cost.
+  // One year column: a header line (Year N + Records input + year total cost),
+  // then two metric cards (Actions, then Credits). Records is the single
+  // editable driver; the cards are display-only. Actions bill at a tier.
   function buildPricingYearCell(uc, yearIdx, records, creditCost, actionCost) {
     const cell = document.createElement("div");
     cell.className = "cb-pricing-year";
@@ -903,44 +884,59 @@
     const credits = uc.perRowCredits * records;
     const clamped = clampActionVolume(uc.perRowActions * records);
     const actionDollars = clamped.volume * actionCost;
-    const yearTotal = credits * creditCost + actionDollars;
+    const creditDollars = credits * creditCost;
+    const yearTotal = creditDollars + actionDollars;
 
-    const label = document.createElement("div");
-    label.className = "cb-pricing-year-label";
-    const lt = document.createElement("span");
-    lt.textContent = `Year ${yearIdx + 1}`;
-    const lv = document.createElement("span");
-    lv.className = "cb-pricing-year-total";
-    lv.textContent = pricingDollar(yearTotal);
-    label.appendChild(lt);
-    label.appendChild(lv);
-    cell.appendChild(label);
+    // Header line: Year N | Records [input] | total cost.
+    const head = document.createElement("div");
+    head.className = "cb-pricing-year-head";
 
-    const recField = mkPricingField("Records", records, (v) =>
-      __cb.setPricingYearRecords(uc.key, yearIdx, v),
-    );
-    recField.classList.add("cb-pricing-field-records");
-    cell.appendChild(recField);
+    const name = document.createElement("span");
+    name.className = "cb-pricing-year-name";
+    name.textContent = `Year ${yearIdx + 1}`;
 
-    // Actions first (tier-quantized, read-only), then Credits (editable).
-    const metrics = document.createElement("div");
-    metrics.className = "cb-pricing-year-metrics";
-    metrics.appendChild(
-      buildPricingMetricStatic(
-        "Actions",
-        clamped.volume,
-        clamped.tier,
-        actionDollars,
-        "cb-pricing-metric-action",
-      ),
-    );
-    metrics.appendChild(
-      buildPricingMetric("Credits", credits, credits * creditCost, "cb-pricing-metric-credit", (v) => {
-        const r = uc.perRowCredits > 0 ? Math.round(v / uc.perRowCredits) : 0;
-        __cb.setPricingYearRecords(uc.key, yearIdx, r);
-      }),
-    );
-    cell.appendChild(metrics);
+    const recWrap = document.createElement("label");
+    recWrap.className = "cb-pricing-year-records";
+    const recLabel = document.createElement("span");
+    recLabel.className = "cb-pricing-year-records-label";
+    recLabel.textContent = "Records";
+    const recInput = document.createElement("input");
+    recInput.type = "text";
+    recInput.inputMode = "numeric";
+    recInput.className = "cb-pricing-year-records-input";
+    recInput.value = pricingFmt(records);
+    const commitRecords = () => {
+      const raw = parseInt(recInput.value.replace(/[^\d]/g, ""), 10);
+      __cb.setPricingYearRecords(uc.key, yearIdx, Number.isFinite(raw) ? raw : 0);
+    };
+    recInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        recInput.blur();
+      }
+    });
+    recInput.addEventListener("blur", commitRecords);
+    recInput.addEventListener("focus", () => recInput.select());
+    recWrap.appendChild(recLabel);
+    recWrap.appendChild(recInput);
+
+    const total = document.createElement("span");
+    total.className = "cb-pricing-year-total";
+    total.textContent = pricingDollar(yearTotal);
+
+    head.appendChild(name);
+    head.appendChild(recWrap);
+    head.appendChild(total);
+    cell.appendChild(head);
+
+    // Metric cards: Actions first, then Credits.
+    const cards = document.createElement("div");
+    cards.className = "cb-pricing-year-cards";
+    const starIcon = typeof starFourSvg === "function" ? starFourSvg(18) : "";
+    const coinIcon = typeof coinsSvg === "function" ? coinsSvg(18) : "";
+    cards.appendChild(buildPricingMetricCard(starIcon, clamped.tier, clamped.volume, actionDollars));
+    cards.appendChild(buildPricingMetricCard(coinIcon, null, credits, creditDollars));
+    cell.appendChild(cards);
 
     return cell;
   }

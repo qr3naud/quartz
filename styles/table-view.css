@@ -2835,109 +2835,133 @@
   padding: 10px 12px;
 }
 
-/* Year header: "Year N" on the left, that year's total cost on the right. */
-.cb-pricing-year-label {
+/* Year header line: "Year N" + the Records input + the year total cost, all on
+   one row with a coherent font scale. */
+.cb-pricing-year-head {
   display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 8px;
-  font-size: 12px;
-  font-weight: 700;
-  color: #6b7280;
-  margin-bottom: 10px;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
 }
 
-.cb-pricing-year-total {
+.cb-pricing-year-name {
   font-size: 13px;
   font-weight: 700;
-  color: #111827;
-  font-variant-numeric: tabular-nums;
+  color: #374151;
+  white-space: nowrap;
 }
 
-.cb-pricing-field {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
+.cb-pricing-year-records {
+  flex: 1;
   min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  background: #ffffff;
 }
 
-.cb-pricing-field-records {
-  margin-bottom: 10px;
-}
-
-.cb-pricing-field-label {
+.cb-pricing-year-records-label {
   font-size: 10px;
-  font-weight: 500;
+  font-weight: 600;
   color: #9ca3af;
   text-transform: uppercase;
   letter-spacing: 0.02em;
 }
 
-.cb-pricing-field-input {
-  width: 100%;
-  box-sizing: border-box;
-  height: 30px;
-  padding: 0 8px;
-  border: 1px solid #e5e7eb;
-  border-radius: 6px;
-  background: #ffffff;
+.cb-pricing-year-records-input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: transparent;
   font-family: inherit;
   font-size: 13px;
   color: #111827;
   font-variant-numeric: tabular-nums;
 }
 
-.cb-pricing-field-input:focus {
+.cb-pricing-year-records-input:focus {
   outline: none;
+}
+
+.cb-pricing-year-records:focus-within {
   border-color: #047857;
   box-shadow: 0 0 0 2px rgba(4, 120, 87, 0.15);
 }
 
-/* Read-only tier-quantized value (Actions) — looks like an input but isn't
-   editable, tinted indigo to signal it's tier-derived. */
-.cb-pricing-metric-static {
-  box-sizing: border-box;
-  height: 30px;
-  display: flex;
-  align-items: center;
-  padding: 0 8px;
-  border: 1px solid #e0e7ff;
-  border-radius: 6px;
-  background: #eef2ff;
-  font-size: 13px;
-  font-weight: 600;
-  color: #4338ca;
+.cb-pricing-year-total {
+  font-size: 14px;
+  font-weight: 700;
+  color: #111827;
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
-/* Two metric columns side by side: Actions then Credits, each stacking the
-   volume input/value over its dollar cost. */
-.cb-pricing-year-metrics {
+/* Two metric cards (Actions, Credits) — summary-card styling, centered. */
+.cb-pricing-year-cards {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 10px;
 }
 
-.cb-pricing-metric {
+.cb-pricing-metric-card {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  min-width: 0;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 12px 10px;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  background: #ffffff;
+  text-align: center;
+}
+
+.cb-pricing-metric-iconwrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+}
+
+.cb-pricing-metric-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #6b7280;
+}
+
+.cb-pricing-metric-tier {
+  font-size: 10px;
+  font-weight: 600;
+  color: #9ca3af;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.cb-pricing-metric-divider {
+  width: 100%;
+  border-top: 1px solid #f3f4f6;
+}
+
+.cb-pricing-metric-vol {
+  font-size: 15px;
+  font-weight: 600;
+  color: #111827;
+  font-variant-numeric: tabular-nums;
 }
 
 .cb-pricing-metric-cost {
-  font-size: 13px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 14px;
   font-weight: 700;
+  color: #374151;
   font-variant-numeric: tabular-nums;
-  text-align: right;
-}
-
-.cb-pricing-metric-action .cb-pricing-metric-cost {
-  color: #4338ca;
-}
-
-.cb-pricing-metric-credit .cb-pricing-metric-cost {
-  color: #047857;
 }
 
 /* Total box underneath the use-case boxes. */
