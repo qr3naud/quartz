@@ -2733,17 +2733,18 @@
   border-color: #f59e0b;
 }
 
-/* Per-use-case, per-year volume body (headers-only, both-directions edit). */
+/* The 1y/2y/3y term toggle sits in the right action slot in pricing mode; it
+   must show even for non-pro users (like the centered Projected/Actual one). */
+.cb-overlay:not([data-cb-pro-mode]) .cb-view-mode-toggle.cb-table-view-term-toggle {
+  display: inline-flex;
+}
+
+/* Per-use-case, per-year volume body. */
 .cb-pricing-body {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 14px;
   padding: 16px 20px 28px;
-}
-
-.cb-pricing-body-hint {
-  font-size: 13px;
-  color: #6b7280;
 }
 
 .cb-pricing-body-empty {
@@ -2753,37 +2754,76 @@
   text-align: center;
 }
 
+/* Each use case is its own box; equal full width, stacked. */
 .cb-pricing-uc {
-  border: 1px solid #e5e7eb;
+  border: 1px solid #a7f3d0;
   border-radius: 10px;
   background: #ffffff;
-  padding: 14px 16px;
+  overflow: hidden;
 }
 
-.cb-pricing-uc-head {
+/* Collapsible header mirrors the super-group green palette. */
+.cb-pricing-uc-header {
   display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 12px;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  background: #ecfdf5;
+  border-bottom: 1px solid #a7f3d0;
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.12s;
+}
+
+.cb-pricing-uc-header:hover {
+  background: #d1fae5;
+}
+
+.cb-pricing-uc-collapsed .cb-pricing-uc-header {
+  border-bottom-color: transparent;
+}
+
+.cb-pricing-uc-chevron,
+.cb-pricing-uc-icon {
+  display: inline-flex;
+  align-items: center;
+  color: #047857;
+}
+
+.cb-pricing-uc-chevron {
+  transition: transform 0.18s ease;
+}
+
+.cb-pricing-uc-collapsed .cb-pricing-uc-chevron {
+  transform: rotate(-90deg);
 }
 
 .cb-pricing-uc-name {
-  font-size: 15px;
+  font-size: 13px;
   font-weight: 600;
-  color: #111827;
+  color: #064e3b;
+  letter-spacing: 0.005em;
 }
 
-.cb-pricing-uc-per {
-  font-size: 12px;
-  color: #9ca3af;
+.cb-pricing-uc-pills {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.cb-pricing-uc-dollar {
+  font-size: 13px;
+  font-weight: 700;
+  color: #064e3b;
   font-variant-numeric: tabular-nums;
 }
 
+/* N equal-width year columns (grid-template-columns set inline to repeat(N)). */
 .cb-pricing-uc-years {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   gap: 12px;
+  padding: 14px;
 }
 
 .cb-pricing-year {
@@ -2837,6 +2877,111 @@
 
 .cb-pricing-field-input:focus {
   outline: none;
-  border-color: #f59e0b;
-  box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.15);
+  border-color: #047857;
+  box-shadow: 0 0 0 2px rgba(4, 120, 87, 0.15);
+}
+
+/* Second row: the per-year dollar cost of actions + credits. */
+.cb-pricing-year-costs {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed #e5e7eb;
+}
+
+.cb-pricing-cost-cell {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.cb-pricing-cost-cell-label {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  color: #9ca3af;
+}
+
+.cb-pricing-cost-cell-value {
+  font-size: 13px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.cb-pricing-cost-cell-action .cb-pricing-cost-cell-value {
+  color: #4338ca;
+}
+
+.cb-pricing-cost-cell-credit .cb-pricing-cost-cell-value {
+  color: #047857;
+}
+
+/* Total box underneath the use-case boxes. */
+.cb-pricing-total-box {
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  background: #ffffff;
+  padding: 14px 16px;
+}
+
+.cb-pricing-total-head {
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: #6b7280;
+  margin-bottom: 10px;
+}
+
+.cb-pricing-total-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 12px;
+}
+
+.cb-pricing-total-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px;
+  border: 1px solid #f3f4f6;
+  border-radius: 8px;
+  background: #f9fafb;
+}
+
+.cb-pricing-total-card-label {
+  font-size: 11px;
+  font-weight: 500;
+  color: #6b7280;
+}
+
+.cb-pricing-total-card-value {
+  font-size: 18px;
+  font-weight: 700;
+  color: #111827;
+  font-variant-numeric: tabular-nums;
+}
+
+.cb-pricing-total-card-grand {
+  background: #eef2ff;
+  border-color: #c7d2fe;
+}
+
+.cb-pricing-total-card-grand .cb-pricing-total-card-value {
+  color: #3730a3;
+}
+
+.cb-pricing-total-card-savings {
+  background: #ecfdf5;
+  border-color: #a7f3d0;
+}
+
+.cb-pricing-total-card-savings .cb-pricing-total-card-value {
+  color: #047857;
+  font-size: 15px;
 }

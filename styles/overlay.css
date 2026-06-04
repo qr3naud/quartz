@@ -1457,14 +1457,61 @@ body:has(.cb-overlay) [data-floating-ui-portal] {
 .cb-pricing-strip-inner {
   display: inline-flex;
   gap: 10px;
-  align-items: stretch;
+  align-items: center;
   overflow: hidden;
   min-width: 0;
   min-height: 0;
 }
 
-.cb-pricing-card.cb-pricing-savings .cb-summary-value {
-  color: #047857;
+/* Projected/Actual mode pill in the strip (reuses .cb-gtme-mode-pill). */
+.cb-pricing-mode-pill {
+  height: 22px;
+}
+
+/* Per-unit cost pill input (actions/credits) — pill-shaped, with a leading
+   glyph, matching the segmented cost-pill family. */
+.cb-pricing-cost-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid #e6e8ec;
+  border-radius: 999px;
+  background: #ffffff;
+}
+
+.cb-pricing-cost-pill-icon {
+  display: inline-flex;
+  align-items: center;
+  color: #6b7280;
+}
+
+.cb-pricing-cost-pill-label {
+  font-size: 11px;
+  font-weight: 500;
+  color: #6b7280;
+}
+
+.cb-pricing-cost-pill-input {
+  width: 56px;
+  border: none;
+  background: transparent;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  color: #111827;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.cb-pricing-cost-pill-input:focus {
+  outline: none;
+}
+
+.cb-pricing-cost-pill:focus-within {
+  border-color: #047857;
+  box-shadow: 0 0 0 2px rgba(4, 120, 87, 0.15);
 }
 
 @media (prefers-reduced-motion: reduce) {

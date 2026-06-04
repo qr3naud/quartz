@@ -671,18 +671,25 @@
   function pricingFmt(n) {
     return Math.max(0, Math.round(Number(n) || 0)).toLocaleString();
   }
+  function pricingDollar(n) {
+    return "$" + Math.round(Number(n) || 0).toLocaleString();
+  }
 
-  // The simplified pricing body: one card per use case, each with N per-year
-  // volume editors (N = __cb.contractYears). Each year cell exposes Records,
-  // Credits, and Actions inputs — editing any one resolves the year's records
-  // (volume = perRow x records), so the rep can drive from records OR volume.
+  // The pricing body: one collapsible box per use case (reusing the green
+  // super-group header look), each with N per-year columns (N = contractYears).
+  // Each year column shows Records / Actions / Credits inputs (actions before
+  // credits; edit any one to resolve that year's records) and, when expanded, a
+  // second row with the action + credit dollar costs. A total box sits
+  // underneath. Mode-aware: volumes follow the Projected/Actual toggle.
   function buildPricingBody() {
     const wrap = document.createElement("div");
     wrap.className = "cb-pricing-body";
 
-    const ucs = __cb.cost?.computePricingUseCases?.() || [];
     const years = Math.min(3, Math.max(1, __cb.contractYears || 1));
+    const ucs = __cb.cost?.computePricingUseCases?.({ viewMode: __cb.viewMode }) || [];
     const yrMap = __cb.pricingYearRecords || {};
+    const creditCost = __cb.getCreditCost ? __cb.getCreditCost() : 0.05;
+    const actionCost = __cb.getActionCost ? __cb.getActionCost() : 0.008;
 
     if (ucs.length === 0) {
       const empty = document.createElement("div");
@@ -693,44 +700,98 @@
       return wrap;
     }
 
-    const hint = document.createElement("div");
-    hint.className = "cb-pricing-body-hint";
-    hint.textContent =
-      years > 1
-        ? `Set each year's volume per use case. Edit records or credits/actions \u2014 the others follow. Pricing uses the ${years}-year average to pick the tier.`
-        : "Set each use case's volume. Edit records or credits/actions \u2014 the others follow.";
-    wrap.appendChild(hint);
+    const collapsed = (__cb._pricingCollapsed = __cb._pricingCollapsed || new Set());
+
+    // Per-year grand running totals (across use cases) for the total box.
+    const grand = Array.from({ length: years }, () => ({ credits: 0, actions: 0 }));
 
     for (const uc of ucs) {
-      const card = document.createElement("div");
-      card.className = "cb-pricing-uc";
+      const arr = yrMap[uc.key] || [];
+      const yearRecs = [];
+      let ucCredits = 0;
+      let ucActions = 0;
+      for (let i = 0; i < years; i++) {
+        const recs = arr[i] != null ? Number(arr[i]) : uc.baselineRecords;
+        yearRecs.push(recs);
+        const c = uc.perRowCredits * recs;
+        const a = uc.perRowActions * recs;
+        ucCredits += c;
+        ucActions += a;
+        grand[i].credits += c;
+        grand[i].actions += a;
+      }
 
-      const head = document.createElement("div");
-      head.className = "cb-pricing-uc-head";
+      const box = document.createElement("div");
+      box.className = "cb-pricing-uc";
+      const isCollapsed = collapsed.has(uc.key);
+      if (isCollapsed) box.classList.add("cb-pricing-uc-collapsed");
+
+      // ---- Collapsible green header (mirrors the super-group header) --------
+      const header = document.createElement("div");
+      header.className = "cb-pricing-uc-header";
+      header.setAttribute("role", "button");
+      header.tabIndex = 0;
+      const chevron = document.createElement("span");
+      chevron.className = "cb-pricing-uc-chevron";
+      chevron.innerHTML = chevronDownSvg(12);
+      const icon = document.createElement("span");
+      icon.className = "cb-pricing-uc-icon";
+      icon.innerHTML = typeof tableSvg === "function" ? tableSvg(13) : folderSvg(13);
       const nm = document.createElement("span");
       nm.className = "cb-pricing-uc-name";
       nm.textContent = uc.name;
-      const per = document.createElement("span");
-      per.className = "cb-pricing-uc-per";
-      per.textContent = `${uc.perRowCredits.toFixed(1)} cr \u00b7 ${uc.perRowActions.toFixed(1)} act / record`;
-      head.appendChild(nm);
-      head.appendChild(per);
-      card.appendChild(head);
+      header.appendChild(chevron);
+      header.appendChild(icon);
+      header.appendChild(nm);
+      // Contract-total cost pill (actions|credits) + $ on the right.
+      const pillWrap = document.createElement("span");
+      pillWrap.className = "cb-pricing-uc-pills";
+      if (__cb.buildCostBadges) pillWrap.appendChild(__cb.buildCostBadges(ucCredits, ucActions));
+      const dol = document.createElement("span");
+      dol.className = "cb-pricing-uc-dollar";
+      dol.textContent = pricingDollar(ucCredits * creditCost + ucActions * actionCost);
+      pillWrap.appendChild(dol);
+      header.appendChild(pillWrap);
+      const toggle = () => {
+        if (collapsed.has(uc.key)) collapsed.delete(uc.key);
+        else collapsed.add(uc.key);
+        refresh();
+      };
+      header.addEventListener("click", (e) => {
+        e.stopPropagation();
+        toggle();
+      });
+      header.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          toggle();
+        }
+      });
+      box.appendChild(header);
 
-      const yearsWrap = document.createElement("div");
-      yearsWrap.className = "cb-pricing-uc-years";
-      const arr = yrMap[uc.key] || [];
-      for (let i = 0; i < years; i++) {
-        const recs = arr[i] != null ? Number(arr[i]) : uc.baselineRecords;
-        yearsWrap.appendChild(buildPricingYearCell(uc, i, recs));
+      // ---- Per-year columns (hidden when collapsed) ------------------------
+      if (!isCollapsed) {
+        const yearsWrap = document.createElement("div");
+        yearsWrap.className = "cb-pricing-uc-years";
+        yearsWrap.style.gridTemplateColumns = `repeat(${years}, minmax(0, 1fr))`;
+        for (let i = 0; i < years; i++) {
+          yearsWrap.appendChild(
+            buildPricingYearCell(uc, i, yearRecs[i], creditCost, actionCost),
+          );
+        }
+        box.appendChild(yearsWrap);
       }
-      card.appendChild(yearsWrap);
-      wrap.appendChild(card);
+      wrap.appendChild(box);
     }
+
+    // ---- Total box underneath -------------------------------------------
+    wrap.appendChild(buildPricingTotalBox(grand, creditCost, actionCost, years));
     return wrap;
   }
 
-  function buildPricingYearCell(uc, yearIdx, records) {
+  // One year column: label + a volumes row (Records / Actions / Credits, actions
+  // before credits) + a dollar-cost row (Action $ / Credit $).
+  function buildPricingYearCell(uc, yearIdx, records, creditCost, actionCost) {
     const cell = document.createElement("div");
     cell.className = "cb-pricing-year";
 
@@ -741,9 +802,6 @@
 
     const credits = uc.perRowCredits * records;
     const actions = uc.perRowActions * records;
-
-    const fields = document.createElement("div");
-    fields.className = "cb-pricing-year-fields";
 
     const mkField = (labelText, value, onCommit) => {
       const f = document.createElement("label");
@@ -773,23 +831,98 @@
       return f;
     };
 
-    fields.appendChild(
+    // Volumes row — Records, then Actions, then Credits.
+    const volRow = document.createElement("div");
+    volRow.className = "cb-pricing-year-fields";
+    volRow.appendChild(
       mkField("Records", records, (v) => __cb.setPricingYearRecords(uc.key, yearIdx, v)),
     );
-    fields.appendChild(
-      mkField("Credits", credits, (v) => {
-        const r = uc.perRowCredits > 0 ? Math.round(v / uc.perRowCredits) : 0;
-        __cb.setPricingYearRecords(uc.key, yearIdx, r);
-      }),
-    );
-    fields.appendChild(
+    volRow.appendChild(
       mkField("Actions", actions, (v) => {
         const r = uc.perRowActions > 0 ? Math.round(v / uc.perRowActions) : 0;
         __cb.setPricingYearRecords(uc.key, yearIdx, r);
       }),
     );
-    cell.appendChild(fields);
+    volRow.appendChild(
+      mkField("Credits", credits, (v) => {
+        const r = uc.perRowCredits > 0 ? Math.round(v / uc.perRowCredits) : 0;
+        __cb.setPricingYearRecords(uc.key, yearIdx, r);
+      }),
+    );
+    cell.appendChild(volRow);
+
+    // Dollar-cost row — action $ then credit $.
+    const costRow = document.createElement("div");
+    costRow.className = "cb-pricing-year-costs";
+    const mkCost = (labelText, value, cls) => {
+      const d = document.createElement("div");
+      d.className = "cb-pricing-cost-cell " + cls;
+      const t = document.createElement("span");
+      t.className = "cb-pricing-cost-cell-label";
+      t.textContent = labelText;
+      const v = document.createElement("span");
+      v.className = "cb-pricing-cost-cell-value";
+      v.textContent = pricingDollar(value);
+      d.appendChild(t);
+      d.appendChild(v);
+      return d;
+    };
+    costRow.appendChild(mkCost("Action $", actions * actionCost, "cb-pricing-cost-cell-action"));
+    costRow.appendChild(mkCost("Credit $", credits * creditCost, "cb-pricing-cost-cell-credit"));
+    cell.appendChild(costRow);
+
     return cell;
+  }
+
+  // Grand total box: total action $, total credit $, total cost, savings vs list.
+  function buildPricingTotalBox(grand, creditCost, actionCost, years) {
+    let totalCredits = 0;
+    let totalActions = 0;
+    for (const y of grand) {
+      totalCredits += y.credits;
+      totalActions += y.actions;
+    }
+    const creditDollars = totalCredits * creditCost;
+    const actionDollars = totalActions * actionCost;
+    const total = creditDollars + actionDollars;
+    const listCpc = __cb.pricing?.LIST_CPC ?? 0.05;
+    const listCpa = __cb.pricing?.LIST_CPA ?? 0.008;
+    const listTotal = totalCredits * listCpc + totalActions * listCpa;
+    const savings = Math.max(0, listTotal - total);
+    const savingsPct = listTotal > 0 ? (savings / listTotal) * 100 : 0;
+
+    const box = document.createElement("div");
+    box.className = "cb-pricing-total-box";
+
+    const head = document.createElement("div");
+    head.className = "cb-pricing-total-head";
+    head.textContent = years > 1 ? `Total \u00b7 ${years}-year contract` : "Total";
+    box.appendChild(head);
+
+    const cards = document.createElement("div");
+    cards.className = "cb-pricing-total-cards";
+    const mk = (labelText, valueText, cls) => {
+      const c = document.createElement("div");
+      c.className = "cb-pricing-total-card " + (cls || "");
+      const l = document.createElement("span");
+      l.className = "cb-pricing-total-card-label";
+      l.textContent = labelText;
+      const v = document.createElement("span");
+      v.className = "cb-pricing-total-card-value";
+      v.textContent = valueText;
+      c.appendChild(l);
+      c.appendChild(v);
+      return c;
+    };
+    // Actions before credits.
+    cards.appendChild(mk("Total Action Cost", pricingDollar(actionDollars)));
+    cards.appendChild(mk("Total Credit Cost", pricingDollar(creditDollars)));
+    cards.appendChild(mk("Total Cost", pricingDollar(total), "cb-pricing-total-card-grand"));
+    cards.appendChild(
+      mk("Savings vs List", `${pricingDollar(savings)} \u00b7 ${savingsPct.toFixed(0)}%`, "cb-pricing-total-card-savings"),
+    );
+    box.appendChild(cards);
+    return box;
   }
 
   // Focuses the search input within the currently-mounted control, if any.
@@ -4734,14 +4867,7 @@
     // same flag the Records box uses for its "actual / POC" state.
     const importedYet =
       typeof __cb.recordsActual === "number" && __cb.recordsActual > 0;
-    if (__cb.pricingMode && typeof __cb.buildContractTermToggle === "function") {
-      // Pricing mode: the Projected/Actual toggle becomes a 1y/2y/3y contract
-      // term toggle (same pill design). Shown even before an import, since
-      // pricing works off the scoped enrichments, not just imported tables.
-      const termToggle = __cb.buildContractTermToggle();
-      termToggle.classList.add("cb-table-view-mode-toggle");
-      intro.appendChild(termToggle);
-    } else if (importedYet && typeof __cb.buildViewModeToggle === "function") {
+    if (importedYet && typeof __cb.buildViewModeToggle === "function") {
       const viewToggle = __cb.buildViewModeToggle();
       viewToggle.classList.add("cb-table-view-mode-toggle");
       // Slide it in the first time it appears (import just populated the header).
@@ -4791,6 +4917,14 @@
         openAddMenu(addBtn);
       });
       introActions.appendChild(addBtn);
+    }
+
+    // Pricing mode: the 1y/2y/3y contract-term toggle sits on the right of the
+    // intro row (the Projected/Actual toggle keeps its center slot).
+    if (__cb.pricingMode && typeof __cb.buildContractTermToggle === "function") {
+      const termToggle = __cb.buildContractTermToggle();
+      termToggle.classList.add("cb-table-view-term-toggle");
+      introActions.appendChild(termToggle);
     }
     intro.appendChild(introActions);
 

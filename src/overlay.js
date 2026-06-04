@@ -1347,67 +1347,67 @@
     pricingGroup.appendChild(pricingToggleBox);
     pricingGroup.appendChild(pricingCards);
 
-    // ---- Pricing view strip (multi-year cost + savings) --------------------
+    // ---- Pricing view strip (per-unit cost levers) -------------------------
     // Hidden until pricing mode (CSS keys off .cb-summary-pricing); slides up
-    // from the bottom of the summary bar. The Action/Credit Cost inputs mirror
-    // the creditCost/actionCost state (kept in sync with the Pricing Show cards
-    // via syncStripInputs). The four read-only cards are the derived totals.
+    // from the bottom of the summary bar. Holds the contract per-unit prices as
+    // pill inputs (actions before credits) plus a Projected/Actual mode pill —
+    // the derived totals live in the total box at the bottom of the body. The
+    // inputs mirror the creditCost/actionCost state (synced via syncStripInputs
+    // with the Pricing Show cards).
     const pricingStrip = document.createElement("div");
     pricingStrip.className = "cb-pricing-strip";
     const pricingStripInner = document.createElement("div");
     pricingStripInner.className = "cb-pricing-strip-inner";
 
-    function makeStripInput(id, labelText, value) {
-      const box = document.createElement("div");
-      box.className = "cb-summary-box cb-pricing-card";
-      const lab = document.createElement("label");
-      lab.className = "cb-summary-label";
+    // Projected/Actual mode pill (reuses the export/deal-desk mode pill look).
+    const stripModePill = document.createElement("span");
+    stripModePill.className = "cb-gtme-mode-pill cb-pricing-mode-pill";
+    stripModePill.textContent = "Projected";
+
+    // Pill-shaped per-unit cost input with a leading glyph (StarFour for
+    // actions, Coin for credits) so it reads as the same family as the cost
+    // pills used across the table.
+    function makeStripInput(id, labelText, value, glyph) {
+      const box = document.createElement("label");
+      box.className = "cb-pricing-cost-pill";
+      box.htmlFor = id;
+      const ic = document.createElement("span");
+      ic.className = "cb-pricing-cost-pill-icon";
+      ic.innerHTML = glyph;
+      const lab = document.createElement("span");
+      lab.className = "cb-pricing-cost-pill-label";
       lab.textContent = labelText;
-      lab.htmlFor = id;
       const inp = document.createElement("input");
       inp.type = "text";
       inp.inputMode = "decimal";
-      inp.className = "cb-pricing-input";
+      inp.className = "cb-pricing-cost-pill-input";
       inp.id = id;
       inp.value = value;
+      box.appendChild(ic);
       box.appendChild(lab);
       box.appendChild(inp);
       return { box, inp };
     }
-    function makeStripCard(labelText, extraClass) {
-      const box = document.createElement("div");
-      box.className = "cb-summary-box cb-pricing-card" + (extraClass ? " " + extraClass : "");
-      const lab = document.createElement("span");
-      lab.className = "cb-summary-label";
-      lab.textContent = labelText;
-      const val = document.createElement("span");
-      val.className = "cb-summary-value";
-      val.textContent = "$0";
-      box.appendChild(lab);
-      box.appendChild(val);
-      return { box, val };
-    }
 
-    const stripActionCost = makeStripInput("cb-strip-action-cost", "Action Cost", "$0.008");
-    const stripCreditCost = makeStripInput("cb-strip-credit-cost", "Credit Cost", "$0.05");
-    const stripActionTotalCard = makeStripCard("Total Action Cost");
-    const stripCreditTotalCard = makeStripCard("Total Credit Cost");
-    const stripTotalCard = makeStripCard("Total Cost", "cb-pricing-total");
-    const stripSavingsCard = makeStripCard("Savings vs List", "cb-pricing-savings");
+    const starGlyph =
+      '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l1.6 6.4L20 10l-6.4 1.6L12 18l-1.6-6.4L4 10l6.4-1.6L12 2z"/></svg>';
+    const coinGlyph =
+      '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v10M9.5 9.5h3.2a1.8 1.8 0 0 1 0 3.6H9.5"/></svg>';
+
+    // Actions before credits.
+    const stripActionCost = makeStripInput("cb-strip-action-cost", "Action cost", "$0.008", starGlyph);
+    const stripCreditCost = makeStripInput("cb-strip-credit-cost", "Credit cost", "$0.05", coinGlyph);
     const stripActionInput = stripActionCost.inp;
     const stripCreditInput = stripCreditCost.inp;
 
+    pricingStripInner.appendChild(stripModePill);
     pricingStripInner.appendChild(stripActionCost.box);
     pricingStripInner.appendChild(stripCreditCost.box);
-    pricingStripInner.appendChild(stripActionTotalCard.box);
-    pricingStripInner.appendChild(stripCreditTotalCard.box);
-    pricingStripInner.appendChild(stripTotalCard.box);
-    pricingStripInner.appendChild(stripSavingsCard.box);
     pricingStrip.appendChild(pricingStripInner);
 
     // wirePricingInput + commitPricingInput are hoisted function declarations
     // below; they set the shared creditCost/actionCost and call recalcTotal
-    // (which re-syncs every cost input via syncStripInputs).
+    // (which re-syncs every cost input + refreshes the body totals).
     wirePricingInput(stripCreditInput, (v) => { creditCost = v; });
     wirePricingInput(stripActionInput, (v) => { actionCost = v; });
 
@@ -1742,37 +1742,29 @@
       setIf(actionCostInput, actionCost);
     }
 
+    // Mode-aware: the per-year volumes follow the Projected/Actual toggle (same
+    // as the rest of the table). __cb.getPricingResult is the single source the
+    // body total box + the View Bands overlay both read.
     function computePricingResult() {
       const contractYears = Math.min(3, Math.max(1, __cb.contractYears || 1));
       return __cb.cost.computeContractTotals({
         contractYears,
         yearRecordsByUc: __cb.pricingYearRecords || {},
+        viewMode: __cb.viewMode,
       });
     }
     __cb.getPricingResult = computePricingResult;
 
+    // The strip itself only carries the cost-input pills + the mode pill; the
+    // derived totals render in the body's total box (rebuilt on every refresh).
+    // So this just keeps the inputs + mode pill + bands overlay in sync.
     function updatePricingStrip() {
-      if (!__cb.pricingMode) return;
-      const res = computePricingResult();
-      let totalCredits = 0;
-      let totalActions = 0;
-      for (const y of res.years) {
-        totalCredits += y.credits;
-        totalActions += y.actions;
-      }
-      const creditDollars = totalCredits * creditCost;
-      const actionDollars = totalActions * actionCost;
-      const total = creditDollars + actionDollars;
-      const listCpc = __cb.pricing?.LIST_CPC ?? 0.05;
-      const listCpa = __cb.pricing?.LIST_CPA ?? 0.008;
-      const listTotal = totalCredits * listCpc + totalActions * listCpa;
-      const savings = Math.max(0, listTotal - total);
-      const savingsPct = listTotal > 0 ? (savings / listTotal) * 100 : 0;
-      setSummaryNumber(stripActionTotalCard.val, actionDollars, formatDollarRounded);
-      setSummaryNumber(stripCreditTotalCard.val, creditDollars, formatDollarRounded);
-      setSummaryNumber(stripTotalCard.val, total, formatDollarRounded);
-      stripSavingsCard.val.textContent = `${formatDollarRounded(savings)} \u00b7 ${savingsPct.toFixed(0)}%`;
-      if (__cb.pricingBands?.refresh) __cb.pricingBands.refresh(res);
+      const actual = __cb.viewMode === "actual";
+      stripModePill.textContent = actual ? "Actual" : "Projected";
+      stripModePill.classList.toggle("cb-gtme-mode-pill-actual", actual);
+      stripModePill.classList.toggle("cb-gtme-mode-pill-projected", !actual);
+      syncStripInputs();
+      if (__cb.pricingBands?.refresh) __cb.pricingBands.refresh(computePricingResult());
     }
     __cb.updatePricingStrip = updatePricingStrip;
 
@@ -1825,6 +1817,10 @@
       if (__cb.canvas?.updateGroupCredits) {
         __cb.canvas.updateGroupCredits();
       }
+      // Pricing mode: the body total box derives from these prices, so refresh
+      // it. Safe re: focus — commit runs on blur, and the inputs live in the
+      // summary-bar strip, not the body being re-rendered.
+      if (__cb.pricingMode && __cb.tableView?.refresh) __cb.tableView.refresh();
       if (__cb.debouncedSave) __cb.debouncedSave();
     }
 

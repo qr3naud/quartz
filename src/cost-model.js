@@ -511,7 +511,9 @@
   // ("other") cards collapse into a single synthetic "Scope" use case so a
   // canvas-only scope still prices.
   // ---------------------------------------------------------------------------
-  function computePricingUseCases() {
+  function computePricingUseCases(opts) {
+    opts = opts || {};
+    const projected = (opts.viewMode || cb.viewMode) !== "actual";
     const cards = cb.model?.getNodes?.() || [];
     const freqMult = (id) => (cb.getFrequencyMultiplier ? cb.getFrequencyMultiplier(id) : 1);
     const hasImported = listUseCases().length > 0;
@@ -524,7 +526,15 @@
       // quote (same as computeUseCaseTotals). With no tables, "other" IS the
       // scope, so keep it.
       if (key === OTHER_USE_CASE && hasImported) continue;
-      const pr = perRowCost(c, { viewMode: "projected" });
+      // Mode-aware: Projected uses catalog credits; Actual uses measured per-row
+      // spend (spend/ran) and skips cards with no spend yet.
+      const pr = perRowCost(
+        c,
+        projected
+          ? { viewMode: "projected" }
+          : { viewMode: "actual", fallbackToProjected: false },
+      );
+      if (pr.noSpend) continue;
       const freqId = d.frequencyCustom
         ? d.frequency
         : key === OTHER_USE_CASE
@@ -567,7 +577,9 @@
     opts = opts || {};
     const contractYears = Math.min(3, Math.max(1, Number(opts.contractYears) || 1));
     const yearRecordsByUc = opts.yearRecordsByUc || {};
-    const useCases = Array.isArray(opts.useCases) ? opts.useCases : computePricingUseCases();
+    const useCases = Array.isArray(opts.useCases)
+      ? opts.useCases
+      : computePricingUseCases({ viewMode: opts.viewMode });
     const years = [];
     for (let i = 0; i < contractYears; i++) {
       let credits = 0;
