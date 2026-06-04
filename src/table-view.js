@@ -4162,11 +4162,13 @@
         action: () => groupSelected(),
       });
 
-      // Link = "share an enrichment" in the lineage model. Only meaningful
-      // for exactly one enrichment + data point(s), or DP-only where at
-      // least one DP already carries a source enrichment to propagate.
+      // Link = "share an enrichment" in the lineage model. Meaningful for one
+      // OR MORE enrichments + data point(s) — a DP can derive from multiple
+      // enrichments (OR/waterfall or AND/sum chain), and linkCardsByIds unions
+      // every selected ER onto each DP. Also DP-only where at least one DP
+      // already carries a source enrichment to propagate.
       const canShareEnrichment =
-        (erCount === 1 && dpCards.length >= 1) ||
+        (erCount >= 1 && dpCards.length >= 1) ||
         (erCount === 0 && dpCards.length >= 2 && dpWithLineage);
       if (canShareEnrichment) {
         items.push({

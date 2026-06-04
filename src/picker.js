@@ -1036,24 +1036,30 @@
     // Lineage link (Phase 2.c). The table view matches DP -> ER by
     // `sourceEnrichmentFieldId`, NOT by cluster/geometry, so a cluster-only
     // link leaves the new enrichment stranded in the "Unattached
-    // enrichments" section. When the user adds a single enrichment to a
-    // specific data point (table-view "+ Add enrichment" or the canvas ER
-    // tool on a DP), stamp the DP's lineage to that ER's key. Picker-created
-    // ERs carry no Clay fieldId, so synthesize a stable local key (mirrors
-    // erLineageKeyOf in canvas/index.js + the table view's key derivation,
-    // both of which read data.fieldId / wf:<groupCluster>). The synthetic id
-    // never has a tableId, so "Open in table" stays correctly disabled.
-    if (target.data && target.data.type === "dp" && addedCards.length === 1 && addedCards[0]?.data) {
-      const erKey = __cb.canvas.ensureErLineageKey
-        ? __cb.canvas.ensureErLineageKey(addedCards[0])
-        : null;
-      if (erKey != null) {
+    // enrichments" section. When the user adds one OR MORE enrichments to a
+    // specific data point (table-view "+ Add enrichment" / "Insert enrichment
+    // below" or the canvas ER tool on a DP), stamp the DP's lineage with every
+    // added ER's key — a data point can derive from multiple enrichments.
+    // Picker-created ERs carry no Clay fieldId, so synthesize a stable local
+    // key (mirrors erLineageKeyOf in canvas/index.js + the table view's key
+    // derivation, both of which read data.fieldId / wf:<groupCluster>). The
+    // synthetic id never has a tableId, so "Open in table" stays correctly
+    // disabled.
+    if (target.data && target.data.type === "dp" && addedCards.length >= 1) {
+      const erKeys = addedCards
+        .map((c) =>
+          c?.data && __cb.canvas.ensureErLineageKey
+            ? __cb.canvas.ensureErLineageKey(c)
+            : null,
+        )
+        .filter((k) => k != null);
+      if (erKeys.length > 0) {
         // Union, not overwrite — a data point can link multiple enrichments,
         // so "+ Add enrichment" adds to whatever it already references.
         if (__cb.setDpErKeys) {
-          __cb.setDpErKeys(target, [...__cb.dpErKeys(target), erKey]);
+          __cb.setDpErKeys(target, [...__cb.dpErKeys(target), ...erKeys]);
         } else {
-          target.data.sourceEnrichmentFieldId = erKey;
+          target.data.sourceEnrichmentFieldId = erKeys[0];
         }
         // addCard already fired a notifyChange before the lineage was set, so
         // the first table render saw the ER as orphan. Re-notify + persist so
