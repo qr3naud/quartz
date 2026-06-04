@@ -311,7 +311,8 @@
             a.target = "_blank";
             a.rel = "noopener noreferrer";
             a.textContent = "Slack";
-            a.style.cssText = "color:#2563eb;text-decoration:none;flex:0 0 auto;";
+            a.style.cssText =
+              "flex:0 0 auto;display:inline-flex;align-items:center;height:20px;padding:0 8px;border:1px solid #e0e7ff;border-radius:999px;background:#eef2ff;color:#4338ca;font-size:11px;font-weight:600;text-decoration:none;";
             line.appendChild(a);
           }
           recentList.appendChild(line);

@@ -20,6 +20,10 @@
 
   let modalEl = null;
   let backdropEl = null;
+  // Unsubscribe handle for the linked-opportunity subscription (the SFDC opp
+  // selector embedded in the modal); cleared in close() so we don't leak a
+  // listener per modal open.
+  let oppUnsub = null;
 
   function sendMessage(payload) {
     return new Promise((resolve) => {
@@ -40,6 +44,7 @@
   function close() {
     if (modalEl) { modalEl.remove(); modalEl = null; }
     if (backdropEl) { backdropEl.remove(); backdropEl = null; }
+    if (oppUnsub) { try { oppUnsub(); } catch {} oppUnsub = null; }
     document.removeEventListener("keydown", onKeydown);
   }
   __cb.closeDealDeskModal = close;
@@ -153,8 +158,10 @@
       });
     }
 
-    let customerName = linkedOpp?.name || "";
-    let channel = "";
+    // The linked opportunity can change while the modal is open (via the SFDC
+    // picker below), so track it in a mutable local kept in sync by the
+    // onLinkedOppChange subscription.
+    let currentOpp = linkedOpp;
     let justification = "";
     let submitting = false;
 
@@ -194,50 +201,67 @@
     const body = document.createElement("div");
     body.className = "cb-export-modal-body cb-gtme-body";
 
-    // Customer + channel fields.
-    const fieldsRow = document.createElement("div");
-    fieldsRow.className = "cb-gtme-fields";
+    // Salesforce opportunity selector — replaces the free-text customer name.
+    // The Slack channel override moved to Admin settings (app_settings), so the
+    // modal no longer carries a channel field. The account name + SFDC fields on
+    // submit come from the linked opportunity. Reuses the same linked-opp pill /
+    // search picker as the toolbar.
+    const CLOUD_SVG =
+      '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.5 19a4.5 4.5 0 1 0-1.4-8.8 6 6 0 0 0-11.6 1.6A4 4 0 0 0 6 19h11.5z"/></svg>';
 
-    const nameField = document.createElement("label");
-    nameField.className = "cb-gtme-field cb-gtme-field-grow";
-    const nameLabel = document.createElement("span");
-    nameLabel.className = "cb-gtme-field-label";
-    nameLabel.textContent = "Customer / account name";
-    const nameInput = document.createElement("input");
-    nameInput.type = "text";
-    nameInput.className = "cb-gtme-input";
-    nameInput.placeholder = "e.g. Acme Corp";
-    nameInput.autocomplete = "off";
-    nameInput.value = customerName;
-    nameInput.addEventListener("input", () => { customerName = nameInput.value; updateSubmitState(); });
-    nameField.appendChild(nameLabel);
-    nameField.appendChild(nameInput);
+    const oppField = document.createElement("div");
+    oppField.className = "cb-gtme-field cb-gtme-field-grow";
+    const oppLabel = document.createElement("span");
+    oppLabel.className = "cb-gtme-field-label";
+    oppLabel.textContent = "Salesforce opportunity";
+    const oppSlot = document.createElement("div");
+    oppField.appendChild(oppLabel);
+    oppField.appendChild(oppSlot);
+    body.appendChild(oppField);
 
-    const channelField = document.createElement("label");
-    channelField.className = "cb-gtme-field";
-    const channelLabel = document.createElement("span");
-    channelLabel.className = "cb-gtme-field-label";
-    channelLabel.textContent = "Slack channel (optional)";
-    const channelInput = document.createElement("input");
-    channelInput.type = "text";
-    channelInput.className = "cb-gtme-input";
-    channelInput.placeholder = "default deal-desk";
-    channelInput.autocomplete = "off";
-    channelInput.addEventListener("input", () => { channel = channelInput.value; });
-    channelField.appendChild(channelLabel);
-    channelField.appendChild(channelInput);
-
-    fieldsRow.appendChild(nameField);
-    fieldsRow.appendChild(channelField);
-    body.appendChild(fieldsRow);
-
-    if (linkedOpp?.id) {
-      const oppNote = document.createElement("div");
-      oppNote.className = "cb-gtme-tabs-hint";
-      oppNote.style.cssText = "margin:-4px 0 8px;";
-      oppNote.textContent = `Linked opportunity: ${linkedOpp.name || linkedOpp.id} (sent with the submission)`;
-      body.appendChild(oppNote);
+    function pickOpp(anchor) {
+      if (!__cb.sfdc || !__cb.sfdc.showPicker) return;
+      __cb.sfdc.showPicker(anchor, async (opp) => {
+        try {
+          await __cb.sfdc.linkCanvasToOpportunity(workbookId, opp);
+        } catch (err) {
+          console.error("[Clay Scoping] linkCanvasToOpportunity failed:", err);
+          showError(`Failed to link opportunity: ${err?.message || err}`);
+        }
+      });
     }
+
+    function renderOpp() {
+      oppSlot.innerHTML = "";
+      if (currentOpp) {
+        const pill = document.createElement("button");
+        pill.type = "button";
+        pill.className = "cb-sfdc-pill";
+        pill.title = "Change linked opportunity";
+        pill.innerHTML =
+          `<span class="cb-sfdc-pill-icon">${CLOUD_SVG}</span><span class="cb-sfdc-pill-label"></span>`;
+        pill.querySelector(".cb-sfdc-pill-label").textContent = currentOpp.name || currentOpp.id;
+        pill.addEventListener("click", (evt) => { evt.stopPropagation(); pickOpp(pill); });
+        oppSlot.appendChild(pill);
+        if (currentOpp.url) {
+          const openLink = document.createElement("a");
+          openLink.href = currentOpp.url;
+          openLink.target = "_blank";
+          openLink.rel = "noopener noreferrer";
+          openLink.textContent = "Open in Salesforce";
+          openLink.style.cssText = "margin-left:10px;font-size:12px;color:#2563eb;text-decoration:none;";
+          oppSlot.appendChild(openLink);
+        }
+      } else {
+        const linkBtn = document.createElement("button");
+        linkBtn.type = "button";
+        linkBtn.className = "cb-toolbar-btn cb-toolbar-sfdc-link";
+        linkBtn.innerHTML = `${CLOUD_SVG}<span>Link opportunity</span>`;
+        linkBtn.addEventListener("click", (evt) => { evt.stopPropagation(); pickOpp(linkBtn); });
+        oppSlot.appendChild(linkBtn);
+      }
+    }
+    renderOpp();
 
     // Tabs to submit.
     const tabsHeader = document.createElement("div");
@@ -353,7 +377,10 @@
     const justInput = document.createElement("textarea");
     justInput.className = "cb-gtme-input";
     justInput.rows = 3;
-    justInput.style.cssText = "width:100%;resize:vertical;";
+    // cb-gtme-input is tuned for one-line inputs (height:36px / padding:0 10px);
+    // override so the textarea is a roomy box with comfortable text padding.
+    justInput.style.cssText =
+      "width:100%;height:auto;min-height:76px;padding:8px 10px;resize:vertical;line-height:1.45;";
     justInput.placeholder = "Why this pricing? e.g. competitive deal, strategic logo…";
     justInput.addEventListener("input", () => { justification = justInput.value; });
     justField.appendChild(justLabel);
@@ -403,7 +430,8 @@
           a.target = "_blank";
           a.rel = "noopener noreferrer";
           a.textContent = "Slack";
-          a.style.cssText = "color:#2563eb;text-decoration:none;flex:0 0 auto;";
+          a.style.cssText =
+            "flex:0 0 auto;display:inline-flex;align-items:center;height:20px;padding:0 8px;border:1px solid #e0e7ff;border-radius:999px;background:#eef2ff;color:#4338ca;font-size:11px;font-weight:600;text-decoration:none;";
           line.appendChild(a);
         }
         recentList.appendChild(line);
@@ -412,26 +440,30 @@
 
     // ---- Footer ----
     const footer = document.createElement("div");
-    footer.className = "cb-export-modal-footer";
+    footer.className = "cb-modal-footer";
     const errorEl = document.createElement("div");
     errorEl.className = "cb-gtme-error";
     errorEl.style.display = "none";
     body.appendChild(errorEl);
 
+    const footerHint = document.createElement("div");
+    footerHint.className = "cb-export-modal-footer-hint";
+    footerHint.textContent = "Posts each checked config to the deal-desk Slack channel.";
     const footerActions = document.createElement("div");
-    footerActions.className = "cb-export-footer-actions";
+    footerActions.className = "cb-modal-footer-actions";
     const cancelBtn = document.createElement("button");
     cancelBtn.type = "button";
-    cancelBtn.className = "cb-export-modal-done";
+    cancelBtn.className = "cb-modal-btn cb-modal-btn-ghost";
     cancelBtn.textContent = "Cancel";
     cancelBtn.addEventListener("click", close);
     const submitBtn = document.createElement("button");
     submitBtn.type = "button";
-    submitBtn.className = "cb-export-submit";
+    submitBtn.className = "cb-modal-btn cb-modal-btn-primary";
     submitBtn.textContent = "Submit";
     submitBtn.addEventListener("click", onSubmit);
     footerActions.appendChild(cancelBtn);
     footerActions.appendChild(submitBtn);
+    footer.appendChild(footerHint);
     footer.appendChild(footerActions);
 
     function showError(msg) { errorEl.textContent = msg; errorEl.style.display = ""; }
@@ -442,7 +474,7 @@
     }
 
     function updateSubmitState() {
-      const ok = !submitting && customerName.trim() && selectedRows().length > 0;
+      const ok = !submitting && !!currentOpp && selectedRows().length > 0;
       submitBtn.disabled = !ok;
       submitBtn.style.opacity = ok ? "1" : ".5";
     }
@@ -450,7 +482,7 @@
     async function onSubmit() {
       if (submitting) return;
       const rows = selectedRows();
-      if (!customerName.trim() || rows.length === 0) return;
+      if (!currentOpp || rows.length === 0) return;
       submitting = true;
       updateSubmitState();
       submitBtn.textContent = "Submitting…";
@@ -458,19 +490,21 @@
 
       // Rebuild configs now so the latest justification is attached.
       const configs = rows.map((r) => buildConfig(r.tab, r.volumes, justification).config);
-      const account = { name: customerName.trim() };
-      if (linkedOpp?.id) {
-        account.sfdc_opportunity_id = linkedOpp.id;
-        if (linkedOpp.name) account.sfdc_opportunity_name = linkedOpp.name;
-        if (linkedOpp.url) account.sfdc_opportunity_url = linkedOpp.url;
+      // Account name comes from the linked opportunity (no free-text field now).
+      const account = { name: currentOpp.name || currentOpp.id };
+      if (currentOpp.id) {
+        account.sfdc_opportunity_id = currentOpp.id;
+        if (currentOpp.name) account.sfdc_opportunity_name = currentOpp.name;
+        if (currentOpp.url) account.sfdc_opportunity_url = currentOpp.url;
       }
 
+      // Channel is resolved server-side from app_settings.deal_desk_channel
+      // (set in Admin), so we no longer send one from the client.
       const resp = await sendMessage({
         type: "cb:dealdesk:submit",
         body: {
           account,
           configs,
-          channel: channel.trim() || undefined,
           workbookId,
           workspaceId,
         },
@@ -505,8 +539,17 @@
     document.addEventListener("keydown", onKeydown);
 
     renderTabs();
+    // Keep the opp selector + submit state in sync when the opp changes via the
+    // picker. onLinkedOppChange fires immediately with the current value, so
+    // this also seeds the initial render/state. Unsubscribed in close().
+    if (__cb.sfdc && __cb.sfdc.onLinkedOppChange) {
+      oppUnsub = __cb.sfdc.onLinkedOppChange((opp) => {
+        currentOpp = opp || null;
+        renderOpp();
+        updateSubmitState();
+      });
+    }
     updateSubmitState();
-    nameInput.focus();
     // Warm pricing + load recent submissions.
     if (__cb.pricing && __cb.pricing.load) __cb.pricing.load().then(renderTabs).catch(() => {});
     refreshRecent();

@@ -28,6 +28,10 @@
       label: "POC request Slack channel",
       hint: "Channel ID (e.g. C0AFJMW5Q75) or #name — the bot must be a member.",
     },
+    deal_desk_channel: {
+      label: "Deal desk Slack channel",
+      hint: "Channel name (e.g. #deal-desk) or ID the deal-desk app posts to. Leave blank to use the server default.",
+    },
   };
 
   function close() {
@@ -100,20 +104,28 @@
     function renderRows(rows) {
       fieldsWrap.innerHTML = "";
       fieldsWrap.style.opacity = "1";
-      const list = rows && rows.length ? rows : [{ key: "poc_request_channel", value: "" }];
-      for (const r of list) {
-        const meta = KNOWN[r.key] || {};
+      // Render every known setting (so unset ones still show and can be
+      // created), then any extra keys already in the DB we have no metadata for.
+      const byKey = new Map();
+      for (const r of rows || []) byKey.set(r.key, r.value || "");
+      const keys = [
+        ...Object.keys(KNOWN),
+        ...[...byKey.keys()].filter((k) => !(k in KNOWN)),
+      ];
+      for (const key of keys) {
+        const meta = KNOWN[key] || {};
+        const value = byKey.get(key) || "";
         const field = document.createElement("label");
         field.className = "cb-gtme-field cb-gtme-field-grow";
         field.style.display = "block";
         const label = document.createElement("span");
         label.className = "cb-gtme-field-label";
-        label.textContent = meta.label || r.key;
+        label.textContent = meta.label || key;
         const input = document.createElement("input");
         input.type = "text";
         input.className = "cb-gtme-input";
         input.autocomplete = "off";
-        input.value = r.value || "";
+        input.value = value;
         if (meta.hint) input.placeholder = meta.hint;
         field.appendChild(label);
         field.appendChild(input);
@@ -125,7 +137,7 @@
           field.appendChild(hint);
         }
         fieldsWrap.appendChild(field);
-        editors.set(r.key, { input, initial: r.value || "" });
+        editors.set(key, { input, initial: value });
       }
     }
 
