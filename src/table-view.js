@@ -876,6 +876,7 @@
         rows,
         total,
         editable: !!erCard,
+        locked: !!erCard?.data?.coverageLocked,
         erCardId: erCard ? erCard.id : null,
       };
     }
@@ -904,35 +905,71 @@
     return { coverage, fill };
   }
 
-  // Writes the projected coverage onto an enrichment card. Coverage lives only
-  // on the ER, so this single write syncs every DP row the enrichment returns
-  // (and the shared projected cost) on the next refresh.
-  function setErCoverage(erCardId, value) {
+  // Resolve an ER's current projected coverage pair: X = coverageRows (rows that
+  // run, drives cost), Y = coverageTotal (attempted total). Both default to /
+  // track the global records total, mirroring coverageFillFor.
+  function erCoveragePair(er) {
+    const cb = window.__cb;
+    const records =
+      Number(cb.getRecordsCount?.()) || Number(cb.recordsActual) || 0;
+    const x = er.data.coverageRows != null ? Number(er.data.coverageRows) : records;
+    const y = er.data.coverageTotalCustom
+      ? Number(er.data.coverageTotal) || 0
+      : records;
+    return { x, y };
+  }
+
+  // Commit a projected coverage edit on an ER. `field` is "rows" (X, the cost
+  // driver) or "total" (Y, the display denominator). Two invariants:
+  //   - X never exceeds Y (you can't run more rows than exist).
+  //   - When the ER's ratio is locked (coverageLocked), editing one value
+  //     rescales the OTHER to preserve X/Y (rounded), so the % stays put.
+  // Coverage lives only on the ER, so one write syncs every DP row + the shared
+  // projected cost on the next refresh.
+  function commitErCoverageEdit(erCardId, field, value) {
     const cb = window.__cb;
     const er = (cb.canvas?.getCards?.() || []).find((c) => c.id === erCardId);
     if (!er) return;
     const n = Math.max(0, Math.round(Number(String(value).replace(/[^\d]/g, "")) || 0));
-    if (er.data.coverageRows === n && er.data.coverageCustom) return;
-    er.data.coverageRows = n;
-    er.data.coverageCustom = true;
+    const { x: oldX, y: oldY } = erCoveragePair(er);
+    const locked = !!er.data.coverageLocked && oldX > 0 && oldY > 0;
+
+    if (field === "rows") {
+      let x = n;
+      if (locked) {
+        // Preserve X/Y: scale Y with X. ratio <= 1 so Y >= X holds.
+        er.data.coverageTotal = Math.max(1, Math.round(x * (oldY / oldX)));
+        er.data.coverageTotalCustom = true;
+      } else if (oldY > 0) {
+        x = Math.min(x, oldY); // clamp numerator <= denominator
+      }
+      er.data.coverageRows = x;
+      er.data.coverageCustom = true;
+    } else {
+      const y = n;
+      if (locked) {
+        er.data.coverageRows = Math.max(0, Math.round(y * (oldX / oldY)));
+        er.data.coverageCustom = true;
+      } else if (oldX > y) {
+        er.data.coverageRows = y; // numerator can't exceed the new denominator
+        er.data.coverageCustom = true;
+      }
+      er.data.coverageTotal = y;
+      er.data.coverageTotalCustom = true;
+    }
     cb.canvas?.refreshCreditTotal?.();
     cb.canvas?.updateGroupCredits?.();
     cb.canvas?.notifyChange?.();
     cb.tableView?.refresh?.();
   }
 
-  // Writes the projected coverage DENOMINATOR (the per-ER "attempted total")
-  // onto an enrichment card. Display-only for the coverage fraction — cost is
-  // driven by coverageRows (the numerator), so this doesn't recompute credits,
-  // but we still persist + re-render so the fraction updates everywhere the ER
-  // appears.
-  function setErCoverageTotal(erCardId, value) {
+  // Toggle the per-ER coverage ratio lock. When on, commitErCoverageEdit keeps
+  // X/Y constant as either value changes.
+  function setErCoverageLocked(erCardId, locked) {
     const cb = window.__cb;
     const er = (cb.canvas?.getCards?.() || []).find((c) => c.id === erCardId);
     if (!er) return;
-    const n = Math.max(0, Math.round(Number(String(value).replace(/[^\d]/g, "")) || 0));
-    er.data.coverageTotal = n;
-    er.data.coverageTotalCustom = true;
+    er.data.coverageLocked = !!locked;
     cb.canvas?.notifyChange?.();
     cb.tableView?.refresh?.();
   }
@@ -964,7 +1001,7 @@
 
       wrap.appendChild(
         mkInput(coverage.rows, "Rows this enrichment runs on (drives projected cost)",
-          (v) => setErCoverage(coverage.erCardId, v)),
+          (v) => commitErCoverageEdit(coverage.erCardId, "rows", v)),
       );
       const sep = document.createElement("span");
       sep.className = "cb-table-view-cov-sep";
@@ -972,8 +1009,25 @@
       wrap.appendChild(sep);
       wrap.appendChild(
         mkInput(coverage.total, "Attempted total for this enrichment (defaults to total records)",
-          (v) => setErCoverageTotal(coverage.erCardId, v)),
+          (v) => commitErCoverageEdit(coverage.erCardId, "total", v)),
       );
+
+      // Ratio lock: when on, editing rows or total keeps the same % (the other
+      // value rescales + rounds). Amber when locked.
+      const lockBtn = document.createElement("button");
+      lockBtn.type = "button";
+      lockBtn.className =
+        "cb-table-view-cov-lock" + (coverage.locked ? " cb-table-view-cov-lock-on" : "");
+      lockBtn.title = coverage.locked
+        ? "Coverage ratio locked \u2014 editing rows or total keeps the same %"
+        : "Lock the coverage ratio";
+      lockBtn.innerHTML = lockSvg(!!coverage.locked);
+      lockBtn.addEventListener("mousedown", (e) => e.stopPropagation());
+      lockBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        setErCoverageLocked(coverage.erCardId, !coverage.locked);
+      });
+      wrap.appendChild(lockBtn);
 
       const denom = Number(coverage.total) || 0;
       if (denom > 0) {
@@ -2544,6 +2598,27 @@
             ? "AI"
             : "Action";
 
+    // Scoped Records for this ER's use case (matches the per-use-case header in
+    // multi-import; falls back to the global Records otherwise) + whether it's
+    // been overridden from the imported baseline (drives the Total(actual) amber).
+    const ucKey = cb?.cost?.useCaseKeyForCard ? cb.cost.useCaseKeyForCard(er) : null;
+    const multiUC =
+      cb?.cost?.useCaseCount?.() >= 2 && ucKey && ucKey !== cb.cost.OTHER_USE_CASE;
+    const scopedRecords = multiUC
+      ? Number(cb.cost.useCaseRecords(ucKey)) || 0
+      : Number(cb?.getRecordsCount?.()) || 0;
+    const recordsBaseline = multiUC
+      ? cb.cost.useCaseRecordsActual(ucKey)
+      : typeof cb?.recordsActual === "number" && cb.recordsActual > 0
+        ? cb.recordsActual
+        : null;
+    const recordsOverridden =
+      recordsBaseline != null && recordsBaseline > 0 && scopedRecords !== recordsBaseline;
+    const actualCov =
+      d.stats?.coverage && Number(d.stats.coverage.total) > 0
+        ? { ran: Number(d.stats.coverage.ran) || 0, total: Number(d.stats.coverage.total) || 0 }
+        : null;
+
     return {
       id: er.id,
       name: d.displayName || d.text || (isWaterfall ? "Waterfall" : "Untitled enrichment"),
@@ -2560,20 +2635,15 @@
       iconUrl: d.iconUrl || null,
       iconSvgHtml: d.iconSvgHtml || null,
       model,
-      // Per-row cost (view-mode-aware) for the details menu.
+      // Per-row cost (view-mode-aware) for the details menu — in Actual mode this
+      // is measured spend ÷ rows that ran (coverage.ran via actualRowDenominator).
       cost: erPerRowCost(er),
-      // Measured per-row spend (credits + action executions) from the import's
-      // background spend fetch — shown as a separate "Actual" row in the details
-      // menu so reps see real cost alongside the projected estimate.
-      actualSpend: (d.stats?.spend && Number(d.stats.spend.cellCount) > 0)
-        ? {
-            credits: (Number(d.stats.spend.credits) || 0) / Number(d.stats.spend.cellCount),
-            actions: (Number(d.stats.spend.actionExecutions) || 0) / Number(d.stats.spend.cellCount),
-          }
-        : null,
-      // Run-total inputs for the details-menu "Total" rows. Projected total =
-      // per-row × records × coverage × frequency; actual total = measured spend.
-      records: Number(cb?.getRecordsCount?.()) || 0,
+      // Run-total inputs for the details-menu "Total" row. Projected total =
+      // per-row × records × coverage × frequency; actual total = measured spend ×
+      // (records / coverage.total) × frequency (matches the use-case header).
+      records: scopedRecords,
+      recordsOverridden,
+      actualCoverage: actualCov,
       coverageRows: d.coverageRows != null ? Number(d.coverageRows) : null,
       spendTotal: d.stats?.spend
         ? {
@@ -5613,15 +5683,21 @@
   function buildErMenuCostNode(er) {
     const c = er.cost || {};
     const calculating = !!c.creditsUnknown;
-    const actions = Number(c.actions) || 0;
+    // Annualize the per-row figures when the ER runs more than once a year
+    // (frequency override); the pill then gets an amber outline to flag it.
+    const freqMult = er.multiplier ?? 1;
+    const overridden = freqMult !== 1;
+    const mult = overridden ? freqMult : 1;
+    const actions = (Number(c.actions) || 0) * mult;
 
     const pill = document.createElement("span");
     pill.className = "cb-table-view-er-cost-pill";
+    if (overridden) pill.classList.add("cb-table-view-er-cost-pill-override");
 
     if (!calculating && actions > 0) {
       const seg = document.createElement("span");
       seg.className = "cb-table-view-er-cost-seg cb-table-view-er-cost-actions";
-      seg.title = `${formatNumber(actions)} action${actions === 1 ? "" : "s"} / row`;
+      seg.title = `${formatNumber(actions)} action${actions === 1 ? "" : "s"}`;
       seg.innerHTML = starFourSvg(12) + `<span>${formatNumber(actions)}</span>`;
       pill.appendChild(seg);
     }
@@ -5632,17 +5708,17 @@
       credSeg.innerHTML = coinSvg(12) + "<span>Calculating\u2026</span>";
     } else if (er.usePrivateKey) {
       credSeg.classList.add("cb-table-view-er-cost-credits-key");
-      credSeg.title = "Billing against your private key (0 credits / row) \u2014 click to change";
+      credSeg.title = "Billing against your private key (0 credits) \u2014 click to change";
       credSeg.innerHTML = KEY_TOGGLE_KEY_SVG + "<span>Private key</span>";
     } else {
-      const credits = Number(c.credits) || 0;
+      const credits = (Number(c.credits) || 0) * mult;
       // Variable-priced AI models are estimates, so prefix "~" to match the
       // model picker; fixed-price models and non-AI enrichments show the exact
       // figure without it.
       const tilde = er.isAi && __cb.isVariableModelId(er.model?.id) ? "~" : "";
-      credSeg.title = `${tilde}${formatNumber(credits)} credit${credits === 1 ? "" : "s"} / row \u2014 click to change`;
+      credSeg.title = `${tilde}${formatNumber(credits)} credit${credits === 1 ? "" : "s"} \u2014 click to change`;
       const coin = Math.abs(credits) <= 1 ? coinSvg(12) : coinsSvg(12);
-      credSeg.innerHTML = coin + `<span>${tilde}${formatNumber(credits)} / row</span>`;
+      credSeg.innerHTML = coin + `<span>${tilde}${formatNumber(credits)}</span>`;
     }
 
     // Resolved cost → the credit segment toggles private key on click, exactly
@@ -5667,17 +5743,23 @@
   // "actual" (measured spend totals). Returns null when not computable.
   function buildErMenuTotalNode(er, which) {
     const records = Number(er.records) || 0;
+    const mult = er.multiplier ?? 1;
+    const freqOverridden = mult !== 1;
     let credits, actions;
     if (which === "actual") {
       if (!er.spendTotal) return null;
-      credits = Number(er.spendTotal.credits) || 0;
-      actions = Number(er.spendTotal.actions) || 0;
+      // Scale measured spend to the scoped Records: spend × (records / total) ×
+      // frequency — matches the use-case header. Falls back to raw × frequency
+      // when there's no coverage total to scale by.
+      const total = er.actualCoverage && er.actualCoverage.total > 0 ? er.actualCoverage.total : 0;
+      const scale = total > 0 && records > 0 ? records / total : 1;
+      credits = (Number(er.spendTotal.credits) || 0) * scale * mult;
+      actions = (Number(er.spendTotal.actions) || 0) * scale * mult;
     } else {
       if (!records || (er.cost && er.cost.creditsUnknown)) return null;
       const cov = er.coverageRows != null && records > 0
         ? Math.min(1, er.coverageRows / records)
         : 1;
-      const mult = er.multiplier ?? 1;
       const perCr = er.usePrivateKey ? 0 : (Number(er.cost?.credits) || 0);
       const perAct = Number(er.cost?.actions) || 0;
       credits = perCr * records * cov * mult;
@@ -5686,6 +5768,11 @@
     if (credits <= 0 && actions <= 0) return null;
     const pill = document.createElement("span");
     pill.className = "cb-table-view-er-cost-pill";
+    // Amber when frequency is overridden, or (Actual) when Records is overridden
+    // from the imported baseline — same convention as the Records field.
+    if (freqOverridden || (which === "actual" && er.recordsOverridden)) {
+      pill.classList.add("cb-table-view-er-cost-pill-override");
+    }
     if (actions > 0) {
       const seg = document.createElement("span");
       seg.className = "cb-table-view-er-cost-seg cb-table-view-er-cost-actions";
@@ -5698,30 +5785,6 @@
     credSeg.title = `${formatNumber(credits)} credits total`;
     const coin = Math.abs(credits) <= 1 ? coinSvg(12) : coinsSvg(12);
     credSeg.innerHTML = coin + `<span>${formatNumber(Math.round(credits))}</span>`;
-    pill.appendChild(credSeg);
-    return pill;
-  }
-
-  // Read-only "Actual" cost node from measured spend — the StarFour (actions) +
-  // Coin (credits) icon pair, mirroring buildErMenuCostNode but non-editable.
-  function buildErMenuActualNode(er) {
-    const sp = er.actualSpend || {};
-    const actions = Number(sp.actions) || 0;
-    const credits = Number(sp.credits) || 0;
-    const pill = document.createElement("span");
-    pill.className = "cb-table-view-er-cost-pill";
-    if (actions > 0) {
-      const seg = document.createElement("span");
-      seg.className = "cb-table-view-er-cost-seg cb-table-view-er-cost-actions";
-      seg.title = `${formatNumber(actions)} action${actions === 1 ? "" : "s"} / row (measured)`;
-      seg.innerHTML = starFourSvg(12) + `<span>${formatNumber(actions)}</span>`;
-      pill.appendChild(seg);
-    }
-    const credSeg = document.createElement("span");
-    credSeg.className = "cb-table-view-er-cost-seg cb-table-view-er-cost-credits";
-    credSeg.title = `${formatNumber(credits)} credit${credits === 1 ? "" : "s"} / row (measured)`;
-    const coin = Math.abs(credits) <= 1 ? coinSvg(12) : coinsSvg(12);
-    credSeg.innerHTML = coin + `<span>${formatNumber(credits)} / row</span>`;
     pill.appendChild(credSeg);
     return pill;
   }
@@ -5769,18 +5832,6 @@
     return pill;
   }
 
-  // Annualized per-row cost — only meaningful when the enrichment runs more
-  // than once a year (multiplier > 1), otherwise it equals the per-row cost.
-  function erMenuAnnualText(er) {
-    if (er.usePrivateKey) return null;
-    const c = er.cost || {};
-    if (c.creditsUnknown) return null;
-    const mult = er.multiplier ?? 1;
-    if (mult <= 1) return null;
-    const perYear = (Number(c.credits) || 0) * mult;
-    return `${formatNumber(perYear)} credits / row`;
-  }
-
   // Builds (or rebuilds) the menu's contents into `menu`. Split out from
   // openErChipMenu so the menu can be re-rendered in place after an edit
   // (frequency / model / private-key) without tearing it down — the user keeps
@@ -5804,29 +5855,28 @@
     header.appendChild(kindBadge);
     menu.appendChild(header);
 
-    // Cost / frequency / model section. The model row (AI columns only) is an
-    // editable pill in this same section — no separate "Model cost" row and no
-    // divider above it.
+    // Cost section, mode-dependent: only the active view's "Cost per row" +
+    // "Total", labeled (proj.)/(actual). The editable ×N frequency badge rides
+    // inline with the per-row pill (no separate Frequency / Per year rows); when
+    // frequency is overridden both pills annualize + turn amber. The model row
+    // (AI columns only) stays an editable pill in this same section.
     const costSection = document.createElement("div");
     costSection.className = "cb-table-view-er-menu-section";
-    costSection.appendChild(erMenuRow("Cost", buildErMenuCostNode(er)));
-    // Show measured spend as its own row when we're in Projected mode (in
-    // Actual mode the Cost row already reflects it). Lets reps compare the
-    // estimate against what the POC actually billed.
-    if (er.actualSpend && window.__cb?.viewMode !== "actual") {
-      costSection.appendChild(erMenuRow("Actual", buildErMenuActualNode(er)));
-    }
-    costSection.appendChild(erMenuRow("Frequency", buildErMenuFrequencyNode(er)));
+    const which = window.__cb?.viewMode === "actual" ? "actual" : "projected";
+    const modeLabel = which === "actual" ? " (actual)" : " (proj.)";
+
+    const perRowWrap = document.createElement("span");
+    perRowWrap.className = "cb-table-view-er-menu-costrow";
+    perRowWrap.appendChild(buildErMenuCostNode(er));
+    perRowWrap.appendChild(buildErMenuFrequencyNode(er)); // inline editable ×N
+    costSection.appendChild(erMenuRow("Cost per row" + modeLabel, perRowWrap));
+
+    const totalNode = buildErMenuTotalNode(er, which);
+    if (totalNode) costSection.appendChild(erMenuRow("Total" + modeLabel, totalNode));
+
     if (er.isAi && er.model) {
       costSection.appendChild(erMenuRow("Model", buildErMenuModelNode(er)));
     }
-    const annual = erMenuAnnualText(er);
-    if (annual) costSection.appendChild(erMenuRow("Per year", annual));
-    // Run totals over all records — projected (estimate) and actual (measured).
-    const totalProj = buildErMenuTotalNode(er, "projected");
-    if (totalProj) costSection.appendChild(erMenuRow("Total (proj.)", totalProj));
-    const totalActual = buildErMenuTotalNode(er, "actual");
-    if (totalActual) costSection.appendChild(erMenuRow("Total (actual)", totalActual));
     menu.appendChild(costSection);
 
     // Footer: "Find in table" scrolls the source column into view (reuses the
@@ -6550,6 +6600,20 @@
       'stroke-linejoin="round" aria-hidden="true">' +
       '<line x1="12" y1="5" x2="12" y2="19"/>' +
       '<line x1="5" y1="12" x2="19" y2="12"/>' +
+      '</svg>'
+    );
+  }
+
+  // Padlock glyph. `closed` = locked (shackle down); otherwise an open shackle.
+  function lockSvg(closed) {
+    const shackle = closed
+      ? '<path d="M7 11V7a5 5 0 0 1 10 0v4"/>'
+      : '<path d="M7 11V7a5 5 0 0 1 9.5-1.5"/>';
+    return (
+      '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" ' +
+      'fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" ' +
+      'stroke-linejoin="round" aria-hidden="true">' +
+      '<rect x="4" y="11" width="16" height="10" rx="2"/>' + shackle +
       '</svg>'
     );
   }

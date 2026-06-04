@@ -788,6 +788,20 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* Amber outline on a details-popover cost pill: frequency override (annualized)
+   or a Records override on the Actual total. Matches the Records-field amber. */
+.cb-table-view-er-cost-pill.cb-table-view-er-cost-pill-override {
+  border-color: #f59e0b;
+  box-shadow: 0 0 0 1.5px rgba(245, 158, 11, 0.18);
+}
+
+/* "Cost per row" details row: the cost pill + the inline editable ×N badge. */
+.cb-table-view-er-menu-costrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .cb-table-view-er-cost-seg {
   display: inline-flex;
   align-items: center;
@@ -1159,6 +1173,37 @@
   flex-shrink: 0;
   color: #9ca3af;
   font-weight: 500;
+}
+
+/* Coverage ratio lock toggle (projected). Muted by default, amber when on. */
+.cb-table-view-cov-lock {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  margin-left: 2px;
+  padding: 0;
+  flex-shrink: 0;
+  border: none;
+  border-radius: 4px;
+  background: none;
+  color: #9ca3af;
+  cursor: pointer;
+}
+
+.cb-table-view-cov-lock:hover {
+  background: #f3f4f6;
+  color: #6b7280;
+}
+
+.cb-table-view-cov-lock-on {
+  color: #d97706;
+}
+
+.cb-table-view-cov-lock-on:hover {
+  background: #fef3c7;
+  color: #b45309;
 }
 
 /* Static data point name (default, non-editing state). Padding/typography

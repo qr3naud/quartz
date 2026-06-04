@@ -67,10 +67,15 @@
             ? c.data.frequency
             : (c.data.frequency || globalFreqId);
           const mult = cb.getFrequencyMultiplier ? cb.getFrequencyMultiplier(freqId) : 1;
+          // Actual cost scales by measured coverage (ran/total): with the per-row
+          // denominator (coverage.ran) the `ran` cancels, so the weighted total
+          // becomes spend × records / total once recalcTotal multiplies by
+          // records. The unweighted "Avg / Row" sums stay honest per-row.
+          const actCov = cb.cost.actualCoverageRatio(c);
           perRowCredits += rowCredits;
           perRowActions += rowActions;
-          weightedCreditTotal += rowCredits * mult;
-          weightedActionExecTotal += rowActions * mult;
+          weightedCreditTotal += rowCredits * mult * actCov;
+          weightedActionExecTotal += rowActions * mult * actCov;
         }
         if (cb.updateCreditTotal) {
           cb.updateCreditTotal(
@@ -100,9 +105,6 @@
         ? cb.getCurrentFrequencyId()
         : cb.DEFAULT_FREQUENCY_ID;
       const records = cb.getRecordsCount ? cb.getRecordsCount() : 0;
-      // Projected cost bills on fill (filled cells), not coverage (attempts) —
-      // built once so billableFraction is O(1) per ER.
-      const erFillMap = cb.cost.buildErFillMap(cardsRef());
       for (const c of cardsRef()) {
         if (isNonErType(c.data.type)) continue;
         // perRowCost returns 0 credits for private-key ERs, so the
@@ -114,9 +116,10 @@
         const mult = cb.getFrequencyMultiplier
           ? cb.getFrequencyMultiplier(freqId)
           : 1;
-        // Coverage × fill scales the weighted (total) slots only — the per-row
-        // "Avg" boxes stay honest about a single execution.
-        const billMult = mult * cb.cost.billableFraction(c, records, erFillMap);
+        // Coverage (rows that run) scales the weighted (total) slots only — the
+        // per-row "Avg" boxes stay honest about a single execution. Fill no
+        // longer discounts cost (it's a performance metric).
+        const billMult = mult * cb.cost.billableFraction(c, records);
         creditTotal += credits;
         weightedCreditTotal += credits * billMult;
         actionExecTotal += actions;
@@ -227,8 +230,6 @@
       // full cost directly. So the badge agrees with the table regardless of
       // canvas geometry.
       const { erByKey, dpCountByKey } = buildLineageIndex();
-      // Projected billable fraction (coverage × fill) per ER — built once.
-      const erFillMap = window.__cb.cost.buildErFillMap(cardsRef());
 
       for (const g of groupsRef()) {
         const el = getGroupEl ? getGroupEl(g.id) : null;
@@ -240,8 +241,9 @@
         const records = window.__cb.getRecordsCount ? window.__cb.getRecordsCount() : 0;
 
         // `sum` stays the honest per-row figure (drives the "/ row" badge).
-        // `weightedSum` folds in each ER's billable fraction (coverage × fill)
-        // so the group total (× records) reflects coverage + fill overrides.
+        // `weightedSum` folds in each ER's billable fraction (coverage) so the
+        // group total (× records) reflects coverage overrides. Fill is excluded
+        // (performance metric, not a cost driver).
         let sum = 0;
         let actionSum = 0;
         let weightedSum = 0;
@@ -256,7 +258,7 @@
           for (let i = 0; i < keys.length; i++) {
             const er = erByKey.get(keys[i]);
             const count = dpCountByKey.get(keys[i]) || 1;
-            const cov = window.__cb.cost.billableFraction(er, records, erFillMap);
+            const cov = window.__cb.cost.billableFraction(er, records);
             const share = dpShareFor(c, keys[i], i, keys.length);
             if (!er.data.usePrivateKey && er.data.credits != null && er.data.credits > 0) {
               sum += share * (er.data.credits / count);
@@ -278,7 +280,7 @@
           if (isNonErType(c.data.type)) continue;
           const key = erLineageKey(c);
           if ((dpCountByKey.get(key) || 0) > 0) continue;
-          const cov = window.__cb.cost.billableFraction(c, records, erFillMap);
+          const cov = window.__cb.cost.billableFraction(c, records);
           if (!c.data.usePrivateKey && c.data.credits != null && c.data.credits > 0) {
             sum += c.data.credits;
             weightedSum += c.data.credits * cov;

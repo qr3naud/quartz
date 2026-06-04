@@ -82,14 +82,14 @@
     return { credits, actions, creditsUnknown };
   }
 
-  // Per-ER coverage ratio: coverageRows / total-rows (defaults to 1). Pure
-  // coverage primitive — the projected cost multiplier (billableFraction) folds
-  // fill in on top of this.
+  // Per-ER coverage ratio: coverageRows / total-rows (defaults to 1, capped at
+  // 1). The numerator (rows that run) can never exceed the denominator (records),
+  // so a coverageRows override above records still costs at most the full table.
   function coverageRatio(card, records) {
     if (!records || records <= 0) return 1;
     const cov =
       card.data.coverageRows != null ? Number(card.data.coverageRows) : records;
-    return Number.isFinite(cov) && cov >= 0 ? cov / records : 1;
+    return Number.isFinite(cov) && cov >= 0 ? Math.min(1, cov / records) : 1;
   }
 
   // Lineage key for an enrichment card (must match table-view + credits.js):
@@ -139,24 +139,28 @@
     return map;
   }
 
-  // Projected billable fraction of total rows for an ER = coverage x fill.
-  // This is what scales the frequency-weighted "Total" slots (× records).
+  // Projected billable fraction of total rows for an ER = coverage only.
   //
-  // Why fill and not coverage alone: enrichments that run but return no data
-  // are refunded, so the billable unit is FILLED cells, not attempted cells.
-  // fill is expressed as a fraction of coverage, so absolute billable =
-  // coverage × fill. Default fill is 100% → this equals plain coverage until a
-  // DP's fill is lowered. See ARCHITECTURE.md "projected cost should key off
-  // fill rate" for the rationale + the AI/Claygent caveat (those bill
-  // regardless of output, so fill under-counts them — deferred follow-up).
-  //
-  // `erFillMap` (from buildErFillMap) is optional; when omitted, fill = 1.0.
-  function billableFraction(erCard, records, erFillMap) {
-    const cov = coverageRatio(erCard, records);
-    const key = erLineageKey(erCard);
-    const fill =
-      key != null && erFillMap && erFillMap.has(key) ? erFillMap.get(key) : 1;
-    return cov * fill;
+  // Cost is incurred when a row RUNS, so it keys off coverage (rows attempted),
+  // NOT fill: fill rate is a performance metric ("did Clay return data"), and a
+  // row that ran has already incurred its cost regardless of whether it filled.
+  // (fillFraction / buildErFillMap remain for the DP fill DISPLAY, but no longer
+  // scale cost.)
+  function billableFraction(erCard, records) {
+    return coverageRatio(erCard, records);
+  }
+
+  // Measured (Actual) coverage ratio for an ER = stats.coverage.ran / total,
+  // i.e. the fraction of the table's rows the enrichment actually ran on. Used
+  // to scale measured spend to the scoped Records: combined with the per-row
+  // denominator (coverage.ran) the `ran` cancels, so an Actual use-case total
+  // becomes sessionSpend × Records / total. Defaults to 1 when no coverage
+  // stats exist (then Actual cost is just spend × Records, the prior behavior).
+  function actualCoverageRatio(card) {
+    const cov = card && card.data && card.data.stats && card.data.stats.coverage;
+    const ran = Number(cov && cov.ran) || 0;
+    const total = Number(cov && cov.total) || 0;
+    return ran > 0 && total > 0 ? ran / total : 1;
   }
 
   // Default gap between runs (ms) that starts a new "session". A burst of
@@ -355,7 +359,6 @@
   function computeUseCaseTotals(cards, opts) {
     opts = opts || {};
     const projected = (opts.viewMode || cb.viewMode) !== "actual";
-    const erFillMap = projected ? buildErFillMap(cards) : null;
     const freqMult = (id) => (cb.getFrequencyMultiplier ? cb.getFrequencyMultiplier(id) : 1);
     const buckets = new Map(); // key -> { credits, actions }
     for (const c of cards) {
@@ -379,9 +382,10 @@
       const freqId = d.frequencyCustom ? d.frequency : useCaseFrequencyId(key);
       const mult = freqMult(freqId);
       const recs = useCaseRecords(key);
-      // billableFraction folds coverage x fill (projected only); x recs turns the
-      // per-row figure into the use case's absolute billable volume.
-      const billable = projected ? billableFraction(c, recs, erFillMap) : 1;
+      // Projected: coverage (rows that run). Actual: measured coverage ran/total,
+      // so (spend/ran) × recs × (ran/total) = spend × recs/total (ran cancels).
+      // x recs turns the per-row figure into the use case's absolute volume.
+      const billable = projected ? billableFraction(c, recs) : actualCoverageRatio(c);
       const b = buckets.get(key) || { credits: 0, actions: 0 };
       b.credits += pr.credits * mult * billable * recs;
       b.actions += pr.actions * mult * billable * recs;
@@ -404,6 +408,7 @@
     perRowCost,
     actualRowDenominator,
     coverageRatio,
+    actualCoverageRatio,
     erLineageKey,
     fillFraction,
     buildErFillMap,
