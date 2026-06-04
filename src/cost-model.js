@@ -403,6 +403,83 @@
     return { grandCredits, grandActions, perUseCase };
   }
 
+  // Self-contained per-tab grand total for a SERIALIZED tab.state (cards +
+  // useCaseScope + records/frequency), so the export / deal-desk paths produce
+  // the SAME numbers the table shows for that tab — active or not. Reads only
+  // tabState (no live summary-bar globals), and mirrors computeUseCaseTotals
+  // (2+ imported tables: per-use-case records/frequency, "other" excluded) and
+  // the single-scope summary path (one global records/frequency). Honors
+  // Projected (coverage) vs Actual (measured spend × records/total).
+  function computeTabTotals(tabState, opts) {
+    opts = opts || {};
+    const cards = tabState && Array.isArray(tabState.cards) ? tabState.cards : [];
+    const projected = (opts.viewMode || "projected") !== "actual";
+    const scope = (tabState && tabState.useCaseScope) || {};
+    const parseRecs = (r) => {
+      const n = parseInt(String(r == null ? "" : r).replace(/[^\d]/g, ""), 10);
+      return Number.isFinite(n) && n > 0 ? n : 0;
+    };
+    const globalRecords = parseRecs(tabState && tabState.records);
+    const globalFreq = (tabState && tabState.frequency) || cb.DEFAULT_FREQUENCY_ID;
+    const freqMult = (id) => (cb.getFrequencyMultiplier ? cb.getFrequencyMultiplier(id) : 1);
+
+    // Distinct imported-table use cases on this tab (same test as listUseCases).
+    const ucKeys = new Set();
+    for (const c of cards) {
+      const d = c && c.data;
+      if (!d || isNonErType(d.type)) continue;
+      if (isImportedTableCard(c)) ucKeys.add(`t-${d.tableId}`);
+    }
+    const multi = ucKeys.size >= 2;
+
+    const recordsForKey = (key) => {
+      const sc = scope[key];
+      if (sc && sc.records != null && Number(sc.records) >= 0) return Number(sc.records);
+      if (key && key.startsWith("t-")) {
+        const meta = importedTablesMap()[key.slice(2)];
+        if (meta && meta.recordCount > 0) return Number(meta.recordCount);
+      }
+      return globalRecords;
+    };
+    const freqForKey = (key) => {
+      const sc = scope[key];
+      return (sc && sc.frequency) || globalFreq;
+    };
+
+    let credits = 0;
+    let actions = 0;
+    for (const c of cards) {
+      const d = c && c.data;
+      if (!d || isNonErType(d.type)) continue;
+      let recs;
+      let freqId;
+      if (multi) {
+        const key = useCaseKeyForCard(c);
+        if (key === OTHER_USE_CASE) continue; // unscoped, excluded from the quote
+        recs = recordsForKey(key);
+        freqId = d.frequencyCustom ? d.frequency : freqForKey(key);
+      } else {
+        recs = globalRecords;
+        freqId = d.frequencyCustom ? d.frequency : d.frequency || globalFreq;
+      }
+      const pr = perRowCost(
+        c,
+        projected
+          ? { viewMode: "projected" }
+          : { viewMode: "actual", fallbackToProjected: false },
+      );
+      if (pr.noSpend) continue;
+      const mult = freqMult(freqId);
+      const billable = projected ? billableFraction(c, recs) : actualCoverageRatio(c);
+      credits += pr.credits * mult * billable * recs;
+      actions += pr.actions * mult * billable * recs;
+    }
+    return {
+      creditsPerYear: Math.max(0, Math.round(credits)),
+      actionsPerYear: Math.max(0, Math.round(actions)),
+    };
+  }
+
   cb.cost = {
     isNonErType,
     perRowCost,
@@ -425,5 +502,6 @@
     useCaseFrequencyId,
     syncUseCaseCoverage,
     computeUseCaseTotals,
+    computeTabTotals,
   };
 })();

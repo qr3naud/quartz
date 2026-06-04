@@ -103,6 +103,9 @@
           credit_cost: creditCost,
           action_cost: actionCost,
           acv,
+          // Projected estimate vs Actual measured spend (per-tab), so the deal
+          // desk knows the basis of the submitted volumes.
+          basis: volumes.mode || "projected",
         },
       ],
       approval_required: approval.status,
@@ -290,8 +293,9 @@
         nm.textContent = tab.name || "Scoping";
         const stats = document.createElement("div");
         stats.className = "cb-gtme-tab-stats";
+        const modeTag = row.volumes.mode === "actual" ? " · Actual" : " · Projected";
         stats.textContent =
-          `${fmt(row.volumes.creditsPerYear)} credits / yr · ${fmt(row.volumes.actionsPerYear)} actions / yr · ${money(acv)} ACV`;
+          `${fmt(row.volumes.creditsPerYear)} credits / yr · ${fmt(row.volumes.actionsPerYear)} actions / yr · ${money(acv)} ACV${modeTag}`;
         meta.appendChild(nm);
         meta.appendChild(stats);
         if (approval.status && approval.reasons.length) {

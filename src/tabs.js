@@ -420,6 +420,9 @@
         // canvases (brainstorming) and others as tables (review/scoping).
         // Defaults to "canvas" anywhere the field is absent.
         state.brainstormView = __cb.brainstormView === "table" ? "table" : "canvas";
+        // Projected/Actual is per-tab so a multi-tab export can mix modes — each
+        // tab remembers the view it was last left in (restored in switchTab).
+        state.viewMode = __cb.viewMode === "actual" ? "actual" : "projected";
         // Actual-spend session picker: the bucketed sessions + selection + gap,
         // so reloads/other devices restore instantly with no /run/recent fetch.
         // Preserve the previously-saved blob when the controller has no live
@@ -1262,17 +1265,17 @@
 
     __cb.recordsActual = tab?.state?.recordsActual ?? null;
     __cb.useCaseScope = tab?.state?.useCaseScope ?? {};
-    // Actual mode reads real spend, which only an imported tab has. Switching
-    // to a non-imported tab (no recordsActual) must fall back to Projected —
-    // otherwise the summary sits on Actual showing 0, with no toggle visible
-    // (it only renders for imported tabs) to switch back. Set the mode before
-    // the recordsInput recalc + setBrainstormView mount below so they render
-    // Projected directly.
-    if (!(Number(__cb.recordsActual) > 0) && __cb.viewMode === "actual") {
-      __cb.viewMode = "projected";
-      if (__cb.tabStore) __cb.tabStore.viewMode = "projected";
-      if (__cb.overlayEl) __cb.overlayEl.setAttribute("data-cb-view-mode", "projected");
-    }
+    // Per-tab Projected/Actual: restore the mode this tab was last left in.
+    // Actual mode reads real spend, which only an imported tab has — so a
+    // non-imported tab (no recordsActual) falls back to Projected, otherwise the
+    // summary sits on Actual showing 0 with no toggle visible to escape. Set the
+    // mode before the recordsInput recalc + setBrainstormView mount below so they
+    // render in the right mode directly.
+    let desiredMode = tab?.state?.viewMode === "actual" ? "actual" : "projected";
+    if (!(Number(__cb.recordsActual) > 0)) desiredMode = "projected";
+    __cb.viewMode = desiredMode;
+    if (__cb.tabStore) __cb.tabStore.viewMode = desiredMode;
+    if (__cb.overlayEl) __cb.overlayEl.setAttribute("data-cb-view-mode", desiredMode);
     // Refresh the Actual loading flag for the tab we just entered (its cards may
     // already carry spend, or none) BEFORE the recalc below, so the summary
     // doesn't blur known numbers using the previous tab's state.

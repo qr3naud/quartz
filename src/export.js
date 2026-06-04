@@ -592,12 +592,6 @@
 
   // ---- Compute per-tab year-1 volumes ----
 
-  function parseRecordsValue(raw) {
-    if (raw == null) return 0;
-    const n = parseInt(String(raw).replace(/,/g, ""), 10);
-    return Number.isFinite(n) && n > 0 ? n : 0;
-  }
-
   // Strips currency formatting ("$0.05" → 0.05) and returns a positive
   // number, or null if parsing failed. Mirrors parseDollar() in overlay.js
   // so prices read from a saved tab match what overlay.js renders.
@@ -607,20 +601,15 @@
     return Number.isFinite(n) && n > 0 ? n : null;
   }
 
-  function frequencyMultiplier(id) {
-    return __cb.getFrequencyMultiplier ? __cb.getFrequencyMultiplier(id || __cb.DEFAULT_FREQUENCY_ID) : 1;
-  }
-
-  // Mirrors notifyCreditTotal in canvas/credits.js but operates on a
-  // serialized tab.state instead of the live canvas, so it works for tabs
-  // the user isn't currently looking at. Returns year-1 volumes (because
-  // the frequency multipliers are already annualized) plus the per-tab
-  // credit/action prices the rep set in the summary bar — null when the
-  // tab predates the price inputs or has no value yet. These prices are
-  // adjusted (negotiated) prices, not list prices: the calculator slots
-  // them into adjustedCPC / adjustedYear1CPA so the discount band reflects
-  // what the rep is pitching, while list prices keep their canonical
-  // policy values.
+  // Per-tab year-1 volumes for export / deal-desk, computed off a serialized
+  // tab.state (so it works for tabs the user isn't currently viewing) via the
+  // shared cost-model.computeTabTotals — identical to what the table shows for
+  // that tab. Also returns the per-tab credit/action prices the rep set in the
+  // summary bar (null when the tab predates the price inputs or has no value),
+  // and the tab's `mode` (projected/actual). Prices are adjusted (negotiated)
+  // prices, not list: the calculator slots them into adjustedCPC /
+  // adjustedYear1CPA so the discount band reflects what the rep is pitching,
+  // while list prices keep their canonical policy values.
   function computeTabVolumes(tabState) {
     if (!tabState || !Array.isArray(tabState.cards)) {
       return {
@@ -628,33 +617,23 @@
         actionsPerYear: 0,
         creditPrice: null,
         actionPrice: null,
+        mode: "projected",
       };
     }
-    const records = parseRecordsValue(tabState.records);
-    const globalFreqId = tabState.frequency || __cb.DEFAULT_FREQUENCY_ID;
-
-    let weightedCreditsPerRow = 0;
-    let weightedActionsPerRow = 0;
-    for (const c of tabState.cards) {
-      if (!c?.data || isNonErType(c.data.type)) continue;
-      // Shared cost model, forced to projected — the discount calc always uses
-      // catalog/list-style per-row credits, never measured spend. perRowCost
-      // zeroes private-key credits, matching the prior usePrivateKey guard
-      // (private-key ERs burn no Clay credits but their actions still run).
-      const { credits, actions } = window.__cb.cost.perRowCost(c, { viewMode: "projected" });
-      const freqId = c.data.frequencyCustom
-        ? c.data.frequency
-        : (c.data.frequency || globalFreqId);
-      const mult = frequencyMultiplier(freqId);
-      weightedCreditsPerRow += credits * mult;
-      weightedActionsPerRow += actions * mult;
-    }
+    // Single source of truth: cost-model.computeTabTotals reproduces exactly what
+    // the table/summary shows for this tab — coverage, per-use-case records +
+    // frequency (multi-table), "other" excluded — in the tab's own saved view
+    // mode (Projected catalog, or Actual measured spend scaled to Records). This
+    // is what both the GTME calculator export and the Deal Desk submission send.
+    const mode = tabState.viewMode === "actual" ? "actual" : "projected";
+    const totals = window.__cb.cost.computeTabTotals(tabState, { viewMode: mode });
 
     return {
-      creditsPerYear: Math.max(0, Math.round(weightedCreditsPerRow * records)),
-      actionsPerYear: Math.max(0, Math.round(weightedActionsPerRow * records)),
+      creditsPerYear: totals.creditsPerYear,
+      actionsPerYear: totals.actionsPerYear,
       creditPrice: parseDollarValue(tabState.creditCost),
       actionPrice: parseDollarValue(tabState.actionCost),
+      mode,
     };
   }
 
@@ -840,9 +819,13 @@
           stats.textContent = "No volume yet — add records and enrichments to this tab.";
           stats.classList.add("cb-gtme-tab-stats-empty");
         } else {
+          // The mode tag tells the rep whether this tab's numbers are the
+          // Projected catalog estimate or the Actual measured spend (each tab
+          // exports in the view it was last left in).
+          const modeTag = row.volumes.mode === "actual" ? " · Actual" : " · Projected";
           stats.textContent =
             `${formatVolumeNumber(row.volumes.creditsPerYear)} credits / yr · ` +
-            `${formatVolumeNumber(row.volumes.actionsPerYear)} actions / yr`;
+            `${formatVolumeNumber(row.volumes.actionsPerYear)} actions / yr${modeTag}`;
         }
         meta.appendChild(nm);
         meta.appendChild(stats);
@@ -928,6 +911,9 @@
             name: tab.name || "Scoping",
             creditsPerYear: volumes.creditsPerYear,
             actionsPerYear: volumes.actionsPerYear,
+            // Whether these volumes are the Projected estimate or Actual measured
+            // spend (per-tab), so the calculator can label/trace the basis.
+            basis: volumes.mode || "projected",
           };
           // Only attach prices when the user explicitly set them in this
           // tab. Sending undefined would still serialize as missing keys,

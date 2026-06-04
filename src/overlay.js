@@ -838,7 +838,14 @@
             b.classList.toggle("cb-view-mode-btn-active", next === "actual"),
           );
       }
-      if (__cb.tabStore) __cb.tabStore.viewMode = next;
+      if (__cb.tabStore) {
+        __cb.tabStore.viewMode = next;
+        // Persist the mode on the active tab so it's remembered per tab (lets a
+        // multi-tab export mix Projected/Actual per tab). saveTabs/debouncedSave
+        // also serializes state.viewMode from __cb.viewMode.
+        const at = __cb.tabStore.tabs?.find((t) => t.id === __cb.tabStore.activeId);
+        if (at?.state) at.state.viewMode = next;
+      }
       // Recompute Actual loading/expired state BEFORE the recalc so
       // setSummaryNumber renders the shimmer placeholder / "Expired" correctly
       // for the mode we're entering.
@@ -2307,7 +2314,11 @@
     // mode reads a ready state.
     __cb.sessionCutoff?.restore?.(restoredTab?.state?.sessionCutoff);
 
-    __cb.setViewMode(__cb.tabStore.viewMode || "projected");
+    // Seed the view from the active tab's saved mode (per-tab). Actual needs an
+    // imported tab — fall back to Projected otherwise.
+    let initialMode = activeTab?.state?.viewMode === "actual" ? "actual" : "projected";
+    if (initialMode === "actual" && !(Number(__cb.recordsActual) > 0)) initialMode = "projected";
+    __cb.setViewMode(initialMode);
 
     // savedBrainstormView was resolved before restore() (above) so we could
     // pick the lazy-DOM mount mode; apply it now.
