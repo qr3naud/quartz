@@ -146,6 +146,9 @@
     // ---- Footer ----
     const footer = document.createElement("div");
     footer.className = "cb-export-modal-footer";
+    const footerHint = document.createElement("div");
+    footerHint.className = "cb-export-modal-footer-hint";
+    footerHint.textContent = "Stored in Supabase \u00b7 maintainer only.";
     const footerActions = document.createElement("div");
     footerActions.className = "cb-export-footer-actions";
     const cancelBtn = document.createElement("button");
@@ -160,6 +163,7 @@
     saveBtn.addEventListener("click", onSave);
     footerActions.appendChild(cancelBtn);
     footerActions.appendChild(saveBtn);
+    footer.appendChild(footerHint);
     footer.appendChild(footerActions);
 
     async function onSave() {

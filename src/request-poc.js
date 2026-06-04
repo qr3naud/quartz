@@ -154,63 +154,81 @@
     const body = document.createElement("div");
     body.className = "cb-export-modal-body cb-gtme-body";
 
-    // Row 1: requester name + customer/account name.
-    const row1 = document.createElement("div");
-    row1.className = "cb-gtme-fields";
+    // Inputs are created up front so the async SFDC hydrate (below) can target
+    // them regardless of where they sit in the layout.
     const nameInput = buildInput(name, "Your name");
     nameInput.addEventListener("input", () => { name = nameInput.value; });
+
     const accountInput = buildInput(account, "e.g. Acme Corp");
     accountInput.addEventListener("input", () => {
       account = accountInput.value; accountTouched = true; updateSubmitState();
     });
-    row1.appendChild(buildField("Your name", nameInput));
-    row1.appendChild(buildField("Customer / account name", accountInput, { grow: true }));
-    body.appendChild(row1);
 
-    // Row 2: ARR estimate + workspace id (read-only) + needed-by date.
-    const row2 = document.createElement("div");
-    row2.className = "cb-gtme-fields";
     const arrInput = buildInput(arr, "best estimate, e.g. $250,000");
     arrInput.addEventListener("input", () => { arr = arrInput.value; arrTouched = true; });
+
     const wsInput = buildInput(workspaceId, "");
     wsInput.readOnly = true;
-    wsInput.classList.add("cb-gtme-input");
     wsInput.style.opacity = "0.7";
-    const dateInput = buildInput("", "", "date");
-    dateInput.addEventListener("input", () => { neededBy = dateInput.value; updateSubmitState(); });
-    row2.appendChild(buildField("ARR (best estimate)", arrInput, { grow: true }));
-    row2.appendChild(buildField("Workspace ID", wsInput));
-    row2.appendChild(buildField("When do you need this by?", dateInput));
-    body.appendChild(row2);
 
-    // Row 3: POC scoping doc link (workbook + #cb-open) + SFDC opportunity link.
     const docInput = buildInput(workbookUrl, "link to the workbook");
-    docInput.addEventListener("input", () => { /* workbookUrl edited inline */ });
-    body.appendChild(buildField("Link to POC scoping doc (opens Quartz)", docInput, { grow: true }));
 
     const sfdcInput = buildInput(sfdcUrl, "link to the SFDC opportunity");
     sfdcInput.addEventListener("input", () => { sfdcUrl = sfdcInput.value; sfdcTouched = true; });
-    const sfdcField = buildField("Link to SFDC opportunity", sfdcInput, { grow: true });
-    sfdcField.style.marginTop = "10px";
-    body.appendChild(sfdcField);
 
-    // Comments.
+    // Prefilled group — collapsed by default. Everything we could derive from
+    // the workbook + linked SFDC opp lives here, so the rep's eye lands on the
+    // fields that actually need input (due date, comments, Loom).
+    const prefill = document.createElement("details");
+    prefill.style.cssText =
+      "border:1px solid #e5e7eb;border-radius:8px;background:#f9fafb;overflow:hidden;";
+    const prefillSummary = document.createElement("summary");
+    prefillSummary.style.cssText =
+      "cursor:pointer;padding:10px 12px;font-size:12px;font-weight:600;color:#374151;user-select:none;";
+    prefillSummary.textContent = "Prefilled details — name, customer, ARR, links (tap to edit)";
+    prefill.appendChild(prefillSummary);
+
+    const prefillBody = document.createElement("div");
+    prefillBody.style.cssText =
+      "display:flex;flex-direction:column;gap:14px;padding:12px;border-top:1px solid #e5e7eb;background:#ffffff;";
+
+    const row1 = document.createElement("div");
+    row1.className = "cb-gtme-fields";
+    row1.appendChild(buildField("Your name", nameInput));
+    row1.appendChild(buildField("Customer / account name", accountInput, { grow: true }));
+
+    const row2 = document.createElement("div");
+    row2.className = "cb-gtme-fields";
+    row2.appendChild(buildField("ARR (best estimate)", arrInput, { grow: true }));
+    row2.appendChild(buildField("Workspace ID", wsInput));
+
+    prefillBody.appendChild(row1);
+    prefillBody.appendChild(row2);
+    prefillBody.appendChild(buildField("Link to POC scoping doc (opens Quartz)", docInput, { grow: true }));
+    prefillBody.appendChild(buildField("Link to SFDC opportunity", sfdcInput, { grow: true }));
+    prefill.appendChild(prefillBody);
+    body.appendChild(prefill);
+
+    // Always-visible: the fields that need the rep's input.
+    const dateInput = buildInput("", "", "date");
+    dateInput.addEventListener("input", () => { neededBy = dateInput.value; updateSubmitState(); });
+    body.appendChild(buildField("When do you need this by?", dateInput, { grow: true }));
+
     const commentsInput = document.createElement("textarea");
     commentsInput.className = "cb-gtme-input";
     commentsInput.rows = 3;
-    commentsInput.style.cssText = "width:100%;resize:vertical;";
+    // cb-gtme-input sets height:36px / padding:0 10px (tuned for one-line
+    // inputs); override both so the textarea reads as a roomy multi-line box
+    // with comfortable text padding.
+    commentsInput.style.cssText =
+      "width:100%;height:auto;min-height:76px;padding:8px 10px;resize:vertical;line-height:1.45;";
     commentsInput.placeholder = "Anything the POC team should know…";
     commentsInput.addEventListener("input", () => { comments = commentsInput.value; });
-    const commentsField = buildField("Comments", commentsInput, { grow: true });
-    commentsField.style.cssText = "display:block;margin-top:10px;";
-    body.appendChild(commentsField);
+    body.appendChild(buildField("Comments", commentsInput, { grow: true }));
 
-    // Loom (optional).
     const loomInput = buildInput("", "https://www.loom.com/share/…");
     loomInput.addEventListener("input", () => { loom = loomInput.value; });
-    const loomField = buildField("Loom (optional)", loomInput, { grow: true });
-    loomField.style.marginTop = "10px";
-    body.appendChild(loomField);
+    body.appendChild(buildField("Loom (optional)", loomInput, { grow: true }));
 
     // Async SFDC hydrate: fill customer + ARR (+ SFDC link) from the linked
     // opportunity unless the rep already edited those fields.
@@ -302,6 +320,9 @@
 
     const footer = document.createElement("div");
     footer.className = "cb-export-modal-footer";
+    const footerHint = document.createElement("div");
+    footerHint.className = "cb-export-modal-footer-hint";
+    footerHint.textContent = "Posts to the POC team's Slack channel.";
     const footerActions = document.createElement("div");
     footerActions.className = "cb-export-footer-actions";
     const cancelBtn = document.createElement("button");
@@ -316,6 +337,7 @@
     submitBtn.addEventListener("click", onSubmit);
     footerActions.appendChild(cancelBtn);
     footerActions.appendChild(submitBtn);
+    footer.appendChild(footerHint);
     footer.appendChild(footerActions);
 
     function showError(msg) { errorEl.textContent = msg; errorEl.style.display = ""; }
