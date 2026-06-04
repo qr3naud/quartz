@@ -1808,35 +1808,93 @@
       if (__cb.debouncedSave) __cb.debouncedSave();
     };
 
-    // Deal-level Total overrides (the editable "Total" group that is the source
-    // of truth for the Summary). Per-year-index overrides for credits and the
-    // action tier; absent entries fall back to the recommended rollup from the
-    // use cases. Editing these NEVER cascades down to the use cases.
-    function persistPricingTotalOverride() {
-      if (!__cb.tabStore) return;
-      __cb.tabStore.pricingTotalOverride = __cb.pricingTotalOverride;
-      const at = __cb.tabStore.tabs?.find((t) => t.id === __cb.tabStore.activeId);
-      if (at?.state) at.state.pricingTotalOverride = __cb.pricingTotalOverride;
+    // Pricing options (the editable "Options" group; up to 3). Each option is an
+    // independent set of per-year overrides (credits + action tier) over the
+    // shared recommended rollup from the use cases. Option A (index 0) is the
+    // source of truth for the Summary. Overrides NEVER cascade to the use cases.
+    function genPricingOptionId() {
+      return "opt_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 8);
+    }
+    function pricingOptionLetter(i) {
+      return String.fromCharCode(65 + i); // A, B, C
     }
 
-    __cb.setPricingTotalCredits = function (yearIdx, value) {
-      __cb.pricingTotalOverride = __cb.pricingTotalOverride || { credits: {}, actionTier: {} };
-      __cb.pricingTotalOverride.credits = __cb.pricingTotalOverride.credits || {};
-      __cb.pricingTotalOverride.credits[yearIdx] = Math.max(0, Math.round(Number(value) || 0));
-      persistPricingTotalOverride();
-      updatePricingStrip();
-      if (__cb.tableView?.refresh) __cb.tableView.refresh();
-      if (__cb.debouncedSave) __cb.debouncedSave();
+    // Ensures __cb.pricingOptions exists, migrating a legacy single override.
+    __cb.getPricingOptions = function () {
+      if (!Array.isArray(__cb.pricingOptions) || __cb.pricingOptions.length === 0) {
+        const legacy = __cb.pricingTotalOverride;
+        __cb.pricingOptions = [
+          {
+            id: genPricingOptionId(),
+            name: "Option A",
+            override: {
+              credits: { ...(legacy?.credits || {}) },
+              actionTier: { ...(legacy?.actionTier || {}) },
+            },
+          },
+        ];
+      }
+      return __cb.pricingOptions;
     };
 
-    __cb.setPricingTotalActionTier = function (yearIdx, tierId) {
-      __cb.pricingTotalOverride = __cb.pricingTotalOverride || { credits: {}, actionTier: {} };
-      __cb.pricingTotalOverride.actionTier = __cb.pricingTotalOverride.actionTier || {};
-      __cb.pricingTotalOverride.actionTier[yearIdx] = tierId;
-      persistPricingTotalOverride();
+    function persistPricingOptions() {
+      if (!__cb.tabStore) return;
+      __cb.tabStore.pricingOptions = __cb.pricingOptions;
+      const at = __cb.tabStore.tabs?.find((t) => t.id === __cb.tabStore.activeId);
+      if (at?.state) at.state.pricingOptions = __cb.pricingOptions;
+    }
+    function afterPricingOptionsChange() {
+      persistPricingOptions();
       updatePricingStrip();
       if (__cb.tableView?.refresh) __cb.tableView.refresh();
       if (__cb.debouncedSave) __cb.debouncedSave();
+    }
+
+    __cb.setPricingOptionCredits = function (optIdx, yearIdx, value) {
+      const o = __cb.getPricingOptions()[optIdx];
+      if (!o) return;
+      o.override = o.override || { credits: {}, actionTier: {} };
+      o.override.credits = o.override.credits || {};
+      o.override.credits[yearIdx] = Math.max(0, Math.round(Number(value) || 0));
+      afterPricingOptionsChange();
+    };
+    __cb.setPricingOptionActionTier = function (optIdx, yearIdx, tierId) {
+      const o = __cb.getPricingOptions()[optIdx];
+      if (!o) return;
+      o.override = o.override || { credits: {}, actionTier: {} };
+      o.override.actionTier = o.override.actionTier || {};
+      o.override.actionTier[yearIdx] = tierId;
+      afterPricingOptionsChange();
+    };
+    __cb.addPricingOption = function () {
+      const opts = __cb.getPricingOptions();
+      if (opts.length >= 3) return null;
+      const last = opts[opts.length - 1];
+      const id = genPricingOptionId();
+      opts.push({
+        id,
+        name: `Option ${pricingOptionLetter(opts.length)}`,
+        override: {
+          credits: { ...(last?.override?.credits || {}) },
+          actionTier: { ...(last?.override?.actionTier || {}) },
+        },
+      });
+      __cb._pricingOptionJustAdded = id; // drives the enter animation
+      __cb._pricingTotalCollapsed = false; // reveal the group if it was collapsed
+      afterPricingOptionsChange();
+      return id;
+    };
+    __cb.deletePricingOption = function (optIdx) {
+      const opts = __cb.getPricingOptions();
+      if (opts.length <= 1) return;
+      opts.splice(optIdx, 1);
+      afterPricingOptionsChange();
+    };
+    __cb.renamePricingOption = function (optIdx, name) {
+      const o = __cb.getPricingOptions()[optIdx];
+      if (!o) return;
+      o.name = String(name || "").trim() || `Option ${pricingOptionLetter(optIdx)}`;
+      afterPricingOptionsChange();
     };
 
     function commitPricingInput(input, setter) {

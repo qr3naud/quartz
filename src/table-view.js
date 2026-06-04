@@ -772,33 +772,28 @@
       ucData.push({ uc, yearRecs, ucCredits, ucActions });
     }
 
-    // Per-year recommended (rollup) + effective (Total override) values. The
-    // Total group is the source of truth for the Summary; overrides do NOT
-    // cascade back into the use cases.
-    const override = __cb.pricingTotalOverride || { credits: {}, actionTier: {} };
-    const perYear = rec.map((r, i) => {
-      const recTier = clampActionVolume(r.actionsRaw).tier;
-      const recCredits = Math.round(r.credits);
-      const ovCredits = override.credits ? override.credits[i] : undefined;
-      const ovTier = override.actionTier ? override.actionTier[i] : undefined;
-      const credits = ovCredits != null ? Number(ovCredits) : recCredits;
-      const tier = ovTier != null ? ovTier : recTier;
-      return {
-        recCredits,
-        recTier,
-        credits,
-        tier,
-        actionVolume: actionVolumeForTier(tier),
-        creditsOverridden: ovCredits != null && Number(ovCredits) !== recCredits,
-        tierOverridden: ovTier != null && String(ovTier) !== String(recTier),
-      };
-    });
+    // Shared recommended rollup per year (credits sum; action tier from the raw
+    // action sum). Each option applies its own overrides over this.
+    const recommended = rec.map((r) => ({
+      recCredits: Math.round(r.credits),
+      recTier: clampActionVolume(r.actionsRaw).tier,
+    }));
 
-    // ---- Summary box FIRST (top), from the effective Total values --------
-    wrap.appendChild(buildPricingSummaryBox(perYear, creditCost, actionCost, years));
+    // Options (1-3); each is an independent override over `recommended`.
+    // Option A (index 0) is the source of truth for the Summary.
+    const options = __cb.getPricingOptions
+      ? __cb.getPricingOptions()
+      : [{ id: "a", name: "Option A", override: { credits: {}, actionTier: {} } }];
+    const optionsData = options.map((opt) => ({
+      opt,
+      perYear: effectivePerYear(recommended, opt.override, years),
+    }));
 
-    // ---- Editable "Total" group (deal-level source of truth) ------------
-    wrap.appendChild(buildPricingTotalGroup(perYear, creditCost, actionCost, years));
+    // ---- Summary box FIRST (top), from Option A's effective values --------
+    wrap.appendChild(buildPricingSummaryBox(optionsData[0].perYear, creditCost, actionCost, years));
+
+    // ---- Editable "Options" group (deal-level source of truth) -----------
+    wrap.appendChild(buildPricingOptionsGroup(optionsData, creditCost, actionCost, years));
 
     for (const { uc, yearRecs, ucCredits, ucActions } of ucData) {
       const box = document.createElement("div");
@@ -1138,54 +1133,33 @@
     return trigger;
   }
 
-  // Editable, collapsible grey "Total" group — the deal-level source of truth
-  // for the Summary. Years are ROWS; Actions + Credits are the two COLUMNS.
-  // Each year: an Actions volume dropdown + a Credits number input (defaults =
-  // the recommended rollup; amber outline on deviation). A final "Discount" row
-  // shows the rep floor for each metric, picked from the tier the AVERAGE volume
-  // across years lands in. Editing here NEVER cascades into the use cases.
-  function buildPricingTotalGroup(perYear, creditCost, actionCost, years) {
-    const box = document.createElement("div");
-    box.className = "cb-pricing-totalgrp";
-    const collapsed = !!__cb._pricingTotalCollapsed;
-    if (collapsed) box.classList.add("cb-pricing-totalgrp-collapsed");
-
-    // ---- Collapsible grey header ----
-    const header = document.createElement("div");
-    header.className = "cb-pricing-totalgrp-header";
-    header.setAttribute("role", "button");
-    header.tabIndex = 0;
-    header.addEventListener("mousedown", (e) => e.stopPropagation());
-    const chevron = document.createElement("span");
-    chevron.className = "cb-pricing-totalgrp-chevron";
-    chevron.innerHTML = chevronDownSvg(12);
-    const nm = document.createElement("span");
-    nm.className = "cb-pricing-totalgrp-name";
-    nm.textContent = "Total";
-    header.appendChild(chevron);
-    header.appendChild(nm);
-    const toggle = () => {
-      __cb._pricingTotalCollapsed = !__cb._pricingTotalCollapsed;
-      render();
-    };
-    header.addEventListener("click", (e) => {
-      e.stopPropagation();
-      toggle();
+  // Effective per-year values for one option = the recommended rollup with the
+  // option's per-year overrides applied (credits + action tier). Flags whether
+  // each value deviates from the recommendation (drives the amber outline).
+  function effectivePerYear(recommended, override, years) {
+    override = override || { credits: {}, actionTier: {} };
+    return recommended.slice(0, years).map((r, i) => {
+      const ovC = override.credits ? override.credits[i] : undefined;
+      const ovT = override.actionTier ? override.actionTier[i] : undefined;
+      const credits = ovC != null ? Number(ovC) : r.recCredits;
+      const tier = ovT != null ? ovT : r.recTier;
+      return {
+        recCredits: r.recCredits,
+        recTier: r.recTier,
+        credits,
+        tier,
+        actionVolume: actionVolumeForTier(tier),
+        creditsOverridden: ovC != null && Number(ovC) !== r.recCredits,
+        tierOverridden: ovT != null && String(ovT) !== String(r.recTier),
+      };
     });
-    header.addEventListener("keydown", (e) => {
-      if (e.key === "Enter" || e.key === " ") {
-        e.preventDefault();
-        toggle();
-      }
-    });
-    box.appendChild(header);
+  }
 
-    if (collapsed) return box;
-
+  // The years-rows grid for ONE option (Actions + Credits columns + Discount).
+  function buildOptionGrid(perYear, optIdx, years) {
     const grid = document.createElement("div");
     grid.className = "cb-pricing-totalgrp-grid";
 
-    // Column header row: corner + Actions + Credits (colored icons + labels).
     grid.appendChild(document.createElement("div")).className = "cb-ptg-corner";
     const colHead = (labelText, iconSvg, cls) => {
       const h = document.createElement("div");
@@ -1200,7 +1174,6 @@
       colHead("Credits", typeof coinsSvg === "function" ? coinsSvg(13) : "", "cb-ptg-credits"),
     );
 
-    // Year rows.
     perYear.forEach((y, i) => {
       const lbl = document.createElement("div");
       lbl.className = "cb-ptg-rowlabel";
@@ -1211,7 +1184,7 @@
       aCell.className = "cb-ptg-cell";
       aCell.appendChild(
         buildPricingVolDropdown(y.tier, y.tierOverridden, (tierId) =>
-          __cb.setPricingTotalActionTier(i, tierId),
+          __cb.setPricingOptionActionTier(optIdx, i, tierId),
         ),
       );
       grid.appendChild(aCell);
@@ -1226,7 +1199,7 @@
       cInput.value = pricingFmt(y.credits);
       const commitCredits = () => {
         const raw = parseInt(cInput.value.replace(/[^\d]/g, ""), 10);
-        __cb.setPricingTotalCredits(i, Number.isFinite(raw) ? raw : 0);
+        __cb.setPricingOptionCredits(optIdx, i, Number.isFinite(raw) ? raw : 0);
       };
       cInput.addEventListener("keydown", (e) => {
         if (e.key === "Enter") {
@@ -1264,7 +1237,184 @@
     grid.appendChild(repCell(actionRep));
     grid.appendChild(repCell(creditRep));
 
-    box.appendChild(grid);
+    return grid;
+  }
+
+  // ---- Option right-click menu (Rename / Delete) ----
+  let pricingOptMenuEl = null;
+  function closePricingOptMenu() {
+    if (pricingOptMenuEl) {
+      pricingOptMenuEl.remove();
+      pricingOptMenuEl = null;
+    }
+    document.removeEventListener("mousedown", onPricingOptMenuDocClick, true);
+  }
+  function onPricingOptMenuDocClick(e) {
+    if (pricingOptMenuEl && !pricingOptMenuEl.contains(e.target)) closePricingOptMenu();
+  }
+  function openPricingOptionMenu(evt, optIdx, opt, box, total) {
+    closePricingOptMenu();
+    const menu = document.createElement("div");
+    menu.className = "cb-ptg-optmenu";
+    menu.addEventListener("mousedown", (e) => e.stopPropagation());
+    const mk = (label, fn, disabled) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "cb-ptg-optmenu-item" + (disabled ? " cb-ptg-optmenu-item-disabled" : "");
+      b.textContent = label;
+      if (!disabled) {
+        b.addEventListener("click", (e) => {
+          e.stopPropagation();
+          closePricingOptMenu();
+          fn();
+        });
+      }
+      menu.appendChild(b);
+    };
+    mk("Rename", () => {
+      __cb._pricingOptionRenaming = opt.id;
+      render();
+    });
+    mk(
+      "Delete",
+      () => {
+        box.classList.add("cb-pricing-option-leaving");
+        setTimeout(() => __cb.deletePricingOption(optIdx), 200);
+      },
+      total <= 1,
+    );
+    document.body.appendChild(menu);
+    const x = Math.min(evt.clientX, window.innerWidth - menu.offsetWidth - 8);
+    const yPos = Math.min(evt.clientY, window.innerHeight - menu.offsetHeight - 8);
+    menu.style.position = "fixed";
+    menu.style.left = `${Math.round(Math.max(8, x))}px`;
+    menu.style.top = `${Math.round(Math.max(8, yPos))}px`;
+    pricingOptMenuEl = menu;
+    document.addEventListener("mousedown", onPricingOptMenuDocClick, true);
+  }
+
+  // One option box: name header (right-click → rename / delete) + its grid.
+  function buildPricingOptionBox(opt, optIdx, perYear, years, total) {
+    const box = document.createElement("div");
+    box.className = "cb-pricing-option";
+    box.dataset.optId = opt.id;
+    if (__cb._pricingOptionJustAdded === opt.id) {
+      box.classList.add("cb-pricing-option-enter");
+      __cb._pricingOptionJustAdded = null;
+    }
+
+    const nameRow = document.createElement("div");
+    nameRow.className = "cb-pricing-option-namerow";
+    if (__cb._pricingOptionRenaming === opt.id) {
+      const inp = document.createElement("input");
+      inp.className = "cb-pricing-option-name-input";
+      inp.value = opt.name;
+      const commit = () => {
+        if (__cb._pricingOptionRenaming !== opt.id) return;
+        __cb._pricingOptionRenaming = null;
+        __cb.renamePricingOption(optIdx, inp.value);
+      };
+      inp.addEventListener("mousedown", (e) => e.stopPropagation());
+      inp.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          inp.blur();
+        } else if (e.key === "Escape") {
+          __cb._pricingOptionRenaming = null;
+          render();
+        }
+      });
+      inp.addEventListener("blur", commit);
+      nameRow.appendChild(inp);
+      requestAnimationFrame(() => {
+        inp.focus();
+        inp.select();
+      });
+    } else {
+      const name = document.createElement("span");
+      name.className = "cb-pricing-option-name";
+      name.textContent = opt.name;
+      nameRow.appendChild(name);
+      const hint = document.createElement("span");
+      hint.className = "cb-pricing-option-hint";
+      hint.textContent = "right-click to rename / delete";
+      nameRow.appendChild(hint);
+    }
+    box.appendChild(nameRow);
+    box.appendChild(buildOptionGrid(perYear, optIdx, years));
+
+    box.addEventListener("contextmenu", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      openPricingOptionMenu(e, optIdx, opt, box, total);
+    });
+
+    return box;
+  }
+
+  // The collapsible grey "Options" group: a header (with a + to add an option,
+  // up to 3) and a horizontal row of option boxes. Option A feeds the Summary.
+  function buildPricingOptionsGroup(optionsData, creditCost, actionCost, years) {
+    const box = document.createElement("div");
+    box.className = "cb-pricing-totalgrp";
+    const collapsed = !!__cb._pricingTotalCollapsed;
+    if (collapsed) box.classList.add("cb-pricing-totalgrp-collapsed");
+
+    const header = document.createElement("div");
+    header.className = "cb-pricing-totalgrp-header";
+    header.setAttribute("role", "button");
+    header.tabIndex = 0;
+    header.addEventListener("mousedown", (e) => e.stopPropagation());
+    const chevron = document.createElement("span");
+    chevron.className = "cb-pricing-totalgrp-chevron";
+    chevron.innerHTML = chevronDownSvg(12);
+    const nm = document.createElement("span");
+    nm.className = "cb-pricing-totalgrp-name";
+    nm.textContent = "Options";
+    header.appendChild(chevron);
+    header.appendChild(nm);
+
+    // "+" to add an option (hidden at the 3-option cap). Sits at the right.
+    if (optionsData.length < 3) {
+      const addBtn = document.createElement("button");
+      addBtn.type = "button";
+      addBtn.className = "cb-pricing-totalgrp-add";
+      addBtn.title = "Add an option";
+      addBtn.setAttribute("aria-label", "Add an option");
+      addBtn.innerHTML =
+        '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>';
+      addBtn.addEventListener("mousedown", (e) => e.stopPropagation());
+      addBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        if (__cb.addPricingOption) __cb.addPricingOption();
+      });
+      header.appendChild(addBtn);
+    }
+
+    const toggle = () => {
+      __cb._pricingTotalCollapsed = !__cb._pricingTotalCollapsed;
+      render();
+    };
+    header.addEventListener("click", (e) => {
+      e.stopPropagation();
+      toggle();
+    });
+    header.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        toggle();
+      }
+    });
+    box.appendChild(header);
+
+    if (collapsed) return box;
+
+    const row = document.createElement("div");
+    row.className = "cb-pricing-options-row";
+    optionsData.forEach(({ opt, perYear }, idx) => {
+      row.appendChild(buildPricingOptionBox(opt, idx, perYear, years, optionsData.length));
+    });
+    box.appendChild(row);
     return box;
   }
 
@@ -7541,6 +7691,7 @@
       closeNotePopover();
       hideNotePreview();
       closePricingVolMenu();
+      closePricingOptMenu();
       selectedRowIds.clear();
       selectionAnchorId = null;
       visibleRowOrder = [];

@@ -3261,3 +3261,156 @@
   border-color: #f59e0b !important;
   box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.18) !important;
 }
+
+/* "+" add-option button in the Options header (right side). */
+.cb-pricing-totalgrp-add {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #374151;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
+}
+
+.cb-pricing-totalgrp-add:hover {
+  background: #eef2ff;
+  border-color: #6366f1;
+  color: #4338ca;
+}
+
+/* Horizontal row of option boxes. */
+.cb-pricing-options-row {
+  display: flex;
+  gap: 12px;
+  padding: 14px;
+  align-items: flex-start;
+}
+
+.cb-pricing-option {
+  flex: 1 1 0;
+  min-width: 0;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #fafafa;
+  overflow: hidden;
+  transform-origin: top left;
+}
+
+.cb-pricing-option-namerow {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid #eef0f3;
+  background: #ffffff;
+}
+
+.cb-pricing-option-name {
+  font-size: 13px;
+  font-weight: 700;
+  color: #374151;
+}
+
+.cb-pricing-option-hint {
+  font-size: 10px;
+  color: #c0c6cf;
+  margin-left: auto;
+  white-space: nowrap;
+}
+
+.cb-pricing-option-name-input {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid #6366f1;
+  border-radius: 5px;
+  padding: 2px 6px;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  color: #111827;
+}
+
+.cb-pricing-option-name-input:focus {
+  outline: none;
+}
+
+/* The grid inside an option box trims its own padding (the box pads it). */
+.cb-pricing-option .cb-pricing-totalgrp-grid {
+  padding: 12px;
+}
+
+/* Enter / leave animations for options. */
+.cb-pricing-option-enter {
+  animation: cb-pricing-option-in 240ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes cb-pricing-option-in {
+  from {
+    opacity: 0;
+    transform: translateX(12px) scale(0.98);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+  }
+}
+
+.cb-pricing-option-leaving {
+  opacity: 0;
+  transform: scale(0.96);
+  transition: opacity 0.18s ease, transform 0.18s ease;
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cb-pricing-option-enter {
+    animation: none;
+  }
+
+  .cb-pricing-option-leaving {
+    transition: none;
+  }
+}
+
+/* Option right-click menu (Rename / Delete). */
+.cb-ptg-optmenu {
+  z-index: 10000060;
+  min-width: 140px;
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.18);
+  padding: 4px;
+}
+
+.cb-ptg-optmenu-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 7px 10px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  font-family: inherit;
+  font-size: 13px;
+  color: #111827;
+  cursor: pointer;
+}
+
+.cb-ptg-optmenu-item:hover {
+  background: #f3f4f6;
+}
+
+.cb-ptg-optmenu-item-disabled,
+.cb-ptg-optmenu-item-disabled:hover {
+  color: #c0c6cf;
+  background: transparent;
+  cursor: default;
+}

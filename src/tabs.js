@@ -429,7 +429,8 @@
         state.pricingMode = !!__cb.pricingMode;
         state.contractYears = Math.min(3, Math.max(1, __cb.contractYears || 1));
         state.pricingYearRecords = __cb.pricingYearRecords ?? {};
-        state.pricingTotalOverride = __cb.pricingTotalOverride ?? { credits: {}, actionTier: {} };
+        // Pricing options (1-3). Legacy single-override tabs migrate on restore.
+        state.pricingOptions = __cb.pricingOptions ?? null;
         // Actual-spend session picker: the bucketed sessions + selection + gap,
         // so reloads/other devices restore instantly with no /run/recent fetch.
         // Preserve the previously-saved blob when the controller has no live
@@ -571,6 +572,7 @@
       __cb.useCaseScope = active.state.useCaseScope ?? {};
       __cb.contractYears = Math.min(3, Math.max(1, active.state.contractYears || 1));
       __cb.pricingYearRecords = active.state.pricingYearRecords ?? {};
+      __cb.pricingOptions = active.state.pricingOptions ?? null;
       __cb.pricingTotalOverride = active.state.pricingTotalOverride ?? { credits: {}, actionTier: {} };
       const recordsInput = document.getElementById("cb-records-input");
       if (recordsInput && active.state.records != null) {
@@ -703,6 +705,7 @@
       __cb.useCaseScope = stateForRestore.useCaseScope ?? {};
       __cb.contractYears = Math.min(3, Math.max(1, stateForRestore.contractYears || 1));
       __cb.pricingYearRecords = stateForRestore.pricingYearRecords ?? {};
+      __cb.pricingOptions = stateForRestore.pricingOptions ?? null;
       __cb.pricingTotalOverride = stateForRestore.pricingTotalOverride ?? { credits: {}, actionTier: {} };
       const recordsInput = document.getElementById("cb-records-input");
       if (recordsInput && stateForRestore.records != null) {
@@ -1331,6 +1334,9 @@
     // table). Falls back to plain assignment before the summary bar exists.
     __cb.contractYears = Math.min(3, Math.max(1, tab?.state?.contractYears || 1));
     __cb.pricingYearRecords = tab?.state?.pricingYearRecords ?? {};
+    // Restore options; keep the legacy single override around so getPricingOptions
+    // can migrate it when a tab predates the multi-option model.
+    __cb.pricingOptions = tab?.state?.pricingOptions ?? null;
     __cb.pricingTotalOverride = tab?.state?.pricingTotalOverride ?? { credits: {}, actionTier: {} };
     if (__cb.setPricingMode) {
       __cb.setPricingMode(!!tab?.state?.pricingMode);
