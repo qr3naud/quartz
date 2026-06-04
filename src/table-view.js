@@ -561,11 +561,11 @@
     const collapsed = (__cb._pricingCollapsed = __cb._pricingCollapsed || new Set());
     const ucs = __cb.cost?.computePricingUseCases?.({ viewMode: __cb.viewMode }) || [];
     for (const uc of ucs) collapsed.add(uc.key);
-    refresh();
+    render();
   }
   function pricingExpandAll() {
     if (__cb._pricingCollapsed) __cb._pricingCollapsed.clear();
-    refresh();
+    render();
   }
 
   // ---- Inline search ----
@@ -688,12 +688,28 @@
     return "$" + Math.round(Number(n) || 0).toLocaleString();
   }
 
-  // The pricing body: one collapsible box per use case (reusing the green
-  // super-group header look), each with N per-year columns (N = contractYears).
-  // Each year column shows Records / Actions / Credits inputs (actions before
-  // credits; edit any one to resolve that year's records) and, when expanded, a
-  // second row with the action + credit dollar costs. A total box sits
-  // underneath. Mode-aware: volumes follow the Projected/Actual toggle.
+  // Action volume is tier-quantized (calculator parity): a derived action
+  // volume bills at the smallest action tier whose volume covers it — exceed a
+  // tier and you bump up to the next. Pricing-mode only. Returns the clamped
+  // volume + tier label; falls back to the raw volume if bands are unavailable.
+  function clampActionVolume(actions) {
+    const a = Math.max(0, Number(actions) || 0);
+    const set = __cb.pricing?.enterpriseActionFloors?.();
+    const bands = set && Array.isArray(set.bands) ? set.bands : null;
+    if (!bands || !bands.length || a <= 0) return { volume: a, tier: null };
+    const sorted = bands.slice().sort((x, y) => x.volume - y.volume);
+    for (const b of sorted) {
+      if (a <= b.volume) return { volume: b.volume, tier: b.tier };
+    }
+    const top = sorted[sorted.length - 1];
+    return { volume: top.volume, tier: top.tier };
+  }
+
+  // The pricing body: a total box at the TOP, then one collapsible box per use
+  // case (reusing the green super-group header look), each with N per-year
+  // columns (N = contractYears). Each year column: Records driver + Actions
+  // (tier-quantized, read-only) + Credits (editable), each metric stacking its
+  // volume over its dollar cost. Mode-aware: volumes follow Projected/Actual.
   function buildPricingBody() {
     const wrap = document.createElement("div");
     wrap.className = "cb-pricing-body";
@@ -719,9 +735,10 @@
 
     const collapsed = (__cb._pricingCollapsed = __cb._pricingCollapsed || new Set());
 
-    // Per-year grand running totals (across use cases) for the total box.
+    // First pass: resolve per-UC per-year records + tier-clamped action volumes,
+    // and the per-year grand totals (actions billed at their tier).
     const grand = Array.from({ length: years }, () => ({ credits: 0, actions: 0 }));
-
+    const ucData = [];
     for (const uc of ucs) {
       const arr = yrMap[uc.key] || [];
       const yearRecs = [];
@@ -731,13 +748,19 @@
         const recs = arr[i] != null ? Number(arr[i]) : uc.baselineRecords;
         yearRecs.push(recs);
         const c = uc.perRowCredits * recs;
-        const a = uc.perRowActions * recs;
+        const a = clampActionVolume(uc.perRowActions * recs).volume;
         ucCredits += c;
         ucActions += a;
         grand[i].credits += c;
         grand[i].actions += a;
       }
+      ucData.push({ uc, yearRecs, ucCredits, ucActions });
+    }
 
+    // ---- Total box FIRST (at the top) -----------------------------------
+    wrap.appendChild(buildPricingTotalBox(grand, creditCost, actionCost, years));
+
+    for (const { uc, yearRecs, ucCredits, ucActions } of ucData) {
       const box = document.createElement("div");
       box.className = "cb-pricing-uc";
       const isCollapsed = collapsed.has(uc.key);
@@ -748,6 +771,8 @@
       header.className = "cb-pricing-uc-header";
       header.setAttribute("role", "button");
       header.tabIndex = 0;
+      // Keep the header mousedown from reaching the document selection-clearer.
+      header.addEventListener("mousedown", (e) => e.stopPropagation());
       const chevron = document.createElement("span");
       chevron.className = "cb-pricing-uc-chevron";
       chevron.innerHTML = chevronDownSvg(12);
@@ -769,10 +794,13 @@
       dol.textContent = pricingDollar(ucCredits * creditCost + ucActions * actionCost);
       pillWrap.appendChild(dol);
       header.appendChild(pillWrap);
+      // NOTE: render() (not refresh()) — there is no module-scoped refresh; the
+      // public refresh lives on __cb.tableView. render() rebuilds the body with
+      // the new collapse state (matches how the normal group rows toggle).
       const toggle = () => {
         if (collapsed.has(uc.key)) collapsed.delete(uc.key);
         else collapsed.add(uc.key);
-        refresh();
+        render();
       };
       header.addEventListener("click", (e) => {
         e.stopPropagation();
@@ -800,9 +828,6 @@
       }
       wrap.appendChild(box);
     }
-
-    // ---- Total box underneath -------------------------------------------
-    wrap.appendChild(buildPricingTotalBox(grand, creditCost, actionCost, years));
     return wrap;
   }
 
@@ -836,7 +861,7 @@
     return f;
   }
 
-  // One metric column: the volume input stacked over its dollar cost.
+  // One editable metric column: the volume input stacked over its dollar cost.
   function buildPricingMetric(labelText, volume, dollar, cls, onCommit) {
     const col = document.createElement("div");
     col.className = "cb-pricing-metric " + cls;
@@ -848,16 +873,37 @@
     return col;
   }
 
+  // One read-only metric column: a tier-quantized volume (with its tier label)
+  // stacked over its dollar cost. Used for Actions, which bill at a tier.
+  function buildPricingMetricStatic(labelText, volume, tier, dollar, cls) {
+    const col = document.createElement("div");
+    col.className = "cb-pricing-metric " + cls;
+    const head = document.createElement("span");
+    head.className = "cb-pricing-field-label";
+    head.textContent = tier ? `${labelText} \u00b7 ${tier}` : labelText;
+    const val = document.createElement("div");
+    val.className = "cb-pricing-metric-static";
+    val.textContent = pricingFmt(volume);
+    col.appendChild(head);
+    col.appendChild(val);
+    const cost = document.createElement("div");
+    cost.className = "cb-pricing-metric-cost";
+    cost.textContent = pricingDollar(dollar);
+    col.appendChild(cost);
+    return col;
+  }
+
   // One year column: header (Year N + that year's total cost), the Records
-  // driver, then two metric columns (Actions, then Credits) each stacking the
-  // volume input over its dollar cost.
+  // driver, then Actions (tier-quantized, read-only) and Credits (editable),
+  // each stacking the volume over its dollar cost.
   function buildPricingYearCell(uc, yearIdx, records, creditCost, actionCost) {
     const cell = document.createElement("div");
     cell.className = "cb-pricing-year";
 
     const credits = uc.perRowCredits * records;
-    const actions = uc.perRowActions * records;
-    const yearTotal = credits * creditCost + actions * actionCost;
+    const clamped = clampActionVolume(uc.perRowActions * records);
+    const actionDollars = clamped.volume * actionCost;
+    const yearTotal = credits * creditCost + actionDollars;
 
     const label = document.createElement("div");
     label.className = "cb-pricing-year-label";
@@ -876,14 +922,17 @@
     recField.classList.add("cb-pricing-field-records");
     cell.appendChild(recField);
 
-    // Actions then credits; each column stacks volume over $ cost.
+    // Actions first (tier-quantized, read-only), then Credits (editable).
     const metrics = document.createElement("div");
     metrics.className = "cb-pricing-year-metrics";
     metrics.appendChild(
-      buildPricingMetric("Actions", actions, actions * actionCost, "cb-pricing-metric-action", (v) => {
-        const r = uc.perRowActions > 0 ? Math.round(v / uc.perRowActions) : 0;
-        __cb.setPricingYearRecords(uc.key, yearIdx, r);
-      }),
+      buildPricingMetricStatic(
+        "Actions",
+        clamped.volume,
+        clamped.tier,
+        actionDollars,
+        "cb-pricing-metric-action",
+      ),
     );
     metrics.appendChild(
       buildPricingMetric("Credits", credits, credits * creditCost, "cb-pricing-metric-credit", (v) => {
