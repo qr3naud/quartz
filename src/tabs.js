@@ -491,99 +491,48 @@
   }
 
   /**
-   * Applies a remote canvases row to the local state. Called from the
-   * realtime postgres_changes subscription, set up in installRealtimeSync()
-   * below. Keeps the local activeId when the tab still exists remotely so
-   * switching tabs in a peer's save doesn't yank you to a different tab.
+   * Handles a remote `canvases` row arriving via the realtime
+   * postgres_changes / canvasInvalidate subscription (installed in
+   * installRealtimeCanvasSync below).
    *
-   * We deliberately do NOT skip when a local save is pending: that save will
-   * fire within ~500ms and overwrite the peer's state with ours anyway, so
-   * applying the remote in the interim just gives a brief preview of the
-   * peer's work rather than freezing live sync until our timer fires.
+   * IMPORTANT: this must NOT apply `newRow.state` to the tab store. Per-tab
+   * state now lives in `canvas_tabs` and syncs through applyRemoteTab(); the
+   * `canvases` row no longer carries authoritative tab state (ensureCanvasRow
+   * stopped writing the `state` column after the canvas_tabs split, so any
+   * `state` left on the row is a stale pre-split blob). The only live data on
+   * the row now is metadata (sfdc_opportunity_*, updated_at, dust POC fields).
+   *
+   * Replacing __cb.tabStore from that stale `state` here was wiping the live
+   * tabs whenever a metadata-only PATCH fired a postgres_changes UPDATE — most
+   * visibly when linking/unlinking a Salesforce opportunity (sfdc.js PATCHes
+   * the row without touching `state` or `updated_by`), after which the tab bar
+   * vanished until the canvas was closed and reopened.
+   *
+   * We keep the subscription only to mirror the linked Salesforce opportunity
+   * so a peer's link/unlink updates everyone's pill live.
    */
   function applyRemoteCanvas(newRow) {
-    // Verbose-only logs: silent unless DevTools "Verbose" filter is on.
-    // Each early-return path tells us why a remote update was skipped, which
-    // is the question that comes up most often when "live updates aren't
-    // working".
-    if (!newRow) {
-      console.debug("[Clay Scoping] skip remote: no row");
-      return;
-    }
+    if (!newRow) return;
 
-    // Normalize stringified state. Some transports (notably BfD via
-    // realtime.broadcast_changes) serialize jsonb columns into JSON strings
-    // by the time they reach the client. Accepting both keeps this handler
-    // transport-agnostic.
-    let state = newRow.state;
-    if (typeof state === "string") {
-      try { state = JSON.parse(state); }
-      catch { state = null; }
-    }
-    if (!state || typeof state !== "object") {
-      console.debug("[Clay Scoping] skip remote: no state", { stateType: typeof newRow.state });
-      return;
-    }
-
-    // Ignore our own echo.
-    if (newRow.updated_by && newRow.updated_by === __cb.userId) {
-      console.debug("[Clay Scoping] skip remote: own echo", { updatedBy: newRow.updated_by });
-      return;
-    }
-    // Only skip if the user is mid-keystroke (typing). Stale focus is fine.
-    if (isUserInteracting()) {
-      console.debug("[Clay Scoping] skip remote: user typing");
-      return;
-    }
-
-    const remote = state;
-    const localActiveId = __cb.tabStore?.activeId;
-
-    const next = { ...remote };
-    if (
-      localActiveId &&
-      Array.isArray(next.tabs) &&
-      next.tabs.some(t => t.id === localActiveId)
-    ) {
-      next.activeId = localActiveId;
-    }
-    __cb.tabStore = next;
-
-    // Cache the new store to localStorage so reload-from-offline keeps parity.
-    const workbookId = newRow.workbook_id;
-    if (workbookId) {
-      try { localStorage.setItem(`cb-tabs-${workbookId}`, JSON.stringify(next)); } catch {}
-    }
-
-    const active = next.tabs?.find(t => t.id === next.activeId);
-    if (active?.state && __cb.canvas) {
-      console.debug("[Clay Scoping] applying remote canvas", {
-        tabs: next.tabs?.length,
-        activeId: next.activeId,
-        cards: active.state.cards?.length,
-        groups: active.state.groups?.length,
-      });
-      // Drop view so user B keeps their own pan/zoom rather than being
-      // teleported to user A's last view position. Same pattern undo/redo
-      // already uses internally.
-      const { view: _ignoredView, ...stateForRestore } = active.state;
-      __cb.model.restore(stateForRestore);
-      __cb.recordsActual = active.state.recordsActual ?? null;
-      __cb.useCaseScope = active.state.useCaseScope ?? {};
-      __cb.contractYears = Math.min(3, Math.max(1, active.state.contractYears || 1));
-      __cb.pricingYearRecords = active.state.pricingYearRecords ?? {};
-      __cb.pricingOptions = active.state.pricingOptions ?? null;
-      __cb.pricingTotalOverride = active.state.pricingTotalOverride ?? { credits: {}, actionTier: {} };
-      const recordsInput = document.getElementById("cb-records-input");
-      if (recordsInput && active.state.records != null) {
-        recordsInput.value = active.state.records;
-        recordsInput.dispatchEvent(new Event("input"));
+    // Keep the Salesforce linked-opp pill in sync across collaborators.
+    // setLinkedOpportunityLocal is idempotent (no-ops when unchanged), so the
+    // local user's own echo is free and peers see link/unlink immediately.
+    // `__cb.sfdc` is only published for users who have the `sfdc` feature flag.
+    if (__cb.sfdc?.setLinkedOpportunityLocal && "sfdc_opportunity_id" in newRow) {
+      try {
+        __cb.sfdc.setLinkedOpportunityLocal(
+          newRow.sfdc_opportunity_id
+            ? {
+                id: newRow.sfdc_opportunity_id,
+                name: newRow.sfdc_opportunity_name || "",
+                url: newRow.sfdc_opportunity_url || "",
+              }
+            : null,
+        );
+      } catch (err) {
+        console.debug("[Clay Scoping] applyRemoteCanvas sfdc sync failed", err);
       }
-      if (__cb.applyRecordsState) __cb.applyRecordsState();
     }
-    // Re-render the tab bar so any new/renamed tabs from the peer appear.
-    // Defined later in this IIFE as a local function; hoisted at call time.
-    try { renderTabBar(); } catch {}
   }
 
   // Registered from overlay.js once the realtime channel is joined. Idempotent.
