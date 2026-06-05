@@ -1506,20 +1506,32 @@
         __cb._pricingOptionJustRestored = opt.id;
         __cb.setPricingOptionMinimized(optIdx, false);
       } else {
-        // FLIP: pin the card's current size, capture its pre-collapse height
-        // (the thin strip keeps that length), then animate the width down to a
-        // thin strip; persist + re-render minimized once the shrink finishes.
+        // Smooth collapse: pin the card's current size + capture its pre-collapse
+        // height (the strip keeps that length), then crossfade the content out and
+        // a rotated title in while the width shrinks. Persist + re-render at the end.
         const rect = box.getBoundingClientRect();
         opt.minH = Math.round(rect.height);
+        box.style.position = "relative";
+        box.style.overflow = "hidden";
         box.style.flex = `0 0 ${rect.width}px`;
         box.style.maxWidth = `${rect.width}px`;
-        box.style.overflow = "hidden";
+        for (const child of Array.from(box.children)) {
+          child.style.transition = "opacity 0.16s ease";
+          child.style.opacity = "0";
+        }
+        const tmpTitle = document.createElement("div");
+        tmpTitle.className = "cb-pricing-option-min-title";
+        tmpTitle.textContent = opt.name;
+        tmpTitle.style.opacity = "0";
+        box.appendChild(tmpTitle);
         requestAnimationFrame(() => {
-          box.style.transition = "flex-basis 0.24s ease, max-width 0.24s ease";
+          box.style.transition = "flex-basis 0.26s ease, max-width 0.26s ease";
           box.style.flexBasis = "46px";
           box.style.maxWidth = "46px";
+          tmpTitle.style.transition = "opacity 0.22s ease 0.08s";
+          tmpTitle.style.opacity = "1";
         });
-        setTimeout(() => __cb.setPricingOptionMinimized(optIdx, true), 260);
+        setTimeout(() => __cb.setPricingOptionMinimized(optIdx, true), 300);
       }
     });
     mk(

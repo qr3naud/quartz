@@ -3406,15 +3406,19 @@
 
 /* Minimized option card: a thin strip showing only the title, rotated 90deg. */
 .cb-pricing-option-min {
+  position: relative;
   flex: 0 0 46px;
   max-width: 46px;
   min-height: 120px;
+}
+
+/* Absolutely centered so it can crossfade in over the collapsing card content. */
+.cb-pricing-option-min-title {
+  position: absolute;
+  inset: 0;
   display: flex;
   align-items: center;
   justify-content: center;
-}
-
-.cb-pricing-option-min-title {
   writing-mode: vertical-rl;
   text-align: center;
   font-size: 13px;
