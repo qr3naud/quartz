@@ -1232,11 +1232,13 @@
     tip.className = "cb-pricing-tip";
     tip.textContent = text;
     document.body.appendChild(tip);
+    // Fixed before measuring so the width is the tip's own, not the body width
+    // (a static block would report full width and get clamped to the left edge).
+    tip.style.position = "fixed";
     const r = anchor.getBoundingClientRect();
-    const tw = tip.getBoundingClientRect().width;
+    const tw = tip.getBoundingClientRect().width || 0;
     let left = Math.round(r.left + r.width / 2 - tw / 2);
     left = Math.max(8, Math.min(left, window.innerWidth - tw - 8));
-    tip.style.position = "fixed";
     tip.style.left = `${left}px`;
     tip.style.top = `${Math.round(r.bottom + 6)}px`;
     pricingTipEl = tip;

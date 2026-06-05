@@ -3624,7 +3624,7 @@
   font-weight: 600;
   color: #374151;
   font-variant-numeric: tabular-nums;
-  cursor: none;
+  cursor: pointer;
   transition: background 0.12s, border-color 0.12s;
 }
 
