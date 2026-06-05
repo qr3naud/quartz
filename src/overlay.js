@@ -409,6 +409,71 @@
     moreMenuEl.style.zIndex = "9999999";
   };
 
+  // --- Overlay positioning (pin below Clay's top nav) ------------------------
+
+  // Clay's header/nav. Same selector chain used by the float launcher.
+  function findClayHeader() {
+    return (
+      document.querySelector("#clay-app header") ??
+      document.querySelector("#clay-app nav") ??
+      document.querySelector("#clay-app > div > div:first-child")
+    );
+  }
+
+  // Pins the overlay's top edge to the bottom of Clay's top nav so the native
+  // breadcrumb/header stays visible above us. Returns true once it has a real
+  // measurement to apply. Crucially it returns false when the header isn't
+  // mounted OR is mounted but not yet laid out (bottom === 0): on a hard
+  // refresh the sticky-open flag fires openCanvas before Clay's SPA renders,
+  // and applying a 0 top would leave the overlay full-page (its CSS default).
+  function positionOverlayBelowHeader() {
+    if (!__cb.overlayEl) return false;
+    const clayHeader = findClayHeader();
+    if (!clayHeader) return false;
+    const bottom = clayHeader.getBoundingClientRect().bottom;
+    if (bottom <= 0) return false;
+    __cb.overlayEl.style.top = bottom + "px";
+    return true;
+  }
+
+  let overlayPosObserver = null;
+  let overlayPosTimer = null;
+  function stopOverlayPositionWatch() {
+    if (overlayPosObserver) { overlayPosObserver.disconnect(); overlayPosObserver = null; }
+    if (overlayPosTimer) { clearInterval(overlayPosTimer); overlayPosTimer = null; }
+  }
+
+  // Retries positioning until Clay's header has mounted and laid out. Covers
+  // the refresh race where openCanvas runs before the SPA paints. Watches DOM
+  // mutations (header mounting) and polls (header present but pre-layout).
+  // Once positioned, the DOM observer disconnects but the poll keeps re-pinning
+  // for the rest of the window so a late layout shift (impersonation banner,
+  // web-font reflow) doesn't leave us mispinned. Self-terminates on overlay
+  // close or after ~6s.
+  function watchOverlayPosition() {
+    stopOverlayPositionWatch();
+    let attempts = 0;
+    const MAX_ATTEMPTS = 60; // ~6s at 100ms
+    const attempt = () => {
+      if (!__cb.overlayEl) { stopOverlayPositionWatch(); return; }
+      if (positionOverlayBelowHeader() && overlayPosObserver) {
+        overlayPosObserver.disconnect();
+        overlayPosObserver = null;
+      }
+      if (++attempts >= MAX_ATTEMPTS) stopOverlayPositionWatch();
+    };
+    overlayPosObserver = new MutationObserver(attempt);
+    overlayPosObserver.observe(document.body, { childList: true, subtree: true });
+    overlayPosTimer = setInterval(attempt, 100);
+  }
+
+  // Keep the overlay pinned when the header's height changes (window resize,
+  // or Clay's impersonation banner toggling — common for GTME/SE users).
+  function onOverlayReposition() {
+    if (!__cb.overlayEl) return;
+    positionOverlayBelowHeader();
+  }
+
   __cb.openCanvas = async function (initialCards) {
     if (__cb.overlayEl) return;
 
@@ -439,13 +504,14 @@
     __cb.overlayEl = document.createElement("div");
     __cb.overlayEl.className = "cb-overlay";
 
-    const clayHeader =
-      document.querySelector("#clay-app header") ??
-      document.querySelector("#clay-app nav") ??
-      document.querySelector("#clay-app > div > div:first-child");
-    if (clayHeader) {
-      __cb.overlayEl.style.top = clayHeader.getBoundingClientRect().bottom + "px";
+    // Pin below Clay's top nav. If the header isn't mounted/laid out yet (hard
+    // refresh + sticky-open fires before the SPA paints), keep retrying until
+    // it is — otherwise the overlay keeps its CSS default (top:0) and covers
+    // the whole page instead of sitting under the native Clay header.
+    if (!positionOverlayBelowHeader()) {
+      watchOverlayPosition();
     }
+    window.addEventListener("resize", onOverlayReposition);
 
     const topBar = document.createElement("div");
     topBar.className = "cb-topbar";
@@ -2796,6 +2862,9 @@
 
   __cb.closeCanvas = function () {
     if (!__cb.overlayEl) return;
+    // Stop the header-position watcher/resize listener set up in openCanvas.
+    stopOverlayPositionWatch();
+    window.removeEventListener("resize", onOverlayReposition);
     // Use the workbook the overlay was mounted for, not parseIdsFromUrl(): if
     // the user just navigated to a different workbook, the URL already points
     // at the new one but we still need to clean up the old workbook's flag.
