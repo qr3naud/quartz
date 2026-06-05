@@ -1513,6 +1513,9 @@
         opt.minH = Math.round(rect.height);
         box.style.position = "relative";
         box.style.overflow = "hidden";
+        // Pin the height up front so the grid reflowing as it narrows can't push
+        // the card (and the row) taller mid-animation.
+        box.style.height = `${rect.height}px`;
         box.style.flex = `0 0 ${rect.width}px`;
         box.style.maxWidth = `${rect.width}px`;
         for (const child of Array.from(box.children)) {
