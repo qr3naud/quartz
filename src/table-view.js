@@ -1271,11 +1271,12 @@
     menu.appendChild(table);
 
     document.body.appendChild(menu);
+    // Fixed before measuring so the width is the menu's own, not the body width.
+    menu.style.position = "fixed";
     const r = anchor.getBoundingClientRect();
     const mw = menu.getBoundingClientRect().width || 280;
     let left = Math.round(r.left);
     if (left + mw > window.innerWidth - 8) left = Math.round(window.innerWidth - mw - 8);
-    menu.style.position = "fixed";
     menu.style.left = `${Math.max(8, left)}px`;
     menu.style.top = `${Math.round(r.bottom + 6)}px`;
     pricingAvgMatrixEl = menu;
@@ -1546,9 +1547,11 @@
       total <= 1,
     );
     document.body.appendChild(menu);
+    // Set fixed positioning BEFORE measuring: a still-static block reports the
+    // full body width, so the right-edge clamp would pin it to the left edge.
+    menu.style.position = "fixed";
     const x = Math.min(evt.clientX, window.innerWidth - menu.offsetWidth - 8);
     const yPos = Math.min(evt.clientY, window.innerHeight - menu.offsetHeight - 8);
-    menu.style.position = "fixed";
     menu.style.left = `${Math.round(Math.max(8, x))}px`;
     menu.style.top = `${Math.round(Math.max(8, yPos))}px`;
     pricingOptMenuEl = menu;
