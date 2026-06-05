@@ -1506,11 +1506,13 @@
         __cb._pricingOptionJustRestored = opt.id;
         __cb.setPricingOptionMinimized(optIdx, false);
       } else {
-        // FLIP: pin the card's current width, then animate it down to a thin
-        // strip; persist + re-render minimized once the shrink finishes.
-        const startW = box.getBoundingClientRect().width;
-        box.style.flex = `0 0 ${startW}px`;
-        box.style.maxWidth = `${startW}px`;
+        // FLIP: pin the card's current size, capture its pre-collapse height
+        // (the thin strip keeps that length), then animate the width down to a
+        // thin strip; persist + re-render minimized once the shrink finishes.
+        const rect = box.getBoundingClientRect();
+        opt.minH = Math.round(rect.height);
+        box.style.flex = `0 0 ${rect.width}px`;
+        box.style.maxWidth = `${rect.width}px`;
         box.style.overflow = "hidden";
         requestAnimationFrame(() => {
           box.style.transition = "flex-basis 0.24s ease, max-width 0.24s ease";
@@ -1576,8 +1578,10 @@
     };
 
     // Minimized: thin strip with only the rotated title (right-click → Restore).
+    // The strip keeps the card's pre-collapse height (opt.minH).
     if (opt.minimized) {
       box.classList.add("cb-pricing-option-min");
+      if (opt.minH) box.style.height = `${opt.minH}px`;
       const title = document.createElement("div");
       title.className = "cb-pricing-option-min-title";
       title.textContent = opt.name;

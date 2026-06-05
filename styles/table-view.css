@@ -3408,16 +3408,15 @@
 .cb-pricing-option-min {
   flex: 0 0 46px;
   max-width: 46px;
-}
-
-.cb-pricing-option-min-title {
+  min-height: 120px;
   display: flex;
   align-items: center;
   justify-content: center;
-  min-height: 132px;
-  padding: 12px 0;
+}
+
+.cb-pricing-option-min-title {
   writing-mode: vertical-rl;
-  transform: rotate(180deg);
+  text-align: center;
   font-size: 13px;
   font-weight: 700;
   color: #374151;
