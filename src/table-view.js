@@ -1174,9 +1174,9 @@
 
   // ---- Average-row hover: the rep-floor band matrix --------------------------
   // A small popover anchored to an Average cell. Rows = the enterprise bands for
-  // the metric; columns = Limit + the 1/2/3-year rep floors (rep only). It
-  // highlights the active contract-year column, the band the average volume
-  // lands in, and the intersection of the two (the floor that actually applies).
+  // the metric; columns = Tier + Rep Floor (band start volume) + the 1/2/3-year
+  // rep floors. It highlights the active contract-year column, the band the
+  // average volume lands in, and their intersection (the floor that applies).
   let pricingAvgMatrixEl = null;
   let pricingAvgMatrixTimer = null;
   function closePricingAvgMatrix() {
@@ -1221,10 +1221,12 @@
     const table = document.createElement("table");
     const thead = document.createElement("thead");
     const htr = document.createElement("tr");
-    ["Limit", "1 Yr", "2 Yr", "3 Yr"].forEach((label, i) => {
+    // Columns: Tier, Rep Floor (the band's start volume), then the 1/2/3-year
+    // rep floors. i 0=Tier, 1=Rep Floor, 2..4 = year columns (year = i - 1).
+    ["Tier", "Rep Floor", "1 Yr", "2 Yr", "3 Yr"].forEach((label, i) => {
       const th = document.createElement("th");
       th.textContent = label;
-      if (i === activeYear) th.className = "cb-pam-col-active";
+      if (i >= 2 && i - 1 === activeYear) th.className = "cb-pam-col-active";
       htr.appendChild(th);
     });
     thead.appendChild(htr);
@@ -1235,6 +1237,10 @@
       const isSel = selKey != null && String(b.tier) === selKey;
       const tr = document.createElement("tr");
       if (isSel) tr.className = "cb-pam-row-sel";
+      const tierTd = document.createElement("td");
+      tierTd.className = "cb-pam-tier";
+      tierTd.textContent = String(b.tier);
+      tr.appendChild(tierTd);
       const limitTd = document.createElement("td");
       limitTd.className = "cb-pam-limit";
       limitTd.textContent = Math.max(0, Math.round(Number(b.volume) || 0)).toLocaleString();
@@ -1433,6 +1439,11 @@
     grid.appendChild(priceBox(LIST_CPA, LIST_CPA, { list: true }));
     grid.appendChild(priceBox(LIST_CPC, LIST_CPC, { list: true }));
 
+    // Authorized (rep floor) — sits above Discount as the reference ceiling.
+    grid.appendChild(mkRowLabel("Authorized"));
+    grid.appendChild(priceBox(actionRep, LIST_CPA, { showPct: true }));
+    grid.appendChild(priceBox(creditRep, LIST_CPC, { showPct: true }));
+
     // Discount (rep-entered; defaults to list).
     grid.appendChild(mkRowLabel("Discount", "cb-ptg-rowlabel-discount"));
     grid.appendChild(
@@ -1441,11 +1452,6 @@
     grid.appendChild(
       priceInput(cpc, LIST_CPC, (v) => __cb.setPricingOptionPrice(optIdx, "credit", v)),
     );
-
-    // Authorized (rep floor).
-    grid.appendChild(mkRowLabel("Authorized"));
-    grid.appendChild(priceBox(actionRep, LIST_CPA, { showPct: true }));
-    grid.appendChild(priceBox(creditRep, LIST_CPC, { showPct: true }));
 
     return grid;
   }
