@@ -1756,19 +1756,30 @@
     }
 
     // Ensures __cb.pricingOptions exists, migrating a legacy single override.
+    // Each option carries its own contract term (`years`, 1..3) and a
+    // `minimized` flag; backfill both for options restored from before they
+    // existed (seeding `years` from the legacy global contractYears).
     __cb.getPricingOptions = function () {
+      const seedYears = Math.min(3, Math.max(1, __cb.contractYears || 1));
       if (!Array.isArray(__cb.pricingOptions) || __cb.pricingOptions.length === 0) {
         const legacy = __cb.pricingTotalOverride;
         __cb.pricingOptions = [
           {
             id: genPricingOptionId(),
             name: "Option A",
+            years: seedYears,
+            minimized: false,
             override: {
               credits: { ...(legacy?.credits || {}) },
               actionTier: { ...(legacy?.actionTier || {}) },
             },
           },
         ];
+      }
+      for (const o of __cb.pricingOptions) {
+        if (typeof o.years !== "number") o.years = seedYears;
+        o.years = Math.min(3, Math.max(1, o.years));
+        if (typeof o.minimized !== "boolean") o.minimized = false;
       }
       return __cb.pricingOptions;
     };
@@ -1813,6 +1824,22 @@
       else o.override.cpa = v;
       afterPricingOptionsChange();
     };
+    // Per-option contract term (1..3 years) — drives that option's year rows,
+    // averaged tier/floors, and Summary card, independent of other options.
+    __cb.setPricingOptionYears = function (optIdx, n) {
+      const o = __cb.getPricingOptions()[optIdx];
+      if (!o) return;
+      o.years = Math.min(3, Math.max(1, Number(n) || 1));
+      afterPricingOptionsChange();
+    };
+    // Minimize / restore an option card (persisted). Minimized cards render as a
+    // thin strip showing only the rotated title; restore is right-click only.
+    __cb.setPricingOptionMinimized = function (optIdx, on) {
+      const o = __cb.getPricingOptions()[optIdx];
+      if (!o) return;
+      o.minimized = !!on;
+      afterPricingOptionsChange();
+    };
     __cb.addPricingOption = function () {
       const opts = __cb.getPricingOptions();
       if (opts.length >= 3) return null;
@@ -1821,6 +1848,8 @@
       opts.push({
         id,
         name: `Option ${pricingOptionLetter(opts.length)}`,
+        years: Math.min(3, Math.max(1, last?.years || __cb.contractYears || 1)),
+        minimized: false,
         override: {
           credits: { ...(last?.override?.credits || {}) },
           actionTier: { ...(last?.override?.actionTier || {}) },

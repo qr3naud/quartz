@@ -729,7 +729,15 @@
     const wrap = document.createElement("div");
     wrap.className = "cb-pricing-body";
 
-    const years = Math.min(3, Math.max(1, __cb.contractYears || 1));
+    // Contract term is per option now: each option has its own `years`, and the
+    // body renders enough year columns for the longest option (maxYears).
+    const LIST_CPC = __cb.pricing?.LIST_CPC ?? 0.05;
+    const LIST_CPA = __cb.pricing?.LIST_CPA ?? 0.008;
+    const options = __cb.getPricingOptions
+      ? __cb.getPricingOptions()
+      : [{ id: "a", name: "Option A", years: 1, minimized: false, override: { credits: {}, actionTier: {} } }];
+    const optYearsOf = (o) => Math.min(3, Math.max(1, (o && o.years) || 1));
+    const maxYears = Math.min(3, Math.max(1, ...options.map(optYearsOf)));
     // Reverse so the order matches the normal table view (cards iterate newest
     // first; the table renders use cases in the opposite order).
     const ucs = (__cb.cost?.computePricingUseCases?.({ viewMode: __cb.viewMode }) || [])
@@ -753,14 +761,14 @@
     // First pass: resolve per-UC per-year records + RAW per-year volumes, and
     // the per-year recommended rollup (sum of credits; sum of raw actions).
     // Actions are tier-quantized at the DEAL level (the Total group), not per UC.
-    const rec = Array.from({ length: years }, () => ({ credits: 0, actionsRaw: 0 }));
+    const rec = Array.from({ length: maxYears }, () => ({ credits: 0, actionsRaw: 0 }));
     const ucData = [];
     for (const uc of ucs) {
       const arr = yrMap[uc.key] || [];
       const yearRecs = [];
       let ucCredits = 0;
       let ucActions = 0;
-      for (let i = 0; i < years; i++) {
+      for (let i = 0; i < maxYears; i++) {
         const recs = arr[i] != null ? Number(arr[i]) : uc.baselineRecords;
         yearRecs.push(recs);
         const c = uc.perRowCredits * recs;
@@ -780,26 +788,24 @@
       recTier: clampActionVolume(r.actionsRaw).tier,
     }));
 
-    // Options (1-3); each is an independent override over `recommended`, plus a
-    // rep-entered discount price (CPC/CPA) that defaults to list. Option A
-    // (index 0) is the source of truth for the Summary.
-    const LIST_CPC = __cb.pricing?.LIST_CPC ?? 0.05;
-    const LIST_CPA = __cb.pricing?.LIST_CPA ?? 0.008;
-    const options = __cb.getPricingOptions
-      ? __cb.getPricingOptions()
-      : [{ id: "a", name: "Option A", override: { credits: {}, actionTier: {} } }];
-    const optionsData = options.map((opt) => ({
-      opt,
-      perYear: effectivePerYear(recommended, opt.override, years),
-      cpc: opt.override && opt.override.cpc != null ? Number(opt.override.cpc) : LIST_CPC,
-      cpa: opt.override && opt.override.cpa != null ? Number(opt.override.cpa) : LIST_CPA,
-    }));
+    // Each option is an independent override over `recommended` + a rep-entered
+    // discount price (CPC/CPA, default list), sliced to its own contract term.
+    const optionsData = options.map((opt) => {
+      const optYears = optYearsOf(opt);
+      return {
+        opt,
+        years: optYears,
+        perYear: effectivePerYear(recommended, opt.override, optYears),
+        cpc: opt.override && opt.override.cpc != null ? Number(opt.override.cpc) : LIST_CPC,
+        cpa: opt.override && opt.override.cpa != null ? Number(opt.override.cpa) : LIST_CPA,
+      };
+    });
 
     // ---- Summary group FIRST (top): one read-only summary card per option -
-    wrap.appendChild(buildPricingSummaryGroup(optionsData, years));
+    wrap.appendChild(buildPricingSummaryGroup(optionsData));
 
     // ---- Editable "Options" group (deal-level source of truth) -----------
-    wrap.appendChild(buildPricingOptionsGroup(optionsData, years));
+    wrap.appendChild(buildPricingOptionsGroup(optionsData));
 
     for (const { uc, yearRecs, ucCredits, ucActions } of ucData) {
       const box = document.createElement("div");
@@ -859,8 +865,8 @@
       if (!isCollapsed) {
         const yearsWrap = document.createElement("div");
         yearsWrap.className = "cb-pricing-uc-years";
-        yearsWrap.style.gridTemplateColumns = `repeat(${years}, minmax(0, 1fr))`;
-        for (let i = 0; i < years; i++) {
+        yearsWrap.style.gridTemplateColumns = `repeat(${maxYears}, minmax(0, 1fr))`;
+        for (let i = 0; i < maxYears; i++) {
           yearsWrap.appendChild(
             buildPricingYearCell(uc, i, yearRecs[i], creditCost, actionCost),
           );
@@ -987,7 +993,7 @@
   // The collapsible grey "Summary" group: a header (no add button) and a
   // horizontal row of read-only summary cards, one per option. Mirrors the
   // "Options" group beneath it so the two read as a matched pair.
-  function buildPricingSummaryGroup(optionsData, years) {
+  function buildPricingSummaryGroup(optionsData) {
     const box = document.createElement("div");
     box.className = "cb-pricing-totalgrp cb-pricing-summarygrp";
     const collapsed = !!__cb._pricingSummaryCollapsed;
@@ -1003,7 +1009,7 @@
     chevron.innerHTML = chevronDownSvg(12);
     const nm = document.createElement("span");
     nm.className = "cb-pricing-totalgrp-name";
-    nm.textContent = years > 1 ? `Summary \u00b7 ${years}-year contract` : "Summary";
+    nm.textContent = "Summary";
     header.appendChild(chevron);
     header.appendChild(nm);
 
@@ -1027,7 +1033,7 @@
 
     const row = document.createElement("div");
     row.className = "cb-pricing-options-row";
-    optionsData.forEach(({ opt, perYear, cpc, cpa }) => {
+    optionsData.forEach(({ opt, perYear, cpc, cpa, years }) => {
       row.appendChild(buildPricingSummaryCard(opt, perYear, cpc, cpa, years));
     });
     box.appendChild(row);
@@ -1063,6 +1069,10 @@
     name.className = "cb-pricing-option-name";
     name.textContent = opt.name;
     nameRow.appendChild(name);
+    const term = document.createElement("span");
+    term.className = "cb-pricing-summary-term";
+    term.textContent = `${years}Y`;
+    nameRow.appendChild(term);
     box.appendChild(nameRow);
 
     const grid = document.createElement("div");
@@ -1491,6 +1501,25 @@
       __cb._pricingOptionRenaming = opt.id;
       render();
     });
+    mk(opt.minimized ? "Restore" : "Minimize", () => {
+      if (opt.minimized) {
+        __cb._pricingOptionJustRestored = opt.id;
+        __cb.setPricingOptionMinimized(optIdx, false);
+      } else {
+        // FLIP: pin the card's current width, then animate it down to a thin
+        // strip; persist + re-render minimized once the shrink finishes.
+        const startW = box.getBoundingClientRect().width;
+        box.style.flex = `0 0 ${startW}px`;
+        box.style.maxWidth = `${startW}px`;
+        box.style.overflow = "hidden";
+        requestAnimationFrame(() => {
+          box.style.transition = "flex-basis 0.24s ease, max-width 0.24s ease";
+          box.style.flexBasis = "46px";
+          box.style.maxWidth = "46px";
+        });
+        setTimeout(() => __cb.setPricingOptionMinimized(optIdx, true), 260);
+      }
+    });
     mk(
       "Delete",
       () => {
@@ -1509,14 +1538,62 @@
     document.addEventListener("mousedown", onPricingOptMenuDocClick, true);
   }
 
-  // One option box: name header (right-click → rename / delete) + its grid.
+  // Compact per-option contract-term toggle (1Y / 2Y / 3Y). Sits in the option
+  // header where the hint used to be; sets that option's own term.
+  function buildOptionTermToggle(optIdx, optYears) {
+    const wrap = document.createElement("div");
+    wrap.className = "cb-option-term-toggle";
+    wrap.addEventListener("mousedown", (e) => e.stopPropagation());
+    const active = Math.min(3, Math.max(1, optYears || 1));
+    [1, 2, 3].forEach((n) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "cb-option-term-btn" + (n === active ? " cb-option-term-btn-active" : "");
+      b.textContent = `${n}Y`;
+      b.addEventListener("click", (e) => {
+        e.stopPropagation();
+        if (n !== active && __cb.setPricingOptionYears) __cb.setPricingOptionYears(optIdx, n);
+      });
+      wrap.appendChild(b);
+    });
+    return wrap;
+  }
+
+  // One option box: name header (term toggle + right-click rename / delete /
+  // minimize) + its grid. When minimized, renders as a thin strip showing only
+  // the title rotated 90deg (grid hidden); restore is right-click only.
   function buildPricingOptionBox(opt, optIdx, perYear, years, total, cpc, cpa) {
     const box = document.createElement("div");
     box.className = "cb-pricing-option";
     box.dataset.optId = opt.id;
+
+    const wireContextMenu = () => {
+      box.addEventListener("contextmenu", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        openPricingOptionMenu(e, optIdx, opt, box, total);
+      });
+    };
+
+    // Minimized: thin strip with only the rotated title (right-click → Restore).
+    if (opt.minimized) {
+      box.classList.add("cb-pricing-option-min");
+      const title = document.createElement("div");
+      title.className = "cb-pricing-option-min-title";
+      title.textContent = opt.name;
+      box.appendChild(title);
+      wireContextMenu();
+      return box;
+    }
+
     if (__cb._pricingOptionJustAdded === opt.id) {
       box.classList.add("cb-pricing-option-enter");
       __cb._pricingOptionJustAdded = null;
+    }
+    // Just restored from minimized: reuse the option enter animation.
+    if (__cb._pricingOptionJustRestored === opt.id) {
+      box.classList.add("cb-pricing-option-enter");
+      __cb._pricingOptionJustRestored = null;
     }
 
     const nameRow = document.createElement("div");
@@ -1551,26 +1628,18 @@
       name.className = "cb-pricing-option-name";
       name.textContent = opt.name;
       nameRow.appendChild(name);
-      const hint = document.createElement("span");
-      hint.className = "cb-pricing-option-hint";
-      hint.textContent = "right-click to rename / delete";
-      nameRow.appendChild(hint);
+      nameRow.appendChild(buildOptionTermToggle(optIdx, years));
     }
     box.appendChild(nameRow);
     box.appendChild(buildOptionGrid(perYear, optIdx, years, cpc, cpa));
 
-    box.addEventListener("contextmenu", (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      openPricingOptionMenu(e, optIdx, opt, box, total);
-    });
-
+    wireContextMenu();
     return box;
   }
 
   // The collapsible grey "Options" group: a header (with a + to add an option,
   // up to 3) and a horizontal row of option boxes. Option A feeds the Summary.
-  function buildPricingOptionsGroup(optionsData, years) {
+  function buildPricingOptionsGroup(optionsData) {
     const box = document.createElement("div");
     box.className = "cb-pricing-totalgrp";
     const collapsed = !!__cb._pricingTotalCollapsed;
@@ -1627,7 +1696,7 @@
 
     const row = document.createElement("div");
     row.className = "cb-pricing-options-row";
-    optionsData.forEach(({ opt, perYear, cpc, cpa }, idx) => {
+    optionsData.forEach(({ opt, perYear, cpc, cpa, years }, idx) => {
       row.appendChild(
         buildPricingOptionBox(opt, idx, perYear, years, optionsData.length, cpc, cpa),
       );
@@ -5633,13 +5702,8 @@
       introActions.appendChild(addBtn);
     }
 
-    // Pricing mode: the 1y/2y/3y contract-term toggle sits on the right of the
-    // intro row (the Projected/Actual toggle keeps its center slot).
-    if (__cb.pricingMode && typeof __cb.buildContractTermToggle === "function") {
-      const termToggle = __cb.buildContractTermToggle();
-      termToggle.classList.add("cb-table-view-term-toggle");
-      introActions.appendChild(termToggle);
-    }
+    // Pricing mode: the contract-term toggle is now per option (in each option
+    // card header), so the intro row no longer carries a global term toggle.
     intro.appendChild(introActions);
 
     wrap.appendChild(intro);
