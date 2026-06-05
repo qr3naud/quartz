@@ -725,7 +725,7 @@
   // (tier-quantized, read-only) + Credits (editable), each metric stacking its
   // volume over its dollar cost. Mode-aware: volumes follow Projected/Actual.
   function buildPricingBody() {
-    closePricingAvgMatrix();
+    closeAvgHover();
     const wrap = document.createElement("div");
     wrap.className = "cb-pricing-body";
 
@@ -1182,57 +1182,140 @@
     return trigger;
   }
 
-  // ---- Average-row hover: the rep-floor band matrix --------------------------
-  // A small popover anchored to an Average cell. Rows = the enterprise bands for
-  // the metric; columns = Tier + Rep Floor (band start volume) + the 1/2/3-year
-  // rep floors. It highlights the active contract-year column, the band the
-  // average volume lands in, and their intersection (the floor that applies).
-  let pricingAvgMatrixEl = null;
-  let pricingAvgMatrixTimer = null;
-  function closePricingAvgMatrix() {
-    if (pricingAvgMatrixTimer) {
-      clearTimeout(pricingAvgMatrixTimer);
-      pricingAvgMatrixTimer = null;
+  // ---- Average-row band matrix: hover to preview, click/pin to keep ----------
+  // Hovering an Average cell opens a transient matrix (Tier / Rep Floor / 1-3 Yr
+  // rep floors) with the active-year column, the landed band, and their
+  // intersection highlighted in the metric's tone (grey actions / green credits).
+  // Clicking it (or its pin icon) pins it open + draggable; multiple can be
+  // pinned at once to compare. Pinned panels are snapshots taken at pin time.
+  let pricingAvgHoverEl = null;
+  let pricingAvgHoverTimer = null;
+  const pricingAvgPinnedEls = new Set();
+
+  function closeAvgHover() {
+    if (pricingAvgHoverTimer) {
+      clearTimeout(pricingAvgHoverTimer);
+      pricingAvgHoverTimer = null;
     }
-    if (pricingAvgMatrixEl) {
-      pricingAvgMatrixEl.remove();
-      pricingAvgMatrixEl = null;
+    if (pricingAvgHoverEl) {
+      pricingAvgHoverEl.remove();
+      pricingAvgHoverEl = null;
     }
   }
-  function schedulePricingAvgMatrixClose() {
-    if (pricingAvgMatrixTimer) clearTimeout(pricingAvgMatrixTimer);
-    pricingAvgMatrixTimer = setTimeout(closePricingAvgMatrix, 140);
+  function scheduleAvgHoverClose() {
+    if (pricingAvgHoverTimer) clearTimeout(pricingAvgHoverTimer);
+    pricingAvgHoverTimer = setTimeout(closeAvgHover, 140);
   }
-  function openPricingAvgMatrix(anchor, metric, avgVolume, years) {
-    closePricingAvgMatrix();
-    if (!__cb.pricing) return;
+  // Closes the transient hover panel; with force, also removes every pinned one.
+  function closeAllAvgMatrices(force) {
+    closeAvgHover();
+    if (force) {
+      for (const el of pricingAvgPinnedEls) el.remove();
+      pricingAvgPinnedEls.clear();
+    }
+  }
+
+  function pinIconSvg() {
+    return '<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="17" x2="12" y2="22"/><path d="M9 2h6l-1 7 3 3v2H7v-2l3-3-1-7z"/></svg>';
+  }
+
+  function pinAvgMatrix(panel) {
+    if (!panel) return;
+    panel.classList.add("cb-pam-pinned");
+    const pin = panel.querySelector(".cb-pam-pin");
+    if (pin) {
+      pin.classList.add("cb-pam-pin-active");
+      pin.title = "Unpin";
+    }
+    // Detach from the hover slot so it survives the next hover / re-render.
+    if (pricingAvgHoverEl === panel) pricingAvgHoverEl = null;
+    if (pricingAvgHoverTimer) {
+      clearTimeout(pricingAvgHoverTimer);
+      pricingAvgHoverTimer = null;
+    }
+    pricingAvgPinnedEls.add(panel);
+  }
+  function unpinAvgMatrix(panel) {
+    pricingAvgPinnedEls.delete(panel);
+    panel.remove();
+  }
+
+  // Drag a pinned panel by its header. No-op until the panel is pinned.
+  function makeAvgMatrixDraggable(panel, header) {
+    header.addEventListener("mousedown", (e) => {
+      if (e.target.closest(".cb-pam-pin")) return;
+      if (!panel.classList.contains("cb-pam-pinned")) return;
+      e.preventDefault();
+      const rect = panel.getBoundingClientRect();
+      const sx = e.clientX;
+      const sy = e.clientY;
+      const ox = rect.left;
+      const oy = rect.top;
+      panel.style.left = `${ox}px`;
+      panel.style.top = `${oy}px`;
+      const move = (ev) => {
+        panel.style.left = `${Math.max(8, ox + ev.clientX - sx)}px`;
+        panel.style.top = `${Math.max(8, oy + ev.clientY - sy)}px`;
+      };
+      const up = () => {
+        document.removeEventListener("mousemove", move);
+        document.removeEventListener("mouseup", up);
+      };
+      document.addEventListener("mousemove", move);
+      document.addEventListener("mouseup", up);
+    });
+  }
+
+  // Builds one matrix panel (header + band table). Starts unpinned.
+  function buildAvgMatrixPanel(opts) {
+    const { metric, avgVolume, years, optName } = opts || {};
+    if (!__cb.pricing) return null;
     const set =
       metric === "credit"
         ? __cb.pricing.enterpriseCreditFloors?.()
         : __cb.pricing.enterpriseActionFloors?.();
     const bands = (set && set.bands) || [];
-    if (!bands.length) return;
+    if (!bands.length) return null;
     const selected = __cb.pricing.selectBand(set, avgVolume);
     const selKey = selected ? String(selected.tier) : null;
     const activeYear = Math.min(3, Math.max(1, years || 1));
 
-    const menu = document.createElement("div");
-    menu.className = "cb-pricing-avgmatrix";
-    // Keep the popover open while the cursor is over it; close shortly after it
-    // leaves (the anchor's mouseleave schedules the same close).
-    menu.addEventListener("mouseenter", () => {
-      if (pricingAvgMatrixTimer) {
-        clearTimeout(pricingAvgMatrixTimer);
-        pricingAvgMatrixTimer = null;
-      }
-    });
-    menu.addEventListener("mouseleave", schedulePricingAvgMatrixClose);
+    const panel = document.createElement("div");
+    panel.className =
+      "cb-pricing-avgmatrix " + (metric === "credit" ? "cb-pam-credits" : "cb-pam-actions");
 
+    // ---- Header: option name + metric pill + pin icon (also the drag handle) -
+    const header = document.createElement("div");
+    header.className = "cb-pam-header";
+    const nm = document.createElement("span");
+    nm.className = "cb-pam-optname";
+    nm.textContent = optName || "Option";
+    const pill = document.createElement("span");
+    pill.className = "cb-pam-metricpill";
+    pill.textContent = metric === "credit" ? "Credits" : "Actions";
+    const pin = document.createElement("button");
+    pin.type = "button";
+    pin.className = "cb-pam-pin";
+    pin.title = "Pin";
+    pin.setAttribute("aria-label", "Pin");
+    pin.innerHTML = pinIconSvg();
+    pin.addEventListener("mousedown", (e) => e.stopPropagation());
+    pin.addEventListener("click", (e) => {
+      e.stopPropagation();
+      if (panel.classList.contains("cb-pam-pinned")) unpinAvgMatrix(panel);
+      else pinAvgMatrix(panel);
+    });
+    header.appendChild(nm);
+    header.appendChild(pill);
+    header.appendChild(pin);
+    panel.appendChild(header);
+
+    // ---- Band table ----
     const table = document.createElement("table");
     const thead = document.createElement("thead");
     const htr = document.createElement("tr");
-    // Columns: Tier, Rep Floor (the band's start volume), then the 1/2/3-year
-    // rep floors. i 0=Tier, 1=Rep Floor, 2..4 = year columns (year = i - 1).
+    // Columns: Tier, Rep Floor (band start volume), then the 1/2/3-year rep
+    // floors. i 0=Tier, 1=Rep Floor, 2..4 = year columns (year = i - 1).
     ["Tier", "Rep Floor", "1 Yr", "2 Yr", "3 Yr"].forEach((label, i) => {
       const th = document.createElement("th");
       th.textContent = label;
@@ -1268,18 +1351,41 @@
       tbody.appendChild(tr);
     }
     table.appendChild(tbody);
-    menu.appendChild(table);
+    panel.appendChild(table);
 
-    document.body.appendChild(menu);
-    // Fixed before measuring so the width is the menu's own, not the body width.
-    menu.style.position = "fixed";
+    // Click anywhere (but the pin button) on an unpinned panel pins it.
+    panel.addEventListener("click", (e) => {
+      if (e.target.closest(".cb-pam-pin")) return;
+      if (!panel.classList.contains("cb-pam-pinned")) pinAvgMatrix(panel);
+    });
+    makeAvgMatrixDraggable(panel, header);
+    return panel;
+  }
+
+  // Opens the transient hover panel near an Average cell. Pinned panels untouched.
+  function openAvgMatrixHover(anchor, metric, avgVolume, years, optName) {
+    closeAvgHover();
+    const panel = buildAvgMatrixPanel({ metric, avgVolume, years, optName });
+    if (!panel) return;
+    panel.addEventListener("mouseenter", () => {
+      if (pricingAvgHoverTimer) {
+        clearTimeout(pricingAvgHoverTimer);
+        pricingAvgHoverTimer = null;
+      }
+    });
+    panel.addEventListener("mouseleave", () => {
+      if (!panel.classList.contains("cb-pam-pinned")) scheduleAvgHoverClose();
+    });
+    document.body.appendChild(panel);
+    // Fixed before measuring so the width is the panel's own, not the body width.
+    panel.style.position = "fixed";
     const r = anchor.getBoundingClientRect();
-    const mw = menu.getBoundingClientRect().width || 280;
+    const mw = panel.getBoundingClientRect().width || 280;
     let left = Math.round(r.left);
     if (left + mw > window.innerWidth - 8) left = Math.round(window.innerWidth - mw - 8);
-    menu.style.left = `${Math.max(8, left)}px`;
-    menu.style.top = `${Math.round(r.bottom + 6)}px`;
-    pricingAvgMatrixEl = menu;
+    panel.style.left = `${Math.max(8, left)}px`;
+    panel.style.top = `${Math.round(r.bottom + 6)}px`;
+    pricingAvgHoverEl = panel;
   }
 
   // Effective per-year values for one option = the recommended rollup with the
@@ -1307,7 +1413,7 @@
   // The years-rows grid for ONE option: Actions + Credits columns, the per-year
   // volume rows, then the price rows — List, Discount (rep-entered, defaults to
   // list), Authorized (rep floor). Discount + Authorized show % off list.
-  function buildOptionGrid(perYear, optIdx, years, cpc, cpa) {
+  function buildOptionGrid(perYear, optIdx, years, cpc, cpa, optName) {
     const LIST_CPC = __cb.pricing?.LIST_CPC ?? 0.05;
     const LIST_CPA = __cb.pricing?.LIST_CPA ?? 0.008;
     const pctOffList = (price, list) =>
@@ -1436,8 +1542,8 @@
       const v = document.createElement("div");
       v.className = "cb-ptg-avg";
       v.textContent = pricingFmt(Math.round(avgVol));
-      v.addEventListener("mouseenter", () => openPricingAvgMatrix(v, metric, avgVol, years));
-      v.addEventListener("mouseleave", schedulePricingAvgMatrixClose);
+      v.addEventListener("mouseenter", () => openAvgMatrixHover(v, metric, avgVol, years, optName));
+      v.addEventListener("mouseleave", scheduleAvgHoverClose);
       cell.appendChild(v);
       return cell;
     };
@@ -1653,7 +1759,7 @@
       nameRow.appendChild(buildOptionTermToggle(optIdx, years));
     }
     box.appendChild(nameRow);
-    box.appendChild(buildOptionGrid(perYear, optIdx, years, cpc, cpa));
+    box.appendChild(buildOptionGrid(perYear, optIdx, years, cpc, cpa, opt.name));
 
     wireContextMenu();
     return box;
@@ -5618,6 +5724,8 @@
 
   function render() {
     if (!hostEl) return;
+    // Pinned band matrices belong to pricing mode only; clear them on the way out.
+    if (!__cb.pricingMode) closeAllAvgMatrices(true);
     hostEl.innerHTML = "";
 
     const wrap = document.createElement("div");
@@ -7996,7 +8104,7 @@
       hideNotePreview();
       closePricingVolMenu();
       closePricingOptMenu();
-      closePricingAvgMatrix();
+      closeAllAvgMatrices(true);
       selectedRowIds.clear();
       selectionAnchorId = null;
       visibleRowOrder = [];

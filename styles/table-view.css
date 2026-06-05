@@ -3581,43 +3581,126 @@
   text-align: left;
 }
 
-.cb-pricing-avgmatrix .cb-pam-tier {
-  font-weight: 700;
-  color: #4338ca;
-}
-
 .cb-pricing-avgmatrix .cb-pam-limit {
   font-weight: 700;
   color: #111827;
 }
 
-/* Active contract-year column (light indigo for the whole column). */
-.cb-pricing-avgmatrix .cb-pam-col-active {
-  background: #eef2ff;
-  color: #4338ca;
-}
-
-.cb-pricing-avgmatrix th.cb-pam-col-active {
-  color: #4338ca;
-}
-
-/* The band the average lands in (dark indigo across the row). */
+/* Weight for the crosshair (colors come from the metric-scoped rules below). */
 .cb-pricing-avgmatrix .cb-pam-row-sel td {
-  background: #3730a3;
-  color: #e0e7ff;
   font-weight: 600;
 }
 
+.cb-pricing-avgmatrix td.cb-pam-cell-active {
+  font-weight: 800;
+}
+
+/* Selected band's lead cells stay readable on the dark row fill. */
 .cb-pricing-avgmatrix .cb-pam-row-sel td:first-child,
 .cb-pricing-avgmatrix .cb-pam-row-sel td:nth-child(2) {
   color: #ffffff;
 }
 
-/* Intersection of the landed band + active year: the floor that applies. */
-.cb-pricing-avgmatrix td.cb-pam-cell-active {
-  background: #4f46e5;
+/* ---- Crosshair colored by metric: grey for Actions, green for Credits ---- */
+/* Actions (grey, base #717989). */
+.cb-pam-actions .cb-pam-tier {
+  font-weight: 700;
+  color: #717989;
+}
+.cb-pam-actions .cb-pam-col-active {
+  background: #eef0f2;
+  color: #5b6472;
+}
+.cb-pam-actions th.cb-pam-col-active {
+  color: #5b6472;
+}
+.cb-pam-actions .cb-pam-row-sel td {
+  background: #717989;
   color: #ffffff;
-  font-weight: 800;
+}
+.cb-pam-actions td.cb-pam-cell-active {
+  background: #565e6b;
+  color: #ffffff;
+}
+
+/* Credits (green, base #0dac65). */
+.cb-pam-credits .cb-pam-tier {
+  font-weight: 700;
+  color: #0a7a48;
+}
+.cb-pam-credits .cb-pam-col-active {
+  background: #e6f7ef;
+  color: #0a7a48;
+}
+.cb-pam-credits th.cb-pam-col-active {
+  color: #0a7a48;
+}
+.cb-pam-credits .cb-pam-row-sel td {
+  background: #0dac65;
+  color: #ffffff;
+}
+.cb-pam-credits td.cb-pam-cell-active {
+  background: #0a8a50;
+  color: #ffffff;
+}
+
+/* ---- Header (option name + metric pill + pin); also the drag handle ---- */
+.cb-pam-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 4px 8px 6px;
+  margin-bottom: 2px;
+  border-bottom: 1px solid #eef1f4;
+}
+.cb-pam-pinned .cb-pam-header {
+  cursor: move;
+}
+.cb-pam-optname {
+  font-size: 12px;
+  font-weight: 700;
+  color: #111827;
+  white-space: nowrap;
+}
+.cb-pam-metricpill {
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  padding: 1px 7px;
+  border-radius: 999px;
+}
+.cb-pam-actions .cb-pam-metricpill {
+  background: #eef0f2;
+  color: #5b6472;
+}
+.cb-pam-credits .cb-pam-metricpill {
+  background: #e6f7ef;
+  color: #0a7a48;
+}
+.cb-pam-pin {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: #9ca3af;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+.cb-pam-pin:hover {
+  background: #f3f4f6;
+  color: #4b5563;
+}
+.cb-pam-pin-active {
+  color: #4338ca;
+}
+.cb-pam-pinned {
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.2), 0 0 0 1px rgba(67, 56, 202, 0.25);
 }
 
 /* Option right-click menu (Rename / Delete). */
