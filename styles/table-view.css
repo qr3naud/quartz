@@ -3354,6 +3354,35 @@
   margin: 4px 0;
 }
 
+/* Approval row: a single status badge spanning the two metric columns. */
+.cb-ptg-approval {
+  grid-column: 2 / -1;
+}
+
+.cb-ptg-approval-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.cb-ptg-approval-green {
+  background: #ecfdf5;
+  color: #047857;
+}
+
+.cb-ptg-approval-amber {
+  background: #fffbeb;
+  color: #b45309;
+}
+
+.cb-ptg-approval-red {
+  background: #fef2f2;
+  color: #b91c1c;
+}
+
 /* Custom volume dropdown menu (body-appended, position: fixed). */
 .cb-ptg-volmenu {
   z-index: 10000060;

@@ -1250,6 +1250,19 @@
 
   function pinAvgMatrix(panel) {
     if (!panel) return;
+    // Don't pin a duplicate of a band that's already pinned (same option+metric).
+    const dupKey = panel.dataset.pamKey;
+    if (dupKey) {
+      for (const el of pricingAvgPinnedEls) {
+        if (el !== panel && el.dataset.pamKey === dupKey) {
+          if (pricingAvgHoverEl === panel) {
+            panel.remove();
+            pricingAvgHoverEl = null;
+          }
+          return;
+        }
+      }
+    }
     panel.classList.add("cb-pam-pinned");
     const pin = panel.querySelector(".cb-pam-pin");
     if (pin) {
@@ -1297,7 +1310,7 @@
 
   // Builds one matrix panel (header + band table). Starts unpinned.
   function buildAvgMatrixPanel(opts) {
-    const { metric, avgVolume, years, optName } = opts || {};
+    const { metric, avgVolume, years, optName, key } = opts || {};
     if (!__cb.pricing) return null;
     const set =
       metric === "credit"
@@ -1312,8 +1325,9 @@
     const panel = document.createElement("div");
     panel.className =
       "cb-pricing-avgmatrix " + (metric === "credit" ? "cb-pam-credits" : "cb-pam-actions");
+    if (key) panel.dataset.pamKey = key;
     // Keep mousedowns inside the panel from reaching the document (selection
-    // clear / outside-click closers) so the click-to-pin always lands.
+    // clear / outside-click closers).
     panel.addEventListener("mousedown", (e) => e.stopPropagation());
 
     // ---- Header: option name + metric pill + pin icon (also the drag handle) -
@@ -1385,19 +1399,16 @@
     table.appendChild(tbody);
     panel.appendChild(table);
 
-    // Click anywhere (but the pin button) on an unpinned panel pins it.
-    panel.addEventListener("click", (e) => {
-      if (e.target.closest(".cb-pam-pin")) return;
-      if (!panel.classList.contains("cb-pam-pinned")) pinAvgMatrix(panel);
-    });
+    // Pinning is via the pin icon (on the modal) or a click on the Average cell
+    // only - clicking the modal body does not pin.
     makeAvgMatrixDraggable(panel, header);
     return panel;
   }
 
   // Opens the transient hover panel near an Average cell. Pinned panels untouched.
-  function openAvgMatrixHover(anchor, metric, avgVolume, years, optName) {
+  function openAvgMatrixHover(anchor, metric, avgVolume, years, optName, key) {
     closeAvgHover();
-    const panel = buildAvgMatrixPanel({ metric, avgVolume, years, optName });
+    const panel = buildAvgMatrixPanel({ metric, avgVolume, years, optName, key });
     if (!panel) return;
     panel.addEventListener("mouseenter", () => {
       if (pricingAvgHoverTimer) {
@@ -1598,13 +1609,15 @@
       const v = document.createElement("div");
       v.className = "cb-ptg-avg";
       v.textContent = pricingFmt(Math.round(avgVol));
-      v.addEventListener("mouseenter", () => openAvgMatrixHover(v, metric, avgVol, years, optName));
+      const key = `${optIdx}|${metric}`;
+      v.addEventListener("mouseenter", () => openAvgMatrixHover(v, metric, avgVol, years, optName, key));
       v.addEventListener("mouseleave", scheduleAvgHoverClose);
       // Click the Average value to pin its matrix (opens it first if needed).
+      // pinAvgMatrix dedupes so the same band can't be pinned twice.
       v.addEventListener("mousedown", (e) => e.stopPropagation());
       v.addEventListener("click", (e) => {
         e.stopPropagation();
-        if (!pricingAvgHoverEl) openAvgMatrixHover(v, metric, avgVol, years, optName);
+        if (!pricingAvgHoverEl) openAvgMatrixHover(v, metric, avgVol, years, optName, key);
         if (pricingAvgHoverEl) pinAvgMatrix(pricingAvgHoverEl);
       });
       cell.appendChild(v);
@@ -1632,6 +1645,31 @@
     grid.appendChild(
       priceInput(cpc, LIST_CPC, (v) => __cb.setPricingOptionPrice(optIdx, "credit", v)),
     );
+
+    // Approval — deal-level status for this option's discount vs the avg-tier
+    // floors over the contract term (auto-approved / manager / deal desk).
+    const approval = __cb.pricing?.approvalForContract
+      ? __cb.pricing.approvalForContract({
+          years: perYear.map((y) => ({ credits: y.credits, actions: y.actionVolume })),
+          contractYears: years,
+          cpc,
+          cpa,
+        })
+      : null;
+    const apInfo =
+      approval && approval.status === "pending_exception"
+        ? { label: "Deal desk approval", cls: "cb-ptg-approval-red" }
+        : approval && approval.status === "pending_standard"
+          ? { label: "Manager approval", cls: "cb-ptg-approval-amber" }
+          : { label: "Auto-approved", cls: "cb-ptg-approval-green" };
+    grid.appendChild(mkRowLabel("Approval"));
+    const apCell = document.createElement("div");
+    apCell.className = "cb-ptg-cell cb-ptg-approval";
+    const apBadge = document.createElement("span");
+    apBadge.className = "cb-ptg-approval-badge " + apInfo.cls;
+    apBadge.textContent = apInfo.label;
+    apCell.appendChild(apBadge);
+    grid.appendChild(apCell);
 
     return grid;
   }
@@ -5818,12 +5856,11 @@
     // pricing mode they fold/unfold the use-case boxes. Search becomes the
     // internal-only "View Bands" control.
     introLead.appendChild(buildGroupToggleControls());
-    if (__cb.pricingMode) {
-      introLead.appendChild(buildViewBandsControl());
-    } else {
+    if (!__cb.pricingMode) {
       // Collapsed search affordance — sits to the right of the collaborators
       // pill, expands inline on click or Cmd/Ctrl+F. State is module-scoped so
       // applySearchHighlight() (end of render) restores highlights afterwards.
+      // (Pricing mode shows per-option band matrices instead of a global control.)
       introLead.appendChild(buildSearchControl());
     }
 
