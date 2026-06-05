@@ -1425,9 +1425,9 @@ body:has(.cb-overlay) [data-floating-ui-portal] {
   border-color: #d97706;
 }
 
-/* Entering pricing mode folds the WHOLE summary bar up (max-height -> 0) and
-   reveals the slim cost strip beneath it. The bar's contents are hidden first
-   so only the height animates. */
+/* Entering pricing mode folds the WHOLE summary bar up (max-height -> 0) so it
+   animates away; the pricing UI (summary, options, use cases) lives in the body
+   below. The bar's contents are hidden as the height collapses. */
 .cb-summary-bar {
   /* Keep the base overflow-x: auto (narrow-width scroll); just add a max-height
      ceiling + transition so the fold animates. */
@@ -1451,95 +1451,8 @@ body:has(.cb-overlay) [data-floating-ui-portal] {
   border-width: 0;
 }
 
-/* Slim cost strip: a sibling directly below the summary bar, collapsed (height
-   0) until pricing mode, then it unfolds. Padding matches the table wrap (24px)
-   so the pills line up with the table edge. */
-.cb-pricing-strip {
-  overflow: hidden;
-  max-height: 0;
-  opacity: 0;
-  background: #ffffff;
-  border-bottom: 1px solid #e5e7eb;
-  padding: 0 24px;
-  transition:
-    max-height 340ms cubic-bezier(0.22, 1, 0.36, 1),
-    opacity 240ms ease,
-    padding 340ms cubic-bezier(0.22, 1, 0.36, 1);
-}
-
-.cb-overlay[data-cb-pricing-mode="on"] .cb-pricing-strip {
-  max-height: 64px;
-  opacity: 1;
-  padding: 10px 24px;
-}
-
-.cb-pricing-strip-inner {
-  display: flex;
-  gap: 10px;
-  align-items: center;
-  min-width: 0;
-}
-
 @media (prefers-reduced-motion: reduce) {
-  .cb-summary-bar,
-  .cb-pricing-strip {
-    transition: none;
-  }
-}
-
-/* Projected/Actual mode pill in the strip (reuses .cb-gtme-mode-pill). */
-.cb-pricing-mode-pill {
-  height: 22px;
-}
-
-/* Per-unit cost pill input (actions/credits) — pill-shaped, with a leading
-   glyph, matching the segmented cost-pill family. */
-.cb-pricing-cost-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  height: 28px;
-  padding: 0 10px;
-  border: 1px solid #e6e8ec;
-  border-radius: 999px;
-  background: #ffffff;
-}
-
-.cb-pricing-cost-pill-icon {
-  display: inline-flex;
-  align-items: center;
-  color: #6b7280;
-}
-
-.cb-pricing-cost-pill-label {
-  font-size: 11px;
-  font-weight: 500;
-  color: #6b7280;
-}
-
-.cb-pricing-cost-pill-input {
-  width: 56px;
-  border: none;
-  background: transparent;
-  font-family: inherit;
-  font-size: 13px;
-  font-weight: 600;
-  color: #111827;
-  font-variant-numeric: tabular-nums;
-  text-align: right;
-}
-
-.cb-pricing-cost-pill-input:focus {
-  outline: none;
-}
-
-.cb-pricing-cost-pill:focus-within {
-  border-color: #047857;
-  box-shadow: 0 0 0 2px rgba(4, 120, 87, 0.15);
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .cb-pricing-strip {
+  .cb-summary-bar {
     transition: none;
   }
 }

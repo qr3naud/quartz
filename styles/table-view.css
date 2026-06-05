@@ -2964,6 +2964,18 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* Dual-tone accent for the per-use-case metric cards: the icon + cost read in
+   the action (#717989) / credit (#0dac65) tone, matching the column headers. */
+.cb-pricing-metric-actions .cb-pricing-metric-icon,
+.cb-pricing-metric-actions .cb-pricing-metric-cost {
+  color: #717989;
+}
+
+.cb-pricing-metric-credits .cb-pricing-metric-icon,
+.cb-pricing-metric-credits .cb-pricing-metric-cost {
+  color: #0dac65;
+}
+
 /* Total box underneath the use-case boxes. */
 .cb-pricing-total-box {
   border: 1px solid #e5e7eb;
@@ -3405,6 +3417,133 @@
   .cb-pricing-option-leaving {
     transition: none;
   }
+}
+
+/* ---- Summary group: read-only per-option summary cards ---------------------
+   Reuses the Options group chrome (.cb-pricing-totalgrp + .cb-pricing-options-row
+   + .cb-pricing-option). Each card lays its four totals out as label/value rows
+   that echo the Options price rows. */
+.cb-pricing-summary-card {
+  cursor: default;
+}
+
+.cb-pricing-summary-grid {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 7px 14px;
+  align-items: baseline;
+  padding: 12px;
+}
+
+.cb-pricing-summary-value {
+  font-size: 13px;
+  font-weight: 700;
+  color: #111827;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.cb-pricing-summary-grid .cb-pricing-summary-grand {
+  color: #3730a3;
+}
+
+.cb-pricing-summary-grid .cb-pricing-summary-grand.cb-pricing-summary-value {
+  font-size: 15px;
+}
+
+.cb-pricing-summary-grid .cb-pricing-summary-savings {
+  color: #047857;
+}
+
+/* ---- Average row: read-only avg-volume cell + hover band matrix ------------ */
+.cb-ptg-avg {
+  box-sizing: border-box;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 0 10px;
+  border: 1px dashed #d1d5db;
+  border-radius: 6px;
+  background: #f9fafb;
+  font-size: 13px;
+  font-weight: 600;
+  color: #374151;
+  font-variant-numeric: tabular-nums;
+  cursor: help;
+  transition: background 0.12s, border-color 0.12s;
+}
+
+.cb-ptg-avg:hover {
+  background: #f3f4f6;
+  border-color: #9ca3af;
+}
+
+/* Band matrix popover (body-appended, position: fixed): Limit + the 1/2/3-year
+   rep floors. Highlights the active contract-year column, the band the average
+   lands in, and their intersection (the floor that applies). */
+.cb-pricing-avgmatrix {
+  z-index: 10000060;
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.18);
+  padding: 6px;
+  font-variant-numeric: tabular-nums;
+}
+
+.cb-pricing-avgmatrix table {
+  border-collapse: collapse;
+}
+
+.cb-pricing-avgmatrix th,
+.cb-pricing-avgmatrix td {
+  padding: 6px 14px;
+  font-size: 12px;
+  text-align: right;
+  white-space: nowrap;
+  color: #374151;
+}
+
+.cb-pricing-avgmatrix th {
+  font-weight: 600;
+  color: #9ca3af;
+  border-bottom: 1px solid #eef1f4;
+}
+
+.cb-pricing-avgmatrix th:first-child,
+.cb-pricing-avgmatrix td:first-child {
+  text-align: left;
+  font-weight: 700;
+  color: #111827;
+}
+
+/* Active contract-year column (light green for the whole column). */
+.cb-pricing-avgmatrix .cb-pam-col-active {
+  background: #e7f3ea;
+  color: #166534;
+}
+
+.cb-pricing-avgmatrix th.cb-pam-col-active {
+  color: #15803d;
+}
+
+/* The band the average lands in (dark green across the row). */
+.cb-pricing-avgmatrix .cb-pam-row-sel td {
+  background: #2f6e3f;
+  color: #eafdef;
+  font-weight: 600;
+}
+
+.cb-pricing-avgmatrix .cb-pam-row-sel td:first-child {
+  color: #ffffff;
+}
+
+/* Intersection of the landed band + active year: the floor that applies. */
+.cb-pricing-avgmatrix td.cb-pam-cell-active {
+  background: #225733;
+  color: #ffffff;
+  font-weight: 800;
 }
 
 /* Option right-click menu (Rename / Delete). */

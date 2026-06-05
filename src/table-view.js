@@ -725,6 +725,7 @@
   // (tier-quantized, read-only) + Credits (editable), each metric stacking its
   // volume over its dollar cost. Mode-aware: volumes follow Projected/Actual.
   function buildPricingBody() {
+    closePricingAvgMatrix();
     const wrap = document.createElement("div");
     wrap.className = "cb-pricing-body";
 
@@ -794,9 +795,8 @@
       cpa: opt.override && opt.override.cpa != null ? Number(opt.override.cpa) : LIST_CPA,
     }));
 
-    // ---- Summary box FIRST (top), from Option A's effective values --------
-    const optA = optionsData[0];
-    wrap.appendChild(buildPricingSummaryBox(optA.perYear, optA.cpc, optA.cpa, years));
+    // ---- Summary group FIRST (top): one read-only summary card per option -
+    wrap.appendChild(buildPricingSummaryGroup(optionsData, years));
 
     // ---- Editable "Options" group (deal-level source of truth) -----------
     wrap.appendChild(buildPricingOptionsGroup(optionsData, years));
@@ -874,11 +874,12 @@
 
   // A metric card (summary-card style): icon at top, divider, total volume,
   // divider, total cost — all centered. The icon (StarFour = actions, Coins =
-  // credits) is the only differentiator; no color coding. `tier` (actions only)
-  // shows as a tiny caption under the icon.
-  function buildPricingMetricCard(iconSvg, tier, volume, dollar) {
+  // credits) plus the `kind` tone ("actions" #717989 / "credits" #0dac65) color
+  // the icon + cost. `tier` (actions only) shows as a tiny caption under the
+  // icon.
+  function buildPricingMetricCard(iconSvg, tier, volume, dollar, kind) {
     const card = document.createElement("div");
-    card.className = "cb-pricing-metric-card";
+    card.className = "cb-pricing-metric-card" + (kind ? " cb-pricing-metric-" + kind : "");
 
     const iconWrap = document.createElement("div");
     iconWrap.className = "cb-pricing-metric-iconwrap";
@@ -976,17 +977,68 @@
     cards.className = "cb-pricing-year-cards";
     const starIcon = typeof starFourSvg === "function" ? starFourSvg(18) : "";
     const coinIcon = typeof coinsSvg === "function" ? coinsSvg(18) : "";
-    cards.appendChild(buildPricingMetricCard(starIcon, null, actions, actionDollars));
-    cards.appendChild(buildPricingMetricCard(coinIcon, null, credits, creditDollars));
+    cards.appendChild(buildPricingMetricCard(starIcon, null, actions, actionDollars, "actions"));
+    cards.appendChild(buildPricingMetricCard(coinIcon, null, credits, creditDollars, "credits"));
     cell.appendChild(cards);
 
     return cell;
   }
 
-  // Summary box: derives from Option A's effective volumes (perYear) priced at
-  // its discount CPC/CPA. Per-year total cost (multi-year) + total action $,
-  // total credit $, total cost, and savings vs list.
-  function buildPricingSummaryBox(perYear, cpc, cpa, years) {
+  // The collapsible grey "Summary" group: a header (no add button) and a
+  // horizontal row of read-only summary cards, one per option. Mirrors the
+  // "Options" group beneath it so the two read as a matched pair.
+  function buildPricingSummaryGroup(optionsData, years) {
+    const box = document.createElement("div");
+    box.className = "cb-pricing-totalgrp cb-pricing-summarygrp";
+    const collapsed = !!__cb._pricingSummaryCollapsed;
+    if (collapsed) box.classList.add("cb-pricing-totalgrp-collapsed");
+
+    const header = document.createElement("div");
+    header.className = "cb-pricing-totalgrp-header";
+    header.setAttribute("role", "button");
+    header.tabIndex = 0;
+    header.addEventListener("mousedown", (e) => e.stopPropagation());
+    const chevron = document.createElement("span");
+    chevron.className = "cb-pricing-totalgrp-chevron";
+    chevron.innerHTML = chevronDownSvg(12);
+    const nm = document.createElement("span");
+    nm.className = "cb-pricing-totalgrp-name";
+    nm.textContent = years > 1 ? `Summary \u00b7 ${years}-year contract` : "Summary";
+    header.appendChild(chevron);
+    header.appendChild(nm);
+
+    const toggle = () => {
+      __cb._pricingSummaryCollapsed = !__cb._pricingSummaryCollapsed;
+      render();
+    };
+    header.addEventListener("click", (e) => {
+      e.stopPropagation();
+      toggle();
+    });
+    header.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        toggle();
+      }
+    });
+    box.appendChild(header);
+
+    if (collapsed) return box;
+
+    const row = document.createElement("div");
+    row.className = "cb-pricing-options-row";
+    optionsData.forEach(({ opt, perYear, cpc, cpa }) => {
+      row.appendChild(buildPricingSummaryCard(opt, perYear, cpc, cpa, years));
+    });
+    box.appendChild(row);
+    return box;
+  }
+
+  // One read-only summary card for an option: the option name + four rows
+  // (Total action cost, Total credit cost, Total cost, Savings vs list),
+  // formatted like the Options grid's price rows. Priced at the option's
+  // discount CPC/CPA over its effective per-year volumes.
+  function buildPricingSummaryCard(opt, perYear, cpc, cpa, years) {
     let totalCredits = 0;
     let totalActions = 0;
     for (const y of perYear) {
@@ -1003,57 +1055,38 @@
     const savingsPct = listTotal > 0 ? (savings / listTotal) * 100 : 0;
 
     const box = document.createElement("div");
-    box.className = "cb-pricing-total-box";
+    box.className = "cb-pricing-option cb-pricing-summary-card";
 
-    const head = document.createElement("div");
-    head.className = "cb-pricing-total-head";
-    head.textContent = years > 1 ? `Summary \u00b7 ${years}-year contract` : "Summary";
-    box.appendChild(head);
+    const nameRow = document.createElement("div");
+    nameRow.className = "cb-pricing-option-namerow";
+    const name = document.createElement("span");
+    name.className = "cb-pricing-option-name";
+    name.textContent = opt.name;
+    nameRow.appendChild(name);
+    box.appendChild(nameRow);
 
-    // Per-year total cost (multi-year only).
-    if (years > 1) {
-      const yearRow = document.createElement("div");
-      yearRow.className = "cb-pricing-total-years";
-      perYear.forEach((y, i) => {
-        const yc = y.credits * cpc + y.actionVolume * cpa;
-        const card = document.createElement("div");
-        card.className = "cb-pricing-total-year";
-        const l = document.createElement("span");
-        l.className = "cb-pricing-total-year-label";
-        l.textContent = `Year ${i + 1}`;
-        const v = document.createElement("span");
-        v.className = "cb-pricing-total-year-value";
-        v.textContent = pricingDollar(yc);
-        card.appendChild(l);
-        card.appendChild(v);
-        yearRow.appendChild(card);
-      });
-      box.appendChild(yearRow);
-    }
-
-    const cards = document.createElement("div");
-    cards.className = "cb-pricing-total-cards";
-    const mk = (labelText, valueText, cls) => {
-      const c = document.createElement("div");
-      c.className = "cb-pricing-total-card " + (cls || "");
-      const l = document.createElement("span");
-      l.className = "cb-pricing-total-card-label";
+    const grid = document.createElement("div");
+    grid.className = "cb-pricing-summary-grid";
+    const mkRow = (labelText, valueText, mod) => {
+      const l = document.createElement("div");
+      l.className = "cb-ptg-rowlabel cb-pricing-summary-label" + (mod ? " " + mod : "");
       l.textContent = labelText;
-      const v = document.createElement("span");
-      v.className = "cb-pricing-total-card-value";
+      const v = document.createElement("div");
+      v.className = "cb-pricing-summary-value" + (mod ? " " + mod : "");
       v.textContent = valueText;
-      c.appendChild(l);
-      c.appendChild(v);
-      return c;
+      grid.appendChild(l);
+      grid.appendChild(v);
     };
-    // Actions before credits.
-    cards.appendChild(mk("Total Action Cost", pricingDollar(actionDollars)));
-    cards.appendChild(mk("Total Credit Cost", pricingDollar(creditDollars)));
-    cards.appendChild(mk("Total Cost", pricingDollar(total), "cb-pricing-total-card-grand"));
-    cards.appendChild(
-      mk("Savings vs List", `${pricingDollar(savings)} \u00b7 ${savingsPct.toFixed(0)}%`, "cb-pricing-total-card-savings"),
+    // Actions before credits, matching the rest of the pricing view.
+    mkRow("Total action cost", pricingDollar(actionDollars));
+    mkRow("Total credit cost", pricingDollar(creditDollars));
+    mkRow("Total cost", pricingDollar(total), "cb-pricing-summary-grand");
+    mkRow(
+      "Savings vs list",
+      `${pricingDollar(savings)} \u00b7 ${savingsPct.toFixed(0)}%`,
+      "cb-pricing-summary-savings",
     );
-    box.appendChild(cards);
+    box.appendChild(grid);
     return box;
   }
 
@@ -1137,6 +1170,99 @@
       openPricingVolMenu(trigger, tier, onPick);
     });
     return trigger;
+  }
+
+  // ---- Average-row hover: the rep-floor band matrix --------------------------
+  // A small popover anchored to an Average cell. Rows = the enterprise bands for
+  // the metric; columns = Limit + the 1/2/3-year rep floors (rep only). It
+  // highlights the active contract-year column, the band the average volume
+  // lands in, and the intersection of the two (the floor that actually applies).
+  let pricingAvgMatrixEl = null;
+  let pricingAvgMatrixTimer = null;
+  function closePricingAvgMatrix() {
+    if (pricingAvgMatrixTimer) {
+      clearTimeout(pricingAvgMatrixTimer);
+      pricingAvgMatrixTimer = null;
+    }
+    if (pricingAvgMatrixEl) {
+      pricingAvgMatrixEl.remove();
+      pricingAvgMatrixEl = null;
+    }
+  }
+  function schedulePricingAvgMatrixClose() {
+    if (pricingAvgMatrixTimer) clearTimeout(pricingAvgMatrixTimer);
+    pricingAvgMatrixTimer = setTimeout(closePricingAvgMatrix, 140);
+  }
+  function openPricingAvgMatrix(anchor, metric, avgVolume, years) {
+    closePricingAvgMatrix();
+    if (!__cb.pricing) return;
+    const set =
+      metric === "credit"
+        ? __cb.pricing.enterpriseCreditFloors?.()
+        : __cb.pricing.enterpriseActionFloors?.();
+    const bands = (set && set.bands) || [];
+    if (!bands.length) return;
+    const selected = __cb.pricing.selectBand(set, avgVolume);
+    const selKey = selected ? String(selected.tier) : null;
+    const activeYear = Math.min(3, Math.max(1, years || 1));
+
+    const menu = document.createElement("div");
+    menu.className = "cb-pricing-avgmatrix";
+    // Keep the popover open while the cursor is over it; close shortly after it
+    // leaves (the anchor's mouseleave schedules the same close).
+    menu.addEventListener("mouseenter", () => {
+      if (pricingAvgMatrixTimer) {
+        clearTimeout(pricingAvgMatrixTimer);
+        pricingAvgMatrixTimer = null;
+      }
+    });
+    menu.addEventListener("mouseleave", schedulePricingAvgMatrixClose);
+
+    const table = document.createElement("table");
+    const thead = document.createElement("thead");
+    const htr = document.createElement("tr");
+    ["Limit", "1 Yr", "2 Yr", "3 Yr"].forEach((label, i) => {
+      const th = document.createElement("th");
+      th.textContent = label;
+      if (i === activeYear) th.className = "cb-pam-col-active";
+      htr.appendChild(th);
+    });
+    thead.appendChild(htr);
+    table.appendChild(thead);
+
+    const tbody = document.createElement("tbody");
+    for (const b of bands) {
+      const isSel = selKey != null && String(b.tier) === selKey;
+      const tr = document.createElement("tr");
+      if (isSel) tr.className = "cb-pam-row-sel";
+      const limitTd = document.createElement("td");
+      limitTd.className = "cb-pam-limit";
+      limitTd.textContent = Math.max(0, Math.round(Number(b.volume) || 0)).toLocaleString();
+      tr.appendChild(limitTd);
+      for (let y = 1; y <= 3; y++) {
+        const td = document.createElement("td");
+        const floors = __cb.pricing.resolveFloors(b, y);
+        td.textContent = floors ? pricingRate(floors.rep) : "\u2014";
+        const cls = [];
+        if (y === activeYear) cls.push("cb-pam-col-active");
+        if (isSel && y === activeYear) cls.push("cb-pam-cell-active");
+        if (cls.length) td.className = cls.join(" ");
+        tr.appendChild(td);
+      }
+      tbody.appendChild(tr);
+    }
+    table.appendChild(tbody);
+    menu.appendChild(table);
+
+    document.body.appendChild(menu);
+    const r = anchor.getBoundingClientRect();
+    const mw = menu.getBoundingClientRect().width || 280;
+    let left = Math.round(r.left);
+    if (left + mw > window.innerWidth - 8) left = Math.round(window.innerWidth - mw - 8);
+    menu.style.position = "fixed";
+    menu.style.left = `${Math.max(8, left)}px`;
+    menu.style.top = `${Math.round(r.bottom + 6)}px`;
+    pricingAvgMatrixEl = menu;
   }
 
   // Effective per-year values for one option = the recommended rollup with the
@@ -1285,10 +1411,27 @@
       return cell;
     };
 
-    // List (read-only reference; a separator sits above it).
-    grid.appendChild(mkRowLabel("List", "cb-ptg-rowtop"));
-    grid.appendChild(priceBox(LIST_CPA, LIST_CPA, { list: true, sep: true }));
-    grid.appendChild(priceBox(LIST_CPC, LIST_CPC, { list: true, sep: true }));
+    // Average row: read-only avg volumes that pick the tier; a separator divides
+    // the year rows from the avg + price block. Hover a cell for the band matrix.
+    const mkAvgCell = (metric, avgVol) => {
+      const cell = document.createElement("div");
+      cell.className = "cb-ptg-cell cb-ptg-rowtop";
+      const v = document.createElement("div");
+      v.className = "cb-ptg-avg";
+      v.textContent = pricingFmt(Math.round(avgVol));
+      v.addEventListener("mouseenter", () => openPricingAvgMatrix(v, metric, avgVol, years));
+      v.addEventListener("mouseleave", schedulePricingAvgMatrixClose);
+      cell.appendChild(v);
+      return cell;
+    };
+    grid.appendChild(mkRowLabel("Average", "cb-ptg-rowtop"));
+    grid.appendChild(mkAvgCell("action", avgActions));
+    grid.appendChild(mkAvgCell("credit", avgCredits));
+
+    // List (read-only reference).
+    grid.appendChild(mkRowLabel("List"));
+    grid.appendChild(priceBox(LIST_CPA, LIST_CPA, { list: true }));
+    grid.appendChild(priceBox(LIST_CPC, LIST_CPC, { list: true }));
 
     // Discount (rep-entered; defaults to list).
     grid.appendChild(mkRowLabel("Discount", "cb-ptg-rowlabel-discount"));
@@ -7761,6 +7904,7 @@
       hideNotePreview();
       closePricingVolMenu();
       closePricingOptMenu();
+      closePricingAvgMatrix();
       selectedRowIds.clear();
       selectionAnchorId = null;
       visibleRowOrder = [];

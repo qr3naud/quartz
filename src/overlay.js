@@ -1347,69 +1347,11 @@
     pricingGroup.appendChild(pricingToggleBox);
     pricingGroup.appendChild(pricingCards);
 
-    // ---- Pricing view strip (per-unit cost levers) -------------------------
-    // Hidden until pricing mode (CSS keys off .cb-summary-pricing); slides up
-    // from the bottom of the summary bar. Holds the contract per-unit prices as
-    // pill inputs (actions before credits) plus a Projected/Actual mode pill —
-    // the derived totals live in the total box at the bottom of the body. The
-    // inputs mirror the creditCost/actionCost state (synced via syncStripInputs
-    // with the Pricing Show cards).
-    const pricingStrip = document.createElement("div");
-    pricingStrip.className = "cb-pricing-strip";
-    const pricingStripInner = document.createElement("div");
-    pricingStripInner.className = "cb-pricing-strip-inner";
-
-    // Projected/Actual mode pill (reuses the export/deal-desk mode pill look).
-    const stripModePill = document.createElement("span");
-    stripModePill.className = "cb-gtme-mode-pill cb-pricing-mode-pill";
-    stripModePill.textContent = "Projected";
-
-    // Pill-shaped per-unit cost input with a leading glyph (StarFour for
-    // actions, Coin for credits) so it reads as the same family as the cost
-    // pills used across the table.
-    function makeStripInput(id, labelText, value, glyph) {
-      const box = document.createElement("label");
-      box.className = "cb-pricing-cost-pill";
-      box.htmlFor = id;
-      const ic = document.createElement("span");
-      ic.className = "cb-pricing-cost-pill-icon";
-      ic.innerHTML = glyph;
-      const lab = document.createElement("span");
-      lab.className = "cb-pricing-cost-pill-label";
-      lab.textContent = labelText;
-      const inp = document.createElement("input");
-      inp.type = "text";
-      inp.inputMode = "decimal";
-      inp.className = "cb-pricing-cost-pill-input";
-      inp.id = id;
-      inp.value = value;
-      box.appendChild(ic);
-      box.appendChild(lab);
-      box.appendChild(inp);
-      return { box, inp };
-    }
-
-    const starGlyph =
-      '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l1.6 6.4L20 10l-6.4 1.6L12 18l-1.6-6.4L4 10l6.4-1.6L12 2z"/></svg>';
-    const coinGlyph =
-      '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v10M9.5 9.5h3.2a1.8 1.8 0 0 1 0 3.6H9.5"/></svg>';
-
-    // Actions before credits.
-    const stripActionCost = makeStripInput("cb-strip-action-cost", "Action cost", "$0.008", starGlyph);
-    const stripCreditCost = makeStripInput("cb-strip-credit-cost", "Credit cost", "$0.05", coinGlyph);
-    const stripActionInput = stripActionCost.inp;
-    const stripCreditInput = stripCreditCost.inp;
-
-    pricingStripInner.appendChild(stripModePill);
-    pricingStripInner.appendChild(stripActionCost.box);
-    pricingStripInner.appendChild(stripCreditCost.box);
-    pricingStrip.appendChild(pricingStripInner);
-
-    // wirePricingInput + commitPricingInput are hoisted function declarations
-    // below; they set the shared creditCost/actionCost and call recalcTotal
-    // (which re-syncs every cost input + refreshes the body totals).
-    wirePricingInput(stripCreditInput, (v) => { creditCost = v; });
-    wirePricingInput(stripActionInput, (v) => { actionCost = v; });
+    // Pricing view: the global mode/cost strip was removed — per-unit costs are
+    // now defined per option (the "Discount" row in the body), and the
+    // Projected/Actual toggle lives in the table intro row. creditCost/actionCost
+    // keep their list defaults (still wired by the Pricing Show cards + tab
+    // restore) so the per-use-case metric cards have a cost to render.
 
     // --- Actual-mode loading state ------------------------------------------
     // Every summary number that reflects real spend in Actual mode. While the
@@ -1495,9 +1437,9 @@
     summaryBar.appendChild(totalActionsBox);
     summaryBar.appendChild(totalBox);
     summaryBar.appendChild(pricingGroup);
-    // pricingStrip is appended as a SIBLING below the summary bar (see the
-    // overlay append below) so the whole summary bar can fold up and disappear
-    // in pricing mode while the slim cost strip slides in beneath it.
+    // In pricing mode the whole summary bar folds up and disappears (CSS keys
+    // off .cb-summary-pricing); there is no longer a cost strip beneath it —
+    // per-unit costs are defined per option in the body.
 
     // Per-row numbers (unweighted) for the "Avg / Row" boxes.
     let currentCreditsPerRow = 0;
@@ -1738,8 +1680,6 @@
       const setIf = (inp, val) => {
         if (inp && document.activeElement !== inp) inp.value = formatDollar(val);
       };
-      setIf(stripCreditInput, creditCost);
-      setIf(stripActionInput, actionCost);
       setIf(creditCostInput, creditCost);
       setIf(actionCostInput, actionCost);
     }
@@ -1757,14 +1697,10 @@
     }
     __cb.getPricingResult = computePricingResult;
 
-    // The strip itself only carries the cost-input pills + the mode pill; the
-    // derived totals render in the body's total box (rebuilt on every refresh).
-    // So this just keeps the inputs + mode pill + bands overlay in sync.
+    // The global strip is gone; this just keeps the (hidden) Pricing Show cost
+    // inputs and the View Bands overlay in sync with creditCost/actionCost, and
+    // is still called on every recalc / volume edit.
     function updatePricingStrip() {
-      const actual = __cb.viewMode === "actual";
-      stripModePill.textContent = actual ? "Actual" : "Projected";
-      stripModePill.classList.toggle("cb-gtme-mode-pill-actual", actual);
-      stripModePill.classList.toggle("cb-gtme-mode-pill-projected", !actual);
       syncStripInputs();
       if (__cb.pricingBands?.refresh) __cb.pricingBands.refresh(computePricingResult());
     }
@@ -2592,7 +2528,6 @@
 
     __cb.overlayEl.appendChild(topBar);
     __cb.overlayEl.appendChild(summaryBar);
-    __cb.overlayEl.appendChild(pricingStrip);
     __cb.overlayEl.appendChild(mainArea);
     document.body.appendChild(__cb.overlayEl);
 
