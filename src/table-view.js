@@ -1416,8 +1416,16 @@
   function buildOptionGrid(perYear, optIdx, years, cpc, cpa, optName) {
     const LIST_CPC = __cb.pricing?.LIST_CPC ?? 0.05;
     const LIST_CPA = __cb.pricing?.LIST_CPA ?? 0.008;
-    const pctOffList = (price, list) =>
-      list > 0 ? `${Math.round(((list - price) / list) * 100)}% off` : "";
+    // Small "% off list" chip: shows just "N%"; the full phrase is the tooltip.
+    const pctBox = (price, list) => {
+      if (!(list > 0) || price == null) return null;
+      const p = Math.round(((list - price) / list) * 100);
+      const box = document.createElement("span");
+      box.className = "cb-ptg-pct-box";
+      box.textContent = `${p}%`;
+      box.title = `${p}% off list`;
+      return box;
+    };
 
     const grid = document.createElement("div");
     grid.className = "cb-pricing-totalgrp-grid";
@@ -1438,8 +1446,26 @@
 
     perYear.forEach((y, i) => {
       const lbl = document.createElement("div");
-      lbl.className = "cb-ptg-rowlabel";
-      lbl.textContent = years > 1 ? `Year ${i + 1}` : "Contract";
+      lbl.className = "cb-ptg-rowlabel cb-ptg-yearlabel";
+      const lblText = document.createElement("span");
+      lblText.textContent = years > 1 ? `Year ${i + 1}` : "Contract";
+      lbl.appendChild(lblText);
+      // Reset-to-proposed: shown only when this year's volume was overridden.
+      if (y.creditsOverridden || y.tierOverridden) {
+        const reset = document.createElement("button");
+        reset.type = "button";
+        reset.className = "cb-ptg-reset";
+        reset.title = "Reset to proposed";
+        reset.setAttribute("aria-label", "Reset to proposed");
+        reset.innerHTML =
+          '<svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>';
+        reset.addEventListener("mousedown", (e) => e.stopPropagation());
+        reset.addEventListener("click", (e) => {
+          e.stopPropagation();
+          if (__cb.resetPricingOptionYear) __cb.resetPricingOptionYear(optIdx, i);
+        });
+        lbl.appendChild(reset);
+      }
       grid.appendChild(lbl);
 
       const aCell = document.createElement("div");
@@ -1497,11 +1523,9 @@
       b.className = "cb-ptg-repfloor" + (opts?.list ? " cb-ptg-listbox" : "");
       b.textContent = rate != null ? pricingRate(rate) : "\u2014";
       cell.appendChild(b);
-      if (opts?.showPct && rate != null) {
-        const pct = document.createElement("span");
-        pct.className = "cb-ptg-pct";
-        pct.textContent = pctOffList(rate, list);
-        cell.appendChild(pct);
+      if (opts?.showPct) {
+        const pb = pctBox(rate, list);
+        if (pb) cell.appendChild(pb);
       }
       return cell;
     };
@@ -1527,10 +1551,8 @@
       inp.addEventListener("blur", commit);
       inp.addEventListener("focus", () => inp.select());
       cell.appendChild(inp);
-      const pct = document.createElement("span");
-      pct.className = "cb-ptg-pct";
-      pct.textContent = pctOffList(value, list);
-      cell.appendChild(pct);
+      const pb = pctBox(value, list);
+      if (pb) cell.appendChild(pb);
       return cell;
     };
 
@@ -1550,11 +1572,6 @@
     grid.appendChild(mkRowLabel("Average", "cb-ptg-rowtop"));
     grid.appendChild(mkAvgCell("action", avgActions));
     grid.appendChild(mkAvgCell("credit", avgCredits));
-
-    // List (read-only reference).
-    grid.appendChild(mkRowLabel("List"));
-    grid.appendChild(priceBox(LIST_CPA, LIST_CPA, { list: true }));
-    grid.appendChild(priceBox(LIST_CPC, LIST_CPC, { list: true }));
 
     // Authorized (rep floor) — sits above Discount as the reference ceiling.
     grid.appendChild(mkRowLabel("Authorized"));

@@ -1813,6 +1813,15 @@
       o.override.actionTier[yearIdx] = tierId;
       afterPricingOptionsChange();
     };
+    // Clears a year's per-option overrides (credits + action tier) so it tracks
+    // the proposed/recommended rollup again.
+    __cb.resetPricingOptionYear = function (optIdx, yearIdx) {
+      const o = __cb.getPricingOptions()[optIdx];
+      if (!o || !o.override) return;
+      if (o.override.credits) delete o.override.credits[yearIdx];
+      if (o.override.actionTier) delete o.override.actionTier[yearIdx];
+      afterPricingOptionsChange();
+    };
     // The rep-entered discount price (contract-wide CPC/CPA) for one option.
     // metric: "credit" -> cpc, "action" -> cpa. Defaults to list when unset.
     __cb.setPricingOptionPrice = function (optIdx, metric, value) {
