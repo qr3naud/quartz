@@ -25,17 +25,18 @@
 
   const __cb = window.__cb;
 
-  // v2: bumped from v1 so every client re-mints once after the Phase-4
-  // internal-admin rollout. The old v1 tokens lack the `is_internal` claim
-  // that RLS now reads, so reusing them would deny cross-workspace access to
-  // Clay members until they expired (~1h). Bumping forces a fresh mint.
-  const STORAGE_KEY = "cb-supabase-jwt-v2";
+  // v3: bumped from v2 so every client re-mints once after the maintainer-gate
+  // rollout. Old v2 tokens lack the `is_admin` claim that RLS (cb_caller_is_admin)
+  // and the UI now read, so reusing them would hide the maintainer-only surfaces
+  // until they expired (~1h). Bumping forces a fresh mint that carries is_admin.
+  // (v2 itself was bumped from v1 for the Phase-4 `is_internal` rollout.)
+  const STORAGE_KEY = "cb-supabase-jwt-v3";
   // Stale JWTs are useless if they're already expired or about to be —
   // refresh proactively when this much time is left on the clock.
   const REFRESH_WINDOW_MS = 5 * 60 * 1000;
 
   /**
-   * @typedef {{ jwt: string, expiresAt: number, userId: string, email: string | null, workspaces: string[], features: string[] }} StoredJwt
+   * @typedef {{ jwt: string, expiresAt: number, userId: string, email: string | null, workspaces: string[], features: string[], isAdmin: boolean }} StoredJwt
    */
 
   let inflightRefresh = null;
@@ -87,6 +88,10 @@
     __cb.userEmail = stored?.email ?? __cb.userEmail ?? null;
     __cb.userWorkspaces = stored?.workspaces ?? [];
     __cb.userFeatures = stored?.features ?? [];
+    // Maintainer flag from the signed `is_admin` claim (set by clay-auth-mint
+    // from the ADMIN_EMAILS secret). Replaces the old hardcoded email checks —
+    // gates the Admin modal, owner-only export rows, canvas view, version picker.
+    __cb.isAdmin = stored?.isAdmin === true;
     // Reflect the feature set onto document.body as a space-separated
     // attribute so CSS can scope rules with `body[data-cb-features~="dust"]
     // .cb-foo`. document.body may not exist yet at content-script start;
@@ -152,6 +157,7 @@
           email: payload.email ?? null,
           workspaces: Array.isArray(payload.workspaces) ? payload.workspaces.map(String) : [],
           features: Array.isArray(payload.features) ? payload.features.map(String) : [],
+          isAdmin: payload.isAdmin === true,
         };
         writeStored(stored);
         adoptStored(stored);

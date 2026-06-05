@@ -15,9 +15,9 @@
   // `feature` (optional): name of the feature flag that must be present in
   // the JWT for the row to render. Options without a `feature` field show
   // for everyone. `ownerOnly` (optional): when true the row only renders for
-  // the maintainer's email (see OWNER_EMAIL) — a UX gate while these surfaces
-  // are still being iterated on. The runtime filter sits at the top of
-  // openExportMenu.
+  // the maintainer (the signed `is_admin` claim, __cb.isAdmin) — a UX gate
+  // while these surfaces are still being iterated on. The runtime filter sits
+  // at the top of openExportMenu.
   const EXPORT_OPTIONS = [
     { id: "gtme",     label: "Export to GTME Calculator", enabled: true,  feature: "gtme_export" },
     { id: "dealdesk", label: "Submit to deal desk",       enabled: true,  feature: "gtme_export", ownerOnly: true },
@@ -26,11 +26,6 @@
     // "Import Inspector" (formerly "Export as JSON") moved to the three-dots
     // ("more") menu — see __cb.openMoreMenu in src/overlay.js.
   ];
-
-  // Maintainer allow-list for `ownerOnly` rows. UX gate, not a security
-  // boundary: the email comes from the JWT `email` claim (set on
-  // __cb.userEmail in src/auth.js), mirroring CANVAS_VIEW_ALLOWED_EMAILS.
-  const OWNER_EMAIL = "quentin.renaud@clay.com";
 
   // ---- Menu ----
 
@@ -60,11 +55,10 @@
 
     // Filter options the JWT doesn't entitle this user to see. Internal
     // GTMEs get the feature-flagged rows; `ownerOnly` rows (Submit to deal
-    // desk, Export as Table) are further restricted to the maintainer's email.
-    // The handler switch below doesn't need its own checks because gated
-    // branches are unreachable when the row isn't rendered.
-    const isOwner =
-      (__cb.userEmail || "").trim().toLowerCase() === OWNER_EMAIL;
+    // desk, Export as Table) are further restricted to the maintainer via the
+    // signed `is_admin` claim. The handler switch below doesn't need its own
+    // checks because gated branches are unreachable when the row isn't rendered.
+    const isOwner = !!__cb.isAdmin;
     const visibleOptions = EXPORT_OPTIONS.filter(
       (opt) =>
         (!opt.feature || (__cb.hasFeature && __cb.hasFeature(opt.feature))) &&

@@ -7,13 +7,12 @@
 
   // Cache whether the current user is the Quartz maintainer so the service
   // worker can scope update checks (admin -> origin/main HEAD; everyone else ->
-  // the published version). Pure-UI gate; refreshed whenever the JWT (and thus
-  // the email) lands or rotates. Same email check as the Archived menu.
+  // the published version). Pure-UI gate; refreshed whenever the JWT lands or
+  // rotates. Sources the signed `is_admin` claim (set on __cb.isAdmin in
+  // src/auth.js from the ADMIN_EMAILS secret) — same flag the Admin menu uses.
   function syncQuartzAdminFlag() {
     try {
-      const isAdmin =
-        (__cb.userEmail || "").trim().toLowerCase() === "quentin.renaud@clay.com";
-      chrome.storage.local.set({ quartzIsAdmin: isAdmin });
+      chrome.storage.local.set({ quartzIsAdmin: !!__cb.isAdmin });
     } catch {}
   }
   syncQuartzAdminFlag();
@@ -272,9 +271,9 @@
 
     // Archived — deprecated toggles (View + Pro Mode), kept available only to
     // the maintainer. Hovering (or clicking) the row opens a flyout submenu to
-    // the left. The chevron-left icon hints at the open direction.
-    const isArchiveAdmin =
-      (__cb.userEmail || "").trim().toLowerCase() === "quentin.renaud@clay.com";
+    // the left. The chevron-left icon hints at the open direction. Gated on the
+    // signed `is_admin` claim (src/auth.js), not a client-side email compare.
+    const isArchiveAdmin = !!__cb.isAdmin;
     if (isArchiveAdmin) {
       // Admin — maintainer-only settings. Edits public.app_settings in Supabase
       // (e.g. the POC request Slack channel) so operational config lives in the

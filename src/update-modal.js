@@ -310,9 +310,9 @@
     closeModal();
 
     // Only the maintainer gets the per-version picker (install/rollback to any
-    // commit). Same email gate as the Archived menu in src/overlay.js.
-    const isAdmin =
-      (__cb.userEmail || "").trim().toLowerCase() === "quentin.renaud@clay.com";
+    // commit). Gated on the signed `is_admin` claim (src/auth.js), same flag as
+    // the Archived menu in src/overlay.js.
+    const isAdmin = !!__cb.isAdmin;
 
     backdropEl = document.createElement("div");
     backdropEl.className = "cb-update-backdrop";

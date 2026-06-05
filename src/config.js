@@ -194,16 +194,14 @@
     // Canvas view is being de-prioritized in favor of the table view, which
     // is now the primary surface. The Cards/Tables toggle (overlay.js
     // openMoreMenu) is greyed out and the view is locked to "table" for
-    // everyone except the allow-listed emails below — they keep full canvas
-    // access so the mode can keep being iterated on. The persisted data
-    // structure (coordinates, clusters, connections) is left intact and
-    // dormant so canvas can be re-introduced later with zero migration.
-    // This is a UX gate, not a security boundary: the email comes from the
-    // JWT `email` claim (set on __cb.userEmail in src/auth.js).
-    CANVAS_VIEW_ALLOWED_EMAILS: ["quentin.renaud@clay.com"],
+    // everyone except the maintainer — they keep full canvas access so the
+    // mode can keep being iterated on. The persisted data structure
+    // (coordinates, clusters, connections) is left intact and dormant so
+    // canvas can be re-introduced later with zero migration. This is a UX
+    // gate keyed on the signed `is_admin` claim (set on __cb.isAdmin in
+    // src/auth.js from the ADMIN_EMAILS secret), not a client-side email.
     canUseCanvasView() {
-      const email = (window.__cb.userEmail || "").trim().toLowerCase();
-      return window.__cb.CANVAS_VIEW_ALLOWED_EMAILS.includes(email);
+      return !!window.__cb.isAdmin;
     },
 
     // "projected" (default — catalog credits × records) vs "actual" (real

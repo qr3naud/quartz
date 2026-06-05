@@ -2404,3 +2404,100 @@
   background: #059669;
   border-color: #059669;
 }
+
+/* Admin modal — read-only feature-flag & gating panel (src/admin-settings.js).
+   Lists the two gating tiers (internal feature flags + maintainer-only
+   surfaces) with a live status badge each. Reuses the modal's cb-gtme-*
+   palette; sits below the editable app_settings fields as a sibling of the
+   18px-gap modal body. */
+.cb-ff-section {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  border-top: 1px solid #e5e7eb;
+  padding-top: 16px;
+}
+
+.cb-ff-heading {
+  font-size: 13px;
+  font-weight: 600;
+  color: #111827;
+}
+
+.cb-ff-intro {
+  font-size: 12px;
+  line-height: 1.45;
+  color: #6b7280;
+  margin-bottom: 4px;
+}
+
+.cb-ff-group-label {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #9ca3af;
+  margin-top: 12px;
+}
+
+.cb-ff-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 0;
+  border-top: 1px solid #f3f4f6;
+}
+
+.cb-ff-row-text {
+  min-width: 0;
+}
+
+.cb-ff-row-label {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 7px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #374151;
+}
+
+.cb-ff-code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  font-weight: 500;
+  background: #f1f5f9;
+  color: #6b7280;
+  padding: 1px 6px;
+  border-radius: 5px;
+}
+
+.cb-ff-row-hint {
+  font-size: 12px;
+  line-height: 1.4;
+  color: #6b7280;
+  margin-top: 2px;
+}
+
+.cb-ff-badge {
+  flex-shrink: 0;
+  display: inline-block;
+  padding: 2px 9px;
+  font-size: 11px;
+  font-weight: 700;
+  border-radius: 9px;
+  white-space: nowrap;
+  background: #f1f5f9;
+  color: #6b7280;
+}
+
+.cb-ff-badge-on {
+  background: #dcfce7;
+  color: #15803d;
+}
+
+.cb-ff-badge-off {
+  background: #f1f5f9;
+  color: #9ca3af;
+}

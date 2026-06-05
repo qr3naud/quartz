@@ -2,14 +2,18 @@
  * Admin settings modal (maintainer-only).
  *
  * Opened from the "Admin" row in the More menu, which src/overlay.js gates on
- * the same quentin.renaud@clay.com check as the Archived submenu. Reads and
- * writes the public.app_settings key/value table directly via supabaseFetch.
+ * the signed `is_admin` JWT claim (__cb.isAdmin) — the same flag as the Archived
+ * submenu. Reads and writes the public.app_settings key/value table directly via
+ * supabaseFetch.
  *
  * Writes are additionally enforced server-side by RLS (cb_caller_is_admin()):
- * only the maintainer's JWT can INSERT/UPDATE app_settings, so this modal is a
+ * only an admin's JWT can INSERT/UPDATE app_settings, so this modal is a
  * convenience UI, not the security boundary. Today it edits
  * `poc_request_channel` (the Slack channel poc-request-submit posts to); new
- * settings rows show up automatically.
+ * settings rows show up automatically. Below the editable settings, a read-only
+ * "Feature flags & gating" panel lists the two gating tiers (internal feature
+ * flags + maintainer-only surfaces) with a live status badge for the current
+ * session.
  *
  * Reuses the cb-export-modal / cb-gtme-* styles from styles/export.css.
  */
@@ -33,6 +37,110 @@
       hint: "Channel name (e.g. #deal-desk) or ID the deal-desk app posts to. Leave blank to use the server default.",
     },
   };
+
+  // Read-only reference rendered in the "Feature flags & gating" panel below the
+  // editable settings. Two tiers:
+  //   - INTERNAL_FEATURES: gated to internal @clay.com users via the JWT
+  //     `features` claim (clay-auth-mint INTERNAL_FEATURES). Live status comes
+  //     from __cb.hasFeature(); derived from Clay workspace membership, so it's
+  //     informational, not toggleable from here.
+  //   - MAINTAINER_SURFACES: gated to the maintainer via the signed `is_admin`
+  //     claim (__cb.isAdmin), set by clay-auth-mint from the ADMIN_EMAILS secret.
+  // Labels/hints only — no emails or secrets live in this bundle.
+  const INTERNAL_FEATURES = [
+    { flag: "internal_branding", label: "Internal branding", hint: '"Quartz" name + internal UI instead of "Scoping".' },
+    { flag: "gtme_export",       label: "GTME export",        hint: "Export to GTME Calculator, Request POC, deal-desk / DealOps rows." },
+    { flag: "pricing_comparison", label: "Pricing comparison", hint: "Old vs New Pricing comparison modal." },
+    { flag: "sfdc",              label: "Salesforce",         hint: "Link and search SFDC opportunities." },
+    { flag: "dust",              label: "Dust",               hint: "Dust AI POC integration." },
+  ];
+
+  const MAINTAINER_SURFACES = [
+    { label: "Admin settings",      hint: "This modal (edits app_settings)." },
+    { label: "Submit to deal desk", hint: "Owner-only row in the Export menu." },
+    { label: "Export as Table",     hint: "Owner-only row in the Export menu." },
+    { label: "Canvas view",         hint: "The Cards / Tables toggle in the More menu." },
+    { label: "Version picker",      hint: "Install / roll back to any version in the update modal." },
+    { label: "Archived submenu",    hint: "Deprecated toggles in the More menu." },
+  ];
+
+  // One status row: label (+ optional code chip), hint, and an on/off badge.
+  function buildFlagRow(opts) {
+    const row = document.createElement("div");
+    row.className = "cb-ff-row";
+
+    const text = document.createElement("div");
+    text.className = "cb-ff-row-text";
+
+    const labelEl = document.createElement("div");
+    labelEl.className = "cb-ff-row-label";
+    labelEl.appendChild(document.createTextNode(opts.label));
+    if (opts.code) {
+      const codeEl = document.createElement("code");
+      codeEl.className = "cb-ff-code";
+      codeEl.textContent = opts.code;
+      labelEl.appendChild(codeEl);
+    }
+    text.appendChild(labelEl);
+
+    if (opts.hint) {
+      const hintEl = document.createElement("div");
+      hintEl.className = "cb-ff-row-hint";
+      hintEl.textContent = opts.hint;
+      text.appendChild(hintEl);
+    }
+
+    const badge = document.createElement("span");
+    badge.className = "cb-ff-badge " + (opts.on ? "cb-ff-badge-on" : "cb-ff-badge-off");
+    badge.textContent = opts.on ? opts.onText : opts.offText;
+
+    row.appendChild(text);
+    row.appendChild(badge);
+    return row;
+  }
+
+  // Builds the read-only "Feature flags & gating" panel. Reads __cb live; the
+  // modal is only reachable once the JWT (and __cb.isAdmin / features) resolved,
+  // so a synchronous render reflects the current session accurately.
+  function buildGatingSection() {
+    const section = document.createElement("div");
+    section.className = "cb-ff-section";
+
+    const heading = document.createElement("div");
+    heading.className = "cb-ff-heading";
+    heading.textContent = "Feature flags & gating";
+    section.appendChild(heading);
+
+    const intro = document.createElement("div");
+    intro.className = "cb-ff-intro";
+    intro.textContent =
+      "Read-only, live for your current session. Admin is set via the ADMIN_EMAILS Supabase secret (signed into your JWT); internal flags come from your Clay workspace membership.";
+    section.appendChild(intro);
+
+    const internalLabel = document.createElement("div");
+    internalLabel.className = "cb-ff-group-label";
+    internalLabel.textContent = "Gated internally (@clay.com)";
+    section.appendChild(internalLabel);
+    for (const f of INTERNAL_FEATURES) {
+      const on = !!(__cb.hasFeature && __cb.hasFeature(f.flag));
+      section.appendChild(
+        buildFlagRow({ label: f.label, code: f.flag, hint: f.hint, on, onText: "Active", offText: "Off" }),
+      );
+    }
+
+    const adminLabel = document.createElement("div");
+    adminLabel.className = "cb-ff-group-label";
+    adminLabel.textContent = "Gated to me (admin)";
+    section.appendChild(adminLabel);
+    const isAdmin = !!__cb.isAdmin;
+    for (const s of MAINTAINER_SURFACES) {
+      section.appendChild(
+        buildFlagRow({ label: s.label, hint: s.hint, on: isAdmin, onText: "You", offText: "Locked" }),
+      );
+    }
+
+    return section;
+  }
 
   function close() {
     if (modalEl) { modalEl.remove(); modalEl = null; }
@@ -94,6 +202,10 @@
     errorEl.className = "cb-gtme-error";
     errorEl.style.display = "none";
     body.appendChild(errorEl);
+
+    // Read-only feature-flag & gating reference (renders immediately; doesn't
+    // depend on the app_settings load below).
+    body.appendChild(buildGatingSection());
 
     function showError(msg) { errorEl.textContent = msg; errorEl.style.display = ""; }
     function clearError() { errorEl.textContent = ""; errorEl.style.display = "none"; }
