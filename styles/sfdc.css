@@ -23,12 +23,12 @@
 }
 
 .cb-sfdc-picker-popover {
-  /* Wider than the Dust POC popover so opportunity meta-rows breathe. */
-  min-width: 380px;
-}
-
-.cb-sfdc-picker-input {
-  margin-bottom: 8px;
+  /* Wider than the Dust POC popover so opportunity meta-rows breathe.
+     border-box (the base popover is content-box) so the JS resize animation
+     can map offsetHeight straight to the height it sets; min-width is bumped
+     by the 28px padding + 2px border so the rendered width is unchanged. */
+  box-sizing: border-box;
+  min-width: 410px;
 }
 
 .cb-sfdc-picker-results {
@@ -37,7 +37,19 @@
   display: flex;
   flex-direction: column;
   gap: 2px;
-  margin: 4px 0;
+  /* No margin — the popover's flex `gap` spaces the results from the input;
+     a fixed margin would keep reserving space in the snug empty state. */
+  margin: 0;
+}
+
+/* Snug empty state: collapse the results list and the status line entirely
+   when they have no content, so the popover hugs the input until a search
+   runs. The JS animates the popover height as these appear/disappear. The
+   status rule is scoped to the picker so the Dust POC popover keeps its
+   min-height (which prevents a jump there). */
+.cb-sfdc-picker-results:empty,
+.cb-sfdc-picker-popover .cb-dust-poc-status:empty {
+  display: none;
 }
 
 .cb-sfdc-picker-empty {

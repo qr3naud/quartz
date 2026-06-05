@@ -385,6 +385,7 @@
     // typing collapse to a single SOSL query.
     let debounceTimer = null;
     let lastReqId = 0;
+    let resizeAnimEnd = null;
 
     function setStatus(kind, html) {
       status.className = `cb-dust-poc-status cb-dust-poc-status-${kind}`;
@@ -394,6 +395,56 @@
     function clearStatus() {
       status.className = "cb-dust-poc-status";
       status.innerHTML = "";
+    }
+
+    // Smoothly grow/shrink the popover as the status line and results come and
+    // go, so the picker feels like it settles onto its content instead of
+    // jumping. Measures the natural height before and after `mutate`, then
+    // transitions between the two. The popover is box-sizing:border-box (see
+    // sfdc.css) so offsetHeight maps directly to the height we assign. No-ops
+    // the animation (but still mutates) when the popover is gone, the height
+    // is unchanged, or the user prefers reduced motion.
+    function animateResize(mutate) {
+      if (!popoverEl) { mutate(); return; }
+      const reduce = window.matchMedia
+        && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+      // Cancel any in-flight resize so listeners don't stack and fight.
+      if (resizeAnimEnd) {
+        popoverEl.removeEventListener("transitionend", resizeAnimEnd);
+        resizeAnimEnd = null;
+      }
+      popoverEl.style.transition = "none";
+
+      const startH = popoverEl.offsetHeight;
+      popoverEl.style.height = "auto";
+      mutate();
+      const endH = popoverEl.offsetHeight;
+
+      if (reduce || Math.abs(startH - endH) < 1) {
+        popoverEl.style.height = "";
+        popoverEl.style.transition = "";
+        popoverEl.style.overflow = "";
+        return;
+      }
+
+      // overflow:hidden so taller content is clipped to the animating height
+      // rather than spilling out of the rounded frame mid-transition.
+      popoverEl.style.overflow = "hidden";
+      popoverEl.style.height = startH + "px";
+      void popoverEl.offsetHeight; // commit the start height before animating
+      popoverEl.style.transition = "height 0.18s ease";
+      popoverEl.style.height = endH + "px";
+
+      resizeAnimEnd = (evt) => {
+        if (evt.target !== popoverEl || evt.propertyName !== "height") return;
+        popoverEl.style.transition = "";
+        popoverEl.style.height = "";
+        popoverEl.style.overflow = "";
+        popoverEl.removeEventListener("transitionend", resizeAnimEnd);
+        resizeAnimEnd = null;
+      };
+      popoverEl.addEventListener("transitionend", resizeAnimEnd);
     }
 
     function renderResults(records) {
@@ -442,12 +493,14 @@
 
     async function runSearch(q) {
       const reqId = ++lastReqId;
-      setStatus("info", "Searching\u2026");
+      animateResize(() => setStatus("info", "Searching\u2026"));
       try {
         const data = await searchOpportunities(q);
         if (reqId !== lastReqId) return; // a newer search has superseded us
-        clearStatus();
-        renderResults(data?.records || []);
+        animateResize(() => {
+          clearStatus();
+          renderResults(data?.records || []);
+        });
       } catch (err) {
         if (reqId !== lastReqId) return;
         console.warn("[Clay Scoping] SFDC search failed:", err);
@@ -456,19 +509,21 @@
         // server text, since reps may be confused why their access was
         // denied. We forced a JWT refresh on picker open so this is the
         // authoritative answer, not stale-cache noise.
-        if (err?.status === 403) {
-          setStatus(
-            "error",
-            "You're not signed in to a Clay workspace that's allowed to use the SFDC integration. If you were impersonating someone, stop impersonating in app.clay.com and reopen this picker.",
-          );
-        } else if (err?.status === 401) {
-          setStatus(
-            "error",
-            "Your Clay session expired. Reload the Clay tab and try again.",
-          );
-        } else {
-          setStatus("error", escapeHtml(err?.message || "Search failed."));
-        }
+        animateResize(() => {
+          if (err?.status === 403) {
+            setStatus(
+              "error",
+              "You're not signed in to a Clay workspace that's allowed to use the SFDC integration. If you were impersonating someone, stop impersonating in app.clay.com and reopen this picker.",
+            );
+          } else if (err?.status === 401) {
+            setStatus(
+              "error",
+              "Your Clay session expired. Reload the Clay tab and try again.",
+            );
+          } else {
+            setStatus("error", escapeHtml(err?.message || "Search failed."));
+          }
+        });
       }
     }
 
@@ -479,8 +534,10 @@
         debounceTimer = null;
       }
       if (q.length < 2) {
-        results.innerHTML = "";
-        clearStatus();
+        animateResize(() => {
+          results.innerHTML = "";
+          clearStatus();
+        });
         return;
       }
       debounceTimer = setTimeout(() => runSearch(q), 250);
