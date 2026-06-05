@@ -2847,6 +2847,26 @@
     // mode reads a ready state.
     __cb.sessionCutoff?.restore?.(restoredTab?.state?.sessionCutoff);
 
+    // Restore the multi-year pricing view (per-tab). closeCanvas does NOT reset
+    // __cb.pricingMode and — unlike switchTab — openCanvas never re-applied it,
+    // so reopening a canvas left in pricing mode produced a broken hybrid: the
+    // stale __cb.pricingMode=true made the table render the pricing grid, but
+    // the freshly-built overlay had no data-cb-pricing-mode="on" attribute (and
+    // the summary bar lacked its pricing class), so the summary bar still showed
+    // in its normal layout. Restore the data first, then setPricingMode (which
+    // sets the attribute + summary class + the flag) BEFORE setBrainstormView
+    // mounts the table, so the table mounts already consistent. The
+    // tableView.refresh inside setPricingMode self-guards while unmounted.
+    __cb.contractYears = Math.min(3, Math.max(1, activeTab?.state?.contractYears || 1));
+    __cb.pricingYearRecords = activeTab?.state?.pricingYearRecords ?? {};
+    __cb.pricingOptions = activeTab?.state?.pricingOptions ?? null;
+    __cb.pricingTotalOverride = activeTab?.state?.pricingTotalOverride ?? { credits: {}, actionTier: {} };
+    if (__cb.setPricingMode) {
+      __cb.setPricingMode(!!activeTab?.state?.pricingMode);
+    } else {
+      __cb.pricingMode = !!activeTab?.state?.pricingMode;
+    }
+
     // Seed the view from the active tab's saved mode (per-tab). Actual needs an
     // imported tab — fall back to Projected otherwise.
     let initialMode = activeTab?.state?.viewMode === "actual" ? "actual" : "projected";
@@ -2924,6 +2944,10 @@
     __cb.closeTotalCostEditor = null;
     __cb.proMode = false;
     __cb.viewMode = "projected";
+    // Reset pricing-mode globals so a canvas reopened without a saved pricing
+    // state (or before openCanvas re-applies it) doesn't inherit this session's
+    // mode. openCanvas restores the real value from the active tab on open.
+    __cb.pricingMode = false;
     __cb.currentFrequencyId = __cb.DEFAULT_FREQUENCY_ID;
     __cb.closeFrequencyPicker();
     closeMoreMenu();
