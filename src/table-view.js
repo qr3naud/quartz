@@ -726,6 +726,7 @@
   // volume over its dollar cost. Mode-aware: volumes follow Projected/Actual.
   function buildPricingBody() {
     closeAvgHover();
+    hidePricingTip();
     const wrap = document.createElement("div");
     wrap.className = "cb-pricing-body";
 
@@ -1209,10 +1210,36 @@
   // Closes the transient hover panel; with force, also removes every pinned one.
   function closeAllAvgMatrices(force) {
     closeAvgHover();
+    hidePricingTip();
     if (force) {
       for (const el of pricingAvgPinnedEls) el.remove();
       pricingAvgPinnedEls.clear();
     }
+  }
+
+  // Tiny instant tooltip for the "% off list" chips. Native title tooltips are
+  // slow/unreliable inside the overlay, and the chips hide the cursor.
+  let pricingTipEl = null;
+  function hidePricingTip() {
+    if (pricingTipEl) {
+      pricingTipEl.remove();
+      pricingTipEl = null;
+    }
+  }
+  function showPricingTip(anchor, text) {
+    hidePricingTip();
+    const tip = document.createElement("div");
+    tip.className = "cb-pricing-tip";
+    tip.textContent = text;
+    document.body.appendChild(tip);
+    const r = anchor.getBoundingClientRect();
+    const tw = tip.getBoundingClientRect().width;
+    let left = Math.round(r.left + r.width / 2 - tw / 2);
+    left = Math.max(8, Math.min(left, window.innerWidth - tw - 8));
+    tip.style.position = "fixed";
+    tip.style.left = `${left}px`;
+    tip.style.top = `${Math.round(r.bottom + 6)}px`;
+    pricingTipEl = tip;
   }
 
   function pinIconSvg() {
@@ -1283,6 +1310,9 @@
     const panel = document.createElement("div");
     panel.className =
       "cb-pricing-avgmatrix " + (metric === "credit" ? "cb-pam-credits" : "cb-pam-actions");
+    // Keep mousedowns inside the panel from reaching the document (selection
+    // clear / outside-click closers) so the click-to-pin always lands.
+    panel.addEventListener("mousedown", (e) => e.stopPropagation());
 
     // ---- Header: option name + metric pill + pin icon (also the drag handle) -
     const header = document.createElement("div");
@@ -1423,7 +1453,9 @@
       const box = document.createElement("span");
       box.className = "cb-ptg-pct-box";
       box.textContent = `${p}%`;
-      box.title = `${p}% off list`;
+      const tip = `${p}% off list`;
+      box.addEventListener("mouseenter", () => showPricingTip(box, tip));
+      box.addEventListener("mouseleave", hidePricingTip);
       return box;
     };
 
@@ -1566,6 +1598,13 @@
       v.textContent = pricingFmt(Math.round(avgVol));
       v.addEventListener("mouseenter", () => openAvgMatrixHover(v, metric, avgVol, years, optName));
       v.addEventListener("mouseleave", scheduleAvgHoverClose);
+      // Click the Average value to pin its matrix (opens it first if needed).
+      v.addEventListener("mousedown", (e) => e.stopPropagation());
+      v.addEventListener("click", (e) => {
+        e.stopPropagation();
+        if (!pricingAvgHoverEl) openAvgMatrixHover(v, metric, avgVol, years, optName);
+        if (pricingAvgHoverEl) pinAvgMatrix(pricingAvgHoverEl);
+      });
       cell.appendChild(v);
       return cell;
     };

@@ -3299,7 +3299,21 @@
   color: #6b7280;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
-  cursor: help;
+  cursor: none;
+}
+
+/* Instant tooltip for the % chips (and any small hover hint). */
+.cb-pricing-tip {
+  z-index: 10000061;
+  pointer-events: none;
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: #111827;
+  color: #ffffff;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.22);
 }
 
 /* Year label: text + an optional reset-to-proposed button (shown when the
@@ -3610,7 +3624,7 @@
   font-weight: 600;
   color: #374151;
   font-variant-numeric: tabular-nums;
-  cursor: help;
+  cursor: none;
   transition: background 0.12s, border-color 0.12s;
 }
 
