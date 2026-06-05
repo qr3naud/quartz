@@ -3344,11 +3344,14 @@
   color: #4338ca;
 }
 
-/* Separator above the List row, dividing volumes from prices. */
-.cb-ptg-rowtop {
-  border-top: 1px solid #e5e7eb;
-  padding-top: 10px;
-  margin-top: 2px;
+/* Full-width divider spanning all grid columns (separates the year rows from
+   the Average + price block). A per-cell border-top would be chopped up by the
+   grid's column gaps. */
+.cb-ptg-divider {
+  grid-column: 1 / -1;
+  height: 1px;
+  background: #e5e7eb;
+  margin: 4px 0;
 }
 
 /* Custom volume dropdown menu (body-appended, position: fixed). */

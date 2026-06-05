@@ -1552,7 +1552,7 @@
     // Read-only price box (+ optional % off list).
     const priceBox = (rate, list, opts) => {
       const cell = document.createElement("div");
-      cell.className = "cb-ptg-cell cb-ptg-pricecell" + (opts?.sep ? " cb-ptg-rowtop" : "");
+      cell.className = "cb-ptg-cell cb-ptg-pricecell";
       const b = document.createElement("div");
       b.className = "cb-ptg-repfloor" + (opts?.list ? " cb-ptg-listbox" : "");
       b.textContent = rate != null ? pricingRate(rate) : "\u2014";
@@ -1594,7 +1594,7 @@
     // the year rows from the avg + price block. Hover a cell for the band matrix.
     const mkAvgCell = (metric, avgVol) => {
       const cell = document.createElement("div");
-      cell.className = "cb-ptg-cell cb-ptg-rowtop";
+      cell.className = "cb-ptg-cell";
       const v = document.createElement("div");
       v.className = "cb-ptg-avg";
       v.textContent = pricingFmt(Math.round(avgVol));
@@ -1610,7 +1610,12 @@
       cell.appendChild(v);
       return cell;
     };
-    grid.appendChild(mkRowLabel("Average", "cb-ptg-rowtop"));
+    // One continuous divider spanning all columns (a per-cell border-top would be
+    // chopped up by the grid's column gaps).
+    const divider = document.createElement("div");
+    divider.className = "cb-ptg-divider";
+    grid.appendChild(divider);
+    grid.appendChild(mkRowLabel("Average"));
     grid.appendChild(mkAvgCell("action", avgActions));
     grid.appendChild(mkAvgCell("credit", avgCredits));
 
