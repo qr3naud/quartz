@@ -1228,6 +1228,58 @@
     // subscription above doesn't exist).
     updateGuidedFlow();
 
+    // ---- Keep a clicked rail button expanded while its surface is open ----
+    // A hovered-then-clicked icon would otherwise snap shut the moment the
+    // pointer leaves, even though the picker/popover/menu/modal it opened is
+    // still on screen. Hold it expanded (.cb-toolbar-open) until that surface
+    // leaves the DOM. The openers live in other modules and several call
+    // stopPropagation, so we listen in the capture phase; close is detected
+    // generically by watching for the surface to disappear.
+    const RAIL_SURFACE_SELECTOR =
+      ".cb-dust-poc-popover, .cb-dust-poc-backdrop, .cb-sfdc-details, " +
+      ".cb-table-picker, .cb-table-picker-backdrop, .cb-export-menu, " +
+      ".cb-export-modal-backdrop";
+    let heldOpenBtn = null;
+    let railSurfaceObserver = null;
+    function releaseHeldOpen() {
+      if (heldOpenBtn) heldOpenBtn.classList.remove("cb-toolbar-open");
+      heldOpenBtn = null;
+      if (railSurfaceObserver) {
+        railSurfaceObserver.disconnect();
+        railSurfaceObserver = null;
+      }
+    }
+    function holdRailButtonOpen(btn) {
+      // Wait a frame for the button's own handler to mount its surface, then
+      // hold the button open until that surface is gone. If nothing opened
+      // (e.g. a toggle that closed, or Pricing/Close), leave it collapsed.
+      requestAnimationFrame(() => {
+        if (!document.querySelector(RAIL_SURFACE_SELECTOR)) return;
+        if (heldOpenBtn && heldOpenBtn !== btn) {
+          heldOpenBtn.classList.remove("cb-toolbar-open");
+        }
+        heldOpenBtn = btn;
+        btn.classList.add("cb-toolbar-open");
+        if (railSurfaceObserver) railSurfaceObserver.disconnect();
+        railSurfaceObserver = new MutationObserver(() => {
+          if (!document.querySelector(RAIL_SURFACE_SELECTOR)) releaseHeldOpen();
+        });
+        railSurfaceObserver.observe(document.body, { childList: true, subtree: true });
+      });
+    }
+    rightGroup.addEventListener(
+      "click",
+      (evt) => {
+        const btn = evt.target.closest?.(".cb-toolbar-btn, .cb-sfdc-pill");
+        // Skip the label-less kebab — there's nothing to keep expanded.
+        if (!btn || !rightGroup.contains(btn) || btn.classList.contains("cb-toolbar-more")) {
+          return;
+        }
+        holdRailButtonOpen(btn);
+      },
+      true,
+    );
+
     // ---- Summary bar ----
 
     const summaryBar = document.createElement("div");

@@ -486,11 +486,14 @@
   transition: max-width 0.2s ease, opacity 0.15s ease, margin 0.2s ease;
 }
 
-/* Reveal the label when the button is the active step (.cb-toolbar-expanded)
-   or hovered. The SFDC link button / pill carry these classes directly (the
-   controller re-resolves the inner element on each run). */
+/* Reveal the label when the button is the active step (.cb-toolbar-expanded),
+   held open while its surface is on screen (.cb-toolbar-open), or hovered. The
+   SFDC link button / pill carry these classes directly (the controller
+   re-resolves the inner element on each run). */
 .cb-topbar-guided .cb-toolbar-expanded .cb-toolbar-label,
 .cb-topbar-guided .cb-toolbar-expanded .cb-sfdc-pill-label,
+.cb-topbar-guided .cb-toolbar-open .cb-toolbar-label,
+.cb-topbar-guided .cb-toolbar-open .cb-sfdc-pill-label,
 .cb-topbar-guided .cb-toolbar-btn:has(.cb-toolbar-label):hover .cb-toolbar-label,
 .cb-topbar-guided .cb-sfdc-pill:hover .cb-sfdc-pill-label {
   max-width: 160px;
@@ -499,13 +502,15 @@
 }
 
 /* Restore horizontal padding so the revealed label has room. Scoped with
-   :has() so the label-less kebab (.cb-toolbar-more) never widens on hover. */
+   :has() so the label-less kebab (.cb-toolbar-more) never widens. */
 .cb-topbar-guided .cb-toolbar-btn.cb-toolbar-expanded,
+.cb-topbar-guided .cb-toolbar-btn.cb-toolbar-open:has(.cb-toolbar-label),
 .cb-topbar-guided .cb-toolbar-btn:has(.cb-toolbar-label):hover {
   padding: 0 12px;
 }
 
 .cb-topbar-guided .cb-sfdc-pill.cb-toolbar-expanded,
+.cb-topbar-guided .cb-sfdc-pill.cb-toolbar-open,
 .cb-topbar-guided .cb-sfdc-pill:hover {
   padding: 0 10px;
 }
