@@ -88,6 +88,25 @@
     return input;
   }
 
+  // Resume the Request POC "done" state on canvas open: a prior request for
+  // this workbook lives in public.poc_requests (workbook_id is stamped on every
+  // submit, see onSubmit below). A matching row flips the guided rail's Request
+  // POC step to done via __cb.setRequestPocDone. RLS scopes the read to the
+  // user's workspaces.
+  __cb.hydrateRequestPocState = async function (workbookId) {
+    if (!workbookId) return;
+    const supa = window.__cbSupabase;
+    if (!supa) return;
+    try {
+      const rows = await supa.supabaseFetch("poc_requests", "GET", {
+        query: { workbook_id: `eq.${workbookId}`, select: "id", limit: "1" },
+      });
+      if (rows && rows.length) __cb.setRequestPocDone?.(true);
+    } catch (err) {
+      console.warn("[Clay Scoping] failed to hydrate request POC state:", err);
+    }
+  };
+
   __cb.startRequestPoc = function startRequestPoc() {
     close();
     if (__cb.saveTabs) { try { __cb.saveTabs(); } catch {} }
@@ -388,6 +407,9 @@
 
       if (resp && resp.ok && resp.data && resp.data.ok) {
         submitBtn.textContent = "Sent ✓";
+        // Flip the guided rail's Request POC step to done now that the Slack
+        // message is sent (hydrateRequestPocState restores this on reopen).
+        __cb.setRequestPocDone?.(true);
         refreshRecent();
         setTimeout(() => { close(); }, 1200);
       } else {

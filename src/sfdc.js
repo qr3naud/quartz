@@ -713,27 +713,6 @@
     }
   }
 
-  // Caps the linked-opp pill's width at the "Generate POC" button's rendered
-  // width. Deferred to a frame so the measurement is reliable: when a canvas
-  // is re-opened with an already-linked opp, render() fires synchronously
-  // while the toolbar is still being constructed — the Generate POC button
-  // isn't in the DOM yet, so an inline measurement would read 0 and the pill
-  // would fall back to its wider CSS max-width. requestAnimationFrame runs
-  // after the topbar is laid out, so offsetWidth is always valid by then.
-  function sizePillToGenPoc(pillEl) {
-    const apply = () => {
-      if (!pillEl.isConnected) return;
-      const genPocBtn = document.querySelector(".cb-toolbar-dust-poc");
-      const w = genPocBtn ? genPocBtn.offsetWidth : 0;
-      if (w > 0) pillEl.style.maxWidth = w + "px";
-    };
-    if (typeof requestAnimationFrame === "function") {
-      requestAnimationFrame(apply);
-    } else {
-      apply();
-    }
-  }
-
   // --- Topbar element factory ------------------------------------------------
 
   /**
@@ -775,12 +754,9 @@
         });
 
         wrap.appendChild(pill);
-
-        // Cap the pill at the "Generate POC" button's rendered width so a
-        // long opportunity name truncates rather than letting the linked-opp
-        // state dominate the toolbar (falls back to the CSS max-width when
-        // that button isn't present, e.g. the `dust` feature is off).
-        sizePillToGenPoc(pill);
+        // The guided rail (styles/overlay.css) collapses this pill to its
+        // cloud icon and reveals the opp name on hover / when it's the active
+        // step, so we no longer size it against the Generate POC button.
       } else {
         // Unlinked: a single button.
         const btn = document.createElement("button");
@@ -794,7 +770,7 @@
         // tight against the text the same way Import used to.
         btn.innerHTML =
           '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.5 19a4.5 4.5 0 1 0-1.4-8.8 6 6 0 0 0-11.6 1.6A4 4 0 0 0 6 19h11.5z"/></svg>' +
-          "<span>Link opportunity</span>";
+          '<span class="cb-toolbar-label">Link opportunity</span>';
         btn.addEventListener("click", (evt) => {
           evt.stopPropagation();
           showPicker(btn, async (opp) => {

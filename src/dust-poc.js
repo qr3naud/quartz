@@ -1124,7 +1124,7 @@
   }
 
   // Toolbar button state — overlay.js owns the button and exposes this.
-  // States: "idle" | "loading" | "done". Drives the icon (sparkles /
+  // States: "idle" | "loading" | "done". Drives the icon (document /
   // spinner / check) and, in the done state, the linked-opportunity color
   // treatment.
   function setButtonState(state) {

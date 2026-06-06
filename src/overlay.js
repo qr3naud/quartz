@@ -211,30 +211,14 @@
       moreMenuEl.appendChild(uploadItem);
     }
 
-    // Request POC — internal-only (gtme_export). Opens the Request POC modal
-    // (src/request-poc.js), which posts a one-way request to the POC Slack
-    // channel via the poc-request-submit Edge Function. Plain action row.
-    if (__cb.hasFeature?.("gtme_export") && __cb.startRequestPoc) {
-      const requestPocItem = document.createElement("button");
-      requestPocItem.type = "button";
-      requestPocItem.className = "cb-export-menu-option cb-more-menu-option";
-      requestPocItem.title = "Request a POC from the team (posts to Slack)";
-      requestPocItem.innerHTML =
-        `<span class="cb-more-menu-icon">${REQUEST_POC_ICON_SVG}</span>` +
-        `<span class="cb-more-menu-label">Request POC</span>`;
-      requestPocItem.addEventListener("click", (evt) => {
-        evt.stopPropagation();
-        closeMoreMenu();
-        __cb.startRequestPoc();
-      });
-      moreMenuEl.appendChild(requestPocItem);
-    }
+    // Request POC moved out of this menu into the guided rail as a first-class
+    // step (see the cb-toolbar-request-poc button + updateGuidedFlow in
+    // __cb.openCanvas). REQUEST_POC_ICON_SVG is reused there.
 
-    // Old vs New Pricing — gated by the pricing_comparison feature flag,
-    // same gate the standalone toolbar button used to carry. When the
-    // flag is off the menu shrinks to a single Pro Mode row (still
-    // useful — non-internal users get Pro Mode too).
-    if (__cb.hasFeature?.("pricing_comparison") && __cb.startPricingComparison) {
+    // Old vs New Pricing — maintainer only (the signed `is_admin` claim). The
+    // comparison surface is still being iterated on, so it's gated to the admin
+    // rather than the whole team. Non-admins simply don't see this row.
+    if (__cb.isAdmin && __cb.startPricingComparison) {
       const pricingItem = document.createElement("button");
       pricingItem.type = "button";
       pricingItem.className = "cb-export-menu-option cb-more-menu-option";
@@ -252,8 +236,8 @@
 
     // Import Inspector (formerly "Export as JSON" in the Export menu) — a
     // read-only debugger for the import flow: the ordered API calls plus the
-    // per-field projected/actual breakdown. Available to everyone.
-    if (__cb.openExportJsonModal) {
+    // per-field projected/actual breakdown. Clay team only (any internal member).
+    if (__cb.isInternal && __cb.openExportJsonModal) {
       const inspectItem = document.createElement("button");
       inspectItem.type = "button";
       inspectItem.className = "cb-export-menu-option cb-more-menu-option";
@@ -521,7 +505,9 @@
     __cb.buildTabBar(leftGroup);
 
     const rightGroup = document.createElement("div");
-    rightGroup.className = "cb-topbar-right";
+    // cb-topbar-guided turns the action cluster into the collapse-to-icon
+    // guided rail (see styles/overlay.css + updateGuidedFlow below).
+    rightGroup.className = "cb-topbar-right cb-topbar-guided";
 
     // Export button replaces the old "+ Add More" entry point. Click opens a
     // dropdown of export options the rep can run on the current scope. The
@@ -532,8 +518,7 @@
     exportBtn.type = "button";
     exportBtn.innerHTML =
       '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>' +
-      '<span>Export</span>' +
-      '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>';
+      '<span class="cb-toolbar-label">Export</span>';
     exportBtn.addEventListener("click", (evt) => {
       evt.stopPropagation();
       if (__cb.openExportMenu) __cb.openExportMenu(exportBtn);
@@ -541,7 +526,14 @@
 
     const closeBtn = document.createElement("button");
     closeBtn.className = "cb-toolbar-btn cb-toolbar-close";
-    closeBtn.textContent = "Close";
+    closeBtn.type = "button";
+    closeBtn.title = "Close";
+    closeBtn.setAttribute("aria-label", "Close");
+    // X glyph + collapsible label so Close reads as an icon in the guided rail
+    // and reveals "Close" on hover like the other buttons.
+    closeBtn.innerHTML =
+      '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>' +
+      '<span class="cb-toolbar-label">Close</span>';
     closeBtn.addEventListener("click", __cb.closeCanvas);
 
     // Generate POC is constructed below inside its feature-flag block so
@@ -550,7 +542,13 @@
     // Pro Mode + Old vs New Pricing used to live in this stretch as
     // standalone buttons; both now live inside the overflow menu the
     // kebab "more" button surfaces — see __cb.openMoreMenu above.
+    // Guided-flow state shared across the action buttons built below. Declared
+    // up here (before any path that can call updateGuidedFlow, e.g. the dust
+    // hydrate) so the controller closes over them without a TDZ hazard.
     let dustBtn = null;
+    let requestBtn = null;
+    let sfdcWrap = null;
+    let requestPocDone = false;
     if (__cb.hasFeature?.("dust")) {
       // Generate POC — opens a small popover with a customer-name input and
       // POSTs to Dust to create a new conversation mentioning the POC agent.
@@ -558,15 +556,15 @@
       dustBtn.className = "cb-toolbar-btn cb-toolbar-dust-poc";
       dustBtn.type = "button";
       dustBtn.title = "Generate a POC scope in Dust for a customer";
-      // Two icons live in the button: the sparkles glyph (default) and a
+      // Two icons live in the button: the document glyph (default) and a
       // check (shown in the "done" state). CSS shows exactly one based on
       // the state class; the loading state hides both and draws a spinner
-      // via ::before. Label is wrapped in <span> so the button's `gap` rule
-      // has real flex children to space out (matches Export / Import).
+      // via ::before. Label is wrapped in <span class="cb-toolbar-label"> so
+      // the guided rail can collapse/expand it (matches Export / Import).
       dustBtn.innerHTML =
-        '<svg class="cb-toolbar-dust-poc-spark" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 4.6L18.5 9l-4.6 1.9L12 15l-1.9-4.1L5.5 9l4.6-1.4L12 3z"/><path d="M19 15l.8 1.9L21.5 17.5l-1.7.6L19 20l-.8-1.9L16.5 17.5l1.7-.6L19 15z"/><path d="M5 14l.6 1.4L7 16l-1.4.6L5 18l-.6-1.4L3 16l1.4-.6L5 14z"/></svg>' +
+        '<svg class="cb-toolbar-dust-poc-doc" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><line x1="10" y1="9" x2="8" y2="9"/></svg>' +
         '<svg class="cb-toolbar-dust-poc-check" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>' +
-        "<span>Generate POC</span>";
+        '<span class="cb-toolbar-label">Generate POC</span>';
       dustBtn.addEventListener("click", (evt) => {
         evt.stopPropagation();
         if (__cb.startDustPoc) __cb.startDustPoc(dustBtn);
@@ -578,21 +576,46 @@
       //   "loading" → spinner replaces the icon (cb-toolbar-dust-poc-loading)
       //   "done"    → check icon + linked-opportunity color treatment
       //               (cb-toolbar-dust-poc-done)
-      //   "idle"    → default sparkles, neutral toolbar styling
+      //   "idle"    → default document icon, neutral toolbar styling
       // The button stays clickable in every state (we never set `disabled`)
       // so the rep can always open the popover to watch progress or grab the
       // finished doc link.
       __cb.setDustPocButtonState = function (state) {
         dustBtn.classList.toggle("cb-toolbar-dust-poc-loading", state === "loading");
         dustBtn.classList.toggle("cb-toolbar-dust-poc-done", state === "done");
+        // The "done" class is the Generate POC step's done signal, so re-run
+        // the guided controller after toggling it (hoisted; defined below).
+        updateGuidedFlow();
       };
+    }
+
+    // Request POC — Clay team only (any internal member). A first-class step in
+    // the guided rail (between Generate POC and Import), relocated from the
+    // overflow menu. Opens the Request POC modal (src/request-poc.js), which
+    // posts a one-way request to the POC Slack channel. Reuses the paper-plane
+    // REQUEST_POC_ICON_SVG. Left null for non-internal users so the controller
+    // simply skips it.
+    if (__cb.isInternal && __cb.startRequestPoc) {
+      requestBtn = document.createElement("button");
+      requestBtn.className = "cb-toolbar-btn cb-toolbar-request-poc";
+      requestBtn.type = "button";
+      requestBtn.title = "Request a POC from the team (posts to Slack)";
+      requestBtn.setAttribute("aria-label", "Request POC");
+      requestBtn.innerHTML =
+        REQUEST_POC_ICON_SVG + '<span class="cb-toolbar-label">Request POC</span>';
+      requestBtn.addEventListener("click", (evt) => {
+        evt.stopPropagation();
+        __cb.startRequestPoc();
+      });
     }
 
     const importBtn = document.createElement("button");
     importBtn.className = "cb-toolbar-btn cb-toolbar-import";
+    importBtn.type = "button";
+    importBtn.title = "Import a Clay table";
     importBtn.innerHTML =
       '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>' +
-      " Import Clay Table";
+      '<span class="cb-toolbar-label">Import Clay Table</span>';
     importBtn.addEventListener("click", () => __cb.startImport(importBtn));
 
     // Amber "Pricing" button — enters the customer-facing multi-year pricing
@@ -609,7 +632,7 @@
       pricingBtn.title = "Multi-year pricing view";
       pricingBtn.innerHTML =
         '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>' +
-        "<span>Pricing</span>";
+        '<span class="cb-toolbar-label">Pricing</span>';
       pricingBtn.addEventListener("click", (evt) => {
         evt.stopPropagation();
         if (__cb.setPricingMode) __cb.setPricingMode(!__cb.pricingMode);
@@ -1089,17 +1112,17 @@
       if (__cb.debouncedSave) __cb.debouncedSave();
     };
 
-    // Salesforce opportunity link — leads the action-button cluster
-    // (Link opp → Generate POC → Import → Export). The element
-    // internally swaps between a "Link opportunity" button and a
+    // Salesforce opportunity link — leads the guided rail
+    // (Link opp → Generate POC → Request POC → Import → Pricing + Export).
+    // The element internally swaps between a "Link opportunity" button and a
     // linked-opp pill ("Acme Inc — Q3 Expansion") based on the
     // canvases row's sfdc_opportunity_* columns. See src/sfdc.js for
     // the picker. The src/sfdc.js IIFE only assigns to __cb.sfdc when
     // the `sfdc` feature flag is on, so this `?.` check is the runtime
-    // gate.
+    // gate. Stored in sfdcWrap so updateGuidedFlow can drive its step.
     if (__cb.sfdc?.buildToolbarElement) {
-      const sfdcEl = __cb.sfdc.buildToolbarElement();
-      rightGroup.appendChild(sfdcEl);
+      sfdcWrap = __cb.sfdc.buildToolbarElement();
+      rightGroup.appendChild(sfdcWrap);
       // Hydrate from Supabase on canvas open. Fire-and-forget — the
       // toolbar element re-renders on its own when the linked-opp state
       // changes via __cb.sfdc.onLinkedOppChange.
@@ -1110,6 +1133,7 @@
       }
     }
     if (dustBtn) rightGroup.appendChild(dustBtn);
+    if (requestBtn) rightGroup.appendChild(requestBtn);
     rightGroup.appendChild(importBtn);
     if (pricingBtn) rightGroup.appendChild(pricingBtn);
     rightGroup.appendChild(exportBtn);
@@ -1127,6 +1151,82 @@
     if (__cb.currentWorkbookId && __cb.hydratePocState) {
       __cb.hydratePocState(__cb.currentWorkbookId);
     }
+
+    // Resume the Request POC "done" state. A prior request is recorded in
+    // poc_requests keyed by workbook_id; hydrateRequestPocState flips the step
+    // to its done color via __cb.setRequestPocDone when a row exists.
+    // Fire-and-forget; only published for internal users (src/request-poc.js).
+    if (__cb.currentWorkbookId && __cb.hydrateRequestPocState) {
+      __cb.hydrateRequestPocState(__cb.currentWorkbookId);
+    }
+
+    // ---- Guided flow controller ----
+    // Collapses the action rail to icons and expands the current step along the
+    // chain Link -> Generate POC -> Request POC -> Import, then the tail
+    // (Pricing + Export) once every chain step is done. The expanded button is
+    // just the first step that isn't done yet (kept white, no highlight); done
+    // chain steps color indigo and collapse to their icon. Buttons absent for
+    // this user (feature-gated) are skipped, so a non-internal user simply gets
+    // Import -> Export.
+    function updateGuidedFlow() {
+      // Re-resolve the SFDC inner element on each run — its wrapper rebuilds the
+      // button/pill on link changes, so a cached reference would go stale.
+      const sfdcInner = sfdcWrap
+        ? sfdcWrap.querySelector(".cb-toolbar-sfdc-link, .cb-sfdc-pill")
+        : null;
+
+      const importDone = (__cb.canvas?.getCards?.() || []).length > 0;
+      const linkDone = !!__cb.sfdc?.getLinkedOpportunity?.();
+      const generateDone = !!dustBtn?.classList.contains("cb-toolbar-dust-poc-done");
+
+      // Color the new done-states. The linked-opp pill and the Generate POC
+      // done state already carry their own indigo treatment.
+      if (importBtn) importBtn.classList.toggle("cb-toolbar-done", importDone);
+      if (requestBtn) requestBtn.classList.toggle("cb-toolbar-done", requestPocDone);
+
+      // Ordered chain of the steps that exist for this user.
+      const chain = [];
+      if (sfdcInner) chain.push({ el: sfdcInner, done: linkDone });
+      if (dustBtn) chain.push({ el: dustBtn, done: generateDone });
+      if (requestBtn) chain.push({ el: requestBtn, done: requestPocDone });
+      if (importBtn) chain.push({ el: importBtn, done: importDone });
+
+      // Tail actions have no done-state; they expand together once the whole
+      // chain is complete.
+      const tail = [];
+      if (pricingBtn) tail.push(pricingBtn);
+      if (exportBtn) tail.push(exportBtn);
+
+      for (const step of chain) step.el.classList.remove("cb-toolbar-expanded");
+      for (const btn of tail) btn.classList.remove("cb-toolbar-expanded");
+
+      const next = chain.find((s) => !s.done);
+      if (next) {
+        next.el.classList.add("cb-toolbar-expanded");
+      } else {
+        for (const btn of tail) btn.classList.add("cb-toolbar-expanded");
+      }
+    }
+    __cb.updateGuidedFlow = updateGuidedFlow;
+
+    // Lets src/request-poc.js flip the Request POC step to done (on submit
+    // success or on hydrate) and re-run the controller.
+    __cb.setRequestPocDone = function (value) {
+      requestPocDone = !!value;
+      updateGuidedFlow();
+    };
+
+    // Re-run the controller whenever the linked opportunity changes (fires
+    // immediately with the current value too). The SFDC element's own render()
+    // is subscribed first, so the fresh button/pill is already in the DOM by
+    // the time this runs.
+    if (__cb.sfdc?.onLinkedOppChange) {
+      __cb.sfdc.onLinkedOppChange(updateGuidedFlow);
+    }
+
+    // Initial paint (also covers users without the sfdc feature, where the
+    // subscription above doesn't exist).
+    updateGuidedFlow();
 
     // ---- Summary bar ----
 
@@ -1737,6 +1837,12 @@
       // and keep every cost input in sync with the shared creditCost/actionCost.
       if (__cb.pricingMode) updatePricingStrip();
       syncStripInputs();
+
+      // Keep the guided rail's "Import" step in sync — this is the chokepoint
+      // an import flows through (importTableToCanvas → model.update →
+      // notifyCreditTotal → updateCreditTotal → recalcTotal), so the Import
+      // step flips to done (and the tail expands) as soon as cards land.
+      updateGuidedFlow();
     }
 
     // --- Pricing view strip computation -------------------------------------

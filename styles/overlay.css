@@ -451,6 +451,84 @@
   color: #1f2937;
 }
 
+/* ==========================================================================
+   GUIDED TOP-BAR FLOW
+   The right action group collapses to an icon rail: every button shows only
+   its icon, and the controller (src/overlay.js updateGuidedFlow) expands one
+   step at a time along the chain Link -> Generate POC -> Request POC ->
+   Import -> (Pricing + Export). Completed chain steps color indigo via the
+   shared .cb-toolbar-done class (the linked-opp pill + Generate POC done state
+   already self-style with the same palette). Hovering any labelled button
+   slides its label open too.
+   ========================================================================== */
+
+/* Collapsed: square the labelled buttons + the linked-opp pill down to their
+   icon. .cb-toolbar-more is already an icon square with no label, so it rides
+   along unchanged. */
+.cb-topbar-guided .cb-toolbar-btn,
+.cb-topbar-guided .cb-sfdc-pill {
+  gap: 0;
+  padding: 0;
+  min-width: 32px;
+  justify-content: center;
+  transition: background 0.15s, border-color 0.15s, color 0.15s, padding 0.2s ease;
+}
+
+/* Labels collapse to zero width and fade out; the slide-open animation rides
+   on max-width + opacity + margin. */
+.cb-topbar-guided .cb-toolbar-label,
+.cb-topbar-guided .cb-sfdc-pill-label {
+  max-width: 0;
+  opacity: 0;
+  margin-left: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  transition: max-width 0.2s ease, opacity 0.15s ease, margin 0.2s ease;
+}
+
+/* Reveal the label when the button is the active step (.cb-toolbar-expanded)
+   or hovered. The SFDC link button / pill carry these classes directly (the
+   controller re-resolves the inner element on each run). */
+.cb-topbar-guided .cb-toolbar-expanded .cb-toolbar-label,
+.cb-topbar-guided .cb-toolbar-expanded .cb-sfdc-pill-label,
+.cb-topbar-guided .cb-toolbar-btn:has(.cb-toolbar-label):hover .cb-toolbar-label,
+.cb-topbar-guided .cb-sfdc-pill:hover .cb-sfdc-pill-label {
+  max-width: 160px;
+  opacity: 1;
+  margin-left: 6px;
+}
+
+/* Restore horizontal padding so the revealed label has room. Scoped with
+   :has() so the label-less kebab (.cb-toolbar-more) never widens on hover. */
+.cb-topbar-guided .cb-toolbar-btn.cb-toolbar-expanded,
+.cb-topbar-guided .cb-toolbar-btn:has(.cb-toolbar-label):hover {
+  padding: 0 12px;
+}
+
+.cb-topbar-guided .cb-sfdc-pill.cb-toolbar-expanded,
+.cb-topbar-guided .cb-sfdc-pill:hover {
+  padding: 0 10px;
+}
+
+/* Completed chain step (Import + Request POC) — indigo "done" treatment that
+   matches the linked-opp pill and the Generate POC done state. */
+.cb-topbar-guided .cb-toolbar-done {
+  background: #eef2ff;
+  border-color: #c7d2fe;
+  color: #3730a3;
+}
+
+.cb-topbar-guided .cb-toolbar-done:hover {
+  background: #e0e7ff;
+  border-color: #c7d2fe;
+}
+
+/* Keep the Request POC paper-plane glyph from shrinking next to its label
+   (matches the .cb-toolbar-dust-poc / .cb-toolbar-sfdc-link svg rules). */
+.cb-toolbar-request-poc svg {
+  flex-shrink: 0;
+}
+
 /* ---- Overflow menu rows ----
    Mirrors .cb-export-menu structure (also applied as the base class on
    the menu root in src/overlay.js) but lays each row out as

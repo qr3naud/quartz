@@ -36,7 +36,7 @@
   const REFRESH_WINDOW_MS = 5 * 60 * 1000;
 
   /**
-   * @typedef {{ jwt: string, expiresAt: number, userId: string, email: string | null, workspaces: string[], features: string[], isAdmin: boolean }} StoredJwt
+   * @typedef {{ jwt: string, expiresAt: number, userId: string, email: string | null, workspaces: string[], features: string[], isInternal: boolean, isAdmin: boolean }} StoredJwt
    */
 
   let inflightRefresh = null;
@@ -88,9 +88,14 @@
     __cb.userEmail = stored?.email ?? __cb.userEmail ?? null;
     __cb.userWorkspaces = stored?.workspaces ?? [];
     __cb.userFeatures = stored?.features ?? [];
+    // Internal (Clay team) flag from the signed `is_internal` claim. Gates
+    // team-only surfaces (Request POC, Import Inspector). Equivalent to holding
+    // any internal feature, but clearer at call sites than a hasFeature check.
+    __cb.isInternal = stored?.isInternal === true;
     // Maintainer flag from the signed `is_admin` claim (set by clay-auth-mint
     // from the ADMIN_EMAILS secret). Replaces the old hardcoded email checks —
-    // gates the Admin modal, owner-only export rows, canvas view, version picker.
+    // gates the Admin modal, owner-only export rows, canvas view, version picker,
+    // and the Old vs New Pricing modal.
     __cb.isAdmin = stored?.isAdmin === true;
     // Reflect the feature set onto document.body as a space-separated
     // attribute so CSS can scope rules with `body[data-cb-features~="dust"]
@@ -157,6 +162,7 @@
           email: payload.email ?? null,
           workspaces: Array.isArray(payload.workspaces) ? payload.workspaces.map(String) : [],
           features: Array.isArray(payload.features) ? payload.features.map(String) : [],
+          isInternal: payload.isInternal === true,
           isAdmin: payload.isAdmin === true,
         };
         writeStored(stored);

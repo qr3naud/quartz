@@ -9,7 +9,7 @@
 
 /* Topbar "Generate POC" button — same icon-to-label spacing as Export
    and the Cards / Tables toggle. .cb-toolbar-btn doesn't define a gap,
-   so without this rule the sparkles glyph renders flush against the
+   so without this rule the document glyph renders flush against the
    label (the leading-space text node Chrome collapses against the
    adjacent SVG). 6px keeps it visually identical to .cb-toolbar-export. */
 .cb-toolbar-dust-poc {
@@ -20,9 +20,9 @@
   flex-shrink: 0;
 }
 
-/* Two icons live in the button: sparkles (default) + check (done state).
-   Only one shows at a time. The check is hidden until the button enters
-   its done state below. */
+/* Two icons live in the button: the document glyph (default) + check (done
+   state). Only one shows at a time. The check is hidden until the button
+   enters its done state below. */
 .cb-toolbar-dust-poc-check {
   display: none;
 }
@@ -47,7 +47,7 @@
 }
 
 /* Done state — the POC finished and the Google Doc link is ready. Swap the
-   sparkles for a check and adopt the linked-opportunity pill's color
+   document icon for a check and adopt the linked-opportunity pill's color
    treatment (see .cb-sfdc-pill in styles/sfdc.css: #eef2ff / #c7d2fe /
    #3730a3) so the button reads as a completed, actionable result rather
    than a call-to-action. Clicking still opens the popover to the doc link. */
@@ -62,7 +62,7 @@
   border-color: #c7d2fe;
 }
 
-.cb-toolbar-dust-poc-done .cb-toolbar-dust-poc-spark {
+.cb-toolbar-dust-poc-done .cb-toolbar-dust-poc-doc {
   display: none;
 }
 
