@@ -25,12 +25,15 @@
 
   const __cb = window.__cb;
 
-  // v3: bumped from v2 so every client re-mints once after the maintainer-gate
-  // rollout. Old v2 tokens lack the `is_admin` claim that RLS (cb_caller_is_admin)
-  // and the UI now read, so reusing them would hide the maintainer-only surfaces
-  // until they expired (~1h). Bumping forces a fresh mint that carries is_admin.
-  // (v2 itself was bumped from v1 for the Phase-4 `is_internal` rollout.)
-  const STORAGE_KEY = "cb-supabase-jwt-v3";
+  // v4: bumped from v3 so every client re-mints once. The mint has returned
+  // `isInternal` since v3.41, but adoptStored only started reading + storing it
+  // in v7.20 — so a cached v3 blob (written under v7.19) has no isInternal
+  // field, leaving __cb.isInternal false and hiding the internal-only surfaces
+  // (the Request POC bar button + Import Inspector) until it expired (~1h).
+  // Bumping forces a fresh mint that stores isInternal.
+  // (v3 was the maintainer-gate/is_admin rollout; v2 the Phase-4 is_internal
+  // claim rollout.)
+  const STORAGE_KEY = "cb-supabase-jwt-v4";
   // Stale JWTs are useless if they're already expired or about to be —
   // refresh proactively when this much time is left on the clock.
   const REFRESH_WINDOW_MS = 5 * 60 * 1000;
