@@ -129,17 +129,23 @@
     if (document.getElementById(STYLE_ID)) return;
     const style = document.createElement("style");
     style.id = STYLE_ID;
-    // While our tab is "active", visually un-check any native option that
-    // still has React's data-checked attribute (typically "Workbooks" —
-    // since React never got the click, its internal state doesn't change).
-    // The selectors match the base-ui classes from the reference option so
-    // the override hits the same specificity as the checked-state styling.
+    // While our tab is "active", visually un-check whichever native option
+    // still carries React's data-checked attribute (e.g. "All files" — React
+    // never got the click, so its internal state doesn't change and it keeps
+    // the selected pill). The redesigned control marks the selected option
+    // with `data-checked:bg-bg-primary` + `data-checked:shadow-sm` (a white
+    // pill), so we strip the background, shadow and bumped text color to make
+    // it read as unselected. A descendant combinator keeps this working
+    // whether the options are direct children of the radiogroup (new layout)
+    // or nested in a wrapper div (old layout).
     style.textContent = `
-      [role="radiogroup"][${ACTIVE_ATTR}] > div > span[role="radio"][data-checked]:not(#${TAB_ID}) {
+      [role="radiogroup"][${ACTIVE_ATTR}] span[role="radio"][data-checked]:not(#${TAB_ID}) {
+        background-color: transparent !important;
+        box-shadow: none !important;
         border-color: transparent !important;
       }
-      [role="radiogroup"][${ACTIVE_ATTR}] > div > span[role="radio"][data-checked]:not(#${TAB_ID}) > div {
-        color: var(--color-content-secondary, currentColor) !important;
+      [role="radiogroup"][${ACTIVE_ATTR}] span[role="radio"][data-checked]:not(#${TAB_ID}) > div {
+        color: var(--color-content-tertiary, currentColor) !important;
       }
     `;
     document.head.appendChild(style);
@@ -323,10 +329,21 @@
     // pb-3 gives breathing room between the heading and the filter bar's
     // top border below it (Clay leaves the heading tight; we relax it).
     const headingRow = document.createElement("div");
-    headingRow.className =
-      "mx-auto grid w-full grid-cols-[1fr_auto] gap-1 px-8 pt-2 pb-3";
+    // Mirror Clay's native heading row (no vertical padding); the row height is
+    // matched to the native one just below so our heading lines up vertically.
+    headingRow.className = "mx-auto grid w-full grid-cols-[1fr_auto] gap-1 px-8";
     const headingWrap = document.createElement("div");
     headingWrap.className = "flex max-w-full flex-row items-center gap-2";
+    // The native heading row is taller than its text because of the "New"
+    // button on the right; we have no such button, so our heading would ride
+    // high. Match the native row's measured height and let items-center
+    // vertically center our heading at the same position. Falls back to 57px
+    // (the observed height) if the native row can't be measured.
+    const nativeHeadingRowEl = stickyHeader.children[1];
+    const nativeHeadingRowH = nativeHeadingRowEl
+      ? nativeHeadingRowEl.getBoundingClientRect().height
+      : 0;
+    headingWrap.style.minHeight = `${nativeHeadingRowH > 0 ? nativeHeadingRowH : 57}px`;
     // Clay-heart icon next to the heading (same chrome.runtime.getURL pattern
     // as the tab's key icon). Must be listed in web_accessible_resources.
     const heartIcon = document.createElement("img");
@@ -623,7 +640,7 @@
     // padding inline on the first and last cells (see the loop below).
     const TH_CLASS =
       "truncate p-2 text-xs font-semibold whitespace-pre-wrap text-content-secondary " +
-      "border-b border-t border-solid";
+      "border-b border-t border-solid border-border-secondary";
     const TBODY_CLASS =
       "col-span-full grid w-full grid-cols-subgrid content-baseline";
     const DATA_TR_CLASS =
