@@ -16,6 +16,33 @@
   color: #1f2937;
 }
 
+/* Transient notice (e.g. "no table open" when adding an enrichment). Mounted in
+   the overlay, bottom-center, auto-dismissed by showOverlayToast(). */
+.cb-toast {
+  position: fixed;
+  left: 50%;
+  bottom: 28px;
+  transform: translate(-50%, 12px);
+  max-width: 420px;
+  padding: 10px 14px;
+  background: #1f2937;
+  color: #f9fafb;
+  border-radius: 10px;
+  font-size: 13px;
+  line-height: 1.45;
+  text-align: center;
+  box-shadow: 0 10px 25px rgba(15, 23, 42, 0.25);
+  opacity: 0;
+  transition: opacity 0.2s ease, transform 0.2s ease;
+  z-index: 10000060;
+  pointer-events: none;
+}
+
+.cb-toast-in {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
 /* ==========================================================================
    TOOLBAR
    ========================================================================== */

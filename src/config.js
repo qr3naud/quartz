@@ -289,6 +289,31 @@
       if (shift > 0) el.style.top = `${-4 - shift}px`;
     },
 
+    // Lightweight transient notice mounted in the overlay. Single toast at a
+    // time; auto-dismisses. Used when a user action can't proceed (e.g. adding
+    // an enrichment with no Clay table open) so they get feedback instead of a
+    // silent no-op.
+    showOverlayToast(message, opts = {}) {
+      const host = window.__cb.overlayEl;
+      if (!host || !message) return;
+      const duration = opts.duration ?? 4500;
+      const prev = host.querySelector(".cb-toast");
+      if (prev) {
+        if (prev._cbTimer) clearTimeout(prev._cbTimer);
+        prev.remove();
+      }
+      const el = document.createElement("div");
+      el.className = "cb-toast";
+      el.setAttribute("role", "status");
+      el.textContent = message;
+      host.appendChild(el);
+      requestAnimationFrame(() => el.classList.add("cb-toast-in"));
+      el._cbTimer = setTimeout(() => {
+        el.classList.remove("cb-toast-in");
+        setTimeout(() => el.remove(), 220);
+      }, duration);
+    },
+
     stringToColor(str) {
       const palette = [
         "#6366f1", "#ec4899", "#f59e0b", "#10b981", "#3b82f6",

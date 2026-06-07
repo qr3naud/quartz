@@ -313,6 +313,19 @@
       return;
     }
 
+    // Enrichments attach to a table. In the workbook overview/flow view there's
+    // no table behind the overlay, so Clay's enrich button doesn't exist and
+    // the picker can't open — surface a notice instead of failing silently.
+    // (Every add-enrichment entry point routes through here, so the toast only
+    // fires on an add-enrichment attempt.)
+    const onTablePage = window.location.pathname.split("/").includes("tables");
+    if (!onTablePage) {
+      __cb.showOverlayToast?.(
+        "No table open. Open a Clay table behind this panel to add an enrichment."
+      );
+      return;
+    }
+
     selectedEnrichments.clear();
     // Run actions BEFORE waterfall fetches: both waterfallByName and
     // waterfallPresetByName store raw actionIds that we resolve against
