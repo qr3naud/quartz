@@ -1,0 +1,81 @@
+/* Quartz design tokens — the single source of truth for the extension's color,
+   elevation, and shape decisions. Loaded FIRST in the manifest so every other
+   stylesheet can reference these variables.
+
+   Naming maps token -> visual role (not a per-component index):
+   - action / credit  : the dual-tone metric accents (StarFour vs Coin)
+   - surface / border : neutral backgrounds + dividers, light to strong
+   - text             : foreground greys, primary to disabled
+   - accent           : indigo interactive accent (focus, selected, links)
+   - green/amber/red  : status + savings + approval tones
+   - shadow / radius  : elevation + corner scale
+
+   Phase 1 migrates the pricing view (cb-pricing-*, cb-ptg-*, cb-pam-*), the ER
+   cost pill tones, and the summary-bar pricing cards onto these. Other surfaces
+   adopt them incrementally. */
+:root {
+  /* ===== Metric tones (actions = grey, credits = green) ===== */
+  --cb-action: #717989;
+  --cb-action-strong: #565e6b;
+  --cb-action-deep: #5b6472;
+  --cb-action-surface: #eef0f2;
+  --cb-credit: #0dac65;
+  --cb-credit-strong: #0a8a50;
+  --cb-credit-deep: #0a7a48;
+  --cb-credit-surface: #e6f7ef;
+
+  /* ===== Surfaces & borders (light -> strong) ===== */
+  --cb-surface: #ffffff;
+  --cb-surface-subtle: #f9fafb;
+  --cb-surface-muted: #f3f4f6;
+  --cb-surface-faint: #fafafa;
+  --cb-border: #e5e7eb;
+  --cb-border-strong: #d1d5db;
+  --cb-border-faint: #eef0f3;
+
+  /* ===== Text (primary -> disabled) ===== */
+  --cb-text-primary: #111827;
+  --cb-text-label: #374151;
+  --cb-text-muted: #6b7280;
+  --cb-text-faint: #9ca3af;
+  --cb-text-disabled: #c0c6cf;
+
+  /* ===== Accent (indigo) ===== */
+  --cb-accent: #6366f1;
+  --cb-accent-strong: #4338ca;
+  --cb-accent-deep: #3730a3;
+  --cb-accent-surface: #eef2ff;
+  --cb-accent-border: #c7d2fe;
+  --cb-accent-ring: rgba(99, 102, 241, 0.15);
+
+  /* ===== Status: green (savings / use case / approve) ===== */
+  --cb-green: #047857;
+  --cb-green-surface: #ecfdf5;
+  --cb-green-border: #a7f3d0;
+  --cb-green-hover: #d1fae5;
+  --cb-green-deep: #064e3b;
+  --cb-green-ring: rgba(4, 120, 87, 0.15);
+
+  /* ===== Status: amber (override / manager) ===== */
+  --cb-amber: #f59e0b;
+  --cb-amber-text: #b45309;
+  --cb-amber-surface: #fffbeb;
+  --cb-amber-ring: rgba(245, 158, 11, 0.18);
+
+  /* ===== Status: red (deal desk) ===== */
+  --cb-red-text: #b91c1c;
+  --cb-red-surface: #fef2f2;
+
+  /* ===== Overlays (tooltip + menu elevation) ===== */
+  --cb-tooltip-bg: #111827;
+  --cb-shadow-menu: 0 12px 32px rgba(0, 0, 0, 0.18);
+  --cb-shadow-tooltip: 0 6px 18px rgba(0, 0, 0, 0.22);
+
+  /* ===== Shape scale ===== */
+  --cb-radius-sm: 6px;
+  --cb-radius-md: 8px;
+  --cb-radius-lg: 10px;
+  --cb-radius-pill: 999px;
+  --cb-pill-height: 22px;
+  --cb-input-height: 32px;
+}

@@ -1053,8 +1053,8 @@
 }
 
 .cb-pricing-toggle:hover {
-  background: #f3f4f6;
-  border-color: #d1d5db;
+  background: var(--cb-surface-muted);
+  border-color: var(--cb-border-strong);
 }
 
 .cb-pricing-toggle-row {
@@ -1066,7 +1066,7 @@
 
 .cb-pricing-toggle .cb-chevron {
   display: inline-flex;
-  color: #6b7280;
+  color: var(--cb-text-muted);
   transition: transform 0.15s ease;
 }
 
@@ -1079,10 +1079,10 @@
   height: 26px;
   padding: 0 6px;
   margin-top: 3px;
-  border: 1px solid #d1d5db;
-  border-radius: 6px;
-  background: #ffffff;
-  color: #111827;
+  border: 1px solid var(--cb-border-strong);
+  border-radius: var(--cb-radius-sm);
+  background: var(--cb-surface);
+  color: var(--cb-text-primary);
   font-family: inherit;
   font-size: 14px;
   font-weight: 600;
@@ -1090,24 +1090,24 @@
 
 .cb-pricing-input:focus {
   outline: none;
-  border-color: #6366f1;
-  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.15);
+  border-color: var(--cb-accent);
+  box-shadow: 0 0 0 2px var(--cb-accent-ring);
 }
 
 .cb-pricing-dollar {
   font-size: 13px;
   font-weight: 500;
-  color: #6b7280;
+  color: var(--cb-text-muted);
   margin-top: 4px;
 }
 
 .cb-pricing-total {
-  background: #eef2ff;
-  border-color: #c7d2fe;
+  background: var(--cb-accent-surface);
+  border-color: var(--cb-accent-border);
 }
 
 .cb-pricing-total .cb-summary-value {
-  color: #3730a3;
+  color: var(--cb-accent-deep);
 }
 
 /* "Total Cost" is a click-to-edit card (opens the back-calculate-records
@@ -1122,7 +1122,7 @@
 .cb-total-cost-editable:hover {
   background: #e0e7ff;
   border-color: #a5b4fc;
-  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.15);
+  box-shadow: 0 0 0 2px var(--cb-accent-ring);
 }
 
 .cb-total-cost-editable:focus-visible {
@@ -1135,8 +1135,8 @@
    frequency / unit-price change re-derives Records instead of changing this
    figure. Mirrors the Records override outline (.cb-records-override). */
 .cb-total-cost-editable.cb-total-cost-pinned {
-  border-color: #f59e0b;
-  box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.15);
+  border-color: var(--cb-amber);
+  box-shadow: 0 0 0 2px var(--cb-amber-ring);
 }
 
 .cb-total-cost-editable.cb-total-cost-pinned:hover {
@@ -1153,7 +1153,7 @@
   top: 8px;
   right: 10px;
   display: inline-flex;
-  color: #4338ca;
+  color: var(--cb-accent-strong);
   opacity: 0;
   transition: opacity 0.15s;
   pointer-events: none;

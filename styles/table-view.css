@@ -860,11 +860,11 @@
 }
 
 .cb-table-view-er-cost-actions svg {
-  color: #717989;
+  color: var(--cb-action);
 }
 
 .cb-table-view-er-cost-credits svg {
-  color: #0dac65;
+  color: var(--cb-credit);
 }
 
 /* The credit segment is a button (toggles private key) — signal it with a
@@ -875,7 +875,7 @@
 }
 
 .cb-table-view-er-cost-credits-toggle:hover {
-  background: #f3f4f6;
+  background: var(--cb-surface-muted);
 }
 
 /* Model value pill — indigo selectable pill (mirrors the canvas model chip),
@@ -2851,16 +2851,16 @@
 
 .cb-pricing-body-empty {
   font-size: 14px;
-  color: #6b7280;
+  color: var(--cb-text-muted);
   padding: 24px;
   text-align: center;
 }
 
 /* Each use case is its own box; equal full width, stacked. */
 .cb-pricing-uc {
-  border: 1px solid #a7f3d0;
-  border-radius: 10px;
-  background: #ffffff;
+  border: 1px solid var(--cb-green-border);
+  border-radius: var(--cb-radius-lg);
+  background: var(--cb-surface);
   overflow: hidden;
 }
 
@@ -2870,15 +2870,15 @@
   align-items: center;
   gap: 8px;
   padding: 10px 14px;
-  background: #ecfdf5;
-  border-bottom: 1px solid #a7f3d0;
+  background: var(--cb-green-surface);
+  border-bottom: 1px solid var(--cb-green-border);
   cursor: pointer;
   user-select: none;
   transition: background 0.12s;
 }
 
 .cb-pricing-uc-header:hover {
-  background: #d1fae5;
+  background: var(--cb-green-hover);
 }
 
 .cb-pricing-uc-collapsed .cb-pricing-uc-header {
@@ -2889,7 +2889,7 @@
 .cb-pricing-uc-icon {
   display: inline-flex;
   align-items: center;
-  color: #047857;
+  color: var(--cb-green);
 }
 
 .cb-pricing-uc-chevron {
@@ -2903,7 +2903,7 @@
 .cb-pricing-uc-name {
   font-size: 13px;
   font-weight: 600;
-  color: #064e3b;
+  color: var(--cb-green-deep);
   letter-spacing: 0.005em;
 }
 
@@ -2917,7 +2917,7 @@
 .cb-pricing-uc-dollar {
   font-size: 13px;
   font-weight: 700;
-  color: #064e3b;
+  color: var(--cb-green-deep);
   font-variant-numeric: tabular-nums;
 }
 
@@ -2929,9 +2929,9 @@
 }
 
 .cb-pricing-year {
-  border: 1px solid #f3f4f6;
-  border-radius: 8px;
-  background: #f9fafb;
+  border: 1px solid var(--cb-surface-muted);
+  border-radius: var(--cb-radius-md);
+  background: var(--cb-surface-subtle);
   padding: 10px 12px;
 }
 
@@ -2947,7 +2947,7 @@
 .cb-pricing-year-name {
   font-size: 13px;
   font-weight: 700;
-  color: #374151;
+  color: var(--cb-text-label);
   white-space: nowrap;
 }
 
@@ -2959,15 +2959,15 @@
   gap: 8px;
   height: 30px;
   padding: 0 10px;
-  border: 1px solid #e5e7eb;
-  border-radius: 6px;
-  background: #ffffff;
+  border: 1px solid var(--cb-border);
+  border-radius: var(--cb-radius-sm);
+  background: var(--cb-surface);
 }
 
 .cb-pricing-year-records-label {
   font-size: 10px;
   font-weight: 600;
-  color: #9ca3af;
+  color: var(--cb-text-faint);
   text-transform: uppercase;
   letter-spacing: 0.02em;
 }
@@ -2979,7 +2979,7 @@
   background: transparent;
   font-family: inherit;
   font-size: 13px;
-  color: #111827;
+  color: var(--cb-text-primary);
   font-variant-numeric: tabular-nums;
 }
 
@@ -2988,14 +2988,14 @@
 }
 
 .cb-pricing-year-records:focus-within {
-  border-color: #047857;
-  box-shadow: 0 0 0 2px rgba(4, 120, 87, 0.15);
+  border-color: var(--cb-green);
+  box-shadow: 0 0 0 2px var(--cb-green-ring);
 }
 
 .cb-pricing-year-total {
   font-size: 14px;
   font-weight: 700;
-  color: #111827;
+  color: var(--cb-text-primary);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
@@ -3014,9 +3014,9 @@
   justify-content: center;
   gap: 8px;
   padding: 12px 10px;
-  border: 1px solid #e5e7eb;
-  border-radius: 10px;
-  background: #ffffff;
+  border: 1px solid var(--cb-border);
+  border-radius: var(--cb-radius-lg);
+  background: var(--cb-surface);
   text-align: center;
 }
 
@@ -3031,26 +3031,26 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  color: #6b7280;
+  color: var(--cb-text-muted);
 }
 
 .cb-pricing-metric-tier {
   font-size: 10px;
   font-weight: 600;
-  color: #9ca3af;
+  color: var(--cb-text-faint);
   text-transform: uppercase;
   letter-spacing: 0.02em;
 }
 
 .cb-pricing-metric-divider {
   width: 100%;
-  border-top: 1px solid #f3f4f6;
+  border-top: 1px solid var(--cb-surface-muted);
 }
 
 .cb-pricing-metric-vol {
   font-size: 15px;
   font-weight: 600;
-  color: #111827;
+  color: var(--cb-text-primary);
   font-variant-numeric: tabular-nums;
 }
 
@@ -3060,123 +3060,27 @@
   gap: 5px;
   font-size: 14px;
   font-weight: 700;
-  color: #374151;
+  color: var(--cb-text-label);
   font-variant-numeric: tabular-nums;
 }
 
 /* Dual-tone accent for the per-use-case metric cards: the icon + cost read in
-   the action (#717989) / credit (#0dac65) tone, matching the column headers. */
+   the action / credit tone, matching the column headers. */
 .cb-pricing-metric-actions .cb-pricing-metric-icon,
 .cb-pricing-metric-actions .cb-pricing-metric-cost {
-  color: #717989;
+  color: var(--cb-action);
 }
 
 .cb-pricing-metric-credits .cb-pricing-metric-icon,
 .cb-pricing-metric-credits .cb-pricing-metric-cost {
-  color: #0dac65;
-}
-
-/* Total box underneath the use-case boxes. */
-.cb-pricing-total-box {
-  border: 1px solid #e5e7eb;
-  border-radius: 10px;
-  background: #ffffff;
-  padding: 14px 16px;
-}
-
-.cb-pricing-total-head {
-  font-size: 12px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
-  color: #6b7280;
-  margin-bottom: 10px;
-}
-
-/* Per-year total cost row (multi-year only). */
-.cb-pricing-total-years {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-bottom: 12px;
-}
-
-.cb-pricing-total-year {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 6px;
-  padding: 5px 10px;
-  border: 1px solid #e5e7eb;
-  border-radius: 999px;
-  background: #f9fafb;
-}
-
-.cb-pricing-total-year-label {
-  font-size: 11px;
-  font-weight: 600;
-  color: #6b7280;
-}
-
-.cb-pricing-total-year-value {
-  font-size: 13px;
-  font-weight: 700;
-  color: #111827;
-  font-variant-numeric: tabular-nums;
-}
-
-.cb-pricing-total-cards {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-  gap: 12px;
-}
-
-.cb-pricing-total-card {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding: 10px 12px;
-  border: 1px solid #f3f4f6;
-  border-radius: 8px;
-  background: #f9fafb;
-}
-
-.cb-pricing-total-card-label {
-  font-size: 11px;
-  font-weight: 500;
-  color: #6b7280;
-}
-
-.cb-pricing-total-card-value {
-  font-size: 18px;
-  font-weight: 700;
-  color: #111827;
-  font-variant-numeric: tabular-nums;
-}
-
-.cb-pricing-total-card-grand {
-  background: #eef2ff;
-  border-color: #c7d2fe;
-}
-
-.cb-pricing-total-card-grand .cb-pricing-total-card-value {
-  color: #3730a3;
-}
-
-.cb-pricing-total-card-savings {
-  background: #ecfdf5;
-  border-color: #a7f3d0;
-}
-
-.cb-pricing-total-card-savings .cb-pricing-total-card-value {
-  color: #047857;
-  font-size: 15px;
+  color: var(--cb-credit);
 }
 
 /* Editable, collapsible grey "Total" group (deal-level source of truth). */
 .cb-pricing-totalgrp {
-  border: 1px solid #e5e7eb;
-  border-radius: 10px;
-  background: #ffffff;
+  border: 1px solid var(--cb-border);
+  border-radius: var(--cb-radius-lg);
+  background: var(--cb-surface);
   overflow: hidden;
 }
 
@@ -3185,15 +3089,15 @@
   align-items: center;
   gap: 8px;
   padding: 10px 14px;
-  background: #f3f4f6;
-  border-bottom: 1px solid #e5e7eb;
+  background: var(--cb-surface-muted);
+  border-bottom: 1px solid var(--cb-border);
   cursor: pointer;
   user-select: none;
   transition: background 0.12s;
 }
 
 .cb-pricing-totalgrp-header:hover {
-  background: #e5e7eb;
+  background: var(--cb-border);
 }
 
 .cb-pricing-totalgrp-collapsed .cb-pricing-totalgrp-header {
@@ -3203,7 +3107,7 @@
 .cb-pricing-totalgrp-chevron {
   display: inline-flex;
   align-items: center;
-  color: #6b7280;
+  color: var(--cb-text-muted);
   transition: transform 0.18s ease;
 }
 
@@ -3214,7 +3118,7 @@
 .cb-pricing-totalgrp-name {
   font-size: 13px;
   font-weight: 700;
-  color: #374151;
+  color: var(--cb-text-label);
   letter-spacing: 0.01em;
 }
 
@@ -3250,23 +3154,23 @@
 }
 
 .cb-ptg-actions {
-  color: #717989;
+  color: var(--cb-action);
 }
 
 .cb-ptg-credits {
-  color: #0dac65;
+  color: var(--cb-credit);
 }
 
 .cb-ptg-rowlabel {
   font-size: 12px;
   font-weight: 600;
-  color: #6b7280;
+  color: var(--cb-text-muted);
   white-space: nowrap;
 }
 
 .cb-ptg-rowlabel-discount {
   font-weight: 700;
-  color: #374151;
+  color: var(--cb-text-label);
 }
 
 .cb-ptg-cell {
@@ -3278,21 +3182,21 @@
 .cb-ptg-vol {
   width: 100%;
   box-sizing: border-box;
-  height: 32px;
+  height: var(--cb-input-height);
   padding: 0 10px;
-  border: 1px solid #e5e7eb;
-  border-radius: 6px;
-  background: #ffffff;
+  border: 1px solid var(--cb-border);
+  border-radius: var(--cb-radius-sm);
+  background: var(--cb-surface);
   font-family: inherit;
   font-size: 13px;
-  color: #111827;
+  color: var(--cb-text-primary);
   font-variant-numeric: tabular-nums;
 }
 
 .cb-ptg-input:focus {
   outline: none;
-  border-color: #6366f1;
-  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.15);
+  border-color: var(--cb-accent);
+  box-shadow: 0 0 0 2px var(--cb-accent-ring);
 }
 
 .cb-ptg-vol {
@@ -3305,36 +3209,36 @@
 }
 
 .cb-ptg-vol:hover {
-  border-color: #cbd5e1;
+  border-color: var(--cb-border-strong);
 }
 
 .cb-ptg-vol-chevron {
   display: inline-flex;
   align-items: center;
-  color: #9ca3af;
+  color: var(--cb-text-faint);
   flex-shrink: 0;
 }
 
 /* Read-only price/floor box (List + Authorized rows). */
 .cb-ptg-repfloor {
   box-sizing: border-box;
-  height: 32px;
+  height: var(--cb-input-height);
   display: flex;
   align-items: center;
   padding: 0 10px;
-  border: 1px solid #f3f4f6;
-  border-radius: 6px;
-  background: #f9fafb;
+  border: 1px solid var(--cb-surface-muted);
+  border-radius: var(--cb-radius-sm);
+  background: var(--cb-surface-subtle);
   font-size: 13px;
   font-weight: 600;
-  color: #374151;
+  color: var(--cb-text-label);
   font-variant-numeric: tabular-nums;
 }
 
 /* List row box: a touch more muted (pure reference). */
 .cb-ptg-listbox {
-  background: #f3f4f6;
-  color: #6b7280;
+  background: var(--cb-surface-muted);
+  color: var(--cb-text-muted);
 }
 
 /* Price cell: the rate box / input + the "% off list" chip on one line. */
@@ -3358,10 +3262,10 @@
   flex: 0 0 auto;
   padding: 3px 7px;
   border-radius: 5px;
-  background: #f3f4f6;
+  background: var(--cb-surface-muted);
   font-size: 10px;
   font-weight: 700;
-  color: #6b7280;
+  color: var(--cb-text-muted);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
   cursor: none;
@@ -3372,13 +3276,13 @@
   z-index: 10000061;
   pointer-events: none;
   padding: 4px 8px;
-  border-radius: 6px;
-  background: #111827;
-  color: #ffffff;
+  border-radius: var(--cb-radius-sm);
+  background: var(--cb-tooltip-bg);
+  color: var(--cb-surface);
   font-size: 11px;
   font-weight: 600;
   white-space: nowrap;
-  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.22);
+  box-shadow: var(--cb-shadow-tooltip);
 }
 
 /* Year label: text + an optional reset-to-proposed button (shown when the
@@ -3399,14 +3303,14 @@
   border: none;
   border-radius: 5px;
   background: transparent;
-  color: #9ca3af;
+  color: var(--cb-text-faint);
   cursor: pointer;
   transition: background 0.12s, color 0.12s;
 }
 
 .cb-ptg-reset:hover {
-  background: #eef2ff;
-  color: #4338ca;
+  background: var(--cb-accent-surface);
+  color: var(--cb-accent-strong);
 }
 
 /* Full-width divider spanning all grid columns (separates the year rows from
@@ -3415,7 +3319,7 @@
 .cb-ptg-divider {
   grid-column: 1 / -1;
   height: 1px;
-  background: #e5e7eb;
+  background: var(--cb-border);
   margin: 4px 0;
 }
 
@@ -3434,18 +3338,18 @@
 }
 
 .cb-ptg-approval-green {
-  background: #ecfdf5;
-  color: #047857;
+  background: var(--cb-green-surface);
+  color: var(--cb-green);
 }
 
 .cb-ptg-approval-amber {
-  background: #fffbeb;
-  color: #b45309;
+  background: var(--cb-amber-surface);
+  color: var(--cb-amber-text);
 }
 
 .cb-ptg-approval-red {
-  background: #fef2f2;
-  color: #b91c1c;
+  background: var(--cb-red-surface);
+  color: var(--cb-red-text);
 }
 
 /* Custom volume dropdown menu (body-appended, position: fixed). */
@@ -3453,10 +3357,10 @@
   z-index: 10000060;
   max-height: 260px;
   overflow: auto;
-  background: #ffffff;
-  border: 1px solid #e5e7eb;
-  border-radius: 8px;
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.18);
+  background: var(--cb-surface);
+  border: 1px solid var(--cb-border);
+  border-radius: var(--cb-radius-md);
+  box-shadow: var(--cb-shadow-menu);
   padding: 4px;
 }
 
@@ -3466,29 +3370,29 @@
   text-align: left;
   padding: 7px 10px;
   border: none;
-  border-radius: 6px;
+  border-radius: var(--cb-radius-sm);
   background: transparent;
   font-family: inherit;
   font-size: 13px;
-  color: #111827;
+  color: var(--cb-text-primary);
   font-variant-numeric: tabular-nums;
   cursor: pointer;
 }
 
 .cb-ptg-volmenu-opt:hover {
-  background: #f3f4f6;
+  background: var(--cb-surface-muted);
 }
 
 .cb-ptg-volmenu-opt-active {
-  background: #eef2ff;
-  color: #3730a3;
+  background: var(--cb-accent-surface);
+  color: var(--cb-accent-deep);
   font-weight: 600;
 }
 
 /* Amber outline when a Total value deviates from the recommended rollup. */
 .cb-pricing-overridden {
-  border-color: #f59e0b !important;
-  box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.18) !important;
+  border-color: var(--cb-amber) !important;
+  box-shadow: 0 0 0 2px var(--cb-amber-ring) !important;
 }
 
 /* "+" add-option button in the Options header (right side). */
@@ -3499,18 +3403,18 @@
   justify-content: center;
   width: 24px;
   height: 24px;
-  border: 1px solid #d1d5db;
-  border-radius: 6px;
-  background: #ffffff;
-  color: #374151;
+  border: 1px solid var(--cb-border-strong);
+  border-radius: var(--cb-radius-sm);
+  background: var(--cb-surface);
+  color: var(--cb-text-label);
   cursor: pointer;
   transition: background 0.12s, border-color 0.12s, color 0.12s;
 }
 
 .cb-pricing-totalgrp-add:hover {
-  background: #eef2ff;
-  border-color: #6366f1;
-  color: #4338ca;
+  background: var(--cb-accent-surface);
+  border-color: var(--cb-accent);
+  color: var(--cb-accent-strong);
 }
 
 /* Horizontal row of option boxes. */
@@ -3524,9 +3428,9 @@
 .cb-pricing-option {
   flex: 1 1 0;
   min-width: 0;
-  border: 1px solid #e5e7eb;
-  border-radius: 8px;
-  background: #fafafa;
+  border: 1px solid var(--cb-border);
+  border-radius: var(--cb-radius-md);
+  background: var(--cb-surface-faint);
   overflow: hidden;
   transform-origin: top left;
 }
@@ -3537,14 +3441,14 @@
   justify-content: space-between;
   gap: 8px;
   padding: 7px 10px 7px 12px;
-  border-bottom: 1px solid #eef0f3;
-  background: #ffffff;
+  border-bottom: 1px solid var(--cb-border-faint);
+  background: var(--cb-surface);
 }
 
 .cb-pricing-option-name {
   font-size: 13px;
   font-weight: 700;
-  color: #374151;
+  color: var(--cb-text-label);
 }
 
 /* Compact per-option contract-term toggle (1Y / 2Y / 3Y) in the option header. */
@@ -3554,9 +3458,9 @@
   flex-shrink: 0;
   gap: 2px;
   padding: 2px;
-  border: 1px solid #e5e7eb;
+  border: 1px solid var(--cb-border);
   border-radius: 7px;
-  background: #f3f4f6;
+  background: var(--cb-surface-muted);
 }
 
 .cb-option-term-btn {
@@ -3568,14 +3472,14 @@
   font-size: 10px;
   font-weight: 700;
   line-height: 1.4;
-  color: #6b7280;
+  color: var(--cb-text-muted);
   cursor: pointer;
   transition: background 0.12s, box-shadow 0.12s;
 }
 
 .cb-option-term-btn-active {
-  background: #ffffff;
-  color: #111827;
+  background: var(--cb-surface);
+  color: var(--cb-text-primary);
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
 }
 
@@ -3583,11 +3487,11 @@
 .cb-pricing-summary-term {
   flex-shrink: 0;
   padding: 1px 7px;
-  border-radius: 999px;
-  background: #eef2ff;
+  border-radius: var(--cb-radius-pill);
+  background: var(--cb-accent-surface);
   font-size: 10px;
   font-weight: 700;
-  color: #4338ca;
+  color: var(--cb-accent-strong);
 }
 
 /* Minimized option card: a thin strip showing only the title, rotated 90deg. */
@@ -3609,7 +3513,7 @@
   text-align: center;
   font-size: 13px;
   font-weight: 700;
-  color: #374151;
+  color: var(--cb-text-label);
   white-space: nowrap;
   cursor: default;
   user-select: none;
@@ -3618,13 +3522,13 @@
 .cb-pricing-option-name-input {
   width: 100%;
   box-sizing: border-box;
-  border: 1px solid #6366f1;
+  border: 1px solid var(--cb-accent);
   border-radius: 5px;
   padding: 2px 6px;
   font-family: inherit;
   font-size: 13px;
   font-weight: 700;
-  color: #111827;
+  color: var(--cb-text-primary);
 }
 
 .cb-pricing-option-name-input:focus {
@@ -3689,13 +3593,13 @@
 .cb-pricing-summary-value {
   font-size: 13px;
   font-weight: 700;
-  color: #111827;
+  color: var(--cb-text-primary);
   font-variant-numeric: tabular-nums;
   text-align: right;
 }
 
 .cb-pricing-summary-grid .cb-pricing-summary-grand {
-  color: #3730a3;
+  color: var(--cb-accent-deep);
 }
 
 .cb-pricing-summary-grid .cb-pricing-summary-grand.cb-pricing-summary-value {
@@ -3703,31 +3607,31 @@
 }
 
 .cb-pricing-summary-grid .cb-pricing-summary-savings {
-  color: #047857;
+  color: var(--cb-green);
 }
 
 /* ---- Average row: read-only avg-volume cell + hover band matrix ------------ */
 .cb-ptg-avg {
   box-sizing: border-box;
-  height: 32px;
+  height: var(--cb-input-height);
   display: flex;
   align-items: center;
   justify-content: flex-start;
   padding: 0 10px;
-  border: 1px dashed #d1d5db;
-  border-radius: 6px;
-  background: #f9fafb;
+  border: 1px dashed var(--cb-border-strong);
+  border-radius: var(--cb-radius-sm);
+  background: var(--cb-surface-subtle);
   font-size: 13px;
   font-weight: 600;
-  color: #374151;
+  color: var(--cb-text-label);
   font-variant-numeric: tabular-nums;
   cursor: pointer;
   transition: background 0.12s, border-color 0.12s;
 }
 
 .cb-ptg-avg:hover {
-  background: #f3f4f6;
-  border-color: #9ca3af;
+  background: var(--cb-surface-muted);
+  border-color: var(--cb-text-faint);
 }
 
 /* Band matrix popover (body-appended, position: fixed): Limit + the 1/2/3-year
@@ -3735,10 +3639,10 @@
    lands in, and their intersection (the floor that applies). */
 .cb-pricing-avgmatrix {
   z-index: 10000060;
-  background: #ffffff;
-  border: 1px solid #e5e7eb;
-  border-radius: 10px;
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.18);
+  background: var(--cb-surface);
+  border: 1px solid var(--cb-border);
+  border-radius: var(--cb-radius-lg);
+  box-shadow: var(--cb-shadow-menu);
   padding: 6px;
   font-variant-numeric: tabular-nums;
 }
@@ -3753,13 +3657,13 @@
   font-size: 12px;
   text-align: right;
   white-space: nowrap;
-  color: #374151;
+  color: var(--cb-text-label);
 }
 
 .cb-pricing-avgmatrix th {
   font-weight: 600;
-  color: #9ca3af;
-  border-bottom: 1px solid #eef1f4;
+  color: var(--cb-text-faint);
+  border-bottom: 1px solid var(--cb-border-faint);
 }
 
 /* Tier + Floor lead columns are left-aligned labels. */
@@ -3772,7 +3676,7 @@
 
 .cb-pricing-avgmatrix .cb-pam-limit {
   font-weight: 700;
-  color: #111827;
+  color: var(--cb-text-primary);
 }
 
 /* Weight for the crosshair (colors come from the metric-scoped rules below). */
@@ -3787,50 +3691,50 @@
 /* Selected band's lead cells stay readable on the dark row fill. */
 .cb-pricing-avgmatrix .cb-pam-row-sel td:first-child,
 .cb-pricing-avgmatrix .cb-pam-row-sel td:nth-child(2) {
-  color: #ffffff;
+  color: var(--cb-surface);
 }
 
 /* ---- Crosshair colored by metric: grey for Actions, green for Credits ---- */
-/* Actions (grey, base #717989). */
+/* Actions (grey). */
 .cb-pam-actions .cb-pam-tier {
   font-weight: 700;
-  color: #717989;
+  color: var(--cb-action);
 }
 .cb-pam-actions .cb-pam-col-active {
-  background: #eef0f2;
-  color: #5b6472;
+  background: var(--cb-action-surface);
+  color: var(--cb-action-deep);
 }
 .cb-pam-actions th.cb-pam-col-active {
-  color: #5b6472;
+  color: var(--cb-action-deep);
 }
 .cb-pam-actions .cb-pam-row-sel td {
-  background: #717989;
-  color: #ffffff;
+  background: var(--cb-action);
+  color: var(--cb-surface);
 }
 .cb-pam-actions td.cb-pam-cell-active {
-  background: #565e6b;
-  color: #ffffff;
+  background: var(--cb-action-strong);
+  color: var(--cb-surface);
 }
 
-/* Credits (green, base #0dac65). */
+/* Credits (green). */
 .cb-pam-credits .cb-pam-tier {
   font-weight: 700;
-  color: #0a7a48;
+  color: var(--cb-credit-deep);
 }
 .cb-pam-credits .cb-pam-col-active {
-  background: #e6f7ef;
-  color: #0a7a48;
+  background: var(--cb-credit-surface);
+  color: var(--cb-credit-deep);
 }
 .cb-pam-credits th.cb-pam-col-active {
-  color: #0a7a48;
+  color: var(--cb-credit-deep);
 }
 .cb-pam-credits .cb-pam-row-sel td {
-  background: #0dac65;
-  color: #ffffff;
+  background: var(--cb-credit);
+  color: var(--cb-surface);
 }
 .cb-pam-credits td.cb-pam-cell-active {
-  background: #0a8a50;
-  color: #ffffff;
+  background: var(--cb-credit-strong);
+  color: var(--cb-surface);
 }
 
 /* ---- Header (option name + metric pill + pin); also the drag handle ---- */
@@ -3840,7 +3744,7 @@
   gap: 8px;
   padding: 4px 4px 8px 6px;
   margin-bottom: 2px;
-  border-bottom: 1px solid #eef1f4;
+  border-bottom: 1px solid var(--cb-border-faint);
 }
 .cb-pam-pinned .cb-pam-header {
   cursor: move;
@@ -3848,7 +3752,7 @@
 .cb-pam-optname {
   font-size: 12px;
   font-weight: 700;
-  color: #111827;
+  color: var(--cb-text-primary);
   white-space: nowrap;
 }
 .cb-pam-metricpill {
@@ -3860,12 +3764,12 @@
   border-radius: 999px;
 }
 .cb-pam-actions .cb-pam-metricpill {
-  background: #eef0f2;
-  color: #5b6472;
+  background: var(--cb-action-surface);
+  color: var(--cb-action-deep);
 }
 .cb-pam-credits .cb-pam-metricpill {
-  background: #e6f7ef;
-  color: #0a7a48;
+  background: var(--cb-credit-surface);
+  color: var(--cb-credit-deep);
 }
 /* Authority pill (Rep / Manager / Deal Desk) next to the metric pill: the
    approval level the current Discount lands in. Accent (rep) -> amber (manager)
@@ -3880,16 +3784,16 @@
   white-space: nowrap;
 }
 .cb-pam-authpill-rep {
-  background: #eef2ff;
-  color: #4338ca;
+  background: var(--cb-accent-surface);
+  color: var(--cb-accent-strong);
 }
 .cb-pam-authpill-manager {
-  background: #fffbeb;
-  color: #b45309;
+  background: var(--cb-amber-surface);
+  color: var(--cb-amber-text);
 }
 .cb-pam-authpill-dealdesk {
-  background: #fef2f2;
-  color: #b91c1c;
+  background: var(--cb-red-surface);
+  color: var(--cb-red-text);
 }
 .cb-pam-pin {
   margin-left: auto;
@@ -3899,18 +3803,18 @@
   width: 22px;
   height: 22px;
   border: none;
-  border-radius: 6px;
+  border-radius: var(--cb-radius-sm);
   background: transparent;
-  color: #9ca3af;
+  color: var(--cb-text-faint);
   cursor: pointer;
   transition: background 0.12s, color 0.12s;
 }
 .cb-pam-pin:hover {
-  background: #f3f4f6;
+  background: var(--cb-surface-muted);
   color: #4b5563;
 }
 .cb-pam-pin-active {
-  color: #4338ca;
+  color: var(--cb-accent-strong);
 }
 .cb-pam-pinned {
   box-shadow: 0 12px 32px rgba(0, 0, 0, 0.2), 0 0 0 1px rgba(67, 56, 202, 0.25);
@@ -3920,10 +3824,10 @@
 .cb-ptg-optmenu {
   z-index: 10000060;
   min-width: 140px;
-  background: #ffffff;
-  border: 1px solid #e5e7eb;
-  border-radius: 8px;
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.18);
+  background: var(--cb-surface);
+  border: 1px solid var(--cb-border);
+  border-radius: var(--cb-radius-md);
+  box-shadow: var(--cb-shadow-menu);
   padding: 4px;
 }
 
@@ -3933,21 +3837,21 @@
   text-align: left;
   padding: 7px 10px;
   border: none;
-  border-radius: 6px;
+  border-radius: var(--cb-radius-sm);
   background: transparent;
   font-family: inherit;
   font-size: 13px;
-  color: #111827;
+  color: var(--cb-text-primary);
   cursor: pointer;
 }
 
 .cb-ptg-optmenu-item:hover {
-  background: #f3f4f6;
+  background: var(--cb-surface-muted);
 }
 
 .cb-ptg-optmenu-item-disabled,
 .cb-ptg-optmenu-item-disabled:hover {
-  color: #c0c6cf;
+  color: var(--cb-text-disabled);
   background: transparent;
   cursor: default;
 }
