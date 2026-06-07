@@ -6882,6 +6882,18 @@
     return { dp, er };
   }
 
+  // The "rows" figure for a use case's (i) tooltip = its source imported
+  // table's row count (the tableId's recordCount metadata). Manual use cases
+  // (no source table) have no row count → null, so the tooltip omits the line.
+  function useCaseRowCount(section) {
+    const cb = window.__cb;
+    const tid = section && section.tableId;
+    if (!tid) return null;
+    const meta = (cb.model?.getImportedTables?.() || {})[tid];
+    const rc = meta && meta.recordCount;
+    return Number.isFinite(Number(rc)) && Number(rc) > 0 ? Number(rc) : null;
+  }
+
   function buildGroupHeaderRow(section, colSpan, isCollapsed, depth = 0, opts = {}) {
     const tr = document.createElement("tr");
     tr.className =
@@ -7014,51 +7026,42 @@
       }
     }
 
-    const count = document.createElement("span");
-    count.className = "cb-table-view-group-row-count";
-    // Deep, type-aware counts (data points vs. enrichments) for the whole
-    // subtree — see sectionCounts. dpCount is reused by the table (i) tooltip
-    // below.
     const counts = sectionCounts(section);
     const dpCount = counts.dp;
-    const countParts = [`${dpCount} data point${dpCount === 1 ? "" : "s"}`];
-    if (counts.er > 0) {
-      countParts.push(`${counts.er} enrichment${counts.er === 1 ? "" : "s"}`);
-    }
-    count.textContent = countParts.join(" \u00b7 ");
+
+    // Top-level use-case headers (and the legacy imported-table block) carry an
+    // (i) info icon whose tooltip lists "N data points / N enrichments / N
+    // rows" — the v7.21 affordance. Nested sub-groups keep a plain inline "N
+    // data points" count next to the title.
+    const isTopLevelUseCase = !!section.isUseCase && depth === 0;
+    const showInfoIcon = opts.isTable || isTopLevelUseCase;
+
+    const count = document.createElement("span");
+    count.className = "cb-table-view-group-row-count";
+    count.textContent = `${dpCount} data point${dpCount === 1 ? "" : "s"}`;
 
     wrap.appendChild(chevron);
     wrap.appendChild(icon);
     wrap.appendChild(labelEl);
-    // Non-table headers keep the inline "N data points" count; table headers
-    // tuck the counts behind an (i) icon next to the title (below).
-    if (!opts.isTable) wrap.appendChild(count);
-    // Use-case (L1) headers carry the per-use-case scope row (Records +
-    // Frequency + cost), table-native v7.23+: it reads/writes the group via the
-    // group-aware cost fns + setUseCaseScope.
-    if (section.isUseCase && typeof section.groupId === "string") {
-      wrap.appendChild(buildUseCaseScopeControls(section.groupId));
-    }
+    // Nested / non-use-case headers show the inline data-point count; top-level
+    // use cases tuck the counts behind the (i) icon instead (below).
+    if (!showInfoIcon) wrap.appendChild(count);
 
-    // Per-table header (Import Clay Table): an (i) icon next to the title holds
-    // the counts (data points / enrichments / rows); the per-use-case scope
-    // controls (records / frequency / cost) stay left-aligned; only the
-    // imported-at stamp is pinned to the far right.
-    if (opts.isTable) {
-      const cb = window.__cb;
-
-      const erCount = (cb.model?.getNodes?.() || []).filter(
-        (n) =>
-          n?.data &&
-          !cb.cost.isNonErType(n.data.type) &&
-          cb.cost.useCaseKeyForCard(n) === section.groupId,
-      ).length;
-      const infoParts = [
-        `${dpCount} data point${dpCount === 1 ? "" : "s"}`,
-        `${erCount} enrichment${erCount === 1 ? "" : "s"}`,
-      ];
-      if (Number.isFinite(opts.recordCount) && opts.recordCount > 0) {
-        infoParts.push(`${opts.recordCount.toLocaleString()} row${opts.recordCount === 1 ? "" : "s"}`);
+    // (i) info icon — data points / enrichments / rows behind a hover tip.
+    if (showInfoIcon) {
+      const infoParts = [`${dpCount} data point${dpCount === 1 ? "" : "s"}`];
+      if (counts.er > 0) {
+        infoParts.push(`${counts.er} enrichment${counts.er === 1 ? "" : "s"}`);
+      }
+      // "rows" = the use case's source row count; the legacy table block passes
+      // it via opts.recordCount, use-case groups derive it from their tableId.
+      const rowCount = opts.isTable
+        ? Number.isFinite(opts.recordCount)
+          ? opts.recordCount
+          : null
+        : useCaseRowCount(section);
+      if (Number.isFinite(rowCount) && rowCount > 0) {
+        infoParts.push(`${rowCount.toLocaleString()} row${rowCount === 1 ? "" : "s"}`);
       }
       const info = document.createElement("span");
       info.className = "cb-uc-info";
@@ -7070,22 +7073,23 @@
       info.addEventListener("click", (e) => e.stopPropagation());
       info.addEventListener("mousedown", (e) => e.stopPropagation());
       wrap.appendChild(info);
+    }
 
-      // Per-use-case scope controls — only when 2+ imported tables exist (the
-      // global Records/Frequency in the summary bar are hidden then, so each
-      // table owns its own here). Left-aligned, right after the title.
-      if (cb.cost?.useCaseCount?.() >= 2 && typeof section.groupId === "string") {
-        wrap.appendChild(buildUseCaseScopeControls(section.groupId));
-      }
+    // Per-use-case scope controls (Records + Frequency + cost) on use-case (L1)
+    // headers — table-native v7.23+: reads/writes the group via the group-aware
+    // cost fns + setUseCaseScope.
+    if (section.isUseCase && typeof section.groupId === "string") {
+      wrap.appendChild(buildUseCaseScopeControls(section.groupId));
+    }
 
-      // Imported-at, pinned to the far right (margin-left:auto via CSS).
-      if (Number.isFinite(opts.importedAt) && opts.importedAt > 0) {
-        const when = document.createElement("span");
-        when.className = "cb-table-view-group-row-meta cb-table-view-group-row-imported";
-        when.textContent = `imported ${relativeTimeText(opts.importedAt)}`;
-        when.title = new Date(opts.importedAt).toLocaleString();
-        wrap.appendChild(when);
-      }
+    // Imported-at stamp, pinned to the far right (margin-left:auto via CSS) —
+    // legacy imported-table block only.
+    if (opts.isTable && Number.isFinite(opts.importedAt) && opts.importedAt > 0) {
+      const when = document.createElement("span");
+      when.className = "cb-table-view-group-row-meta cb-table-view-group-row-imported";
+      when.textContent = `imported ${relativeTimeText(opts.importedAt)}`;
+      when.title = new Date(opts.importedAt).toLocaleString();
+      wrap.appendChild(when);
     }
 
     td.appendChild(wrap);
