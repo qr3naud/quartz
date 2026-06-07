@@ -35,6 +35,135 @@
   // application-level errors that a retry won't fix.
   const WRITE_RETRY_DELAYS_MS = [400, 1200, 3600];
 
+  // --- Extension-context liveness + reconnect banner -------------------------
+  //
+  // When the extension reloads/updates, an already-injected content script is
+  // "orphaned": chrome.runtime.id flips to undefined and any chrome.runtime.*
+  // call throws "Extension context invalidated". Reading chrome.runtime.id
+  // itself never throws, so it's a safe pre-check before any chrome.* call.
+  //
+  // The normal Quartz update flow reloads every open Clay tab a beat after it
+  // reloads the extension (see internal-bg.js onInstalled "update"), so an
+  // orphaned page is usually about to be replaced. We therefore wait out a
+  // short grace period before showing the "Reload to reconnect" banner — the
+  // happy path reloads on its own and never flashes one. Requests still
+  // short-circuit immediately regardless (see resolveBearer / supabaseFetch).
+  const RECONNECT_BANNER_GRACE_MS = 4000;
+
+  /** True while this script is still attached to a live extension context. */
+  function isExtensionContextAlive() {
+    try {
+      return !!(typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.id);
+    } catch {
+      return false;
+    }
+  }
+
+  // We only ever surface one banner; track so repeated detections are no-ops.
+  let authBannerShown = false;
+  let reconnectBannerTimer = null;
+
+  // The popup runs at chrome-extension://…/popup.html and is short-lived
+  // (reopening it re-mints), so it never needs an in-page banner.
+  function inPageContext() {
+    return (
+      typeof document !== "undefined" &&
+      typeof location !== "undefined" &&
+      location.protocol !== "chrome-extension:"
+    );
+  }
+
+  // kind: "reload" (orphaned context) | "signin" (no Clay session).
+  function showAuthBanner(kind) {
+    if (authBannerShown || !inPageContext()) return;
+    const mount = () => {
+      if (authBannerShown) return;
+      if (!document.body || document.getElementById("cb-reconnect-banner")) return;
+      authBannerShown = true;
+
+      // Keyframes injected inline: the orphaned tab may still be running the
+      // previous build's CSS bundle, so we can't rely on a shipped stylesheet.
+      if (!document.getElementById("cb-reconnect-banner-style")) {
+        const style = document.createElement("style");
+        style.id = "cb-reconnect-banner-style";
+        style.textContent =
+          "@keyframes cbReconnectIn{from{opacity:0;transform:translate(-50%,-12px)}" +
+          "to{opacity:1;transform:translate(-50%,0)}}";
+        (document.head || document.documentElement).appendChild(style);
+      }
+
+      const isSignin = kind === "signin";
+      const banner = document.createElement("div");
+      banner.id = "cb-reconnect-banner";
+      banner.setAttribute("role", "status");
+      Object.assign(banner.style, {
+        position: "fixed",
+        top: "12px",
+        left: "50%",
+        transform: "translate(-50%,0)",
+        zIndex: "2147483647",
+        display: "flex",
+        alignItems: "center",
+        gap: "10px",
+        padding: "8px 14px",
+        background: "#111827",
+        color: "#ffffff",
+        borderRadius: "9999px",
+        font: "500 13px/1.2 -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif",
+        boxShadow: "0 6px 24px rgba(0,0,0,.28)",
+        animation: "cbReconnectIn .22s ease-out",
+        cursor: isSignin ? "default" : "pointer",
+      });
+
+      const label = document.createElement("span");
+      label.textContent = isSignin ? "Sign in to Clay to use Quartz" : "Reload to reconnect";
+      banner.appendChild(label);
+
+      if (!isSignin) {
+        banner.title = "Reload this page to reconnect Quartz";
+        banner.addEventListener("click", () => location.reload());
+      }
+
+      const dismiss = document.createElement("span");
+      dismiss.textContent = "×";
+      Object.assign(dismiss.style, {
+        cursor: "pointer",
+        opacity: "0.7",
+        fontSize: "16px",
+        lineHeight: "1",
+        padding: "0 2px",
+      });
+      dismiss.addEventListener("click", (e) => {
+        e.stopPropagation();
+        banner.remove();
+      });
+      banner.appendChild(dismiss);
+
+      document.body.appendChild(banner);
+    };
+    if (document.body) mount();
+    else document.addEventListener("DOMContentLoaded", mount, { once: true });
+  }
+
+  /**
+   * Called when we detect the extension context is gone. Idempotent. Schedules
+   * the "Reload to reconnect" banner after a grace period so the normal
+   * update-driven auto-reload pre-empts it. Callers short-circuit their request
+   * immediately regardless.
+   */
+  function notifyContextInvalidated() {
+    if (authBannerShown || reconnectBannerTimer) return;
+    reconnectBannerTimer = setTimeout(() => {
+      reconnectBannerTimer = null;
+      showAuthBanner("reload");
+    }, RECONNECT_BANNER_GRACE_MS);
+  }
+
+  /** Called when the mint fails because there's no Clay session (not logged in). */
+  function showSignInBanner() {
+    showAuthBanner("signin");
+  }
+
   // Popup / extension-page JWT cache. The popup loads this file without the
   // rest of the __cb namespace, so it can't use __cb.getSupabaseJwt(). Instead
   // it asks the service worker to mint a JWT (cb:auth:mint) — the same path
@@ -67,22 +196,29 @@
     popupJwtExpiresAt = 0;
   }
 
-  // Resolves a Bearer token for the Authorization header.
+  // Resolves a Bearer token for the Authorization header, or null when none is
+  // available. There is deliberately NO anon fallback: the anon role is
+  // RLS-revoked on every table the extension touches, so a request carrying the
+  // anon key can only 401 with a misleading "permission denied". When we can't
+  // get a JWT we return null and the caller skips the request entirely.
   // - Content-script context: __cb.getSupabaseJwt() fetches/refreshes the JWT.
   // - Popup/extension context: mint via the service worker (cb:auth:mint).
-  // Falls back to the anon publishable key only when neither path yields a JWT
-  // (the anon role is RLS-revoked, so it simply returns no rows).
   async function resolveBearer() {
     if (typeof window !== "undefined" && window.__cb && typeof window.__cb.getSupabaseJwt === "function") {
       try {
         const jwt = await window.__cb.getSupabaseJwt();
         if (jwt) return jwt;
       } catch (err) {
-        console.warn("[Clay Scoping] failed to resolve Supabase JWT, falling back to anon:", err?.message || err);
+        // A dead extension context can't mint until the page reloads — route to
+        // the (grace-delayed) reconnect banner instead of logging a cascade.
+        // Anything else is a transient "not ready yet" we note quietly.
+        if (!isExtensionContextAlive()) notifyContextInvalidated();
+        else console.info("[Clay Scoping] Supabase JWT not ready yet:", err?.message || err);
       }
-      return SUPABASE_ANON_KEY;
+      return null;
     }
     if (typeof chrome !== "undefined" && chrome.runtime && typeof chrome.runtime.sendMessage === "function") {
+      if (!isExtensionContextAlive()) return null;
       if (popupJwt && popupJwtExpiresAt - Date.now() > POPUP_JWT_REFRESH_WINDOW_MS) {
         return popupJwt;
       }
@@ -93,7 +229,7 @@
         return popupJwt;
       }
     }
-    return SUPABASE_ANON_KEY;
+    return null;
   }
 
   /**
@@ -116,6 +252,13 @@
     }
 
     const bearer = await resolveBearer();
+    // No JWT and no anon fallback (anon is RLS-revoked on every table). Skip the
+    // request rather than fire one that can only 401 — reads degrade to null
+    // (callers treat as []), fire-and-forget writes no-op. localStorage stays
+    // the local source of truth and re-syncs once auth returns / the page
+    // reloads. resolveBearer has already surfaced the banner if the context is
+    // dead, so this is silent.
+    if (!bearer) return null;
     const headers = {
       apikey: SUPABASE_ANON_KEY,
       Authorization: `Bearer ${bearer}`,
@@ -166,6 +309,11 @@
               /* refreshSupabaseJwt logs its own failures */
             }
             const freshBearer = await resolveBearer();
+            if (!freshBearer) {
+              // Context died or the re-mint failed during the retry — don't send
+              // a null-bearer request; surface the original RLS error.
+              throw new Error(`Supabase ${method} ${table} failed: ${res.status} ${res.statusText} ${text}`);
+            }
             const retryRes = await fetch(url.toString(), {
               method,
               headers: { ...headers, Authorization: `Bearer ${freshBearer}` },
@@ -190,16 +338,13 @@
         // errors come through as our own Error above and should surface as-is.
         const isNetworkError = err instanceof TypeError;
         if (!isNetworkError || attempt >= delays.length) {
-          // Structured log so production failures leave us a breadcrumb trail
-          // (URL, method, attempt number, elapsed, error details).
-          console.warn("[Clay Scoping] supabase fetch error", {
-            table,
-            method,
-            attempt,
-            elapsedMs: Date.now() - started,
-            errorName: err?.name,
-            errorMessage: err?.message,
-          });
+          // Lead with a readable message string (the error viewer otherwise
+          // renders the bare object as "[object Object]"); keep the structured
+          // detail as a second arg for devtools.
+          console.warn(
+            `[Clay Scoping] supabase fetch error: ${err?.message || err} (${method} ${table}, attempt ${attempt})`,
+            { errorName: err?.name, elapsedMs: Date.now() - started },
+          );
           throw err;
         }
         await new Promise(resolve => setTimeout(resolve, delays[attempt]));
@@ -215,6 +360,9 @@
     SUPABASE_ANON_KEY,
     supabaseFetch,
     resolveBearer,
+    isExtensionContextAlive,
+    notifyContextInvalidated,
+    showSignInBanner,
   };
 
   // Expose to whichever context loads us. The content script uses window.__cbSupabase;

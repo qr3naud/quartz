@@ -119,34 +119,93 @@
     }
   }
 
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+  // Marker used so callers can distinguish "the extension was reloaded out from
+  // under us" (unrecoverable until the page reloads) from a normal mint failure.
+  const EXT_CONTEXT_DEAD = "EXTENSION_CONTEXT_INVALIDATED";
+
+  /** True while the extension context is still live (delegates to supabase.js). */
+  function contextAlive() {
+    try {
+      if (window.__cbSupabase?.isExtensionContextAlive) {
+        return window.__cbSupabase.isExtensionContextAlive();
+      }
+      return !!(typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.id);
+    } catch {
+      return false;
+    }
+  }
+
+  /** Surface the (grace-delayed) "Reload to reconnect" banner. */
+  function notifyContextDead() {
+    window.__cbSupabase?.notifyContextInvalidated?.();
+  }
+
+  function isContextInvalidatedError(err) {
+    return (
+      err?.code === EXT_CONTEXT_DEAD ||
+      /extension context invalidated|context invalidated/i.test(err?.message || "")
+    );
+  }
+
+  function isNoSessionError(err) {
+    return /no clay session|are you logged into|logged into app\.clay/i.test(err?.message || "");
+  }
+
+  function contextDeadError() {
+    const e = new Error("extension context invalidated");
+    e.code = EXT_CONTEXT_DEAD;
+    return e;
+  }
+
   /**
    * Asks the service worker to read the Clay session cookies and exchange
    * them for a JWT at clay-auth-mint. The SW responds with the parsed
    * { jwt, expiresAt, userId, email, workspaces } payload — or { error }.
+   *
+   * Fails fast with an EXT_CONTEXT_DEAD-coded error if the extension context is
+   * already gone, so we don't sit on the 15s timeout (and don't throw the bare
+   * "Extension context invalidated" that chrome.runtime.sendMessage would).
    */
   function fetchFreshJwt() {
     return new Promise((resolve, reject) => {
+      if (!contextAlive()) {
+        reject(contextDeadError());
+        return;
+      }
       let settled = false;
       const timer = setTimeout(() => {
         if (settled) return;
         settled = true;
         reject(new Error("clay-auth-mint timed out"));
       }, 15000);
-      chrome.runtime.sendMessage({ type: "cb:auth:mint" }, (resp) => {
+      try {
+        chrome.runtime.sendMessage({ type: "cb:auth:mint" }, (resp) => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          const lastErr = chrome.runtime?.lastError;
+          if (lastErr) {
+            const e = new Error(lastErr.message || "runtime error");
+            if (/context invalidated/i.test(lastErr.message || "")) e.code = EXT_CONTEXT_DEAD;
+            reject(e);
+            return;
+          }
+          if (!resp || resp.ok !== true) {
+            reject(new Error(resp?.error || "mint failed"));
+            return;
+          }
+          resolve(resp.payload);
+        });
+      } catch (err) {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
-        const lastErr = chrome.runtime?.lastError;
-        if (lastErr) {
-          reject(new Error(lastErr.message || "runtime error"));
-          return;
-        }
-        if (!resp || resp.ok !== true) {
-          reject(new Error(resp?.error || "mint failed"));
-          return;
-        }
-        resolve(resp.payload);
-      });
+        // sendMessage throws synchronously on an orphaned content script.
+        if (!contextAlive()) err.code = EXT_CONTEXT_DEAD;
+        reject(err);
+      }
     });
   }
 
@@ -191,6 +250,13 @@
       // Fire and forget — failures here just mean the next getSupabaseJwt()
       // call will refresh inline. We don't want this to crash the page.
       refresh().catch((err) => {
+        // If the extension was reloaded, this timer can't recover until the
+        // page reloads — surface the banner and stop (don't reschedule, don't
+        // spam). Anything else is a transient we just note.
+        if (isContextInvalidatedError(err)) {
+          notifyContextDead();
+          return;
+        }
         console.warn("[Clay Scoping] background JWT refresh failed:", err?.message || err);
       });
     }, ms);
@@ -290,8 +356,11 @@
       return await refresh();
     } catch (err) {
       // refresh() throws on failure; surface null so callers can branch
-      // on "got fresh JWT" vs "couldn't mint, fall back to whatever they
-      // had". The error is already logged inside refresh()'s fetchFreshJwt.
+      // on "got fresh JWT" vs "couldn't mint, fall back to whatever they had".
+      if (isContextInvalidatedError(err)) {
+        notifyContextDead();
+        return null;
+      }
       console.warn("[Clay Scoping] refreshSupabaseJwt failed:", err?.message || err);
       return null;
     }
@@ -315,15 +384,40 @@
   if (cached) adoptStored(cached);
 
   __cb.supabaseJwtReady = (async () => {
-    try {
-      if (isFresh(cached)) {
-        scheduleBackgroundRefresh(cached.expiresAt);
-        return cached.jwt;
-      }
-      return await refresh();
-    } catch (err) {
-      console.warn("[Clay Scoping] initial JWT mint failed:", err?.message || err);
-      return null;
+    if (isFresh(cached)) {
+      scheduleBackgroundRefresh(cached.expiresAt);
+      return cached.jwt;
     }
+    // Bounded retry so a slow/flaky first mint still lands without a reload.
+    // The launcher stays dimmed and openCanvas awaits this promise, so retrying
+    // here keeps the cold-start gating intact instead of opening feature-less.
+    // Resolves the JWT on success, or null once we give up.
+    const delays = [0, 800, 2500];
+    let lastErr = null;
+    for (let i = 0; i < delays.length; i++) {
+      if (delays[i]) await sleep(delays[i]);
+      if (!contextAlive()) {
+        notifyContextDead();
+        return null;
+      }
+      try {
+        return await refresh();
+      } catch (err) {
+        lastErr = err;
+        // Orphaned context: unrecoverable until reload — banner + stop.
+        if (isContextInvalidatedError(err)) {
+          notifyContextDead();
+          return null;
+        }
+        // Not logged into Clay: retrying won't help — prompt sign-in + stop.
+        if (isNoSessionError(err)) {
+          window.__cbSupabase?.showSignInBanner?.();
+          return null;
+        }
+        // Otherwise transient (timeout / network / SW cold start): retry.
+      }
+    }
+    console.warn("[Clay Scoping] initial JWT mint failed after retries:", lastErr?.message || lastErr);
+    return null;
   })();
 })();

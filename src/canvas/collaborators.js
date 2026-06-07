@@ -35,6 +35,13 @@
   // Populated by the onPresenceSync subscription set up in mount().
   let activeUserIds = new Set();
   let unsubPresence = null;
+  // Re-fetch when the Supabase JWT lands/rotates so the widget never sits blank
+  // through a cold start (see mount()).
+  let unsubJwt = null;
+  // True while the very first contributor fetch is in flight (drives the
+  // shimmer). revealOnce gives a one-shot fade when real avatars first paint.
+  let loading = false;
+  let revealOnce = false;
 
   function isActive(c) {
     if (!c?.id) return false;
@@ -60,6 +67,16 @@
     }
     avatar.title = name || "";
     return avatar;
+  }
+
+  /** The current (acting) user as a contributor-shaped object, for the empty
+   *  state. Only id + email are reliably on __cb, so the avatar falls back to
+   *  the email's first initial; that's still better than a blank pill. */
+  function selfContributor() {
+    const id = __cb.userId || null;
+    const label = __cb.userEmail || (id ? String(id) : null);
+    if (!id && !label) return null;
+    return { id, name: label || "You", profilePicture: null };
   }
 
   /** Queries Supabase for all contributors to the current workbook. */
@@ -91,6 +108,38 @@
   function renderStack() {
     if (!stackEl) return;
     stackEl.innerHTML = "";
+    // One-shot fade when real avatars first replace the shimmer.
+    stackEl.classList.toggle("cb-collab-reveal", revealOnce);
+
+    // First-load shimmer: placeholder avatars while the initial fetch is in
+    // flight. Only when we have nothing yet — a refresh over existing avatars
+    // (e.g. after a save) must not flash.
+    if (loading && contributors.length === 0) {
+      const wrap = document.createElement("div");
+      wrap.className = "cb-collab-stack-inactive cb-collab-skeletons";
+      for (let i = 0; i < 2; i++) {
+        const ph = document.createElement("div");
+        ph.className = "cb-collab-avatar cb-collab-avatar-skeleton";
+        wrap.appendChild(ph);
+      }
+      stackEl.appendChild(wrap);
+      if (countEl) countEl.style.display = "none";
+      return;
+    }
+
+    // Loaded but empty (brand-new canvas before the first save records anyone):
+    // show our own avatar so the widget never sits as a blank pill.
+    if (contributors.length === 0) {
+      const self = selfContributor();
+      if (self) {
+        const wrap = document.createElement("div");
+        wrap.className = "cb-collab-stack-inactive";
+        wrap.appendChild(buildAvatar(self.name, self.profilePicture));
+        stackEl.appendChild(wrap);
+      }
+      if (countEl) countEl.style.display = "none";
+      return;
+    }
 
     // Split so active users get the side-by-side + ring treatment, and
     // inactive users fall back to the classic overlapping stack.
@@ -236,6 +285,9 @@
 
     parent.appendChild(widgetEl);
     attachDocListeners();
+    // Re-mounts start with no contributors, so show the shimmer until the first
+    // fetch (kicked off below) resolves.
+    loading = contributors.length === 0;
     renderStack();
 
     // Presence: subscribe to the realtime channel's presence stream so the
@@ -254,6 +306,28 @@
       });
     }
 
+    // Re-fetch the contributor list whenever the Supabase JWT lands or rotates
+    // (cold start, a retried first mint, or signing into Clay later). Without
+    // this the widget would sit on whatever it fetched before auth was ready —
+    // typically empty — until the next save / tab-switch.
+    if (unsubJwt) { unsubJwt(); unsubJwt = null; }
+    if (__cb.onSupabaseJwtChange) {
+      unsubJwt = __cb.onSupabaseJwtChange(() => {
+        const wb = currentWorkbookId || __cb.currentWorkbookId || __cb.parseIdsFromUrl?.()?.workbookId;
+        if (wb) __cb.refreshCollaborators(wb);
+      });
+    }
+
+    // Kick off the initial fetch so the shimmer always resolves, even if the
+    // caller doesn't immediately call refreshCollaborators.
+    const initialWb = currentWorkbookId || __cb.currentWorkbookId || __cb.parseIdsFromUrl?.()?.workbookId || null;
+    if (initialWb) {
+      __cb.refreshCollaborators(initialWb);
+    } else {
+      loading = false;
+      renderStack();
+    }
+
     return widgetEl;
   };
 
@@ -264,9 +338,22 @@
    */
   __cb.refreshCollaborators = async function (workbookId) {
     if (!widgetEl) return;
-    currentWorkbookId = workbookId || null;
+    // Don't wipe a known workbook id if called with nothing (e.g. a JWT-change
+    // ping before the URL is parsed).
+    currentWorkbookId = workbookId || currentWorkbookId || null;
+    if (!currentWorkbookId) {
+      loading = false;
+      contributors = [];
+      renderStack();
+      return;
+    }
+    loading = true;
+    renderStack(); // shimmer (only paints when we have nothing yet)
     contributors = await fetchContributors(currentWorkbookId);
+    loading = false;
+    revealOnce = true; // one-shot fade as real avatars first paint
     renderStack();
+    revealOnce = false;
     if (isOpen) renderDropdown();
   };
 
@@ -274,6 +361,7 @@
   __cb.unmountCollaboratorsWidget = function () {
     detachDocListeners();
     if (unsubPresence) { unsubPresence(); unsubPresence = null; }
+    if (unsubJwt) { unsubJwt(); unsubJwt = null; }
     if (widgetEl && widgetEl.parentNode) widgetEl.parentNode.removeChild(widgetEl);
     widgetEl = null;
     stackEl = null;
@@ -283,5 +371,7 @@
     isOpen = false;
     currentWorkbookId = null;
     activeUserIds = new Set();
+    loading = false;
+    revealOnce = false;
   };
 })();

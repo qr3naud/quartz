@@ -814,9 +814,23 @@
 
   if (__cb.hasFeature && __cb.hasFeature("sfdc")) {
     publishApi();
-  } else if (__cb.supabaseJwtReady) {
-    __cb.supabaseJwtReady.then(() => {
-      if (__cb.hasFeature && __cb.hasFeature("sfdc")) publishApi();
-    }).catch(() => { /* mint failed; leave the API unexposed */ });
+  } else {
+    // Cold load: hasFeature is false until the first mint resolves. Re-check
+    // when supabaseJwtReady settles, AND subscribe to onSupabaseJwtChange so a
+    // late/retried mint — or signing into Clay after the page loaded — also
+    // publishes the API without requiring a reload. publishApi is idempotent.
+    if (__cb.supabaseJwtReady) {
+      __cb.supabaseJwtReady.then(() => {
+        if (__cb.hasFeature && __cb.hasFeature("sfdc")) publishApi();
+      }).catch(() => { /* mint failed; leave the API unexposed */ });
+    }
+    if (__cb.onSupabaseJwtChange) {
+      const unsub = __cb.onSupabaseJwtChange(() => {
+        if (__cb.hasFeature && __cb.hasFeature("sfdc")) {
+          publishApi();
+          unsub();
+        }
+      });
+    }
   }
 })();
