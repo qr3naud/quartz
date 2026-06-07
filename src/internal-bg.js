@@ -329,6 +329,23 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     return true;
   }
 
+  // cb:slack:channels — lists the Slack channels the bot is a member of, for
+  // the Admin > Secret Configuration channel dropdown (slack-channels function).
+  if (msg.type === "cb:slack:channels") {
+    (async () => {
+      try {
+        const res = await callProxy("slack-channels", { method: "GET" });
+        const text = await res.text();
+        let data = null;
+        try { data = text ? JSON.parse(text) : null; } catch {}
+        sendResponse({ ok: res.ok, status: res.status, data, rawText: text || undefined });
+      } catch (err) {
+        sendResponse({ ok: false, error: err?.message || String(err) });
+      }
+    })();
+    return true;
+  }
+
   // cb:dust:createConversation — { body } (apiKey/workspaceId no longer
   // accepted; the proxy holds both server-side).
   if (msg.type === "cb:dust:createConversation") {

@@ -30,13 +30,32 @@
   const KNOWN = {
     poc_request_channel: {
       label: "POC request Slack channel",
-      hint: "Channel ID (e.g. C0AFJMW5Q75) or #name — the bot must be a member.",
+      hint: "Pick a channel the bot is in — stored as the channel ID.",
+      slack: true,
     },
     deal_desk_channel: {
       label: "Deal desk Slack channel",
-      hint: "Channel name (e.g. #deal-desk) or ID the deal-desk app posts to. Leave blank to use the server default.",
+      hint: "Pick a channel the bot is in. Leave unset to use the server default.",
+      slack: true,
     },
   };
+
+  // Fetch the Slack channels the bot is a member of via the slack-channels Edge
+  // Function (proxied by the service worker). Resolves to an array of
+  // { id, name }, or false on any failure so the UI can fall back to a text box.
+  function fetchSlackChannels() {
+    return new Promise((resolve) => {
+      try {
+        chrome.runtime.sendMessage({ type: "cb:slack:channels" }, (resp) => {
+          if (chrome.runtime.lastError) { resolve(false); return; }
+          const chs = resp?.data?.channels;
+          resolve(resp?.ok && resp.data?.ok && Array.isArray(chs) ? chs : false);
+        });
+      } catch {
+        resolve(false);
+      }
+    });
+  }
 
   // Read-only reference rendered in the "Feature flags & gating" panel below the
   // editable settings. Two tiers:
@@ -222,12 +241,97 @@
     function showError(msg) { if (errorEl) { errorEl.textContent = msg; errorEl.style.display = ""; } }
     function clearError() { if (errorEl) { errorEl.textContent = ""; errorEl.style.display = "none"; } }
 
-    // key -> { input, initial }
+    // key -> { getValue, initial }
     const editors = new Map();
+
+    // Slack channel dropdown state. null = still loading, false = fetch failed
+    // (fall back to a text field), or an array of { id, name }. Fetched in
+    // parallel with the app_settings load; when it resolves we rebuild the
+    // channel controls in place via the registered rebuilders.
+    let slackChannels = null;
+    const slackControlRebuilders = new Map();
+
+    function makeTextInput(value, hint) {
+      const input = document.createElement("input");
+      input.type = "text";
+      input.className = "cb-gtme-input";
+      input.autocomplete = "off";
+      input.value = value || "";
+      if (hint) input.placeholder = hint;
+      return input;
+    }
+
+    // Renders the channel control inside `container` from the current
+    // slackChannels state: loading -> disabled select; failed -> text input;
+    // loaded -> a <select> of the bot's channels (value = ID, label = #name)
+    // plus a "Custom…" escape hatch that swaps to a text input. Keeps
+    // editor.getValue pointed at whichever control is live.
+    function buildSlackControl(container, key, value, editor) {
+      container.innerHTML = "";
+      const hint = (KNOWN[key] || {}).hint;
+
+      if (slackChannels === null) {
+        const sel = document.createElement("select");
+        sel.className = "cb-gtme-input";
+        sel.disabled = true;
+        const opt = document.createElement("option");
+        opt.textContent = "Loading channels…";
+        sel.appendChild(opt);
+        container.appendChild(sel);
+        editor.getValue = () => value;
+        return;
+      }
+
+      if (slackChannels === false) {
+        const input = makeTextInput(value, hint);
+        container.appendChild(input);
+        editor.getValue = () => input.value;
+        return;
+      }
+
+      const sel = document.createElement("select");
+      sel.className = "cb-gtme-input";
+      if (!value) {
+        const o = document.createElement("option");
+        o.value = "";
+        o.textContent = "Select a channel…";
+        sel.appendChild(o);
+      } else if (!slackChannels.some((c) => c.id === value)) {
+        // Preserve an existing value (e.g. an ID the bot isn't a member of) so
+        // it stays selected and isn't silently dropped on save.
+        const o = document.createElement("option");
+        o.value = value;
+        o.textContent = `Current: ${value}`;
+        sel.appendChild(o);
+      }
+      for (const c of slackChannels) {
+        const o = document.createElement("option");
+        o.value = c.id;
+        o.textContent = `#${c.name}`;
+        sel.appendChild(o);
+      }
+      const customOpt = document.createElement("option");
+      customOpt.value = "__custom__";
+      customOpt.textContent = "Custom…";
+      sel.appendChild(customOpt);
+      sel.value = value || "";
+      sel.addEventListener("change", () => {
+        if (sel.value === "__custom__") {
+          container.innerHTML = "";
+          const input = makeTextInput(value, hint);
+          container.appendChild(input);
+          input.focus();
+          editor.getValue = () => input.value;
+        }
+      });
+      container.appendChild(sel);
+      editor.getValue = () => sel.value;
+    }
 
     function renderRows(rows) {
       fieldsWrap.innerHTML = "";
       fieldsWrap.style.opacity = "1";
+      slackControlRebuilders.clear();
       // Render every known setting (so unset ones still show and can be
       // created), then any extra keys already in the DB we have no metadata for.
       const byKey = new Map();
@@ -244,23 +348,33 @@
         const label = document.createElement("span");
         label.className = "cb-gtme-field-label";
         label.textContent = meta.label || key;
-        const input = document.createElement("input");
-        input.type = "text";
-        input.className = "cb-gtme-input";
-        input.autocomplete = "off";
-        input.value = value;
-        if (meta.hint) input.placeholder = meta.hint;
         field.appendChild(label);
-        field.appendChild(input);
+
+        const editor = { getValue: () => value, initial: value };
+        editors.set(key, editor);
+
+        if (meta.slack) {
+          // Channel picker. A wrapper div lets us swap the control in place
+          // (loading -> select / text) once the channel list resolves.
+          const control = document.createElement("div");
+          field.appendChild(control);
+          const rebuild = () => buildSlackControl(control, key, value, editor);
+          slackControlRebuilders.set(key, rebuild);
+          rebuild();
+        } else {
+          const input = makeTextInput(value, meta.hint);
+          field.appendChild(input);
+          editor.getValue = () => input.value;
+        }
+
         if (meta.hint) {
-          const hint = document.createElement("div");
-          hint.className = "cb-gtme-tabs-hint";
-          hint.style.cssText = "margin-top:4px;";
-          hint.textContent = meta.hint;
-          field.appendChild(hint);
+          const hintEl = document.createElement("div");
+          hintEl.className = "cb-gtme-tabs-hint";
+          hintEl.style.cssText = "margin-top:4px;";
+          hintEl.textContent = meta.hint;
+          field.appendChild(hintEl);
         }
         fieldsWrap.appendChild(field);
-        editors.set(key, { input, initial: value });
       }
     }
 
@@ -319,7 +433,7 @@
       clearError();
       const changed = [];
       for (const [key, ed] of editors.entries()) {
-        const value = ed.input.value.trim();
+        const value = ed.getValue().trim();
         if (value !== ed.initial) changed.push({ key, value });
       }
       if (!changed.length) { saveBtn.textContent = "Saved ✓"; setTimeout(() => { saveBtn.textContent = "Save"; }, 1500); return; }
@@ -358,7 +472,16 @@
     document.body.appendChild(backdropEl);
     document.addEventListener("keydown", onKeydown);
 
-    if (!isFlags) load();
+    if (!isFlags) {
+      load();
+      // Fetch the bot's channels in parallel; rebuild the channel dropdowns in
+      // place when they arrive (works whether this resolves before or after the
+      // app_settings rows render).
+      fetchSlackChannels().then((chs) => {
+        slackChannels = Array.isArray(chs) ? chs : false;
+        for (const rebuild of slackControlRebuilders.values()) rebuild();
+      });
+    }
   }
 
   // Secret configuration — the editable app_settings form (e.g. Slack channels).
