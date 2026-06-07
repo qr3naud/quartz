@@ -3777,7 +3777,7 @@
   border: none;
   border-radius: var(--cb-radius-sm);
   background: transparent;
-  color: var(--cb-text-faint);
+  color: var(--cb-border);
   cursor: pointer;
   transition: background 0.12s, color 0.12s;
 }
@@ -3786,7 +3786,7 @@
   color: #4b5563;
 }
 .cb-pam-pin-active {
-  color: var(--cb-border);
+  color: var(--cb-text-primary);
 }
 .cb-pam-pinned {
   box-shadow: 0 12px 32px rgba(0, 0, 0, 0.2), 0 0 0 1px var(--cb-border);
