@@ -1551,9 +1551,12 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  /* Icon-only "+" button — compact, squarish padding instead of the old
-     pill width that assumed a text label. */
-  padding: 3px 5px;
+  /* Icon-only "+" rendered as a round button matching the note badge circle
+     that sits beside it — fixed square box + full border-radius = circle. */
+  flex: none;
+  width: 22px;
+  height: 22px;
+  padding: 0;
   background: transparent;
   color: #6366f1;
   border: 1px dashed #c7d2fe;
