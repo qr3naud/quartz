@@ -39,9 +39,15 @@
   // through a cold start (see mount()).
   let unsubJwt = null;
   // True while the very first contributor fetch is in flight (drives the
-  // shimmer). revealOnce gives a one-shot fade when real avatars first paint.
+  // shimmer). revealOnce gives a one-shot scale-in when real avatars first paint.
   let loading = false;
   let revealOnce = false;
+  // The scale-in reveal runs once per mount (not on every save/refresh).
+  let hasRevealed = false;
+  // User ids whose active (indigo ring) state has already animated in, so the
+  // ring doesn't re-pulse on every save/presence re-render (the DOM is rebuilt
+  // each time). Cleared for anyone who goes inactive so re-activation animates.
+  const ringAnimated = new Set();
 
   function isActive(c) {
     if (!c?.id) return false;
@@ -155,12 +161,25 @@
     const active = contributors.filter(isActive);
     const inactive = contributors.filter(c => !isActive(c));
 
+    // Forget ring-in state for anyone no longer active, so a later re-activation
+    // animates the ring again instead of snapping.
+    const activeIdSet = new Set(active.map(c => String(c.id)));
+    for (const id of [...ringAnimated]) {
+      if (!activeIdSet.has(id)) ringAnimated.delete(id);
+    }
+
     if (active.length > 0) {
       const activeWrap = document.createElement("div");
       activeWrap.className = "cb-collab-stack-active";
       for (const c of active.slice(0, MAX_STACKED_AVATARS)) {
         const av = buildAvatar(c.name, c.profilePicture);
         av.classList.add("cb-collab-avatar-active");
+        // Grow the ring in the first time this user becomes active; the static
+        // ring (no animation) holds on later re-renders.
+        if (c.id != null && !ringAnimated.has(String(c.id))) {
+          av.classList.add("cb-collab-ring-in");
+          ringAnimated.add(String(c.id));
+        }
         activeWrap.appendChild(av);
       }
       stackEl.appendChild(activeWrap);
@@ -258,6 +277,9 @@
     // Remove any previously-mounted instance (e.g. from a prior canvas open, or
     // when moving between the canvas float and the table view's inline slot).
     if (widgetEl && widgetEl.parentNode) widgetEl.parentNode.removeChild(widgetEl);
+    // Fresh per-mount animation state.
+    hasRevealed = false;
+    ringAnimated.clear();
 
     widgetEl = document.createElement("div");
     widgetEl.className = "cb-collab-widget";
@@ -309,7 +331,14 @@
     if (unsubPresence) { unsubPresence(); unsubPresence = null; }
     if (__cb.realtime?.onPresenceSync) {
       unsubPresence = __cb.realtime.onPresenceSync((byUser) => {
-        activeUserIds = new Set(Array.from(byUser.keys()).map(String));
+        const next = new Set(Array.from(byUser.keys()).map(String));
+        // Presence syncs fire on every heartbeat; only re-render when the set of
+        // active users actually changed, so the stack doesn't churn (and the
+        // ring-in animation doesn't re-run on unrelated ticks).
+        if (next.size === activeUserIds.size && [...next].every(id => activeUserIds.has(id))) {
+          return;
+        }
+        activeUserIds = next;
         renderStack();
         if (isOpen) renderDropdown();
       });
@@ -360,7 +389,10 @@
     renderStack(); // shimmer (only paints when we have nothing yet)
     contributors = await fetchContributors(currentWorkbookId);
     loading = false;
-    revealOnce = true; // one-shot fade as real avatars first paint
+    // Scale-in only on the first paint of this mount — not on every refresh
+    // (e.g. after each save), which would re-scale the whole stack.
+    revealOnce = !hasRevealed;
+    hasRevealed = true;
     renderStack();
     revealOnce = false;
     if (isOpen) renderDropdown();
@@ -382,5 +414,7 @@
     activeUserIds = new Set();
     loading = false;
     revealOnce = false;
+    hasRevealed = false;
+    ringAnimated.clear();
   };
 })();

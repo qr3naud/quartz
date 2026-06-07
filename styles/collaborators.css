@@ -264,7 +264,29 @@
   to { opacity: 1; transform: scale(1); }
 }
 
+/* Grow the active-user indigo ring in smoothly the first time a user becomes
+   active (a separate render from the load reveal — usually the presence sync),
+   instead of the box-shadow snapping on. Reverts to the static
+   .cb-collab-avatar-active ring (identical `to` frame) when it ends. */
+.cb-collab-ring-in {
+  animation: cbCollabRing 0.3s ease-out;
+}
+
+@keyframes cbCollabRing {
+  from {
+    box-shadow:
+      0 0 0 0 #ffffff,
+      0 0 0 0 #6366f1;
+  }
+  to {
+    box-shadow:
+      0 0 0 calc(var(--cb-collab-av-size) * 0.0714) #ffffff,
+      0 0 0 calc(var(--cb-collab-av-size) * 0.125) #6366f1;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .cb-collab-avatar-skeleton { animation: none; }
   .cb-collab-reveal { animation: none; }
+  .cb-collab-ring-in { animation: none; }
 }
