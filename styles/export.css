@@ -548,6 +548,168 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* ---- Admin > Secret Configuration ----
+   Snug modal that hugs the label|control grid (560px = 200 + 16 gap + 300 +
+   the body's 44px horizontal padding), instead of the wide default used by the
+   Feature Flags view. */
+.cb-secret-modal {
+  width: 560px;
+  max-width: 92vw;
+}
+
+/* A two-column grid: the setting name on the left, the control on the right.
+   Fixed column widths + fixed row height so the layout never shifts with the
+   control's content or open/closed state (the dropdown panel floats). */
+.cb-secret-grid {
+  display: grid;
+  grid-template-columns: 200px 300px;
+  column-gap: 16px;
+  align-items: center;
+  width: fit-content;
+}
+
+.cb-secret-label {
+  display: flex;
+  align-items: center;
+  height: 52px;
+  padding-right: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #374151;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cb-secret-control {
+  display: flex;
+  align-items: center;
+  height: 52px;
+}
+
+/* Custom channel dropdown */
+.cb-secret-dd {
+  position: relative;
+  width: 100%;
+}
+
+.cb-secret-dd-trigger {
+  width: 100%;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 10px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #1f2937;
+  font-family: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 0.12s, box-shadow 0.12s;
+}
+
+.cb-secret-dd-trigger:hover {
+  border-color: #9ca3af;
+}
+
+.cb-secret-dd-trigger:disabled {
+  cursor: default;
+  background: #f9fafb;
+  color: #9ca3af;
+}
+
+.cb-secret-dd-trigger.cb-secret-dd-open {
+  border-color: #6366f1;
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.18);
+}
+
+.cb-secret-dd-value {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cb-secret-dd-placeholder {
+  color: #9ca3af;
+}
+
+.cb-secret-dd-chevron {
+  flex: none;
+  display: inline-flex;
+  color: #6b7280;
+}
+
+/* Floating panel (appended to <body>, positioned via placePopover so it's never
+   clipped by the modal and never grows the row). */
+.cb-secret-dd-panel {
+  position: fixed;
+  z-index: 10000060;
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.15);
+  padding: 4px;
+  max-height: 260px;
+  display: flex;
+  flex-direction: column;
+}
+
+.cb-secret-dd-search {
+  height: 32px;
+  padding: 0 8px;
+  margin: 2px 2px 4px;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  font-size: 13px;
+  font-family: inherit;
+  color: #1f2937;
+}
+
+.cb-secret-dd-search:focus {
+  outline: none;
+  border-color: #6366f1;
+}
+
+.cb-secret-dd-list {
+  overflow-y: auto;
+}
+
+.cb-secret-dd-option {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 7px 8px;
+  border: none;
+  background: transparent;
+  border-radius: 6px;
+  font-size: 13px;
+  color: #374151;
+  cursor: pointer;
+  font-family: inherit;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cb-secret-dd-option:hover {
+  background: #f3f4f6;
+}
+
+.cb-secret-dd-option-selected {
+  color: #4338ca;
+  font-weight: 600;
+}
+
+.cb-secret-dd-empty {
+  padding: 8px;
+  font-size: 12px;
+  color: #6b7280;
+}
+
 /* Read-only display for fields the user can't edit (e.g. fixed contract
    length). Mirrors .cb-gtme-input's metrics so the row stays balanced. */
 .cb-gtme-static-value {

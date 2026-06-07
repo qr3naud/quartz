@@ -30,12 +30,10 @@
   const KNOWN = {
     poc_request_channel: {
       label: "POC request Slack channel",
-      hint: "Pick a channel the bot is in — stored as the channel ID.",
       slack: true,
     },
     deal_desk_channel: {
       label: "Deal desk Slack channel",
-      hint: "Pick a channel the bot is in. Leave unset to use the server default.",
       slack: true,
     },
   };
@@ -47,11 +45,24 @@
     return new Promise((resolve) => {
       try {
         chrome.runtime.sendMessage({ type: "cb:slack:channels" }, (resp) => {
-          if (chrome.runtime.lastError) { resolve(false); return; }
+          if (chrome.runtime.lastError) {
+            console.warn("[Clay Scoping] slack-channels unreachable:", chrome.runtime.lastError.message);
+            resolve(false);
+            return;
+          }
           const chs = resp?.data?.channels;
-          resolve(resp?.ok && resp.data?.ok && Array.isArray(chs) ? chs : false);
+          if (resp?.ok && resp.data?.ok && Array.isArray(chs)) {
+            resolve(chs);
+          } else {
+            console.warn(
+              "[Clay Scoping] slack-channels failed:",
+              resp?.data?.error || resp?.rawText || `HTTP ${resp?.status}`,
+            );
+            resolve(false);
+          }
         });
-      } catch {
+      } catch (e) {
+        console.warn("[Clay Scoping] slack-channels threw:", e);
         resolve(false);
       }
     });
@@ -164,6 +175,9 @@
   function close() {
     if (modalEl) { modalEl.remove(); modalEl = null; }
     if (backdropEl) { backdropEl.remove(); backdropEl = null; }
+    // A channel dropdown panel lives on <body> (not inside the modal), so the
+    // modal teardown above won't take it with it — sweep up any that are open.
+    document.querySelectorAll(".cb-secret-dd-panel").forEach((p) => p.remove());
     document.removeEventListener("keydown", onKeydown);
   }
   __cb.closeAdminSettings = close;
@@ -186,7 +200,9 @@
     });
 
     modalEl = document.createElement("div");
-    modalEl.className = "cb-export-modal cb-gtme-modal";
+    // Secrets view gets a snug modal sized to its grid; the Feature Flags view
+    // keeps the wider default for its gating reference rows.
+    modalEl.className = "cb-export-modal cb-gtme-modal" + (isFlags ? "" : " cb-secret-modal");
 
     // ---- Header ----
     const header = document.createElement("div");
@@ -225,9 +241,9 @@
       body.appendChild(buildGatingSection());
     } else {
       fieldsWrap = document.createElement("div");
-      // Two clean columns: each setting (label + input + hint) is a grid cell.
-      fieldsWrap.style.cssText =
-        "display:grid;grid-template-columns:repeat(2, minmax(0, 1fr));gap:16px 20px;align-items:start;";
+      // Two columns: setting name (left) | control (right). Fixed widths + row
+      // heights via .cb-secret-grid so the layout never shifts.
+      fieldsWrap.className = "cb-secret-grid";
       fieldsWrap.textContent = "Loading…";
       fieldsWrap.style.opacity = ".7";
       body.appendChild(fieldsWrap);
@@ -251,81 +267,147 @@
     let slackChannels = null;
     const slackControlRebuilders = new Map();
 
-    function makeTextInput(value, hint) {
+    function makeTextInput(value, placeholder) {
       const input = document.createElement("input");
       input.type = "text";
       input.className = "cb-gtme-input";
       input.autocomplete = "off";
+      input.style.width = "100%";
       input.value = value || "";
-      if (hint) input.placeholder = hint;
+      if (placeholder) input.placeholder = placeholder;
       return input;
     }
 
-    // Renders the channel control inside `container` from the current
-    // slackChannels state: loading -> disabled select; failed -> text input;
-    // loaded -> a <select> of the bot's channels (value = ID, label = #name)
-    // plus a "Custom…" escape hatch that swaps to a text input. Keeps
-    // editor.getValue pointed at whichever control is live.
-    function buildSlackControl(container, key, value, editor) {
-      container.innerHTML = "";
-      const hint = (KNOWN[key] || {}).hint;
-
-      if (slackChannels === null) {
-        const sel = document.createElement("select");
-        sel.className = "cb-gtme-input";
-        sel.disabled = true;
-        const opt = document.createElement("option");
-        opt.textContent = "Loading channels…";
-        sel.appendChild(opt);
-        container.appendChild(sel);
-        editor.getValue = () => value;
-        return;
-      }
+    // Custom channel dropdown rendered into `cell`. States:
+    //   - loading (slackChannels === null): a disabled "Loading channels…" trigger
+    //   - failed (false): a plain text input so the admin isn't blocked
+    //   - loaded (array): a styled trigger + a floating, searchable panel of the
+    //     bot's channels (value = channel ID, label = #name). The panel is
+    //     appended to <body> and positioned with placePopover so opening it never
+    //     resizes the row.
+    function buildChannelDropdown(cell, value, editor) {
+      cell.innerHTML = "";
 
       if (slackChannels === false) {
-        const input = makeTextInput(value, hint);
-        container.appendChild(input);
+        const input = makeTextInput(value, "Channel ID");
+        cell.appendChild(input);
         editor.getValue = () => input.value;
         return;
       }
 
-      const sel = document.createElement("select");
-      sel.className = "cb-gtme-input";
-      if (!value) {
-        const o = document.createElement("option");
-        o.value = "";
-        o.textContent = "Select a channel…";
-        sel.appendChild(o);
-      } else if (!slackChannels.some((c) => c.id === value)) {
-        // Preserve an existing value (e.g. an ID the bot isn't a member of) so
-        // it stays selected and isn't silently dropped on save.
-        const o = document.createElement("option");
-        o.value = value;
-        o.textContent = `Current: ${value}`;
-        sel.appendChild(o);
+      let selected = value || "";
+      const wrap = document.createElement("div");
+      wrap.className = "cb-secret-dd";
+      const trigger = document.createElement("button");
+      trigger.type = "button";
+      trigger.className = "cb-secret-dd-trigger";
+      const valueEl = document.createElement("span");
+      valueEl.className = "cb-secret-dd-value";
+      const chevron = document.createElement("span");
+      chevron.className = "cb-secret-dd-chevron";
+      chevron.innerHTML =
+        '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>';
+      trigger.appendChild(valueEl);
+      trigger.appendChild(chevron);
+      wrap.appendChild(trigger);
+      cell.appendChild(wrap);
+
+      editor.getValue = () => selected;
+
+      function nameFor(id) {
+        const c = Array.isArray(slackChannels) ? slackChannels.find((x) => x.id === id) : null;
+        return c ? `#${c.name}` : id;
       }
-      for (const c of slackChannels) {
-        const o = document.createElement("option");
-        o.value = c.id;
-        o.textContent = `#${c.name}`;
-        sel.appendChild(o);
-      }
-      const customOpt = document.createElement("option");
-      customOpt.value = "__custom__";
-      customOpt.textContent = "Custom…";
-      sel.appendChild(customOpt);
-      sel.value = value || "";
-      sel.addEventListener("change", () => {
-        if (sel.value === "__custom__") {
-          container.innerHTML = "";
-          const input = makeTextInput(value, hint);
-          container.appendChild(input);
-          input.focus();
-          editor.getValue = () => input.value;
+      function paintTrigger() {
+        if (slackChannels === null) {
+          valueEl.textContent = "Loading channels…";
+          valueEl.classList.add("cb-secret-dd-placeholder");
+        } else if (!selected) {
+          valueEl.textContent = "Select a channel";
+          valueEl.classList.add("cb-secret-dd-placeholder");
+        } else {
+          valueEl.textContent = nameFor(selected);
+          valueEl.classList.remove("cb-secret-dd-placeholder");
         }
-      });
-      container.appendChild(sel);
-      editor.getValue = () => sel.value;
+      }
+      paintTrigger();
+
+      if (slackChannels === null) {
+        trigger.disabled = true;
+        return;
+      }
+
+      let panel = null;
+      let onDocDown = null;
+      function close() {
+        if (panel) { panel.remove(); panel = null; }
+        // Capture-phase listener (see open()): must be removed with the same
+        // `true` flag.
+        if (onDocDown) { document.removeEventListener("mousedown", onDocDown, true); onDocDown = null; }
+        trigger.classList.remove("cb-secret-dd-open");
+      }
+      function open() {
+        if (panel) { close(); return; }
+        panel = document.createElement("div");
+        panel.className = "cb-secret-dd-panel";
+        const search = document.createElement("input");
+        search.type = "text";
+        search.className = "cb-secret-dd-search";
+        search.placeholder = "Search channels…";
+        panel.appendChild(search);
+        const list = document.createElement("div");
+        list.className = "cb-secret-dd-list";
+        panel.appendChild(list);
+
+        function renderList(q) {
+          list.innerHTML = "";
+          const qq = q.trim().toLowerCase();
+          let any = false;
+          for (const c of slackChannels) {
+            if (qq && !c.name.toLowerCase().includes(qq)) continue;
+            any = true;
+            const opt = document.createElement("button");
+            opt.type = "button";
+            opt.className =
+              "cb-secret-dd-option" + (c.id === selected ? " cb-secret-dd-option-selected" : "");
+            opt.textContent = `#${c.name}`;
+            opt.addEventListener("click", (e) => {
+              e.stopPropagation();
+              selected = c.id;
+              paintTrigger();
+              close();
+            });
+            list.appendChild(opt);
+          }
+          if (!any) {
+            const empty = document.createElement("div");
+            empty.className = "cb-secret-dd-empty";
+            empty.textContent = "No channels match.";
+            list.appendChild(empty);
+          }
+        }
+        renderList("");
+        search.addEventListener("input", () => renderList(search.value));
+        search.addEventListener("keydown", (e) => {
+          if (e.key === "Escape") { e.stopPropagation(); close(); }
+        });
+
+        document.body.appendChild(panel);
+        panel.style.width = `${trigger.offsetWidth}px`;
+        if (__cb.placePopover) __cb.placePopover(panel, trigger, { gap: 4 });
+        trigger.classList.add("cb-secret-dd-open");
+        setTimeout(() => search.focus(), 0);
+
+        // Capture phase: fires before the modal's own mousedown
+        // stopPropagation and before the backdrop tears the modal down, so the
+        // panel closes whether you click elsewhere in the modal or on the
+        // backdrop. (panel may already be null if close() ran first.)
+        onDocDown = (e) => {
+          if (!wrap.contains(e.target) && !(panel && panel.contains(e.target))) close();
+        };
+        setTimeout(() => document.addEventListener("mousedown", onDocDown, true), 0);
+      }
+      trigger.addEventListener("click", (e) => { e.stopPropagation(); open(); });
     }
 
     function renderRows(rows) {
@@ -343,38 +425,32 @@
       for (const key of keys) {
         const meta = KNOWN[key] || {};
         const value = byKey.get(key) || "";
-        const field = document.createElement("label");
-        field.className = "cb-gtme-field cb-gtme-field-grow";
-        const label = document.createElement("span");
-        label.className = "cb-gtme-field-label";
-        label.textContent = meta.label || key;
-        field.appendChild(label);
+
+        // Left column: the setting name. Right column: the control.
+        const labelCell = document.createElement("div");
+        labelCell.className = "cb-secret-label";
+        labelCell.textContent = meta.label || key;
+        labelCell.title = meta.label || key;
+
+        const controlCell = document.createElement("div");
+        controlCell.className = "cb-secret-control";
 
         const editor = { getValue: () => value, initial: value };
         editors.set(key, editor);
 
         if (meta.slack) {
-          // Channel picker. A wrapper div lets us swap the control in place
-          // (loading -> select / text) once the channel list resolves.
-          const control = document.createElement("div");
-          field.appendChild(control);
-          const rebuild = () => buildSlackControl(control, key, value, editor);
+          // Re-rendered in place when the channel list resolves.
+          const rebuild = () => buildChannelDropdown(controlCell, value, editor);
           slackControlRebuilders.set(key, rebuild);
           rebuild();
         } else {
-          const input = makeTextInput(value, meta.hint);
-          field.appendChild(input);
+          const input = makeTextInput(value, "");
+          controlCell.appendChild(input);
           editor.getValue = () => input.value;
         }
 
-        if (meta.hint) {
-          const hintEl = document.createElement("div");
-          hintEl.className = "cb-gtme-tabs-hint";
-          hintEl.style.cssText = "margin-top:4px;";
-          hintEl.textContent = meta.hint;
-          field.appendChild(hintEl);
-        }
-        fieldsWrap.appendChild(field);
+        fieldsWrap.appendChild(labelCell);
+        fieldsWrap.appendChild(controlCell);
       }
     }
 
