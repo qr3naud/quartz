@@ -108,6 +108,7 @@
           viewId: g.viewId ?? null,
           records: g.records ?? null,
           frequency: g.frequency ?? null,
+          clusterKey: g.clusterKey ?? null,
           level: g.level || 0,
           color: g.color || null,
         })),

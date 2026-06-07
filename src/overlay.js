@@ -1401,6 +1401,30 @@
     // Re-runs the cost roll-up + table refresh + persist.
     __cb.setUseCaseScope = function (key, patch) {
       if (!key || key === __cb.cost.OTHER_USE_CASE || !patch) return;
+      // Table-native (v7.23+): a g-<id> key is a real group — persist records /
+      // frequency on the group itself (cost reads group.records/frequency). The
+      // pinned budget (a UI convenience for the cost dollar) stays in the scope
+      // map keyed the same way.
+      if (key.startsWith("g-") && __cb.model && __cb.model.getGroup) {
+        const g = __cb.model.getGroup(Number(key.slice(2)));
+        if (g) {
+          if ("records" in patch || "frequency" in patch) {
+            __cb.model.update(() => {
+              if ("records" in patch) g.records = patch.records == null ? null : Number(patch.records);
+              if ("frequency" in patch) g.frequency = patch.frequency || null;
+            });
+          }
+          if ("budget" in patch) {
+            __cb.useCaseScope = __cb.useCaseScope || {};
+            __cb.useCaseScope[key] = { ...(__cb.useCaseScope[key] || {}), budget: patch.budget };
+          }
+          if (__cb.canvas?.refreshCreditTotal) __cb.canvas.refreshCreditTotal();
+          if (__cb.canvas?.updateGroupCredits) __cb.canvas.updateGroupCredits();
+          if (__cb.tableView?.refresh) __cb.tableView.refresh();
+          if (__cb.debouncedSave) __cb.debouncedSave();
+          return;
+        }
+      }
       __cb.useCaseScope = __cb.useCaseScope || {};
       __cb.useCaseScope[key] = { ...(__cb.useCaseScope[key] || {}), ...patch };
       // refreshCreditTotal -> notifyCreditTotal runs cost.syncUseCaseCoverage(),
@@ -1841,10 +1865,11 @@
     }
 
     function recalcTotal() {
-      // Multi-use-case (2+ imported tables): the grand totals are pre-computed
-      // per use case in notifyCreditTotal (each ER x its table's records), so
-      // we use them directly instead of weighted-per-row x one global records.
-      // At <= 1 use case __cb._multiTotals is null and this is unchanged.
+      // Use-case scope (table-native, v7.23+: 1+ use cases): the grand totals
+      // are pre-computed per use case in notifyCreditTotal (each ER x its use
+      // case's records), so we use them directly instead of weighted-per-row x
+      // one global records. With NO use cases __cb._multiTotals is null and the
+      // single global-records path below runs unchanged.
       const multi = __cb._multiTotals;
       const records = parseRecordsValue();
       const totalCredits = multi

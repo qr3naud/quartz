@@ -224,6 +224,11 @@
         viewId: opts.viewId ?? null,
         records: opts.records ?? null,
         frequency: opts.frequency ?? null,
+        // For import-cluster L2 groups: the source groupCluster id, so the
+        // migration adapter reuses one L2 per cluster across render passes
+        // (otherwise an import that lands cards over several renders makes a
+        // duplicate L2 per card).
+        clusterKey: opts.clusterKey ?? null,
         level: 0,
         color: null,
       };
@@ -315,7 +320,14 @@
           }
         }
       }
+      // Reuse L2 sub-groups already created for a cluster (across render passes
+      // and reloads) so a multi-DP column group stays ONE L2, not one-per-DP.
       const l2ByCluster = new Map();
+      for (const g of state.groups) {
+        if (g.parentId != null && g.source === "import-cluster" && g.clusterKey != null) {
+          if (!l2ByCluster.has(g.clusterKey)) l2ByCluster.set(g.clusterKey, g);
+        }
+      }
       // Assign every ungrouped, table-tagged card to its use case (loose) or its
       // column group's L2 sub-group. Only touches cards with no groupId, so it
       // never fights user edits and is safe to run on every render.
@@ -331,6 +343,7 @@
             l2 = model.createGroup({
               parentId: uc.id,
               source: "import-cluster",
+              clusterKey: cluster,
               label: titleByCluster.get(cluster),
             });
             l2ByCluster.set(cluster, l2);

@@ -3957,8 +3957,11 @@
     // multi-import; falls back to the global Records otherwise) + whether it's
     // been overridden from the imported baseline (drives the Total(actual) amber).
     const ucKey = cb?.cost?.useCaseKeyForCard ? cb.cost.useCaseKeyForCard(er) : null;
+    // Table-native (v7.23+): per-use-case records drive cost whenever there's a
+    // use case (>= 1), so the per-row records/override display follows the same
+    // threshold (was 2+, which left a single imported table on global records).
     const multiUC =
-      cb?.cost?.useCaseCount?.() >= 2 && ucKey && ucKey !== cb.cost.OTHER_USE_CASE;
+      cb?.cost?.useCaseCount?.() >= 1 && ucKey && ucKey !== cb.cost.OTHER_USE_CASE;
     const scopedRecords = multiUC
       ? Number(cb.cost.useCaseRecords(ucKey)) || 0
       : Number(cb?.getRecordsCount?.()) || 0;
@@ -4915,49 +4918,6 @@
       g.label = v;
     });
     if (__cb.saveTabs) __cb.saveTabs();
-  }
-
-  // Commit the per-use-case records count onto the L1 group (table-native
-  // v7.23+). Drives the use case's projected cost (cost-model reads
-  // group.records). Empty / 0 clears it (falls back to the table's imported
-  // count, then the global records).
-  function commitGroupRecords(groupId, rawValue) {
-    const g = __cb.model?.getGroup?.(groupId);
-    if (!g) return;
-    const n = Math.max(0, Math.round(Number(String(rawValue).replace(/[^\d]/g, "")) || 0));
-    const next = n > 0 ? n : null;
-    if ((g.records ?? null) === next) return;
-    __cb.model.update(() => {
-      g.records = next;
-    });
-    __cb.canvas?.refreshCreditTotal?.();
-    __cb.canvas?.updateGroupCredits?.();
-    if (__cb.saveTabs) __cb.saveTabs();
-  }
-
-  // Editable "records" pill shown on a use-case (L1) header.
-  function buildUseCaseRecordsControl(section) {
-    const groupId = section.canvasGroupId;
-    const wrap = document.createElement("span");
-    wrap.className = "cb-uc-records";
-    const input = document.createElement("input");
-    input.type = "text";
-    input.className = "cb-uc-records-input";
-    input.value = section.records != null ? Number(section.records).toLocaleString() : "";
-    input.placeholder = "0";
-    input.title = "Records for this use case (drives projected cost)";
-    input.addEventListener("mousedown", (e) => e.stopPropagation());
-    input.addEventListener("click", (e) => e.stopPropagation());
-    input.addEventListener("keydown", (e) => {
-      if (e.key === "Enter") e.target.blur();
-    });
-    input.addEventListener("blur", () => commitGroupRecords(groupId, input.value));
-    const lbl = document.createElement("span");
-    lbl.className = "cb-uc-records-label";
-    lbl.textContent = "records";
-    wrap.appendChild(input);
-    wrap.appendChild(lbl);
-    return wrap;
   }
 
   // Promote a sub-group (L2) to a top-level use case (L1).
@@ -8239,10 +8199,11 @@
     // Non-table headers keep the inline "N data points" count; table headers
     // tuck the counts behind an (i) icon next to the title (below).
     if (!opts.isTable) wrap.appendChild(count);
-    // Use-case (L1) headers carry an editable per-use-case records pill
-    // (table-native v7.23+) — records live on the group, not the global field.
-    if (section.isUseCase && section.canvasGroupId != null) {
-      wrap.appendChild(buildUseCaseRecordsControl(section));
+    // Use-case (L1) headers carry the per-use-case scope row (Records +
+    // Frequency + cost), table-native v7.23+: it reads/writes the group via the
+    // group-aware cost fns + setUseCaseScope.
+    if (section.isUseCase && typeof section.groupId === "string") {
+      wrap.appendChild(buildUseCaseScopeControls(section.groupId));
     }
 
     // Per-table header (Import Clay Table): an (i) icon next to the title holds

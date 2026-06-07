@@ -439,6 +439,7 @@
         viewId: gs.viewId ?? null,
         records: gs.records ?? null,
         frequency: gs.frequency ?? null,
+        clusterKey: gs.clusterKey ?? null,
         // Legacy canvas fields.
         level: gs.level || 0,
         color: gs.color || null,

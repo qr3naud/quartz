@@ -28,10 +28,15 @@
       // each table's records into its ERs' coverageRows so cost + the Coverage
       // column agree (import seeds coverage from the global records, not per
       // table).
-      if (cb.cost.useCaseCount() >= 2) {
+      // Table-native (v7.23+): use the per-use-case path whenever there is at
+      // least ONE use case (not just 2+), so each use case's own records /
+      // frequency drive the total and the header cost pill renders. With no use
+      // cases (pure canvas scope) it stays null and the single-scope path below
+      // (global records) runs unchanged.
+      if (cb.cost.useCaseCount() >= 1) {
         cb.cost.syncUseCaseCoverage();
-        // Also push each table's frequency onto its non-custom ERs so their
-        // chips + details reflect the per-table frequency (not the global).
+        // Also push each use case's frequency onto its non-custom ERs so their
+        // chips + details reflect the per-use-case frequency (not the global).
         cb.cost.syncUseCaseFrequency();
         cb._multiTotals = cb.cost.computeUseCaseTotals(cardsRef(), { viewMode: cb.viewMode });
       } else {
