@@ -928,9 +928,21 @@
       applyActive(startMode);
 
       // Switching to Projected dismisses the session menu (we're leaving Actual).
+      // Projected mirrors Actual's re-click affordance: the first click switches
+      // to Projected; clicking it again (already selected) opens the Projected
+      // menu (e.g. "Copy coverage & fill from Actual") anchored to the freshly-
+      // rebuilt Projected button.
       proj.addEventListener("click", () => {
+        const wasProjected = __cb.viewMode === "projected";
         if (__cb.closeSessionPopover) __cb.closeSessionPopover();
         __cb.setViewMode("projected");
+        if (wasProjected && __cb.tableView?.openProjectedMenu) {
+          const anchor =
+            __cb.overlayEl?.querySelector(
+              ".cb-table-view-mode-toggle .cb-view-mode-projected",
+            ) || proj;
+          __cb.tableView.openProjectedMenu(anchor);
+        }
       });
       // Actual doubles as the session-cutoff menu trigger now (the standalone
       // session button was removed). First click just switches to Actual;

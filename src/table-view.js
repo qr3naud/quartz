@@ -2157,6 +2157,32 @@
     return globalRows;
   }
 
+  // Actual fill % for a data point measured against its (widest) linked
+  // enrichment. Single source of truth shared by the table's Actual fill cell
+  // (coverageFillFor) and the "Copy coverage & fill from Actual" routine so the
+  // copied value always equals what the user sees. Returns one of:
+  //   { loading: true }  full-table null% profile still in flight
+  //   { pct: <0..100> }  computed actual fill
+  //   { pct: null }      no usable signal (no null% / no records)
+  function actualFillPct(erCard, dpCard) {
+    const cb = window.__cb;
+    if (!dpCard) return { pct: null };
+    if (cb?.fullProfilePending?.has?.(dpCard.data.tableId)) return { loading: true };
+    const np = dpCard.data.stats?.nullPercentage;
+    const tot = Number(dpCard.data.stats?.totalRecords) || 0;
+    if (np == null || tot <= 0) return { pct: null };
+    const nonNull = ((100 - Number(np)) / 100) * tot;
+    // Fill divides by rows ATTEMPTED (not coverage.ran, which is now
+    // success-only) so the fill % is unchanged by the success-only coverage
+    // numerator.
+    const cov = erCard?.data?.stats?.coverage;
+    const attempted = Number(cov?.attempted ?? cov?.ran) || 0;
+    const denom = attempted > 0 ? attempted : tot;
+    return {
+      pct: Math.min(100, Math.max(0, Math.round((nonNull / denom) * 100))),
+    };
+  }
+
   function coverageFillFor(erCard, dpCard) {
     const cb = window.__cb;
     const actual = cb?.viewMode === "actual";
@@ -2189,24 +2215,10 @@
     let fill = null;
     if (dpCard) {
       if (actual) {
-        if (cb?.fullProfilePending?.has?.(dpCard.data.tableId)) {
-          fill = { mode: "actual", loading: true };
-        } else {
-          const np = dpCard.data.stats?.nullPercentage;
-          const tot = Number(dpCard.data.stats?.totalRecords) || 0;
-          if (np != null && tot > 0) {
-            const nonNull = ((100 - Number(np)) / 100) * tot;
-            // Fill divides by rows ATTEMPTED (not coverage.ran, which is now
-            // success-only) so the fill % is unchanged by the success-only
-            // coverage numerator.
-            const cov = erCard?.data?.stats?.coverage;
-            const attempted = Number(cov?.attempted ?? cov?.ran) || 0;
-            const denom = attempted > 0 ? attempted : tot;
-            fill = { mode: "actual", pct: Math.min(100, Math.max(0, Math.round((nonNull / denom) * 100))) };
-          } else {
-            fill = { mode: "actual", pct: null };
-          }
-        }
+        const af = actualFillPct(erCard, dpCard);
+        fill = af.loading
+          ? { mode: "actual", loading: true }
+          : { mode: "actual", pct: af.pct };
       } else {
         fill = { mode: "projected", pct: fillRatePct(dpCard.data.fillRate) };
       }
@@ -4049,6 +4061,93 @@
     if (__cb.saveTabs) __cb.saveTabs();
   }
 
+  // Actual "rows this enrichment ran on" — measured cells, falling back to
+  // coverage attempts. Mirrors erRanCount in buildRows so the widest-ER pick
+  // for a DP's fill matches what Actual mode displays.
+  function erActualRanCount(er) {
+    const d = er?.data || {};
+    const cells = Number(d.stats?.spend?.cellCount) || 0;
+    if (cells > 0) return cells;
+    return Number(d.stats?.coverage?.ran) || 0;
+  }
+
+  // The widest linked enrichment for a data point (max actual run count). The
+  // table's Actual fill cell divides by THIS ER's attempted rows, so the copy
+  // routine resolves the same ER to reproduce the displayed %.
+  function widestActualErForDp(dpCard) {
+    const ers = erCardsForDp(dpCard);
+    if (ers.length === 0) return null;
+    let best = null;
+    let widest = -1;
+    for (const e of ers) {
+      const n = erActualRanCount(e);
+      if (n > widest) { widest = n; best = e; }
+    }
+    return best || ers[0];
+  }
+
+  // "Copy coverage & fill from Actual": seed the editable PROJECTED fields from
+  // the loaded actual results so the rep can re-scope (add/remove use cases)
+  // off a real baseline. Copies ONLY volume signals — coverage (ran/total) per
+  // enrichment and fill % per data point. Cost is never copied: per-row credits,
+  // model selection, and pricing stay catalog-based, so the projected total
+  // recomputes from the new volume rather than importing actual spend. The whole
+  // copy is one undoable transaction.
+  function copyActualToProjected() {
+    const cb = window.__cb;
+    const cards = cb.model?.getNodes?.() || [];
+    let touched = false;
+
+    // Enrichments: actual ran -> coverageRows (X, drives projected cost),
+    // actual total -> coverageTotal (Y, display denominator). Marked custom so
+    // they don't snap back to the default records total on the next refresh.
+    for (const er of cards) {
+      if (!isErType(er.data?.type)) continue;
+      const cov = er.data.stats?.coverage;
+      if (!cov || !(Number(cov.total) > 0)) continue;
+      er.data.coverageRows = Number(cov.ran) || 0;
+      er.data.coverageCustom = true;
+      er.data.coverageTotal = Number(cov.total) || 0;
+      er.data.coverageTotalCustom = true;
+      touched = true;
+    }
+
+    // Data points: actual fill % -> fillRate {numerator: pct, denominator: 100}.
+    // Skip when the full-table profile is still loading or there's no usable
+    // null% signal (those DPs keep their current projected fill).
+    for (const dp of cards) {
+      if (dp.data?.type !== "dp") continue;
+      const er = widestActualErForDp(dp);
+      const af = actualFillPct(er, dp);
+      if (af.loading || af.pct == null) continue;
+      dp.data.fillRate = { numerator: af.pct, denominator: 100 };
+      dp.data.fillRateCustom = true;
+      touched = true;
+    }
+
+    if (!touched) return;
+    // update() captures one undo snapshot, notifies subscribers (which refreshes
+    // the table) and schedules persist; saveTabs forces an immediate write to
+    // match the other coverage/fill commit paths.
+    cb.model?.update?.();
+    if (cb.saveTabs) cb.saveTabs();
+    cb.canvas?.refreshCreditTotal?.();
+    cb.canvas?.updateGroupCredits?.();
+    cb.tableView?.refresh?.();
+  }
+
+  // Whether any enrichment in the current tab has loaded actual coverage —
+  // gates the "Copy coverage & fill from Actual" menu item (nothing to copy
+  // before an import's run-status stats have landed).
+  function hasActualCoverage() {
+    const cards = window.__cb.model?.getNodes?.() || [];
+    return cards.some(
+      (c) =>
+        isErType(c.data?.type) &&
+        Number(c.data?.stats?.coverage?.total) > 0,
+    );
+  }
+
   // Per-row note commit. Writes the free-text note onto the row's primary
   // card (DP card for DP rows, ER card for orphan-ER rows) so it round-trips
   // through persistence. Empty text clears the note (drops the badge).
@@ -5788,6 +5887,67 @@
       labelEl.className = "cb-table-view-context-menu-option-label";
       labelEl.textContent = item.label;
       btn.appendChild(labelEl);
+      btn.addEventListener("click", () => {
+        closeContextMenu();
+        item.action();
+      });
+      contextMenuEl.appendChild(btn);
+    }
+
+    document.body.appendChild(contextMenuBackdrop);
+    document.body.appendChild(contextMenuEl);
+    // Anchor below the button, left-aligned, clamped to the viewport.
+    const aRect = anchorEl.getBoundingClientRect();
+    const rect = contextMenuEl.getBoundingClientRect();
+    const left = Math.min(aRect.left, window.innerWidth - rect.width - 8);
+    let top = aRect.bottom + 6;
+    if (top + rect.height > window.innerHeight - 8) {
+      top = Math.max(8, aRect.top - 6 - rect.height);
+    }
+    contextMenuEl.style.left = `${Math.max(8, left)}px`;
+    contextMenuEl.style.top = `${top}px`;
+  }
+
+  // Dropdown under the Projected toggle button. Mirrors openAddMenu's anchored
+  // pattern + the shared context-menu teardown (one menu at a time, Escape /
+  // outside-click close). Opened by re-clicking Projected while already in
+  // projected mode (see buildViewModeToggle). Gated on actual data existing so
+  // it never opens an empty / no-op menu before an import's stats have landed.
+  function openProjectedMenu(anchorEl) {
+    closeContextMenu();
+    if (!hasActualCoverage()) return;
+    const items = [
+      {
+        label: "Copy coverage & fill from Actual",
+        hint: "Sets projected coverage and fill rate to the actual results. Doesn\u2019t change cost.",
+        action: () => copyActualToProjected(),
+      },
+    ];
+
+    contextMenuBackdrop = document.createElement("div");
+    contextMenuBackdrop.className = "cb-table-view-context-backdrop";
+    contextMenuBackdrop.addEventListener("mousedown", (evt) => {
+      evt.stopPropagation();
+      closeContextMenu();
+    });
+
+    contextMenuEl = document.createElement("div");
+    contextMenuEl.className = "cb-table-view-context-menu";
+    contextMenuEl.addEventListener("mousedown", (evt) => evt.stopPropagation());
+    for (const item of items) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "cb-table-view-context-menu-option";
+      const labelEl = document.createElement("div");
+      labelEl.className = "cb-table-view-context-menu-option-label";
+      labelEl.textContent = item.label;
+      btn.appendChild(labelEl);
+      if (item.hint) {
+        const hintEl = document.createElement("div");
+        hintEl.className = "cb-table-view-context-menu-option-hint";
+        hintEl.textContent = item.hint;
+        btn.appendChild(hintEl);
+      }
       btn.addEventListener("click", () => {
         closeContextMenu();
         item.action();
@@ -8174,6 +8334,12 @@
         __cb.showProviderChain(card, btn, { besideEl: erChipMenuEl });
       }
       return true;
+    },
+    // Open the Projected toggle's dropdown ("Copy coverage & fill from Actual").
+    // Called by overlay.js's buildViewModeToggle when the Projected button is
+    // re-clicked while already in projected mode.
+    openProjectedMenu(anchorEl) {
+      openProjectedMenu(anchorEl);
     },
     mount(host) {
       hostEl = host;
