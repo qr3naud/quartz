@@ -13,12 +13,102 @@
 }
 
 /* The scope element: token edits set CSS variables here, so only the descendant
-   swatches + samples change (never :root). Two columns: controls | live preview. */
+   controls + samples change (never :root). A toolbar over two columns. */
 .cb-dex {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 18px 20px 22px;
+}
+
+/* The two columns: token controls | live preview. */
+.cb-dex-columns {
   display: flex;
   gap: 20px;
   align-items: flex-start;
-  padding: 18px 20px 22px;
+}
+
+/* ---- Toolbar: mode toggle + (component mode) component chips ---- */
+.cb-dex-toolbar {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.cb-dex-mode-toggle {
+  display: inline-flex;
+  align-self: flex-start;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--cb-border);
+  border-radius: var(--cb-radius-md);
+  background: var(--cb-surface-muted);
+}
+
+.cb-dex-mode-btn {
+  border: none;
+  border-radius: var(--cb-radius-sm);
+  padding: 4px 12px;
+  background: transparent;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--cb-text-muted);
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+
+.cb-dex-mode-btn-active {
+  background: var(--cb-surface);
+  color: var(--cb-text-primary);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+}
+
+.cb-dex-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.cb-dex-chip {
+  border: 1px solid var(--cb-border);
+  border-radius: var(--cb-radius-pill);
+  padding: 3px 10px;
+  background: var(--cb-surface);
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--cb-text-muted);
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
+}
+
+.cb-dex-chip:hover {
+  border-color: var(--cb-border-strong);
+  color: var(--cb-text-label);
+}
+
+.cb-dex-chip-active {
+  background: var(--cb-accent-surface);
+  border-color: var(--cb-accent-border);
+  color: var(--cb-accent-strong);
+}
+
+/* Component mode: header + per-group subheaders over the affecting tokens. */
+.cb-dex-affect-head {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--cb-text-muted);
+  margin-bottom: 4px;
+}
+
+.cb-dex-subgroup-title {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--cb-text-faint);
+  margin: 12px 0 4px;
 }
 
 /* ---- Left column: grouped token controls ---- */
@@ -261,6 +351,27 @@
   display: flex;
   flex-direction: column;
   gap: 6px;
+}
+
+/* Component mode: samples are clickable to focus; the selected one is ringed
+   and the rest dimmed (hover un-dims for a peek). */
+.cb-dex-sample-click {
+  cursor: pointer;
+  transition: opacity 0.12s;
+}
+
+.cb-dex-sample-dim {
+  opacity: 0.45;
+}
+
+.cb-dex-sample-click:hover {
+  opacity: 1;
+}
+
+.cb-dex-sample-selected {
+  outline: 2px solid var(--cb-accent);
+  outline-offset: 6px;
+  border-radius: 2px;
 }
 
 .cb-dex-sample-label {

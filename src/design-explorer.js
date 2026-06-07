@@ -196,6 +196,12 @@
   // Index of the single expanded accordion group (-1 = all collapsed). Persists
   // across Reset; defaults to the first group when the tool opens.
   let openGroupIdx = 0;
+  // View mode: "group" (token-group accordion -> affected components) or
+  // "component" (pick a component -> only the tokens that affect it).
+  let viewMode = "group";
+  // Selected component key in component mode (resolved to SAMPLES[0] lazily, as
+  // SAMPLES is declared further down).
+  let selectedSampleKey = null;
   // Token name -> overridden value (preview only). Empty = pristine defaults.
   const overrides = new Map();
   // Token name -> shipped default, snapshotted from :root when the tool opens.
@@ -228,21 +234,21 @@
     return overrides.has(name) ? overrides.get(name) : defaultValue(name);
   }
 
-  // Filter the live preview to the samples the active group affects (all when
-  // none is open), and label the preview with the active group's name. The match
-  // is derived: a sample shows when one of its declared `uses` prefixes covers a
-  // token short-name (--cb-x -> "x") in the open group — so it self-maintains as
-  // tokens/samples change.
+  // Group mode: filter the live preview to the samples the open group affects
+  // (all when none is open) and label the preview. A sample shows when it uses a
+  // token that's in the open group (exact membership against the group's token
+  // short-names, --cb-x -> "x").
   function updatePreview(idx) {
     if (!scopeEl) return;
     const group = idx >= 0 && GROUPS ? GROUPS[idx] : null;
     const shorts = group ? group.tokens.map(([n]) => n.slice(5)) : null;
     scopeEl.querySelectorAll("[data-dex-sample]").forEach((el) => {
+      el.classList.remove("cb-dex-sample-selected", "cb-dex-sample-dim", "cb-dex-sample-click");
       let show = true;
       if (shorts) {
         const sample = SAMPLES.find((s) => s.key === el.dataset.dexSample);
         const uses = sample ? sample.uses : [];
-        show = uses.some((u) => shorts.some((sn) => sn === u || sn.startsWith(u + "-")));
+        show = uses.some((u) => shorts.includes(u));
       }
       el.style.display = show ? "" : "none";
     });
@@ -268,14 +274,87 @@
     updatePreview(idx);
   }
 
-  // (Re)build the gallery into the scope element and apply the current open group.
-  // Used on open and after Reset.
+  // The selected component key in component mode, defaulting to the first sample.
+  function selectedKey() {
+    if (selectedSampleKey && SAMPLES.some((s) => s.key === selectedSampleKey)) {
+      return selectedSampleKey;
+    }
+    return SAMPLES[0] ? SAMPLES[0].key : null;
+  }
+
+  // Top toolbar: the By group / By component mode toggle, plus (component mode)
+  // a chip per component to pick which one to explore.
+  function buildToolbar() {
+    const bar = document.createElement("div");
+    bar.className = "cb-dex-toolbar";
+
+    const toggle = document.createElement("div");
+    toggle.className = "cb-dex-mode-toggle";
+    [["group", "By group"], ["component", "By component"]].forEach(([m, label]) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "cb-dex-mode-btn" + (viewMode === m ? " cb-dex-mode-btn-active" : "");
+      b.textContent = label;
+      b.addEventListener("click", () => {
+        if (viewMode === m) return;
+        viewMode = m;
+        renderGallery();
+      });
+      toggle.appendChild(b);
+    });
+    bar.appendChild(toggle);
+
+    if (viewMode === "component") {
+      const chips = document.createElement("div");
+      chips.className = "cb-dex-chips";
+      const sel = selectedKey();
+      for (const s of SAMPLES) {
+        const chip = document.createElement("button");
+        chip.type = "button";
+        chip.className = "cb-dex-chip" + (s.key === sel ? " cb-dex-chip-active" : "");
+        chip.textContent = s.label;
+        chip.addEventListener("click", () => {
+          selectedSampleKey = s.key;
+          renderGallery();
+        });
+        chips.appendChild(chip);
+      }
+      bar.appendChild(chips);
+    }
+    return bar;
+  }
+
+  // Component mode: highlight the selected sample (ring) and dim the rest; every
+  // sample stays visible + clickable so you can switch by clicking the preview.
+  function applyComponentSelection() {
+    if (!scopeEl) return;
+    const sel = selectedKey();
+    const sample = SAMPLES.find((s) => s.key === sel);
+    scopeEl.querySelectorAll("[data-dex-sample]").forEach((el) => {
+      el.style.display = "";
+      const isSel = el.dataset.dexSample === sel;
+      el.classList.toggle("cb-dex-sample-selected", isSel);
+      el.classList.toggle("cb-dex-sample-dim", !isSel);
+    });
+    const heading = scopeEl.querySelector(".cb-dex-preview-heading");
+    if (heading) {
+      heading.textContent = sample ? `Live preview \u00b7 ${sample.label}` : "Live preview";
+    }
+  }
+
+  // (Re)build the gallery into the scope element and apply the current mode.
+  // Used on open, on mode/selection change, and after Reset.
   function renderGallery() {
     if (!scopeEl) return;
     scopeEl.innerHTML = "";
-    scopeEl.appendChild(buildTokensColumn());
-    scopeEl.appendChild(buildSamples());
-    setOpenGroup(openGroupIdx);
+    scopeEl.appendChild(buildToolbar());
+    const columns = document.createElement("div");
+    columns.className = "cb-dex-columns";
+    columns.appendChild(buildTokensColumn());
+    columns.appendChild(buildSamples());
+    scopeEl.appendChild(columns);
+    if (viewMode === "component") applyComponentSelection();
+    else setOpenGroup(openGroupIdx);
   }
 
   // Apply a preview edit: record it + set the variable on the gallery scope only.
@@ -627,27 +706,31 @@
   // Declarative sample list. `uses` lists the token short-names (--cb-x -> "x")
   // each sample consumes; updatePreview matches these against the open group's
   // tokens (prefix-aware) to show only the relevant samples.
+  // `uses` is the EXACT set of token short-names (--cb-x -> "x") each sample
+  // consumes, compiled from the component classes' var(--cb-*) usages. Drives
+  // both the group->sample filter (group mode) and the token list (component
+  // mode), so both views are honest. Keep in sync if a component's CSS changes.
   const SAMPLES = [
     { key: "pill", label: "Cost pill", build: samplePill,
       uses: ["action", "credit", "border-pill", "surface", "pill-height", "radius-pill", "pill-text"] },
     { key: "dollar", label: "Dollar pill", build: sampleDollar,
       uses: ["action", "border-pill", "surface", "pill-height", "radius-pill", "pill-text"] },
     { key: "metric", label: "Metric cards", build: sampleMetricCards,
-      uses: ["surface", "border", "radius", "action", "credit", "text"] },
+      uses: ["surface", "border", "radius-lg", "surface-muted", "text-muted", "text-faint", "text-primary", "text-label", "action", "credit"] },
     { key: "inputs", label: "Input + dropdown", build: sampleInputs,
-      uses: ["border", "surface", "text", "input-height", "radius", "accent"] },
+      uses: ["border", "radius-sm", "surface", "text-primary", "input-height", "text-faint", "border-strong"] },
     { key: "prices", label: "Price + floor boxes", build: samplePrices,
-      uses: ["surface", "text", "radius", "input-height", "border"] },
+      uses: ["surface-muted", "radius-sm", "surface-subtle", "text-label", "input-height", "text-muted"] },
     { key: "surface", label: "Surface + text", build: sampleSurface,
-      uses: ["surface", "border", "radius", "accent", "green"] },
+      uses: ["surface", "border", "text-primary", "accent-deep", "green", "radius-md"] },
     { key: "tags", label: "Tags + pills", build: sampleTags,
-      uses: ["accent", "amber", "red", "action", "credit"] },
+      uses: ["accent-surface", "accent-strong", "radius-pill", "amber-surface", "amber-text", "red-surface", "red-text", "action-surface", "action-deep", "credit-surface", "credit-deep"] },
     { key: "badges", label: "Approval badges", build: sampleBadges,
-      uses: ["green", "amber", "red"] },
+      uses: ["green-surface", "green", "amber-surface", "amber-text", "red-surface", "red-text"] },
     { key: "matrix", label: "Band matrix crosshair", build: sampleMatrices,
-      uses: ["action", "credit", "shadow", "surface", "border"] },
+      uses: ["surface", "border", "radius-lg", "shadow-menu", "text-label", "action-surface", "action-deep", "action", "action-strong", "credit-surface", "credit-deep", "credit", "credit-strong"] },
     { key: "overridden", label: "Overridden outline", build: sampleOverridden,
-      uses: ["amber", "border", "surface", "text", "input-height", "radius"] },
+      uses: ["border", "radius-sm", "surface", "text-primary", "input-height", "amber", "amber-ring"] },
   ];
 
   function buildSamples() {
@@ -660,7 +743,17 @@
     wrap.appendChild(heading);
 
     for (const s of SAMPLES) {
-      wrap.appendChild(sampleBlock(s.key, s.label, s.build()));
+      const block = sampleBlock(s.key, s.label, s.build());
+      // Component mode: clicking a sample focuses it (same as its chip).
+      if (viewMode === "component") {
+        block.classList.add("cb-dex-sample-click");
+        block.title = "Explore " + s.label;
+        block.addEventListener("click", () => {
+          selectedSampleKey = s.key;
+          renderGallery();
+        });
+      }
+      wrap.appendChild(block);
     }
     return wrap;
   }
@@ -696,9 +789,50 @@
 
   // Builds the token-controls column (left): one collapsible accordion group per
   // token group. Headers toggle via setOpenGroup (single-open).
+  // Component mode: a flat, fully-expanded list of only the tokens that affect
+  // the selected component, grouped under their token-group titles.
+  function buildComponentTokens(col) {
+    const sel = selectedKey();
+    const sample = SAMPLES.find((s) => s.key === sel);
+    const uses = sample ? sample.uses : [];
+    let count = 0;
+    GROUPS.forEach((group) => {
+      group.tokens.forEach(([n]) => {
+        if (uses.includes(n.slice(5))) count++;
+      });
+    });
+
+    const hdr = document.createElement("div");
+    hdr.className = "cb-dex-affect-head";
+    hdr.textContent =
+      `${count} token${count === 1 ? "" : "s"} affect ${sample ? sample.label : "this"}`;
+    col.appendChild(hdr);
+
+    GROUPS.forEach((group) => {
+      const rows = group.tokens.filter(([n]) => uses.includes(n.slice(5)));
+      if (!rows.length) return;
+      const sub = document.createElement("div");
+      sub.className = "cb-dex-subgroup-title";
+      sub.textContent = group.title;
+      col.appendChild(sub);
+      for (const [name, kind] of rows) col.appendChild(buildTokenRow(name, kind));
+    });
+
+    if (!count) {
+      const empty = document.createElement("div");
+      empty.className = "cb-dex-loading";
+      empty.textContent = "No tokens found for this component.";
+      col.appendChild(empty);
+    }
+  }
+
   function buildTokensColumn() {
     const col = document.createElement("div");
     col.className = "cb-dex-tokens";
+    if (viewMode === "component") {
+      buildComponentTokens(col);
+      return col;
+    }
     GROUPS.forEach((group, gi) => {
       const groupEl = document.createElement("div");
       groupEl.className = "cb-dex-group";
