@@ -115,14 +115,106 @@
     '<path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>' +
     '</svg>';
 
+  // Flag glyph for the Feature Flags admin row.
+  const FLAG_ICON_SVG =
+    '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" ' +
+    'fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" ' +
+    'stroke-linejoin="round" aria-hidden="true">' +
+    '<path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/>' +
+    '<line x1="4" y1="22" x2="4" y2="15"/>' +
+    '</svg>';
+
   let moreMenuEl = null;
   let moreMenuBackdrop = null;
-  let moreSubmenuEl = null;
+  // All open left-flyout submenus (Admin, Archived, …). Tracked as a list so
+  // closeMoreMenu tears every one down — there can be more than one.
+  let moreSubmenuEls = [];
 
   function closeMoreMenu() {
     if (moreMenuEl) { moreMenuEl.remove(); moreMenuEl = null; }
     if (moreMenuBackdrop) { moreMenuBackdrop.remove(); moreMenuBackdrop = null; }
-    if (moreSubmenuEl) { moreSubmenuEl.remove(); moreSubmenuEl = null; }
+    for (const el of moreSubmenuEls) el.remove();
+    moreSubmenuEls = [];
+  }
+
+  // Build a More-menu row that reveals a left-opening flyout submenu on hover or
+  // click. Centralizes the chevron-left row, left-flyout positioning, and
+  // show/hide timing so grouped sections (Admin, Archived, …) behave identically
+  // and the menu scales as more tools are added. `items` entries are either
+  // pre-built button elements or { label, icon, title, state, onClick, disabled }
+  // descriptors. Returns the row button; the submenu is appended to <body> and
+  // registered in moreSubmenuEls for cleanup.
+  function buildMoreSubmenu(opts) {
+    const row = document.createElement("button");
+    row.type = "button";
+    row.className = "cb-export-menu-option cb-more-menu-option cb-more-menu-has-submenu";
+    if (opts.title) row.title = opts.title;
+    row.innerHTML =
+      `<span class="cb-more-menu-icon">${CHEVRON_LEFT_ICON_SVG}</span>` +
+      `<span class="cb-more-menu-label">${opts.label}</span>`;
+
+    const submenu = document.createElement("div");
+    submenu.className = "cb-export-menu cb-more-menu cb-more-submenu";
+    submenu.style.display = "none";
+    submenu.addEventListener("mousedown", (evt) => evt.stopPropagation());
+
+    for (const item of opts.items || []) {
+      if (item instanceof HTMLElement) { submenu.appendChild(item); continue; }
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className =
+        "cb-export-menu-option cb-more-menu-option" +
+        (item.disabled ? " cb-more-menu-option-disabled" : "");
+      if (item.disabled) b.disabled = true;
+      if (item.title) b.title = item.title;
+      b.innerHTML =
+        `<span class="cb-more-menu-icon">${item.icon || ""}</span>` +
+        `<span class="cb-more-menu-label">${item.label}</span>` +
+        (item.state != null ? `<span class="cb-more-menu-state">${item.state}</span>` : "");
+      if (item.onClick && !item.disabled) {
+        b.addEventListener("click", (evt) => {
+          evt.stopPropagation();
+          closeMoreMenu();
+          item.onClick();
+        });
+      }
+      submenu.appendChild(b);
+    }
+
+    let hideTimer = null;
+    const position = () => {
+      const r = row.getBoundingClientRect();
+      submenu.style.position = "fixed";
+      submenu.style.top = r.top + "px";
+      // Open to the LEFT: pin the submenu's right edge just left of the row.
+      submenu.style.right = Math.max(8, window.innerWidth - r.left + 6) + "px";
+      submenu.style.zIndex = "9999999";
+    };
+    const show = () => {
+      clearTimeout(hideTimer);
+      position();
+      submenu.style.display = "block";
+      row.classList.add("cb-more-menu-option-active");
+    };
+    const hide = () => {
+      hideTimer = setTimeout(() => {
+        submenu.style.display = "none";
+        row.classList.remove("cb-more-menu-option-active");
+      }, 160);
+    };
+    row.addEventListener("mouseenter", show);
+    row.addEventListener("mouseleave", hide);
+    row.addEventListener("click", (evt) => {
+      evt.stopPropagation();
+      if (submenu.style.display === "none") show();
+      else hide();
+    });
+    submenu.addEventListener("mouseenter", () => clearTimeout(hideTimer));
+    submenu.addEventListener("mouseleave", hide);
+
+    moreSubmenuEls.push(submenu);
+    document.body.appendChild(submenu);
+    return row;
   }
 
   __cb.closeMoreMenu = closeMoreMenu;
@@ -259,23 +351,32 @@
     // signed `is_admin` claim (src/auth.js), not a client-side email compare.
     const isArchiveAdmin = !!__cb.isAdmin;
     if (isArchiveAdmin) {
-      // Admin — maintainer-only settings. Edits public.app_settings in Supabase
-      // (e.g. the POC request Slack channel) so operational config lives in the
-      // DB, not code or secrets. Opens the modal in src/admin-settings.js.
-      if (__cb.openAdminSettings) {
-        const adminItem = document.createElement("button");
-        adminItem.type = "button";
-        adminItem.className = "cb-export-menu-option cb-more-menu-option";
-        adminItem.title = "Edit Quartz operational settings";
-        adminItem.innerHTML =
-          `<span class="cb-more-menu-icon">${ADMIN_ICON_SVG}</span>` +
-          `<span class="cb-more-menu-label">Admin</span>`;
-        adminItem.addEventListener("click", (evt) => {
-          evt.stopPropagation();
-          closeMoreMenu();
-          __cb.openAdminSettings();
+      // Admin — a chevron-left submenu grouping maintainer tools, so the row
+      // reads like "Archived" and scales as more admin tools are added.
+      //   - Secret Configuration: edits public.app_settings in Supabase (e.g.
+      //     the POC request Slack channel) — src/admin-settings.js.
+      //   - Feature Flags: read-only feature-flag & gating reference.
+      const adminToolItems = [];
+      if (__cb.openSecretConfig) {
+        adminToolItems.push({
+          label: "Secret Configuration",
+          icon: ADMIN_ICON_SVG,
+          title: "Edit operational settings (e.g. the Slack channel)",
+          onClick: () => __cb.openSecretConfig(),
         });
-        moreMenuEl.appendChild(adminItem);
+      }
+      if (__cb.openFeatureFlags) {
+        adminToolItems.push({
+          label: "Feature Flags",
+          icon: FLAG_ICON_SVG,
+          title: "Feature flags & gating for your session",
+          onClick: () => __cb.openFeatureFlags(),
+        });
+      }
+      if (adminToolItems.length) {
+        moreMenuEl.appendChild(
+          buildMoreSubmenu({ label: "Admin", title: "Admin tools", items: adminToolItems }),
+        );
       }
 
       // View (Canvas / Tables) toggle. Canvas is allow-listed; otherwise the
@@ -327,56 +428,10 @@
         if (__cb.setProMode) __cb.setProMode(!__cb.proMode);
       });
 
-      // The Archived row + its left-opening flyout submenu.
-      const archivedItem = document.createElement("button");
-      archivedItem.type = "button";
-      archivedItem.className = "cb-export-menu-option cb-more-menu-option cb-more-menu-has-submenu";
-      archivedItem.title = "Archived tools";
-      archivedItem.innerHTML =
-        `<span class="cb-more-menu-icon">${CHEVRON_LEFT_ICON_SVG}</span>` +
-        `<span class="cb-more-menu-label">Archived</span>`;
-
-      const submenu = document.createElement("div");
-      submenu.className = "cb-export-menu cb-more-menu cb-more-submenu";
-      submenu.style.display = "none";
-      submenu.addEventListener("mousedown", (evt) => evt.stopPropagation());
-      submenu.appendChild(viewItem);
-      submenu.appendChild(proItem);
-
-      let submenuHideTimer = null;
-      const positionSubmenu = () => {
-        const r = archivedItem.getBoundingClientRect();
-        submenu.style.position = "fixed";
-        submenu.style.top = r.top + "px";
-        // Open to the LEFT: pin the submenu's right edge just left of the row.
-        submenu.style.right = Math.max(8, window.innerWidth - r.left + 6) + "px";
-        submenu.style.zIndex = "9999999";
-      };
-      const showSubmenu = () => {
-        clearTimeout(submenuHideTimer);
-        positionSubmenu();
-        submenu.style.display = "block";
-        archivedItem.classList.add("cb-more-menu-option-active");
-      };
-      const hideSubmenu = () => {
-        submenuHideTimer = setTimeout(() => {
-          submenu.style.display = "none";
-          archivedItem.classList.remove("cb-more-menu-option-active");
-        }, 160);
-      };
-      archivedItem.addEventListener("mouseenter", showSubmenu);
-      archivedItem.addEventListener("mouseleave", hideSubmenu);
-      archivedItem.addEventListener("click", (evt) => {
-        evt.stopPropagation();
-        if (submenu.style.display === "none") showSubmenu();
-        else hideSubmenu();
-      });
-      submenu.addEventListener("mouseenter", () => clearTimeout(submenuHideTimer));
-      submenu.addEventListener("mouseleave", hideSubmenu);
-
-      moreMenuEl.appendChild(archivedItem);
-      moreSubmenuEl = submenu;
-      document.body.appendChild(submenu);
+      // The Archived row + its left-opening flyout submenu (View + Pro Mode).
+      moreMenuEl.appendChild(
+        buildMoreSubmenu({ label: "Archived", title: "Archived tools", items: [viewItem, proItem] }),
+      );
     }
 
     document.body.appendChild(moreMenuBackdrop);

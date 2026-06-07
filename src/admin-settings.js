@@ -56,7 +56,7 @@
   ];
 
   const MAINTAINER_SURFACES = [
-    { label: "Admin settings",      hint: "This modal (edits app_settings)." },
+    { label: "Secret configuration", hint: "Edits app_settings (e.g. Slack channels)." },
     { label: "Submit to deal desk", hint: "Owner-only row in the Export menu." },
     { label: "Export as Table",     hint: "Owner-only row in the Export menu." },
     { label: "Canvas view",         hint: "The Cards / Tables toggle in the More menu." },
@@ -153,8 +153,12 @@
     if (evt.key === "Escape") { evt.stopPropagation(); close(); }
   }
 
-  __cb.openAdminSettings = function openAdminSettings() {
+  // view: "secrets" (editable app_settings — Slack channels) or "flags"
+  // (read-only feature-flag & gating reference). The two share this modal shell
+  // but render different bodies/footers so each admin tool is its own surface.
+  function openAdminModal(view) {
     close();
+    const isFlags = view === "flags";
 
     backdropEl = document.createElement("div");
     backdropEl.className = "cb-export-modal-backdrop";
@@ -172,10 +176,12 @@
     titleWrap.className = "cb-export-modal-title-wrap";
     const title = document.createElement("h2");
     title.className = "cb-export-modal-title";
-    title.textContent = "Admin settings";
+    title.textContent = isFlags ? "Feature flags & gating" : "Secret configuration";
     const subtitle = document.createElement("div");
     subtitle.className = "cb-export-modal-subtitle";
-    subtitle.textContent = "Operational config stored in Supabase (app_settings). Maintainer-only.";
+    subtitle.textContent = isFlags
+      ? "Read-only reference, live for your current session. Maintainer-only."
+      : "Operational config stored in Supabase (app_settings). Maintainer-only.";
     titleWrap.appendChild(title);
     titleWrap.appendChild(subtitle);
     const closeBtn = document.createElement("button");
@@ -192,23 +198,29 @@
     const body = document.createElement("div");
     body.className = "cb-export-modal-body cb-gtme-body";
 
-    const fieldsWrap = document.createElement("div");
-    fieldsWrap.style.cssText = "display:flex;flex-direction:column;gap:10px;";
-    fieldsWrap.textContent = "Loading…";
-    fieldsWrap.style.opacity = ".7";
-    body.appendChild(fieldsWrap);
+    // Feature Flags view: just the read-only gating reference. Secret config
+    // view: the editable app_settings form (Slack channels, etc.).
+    let fieldsWrap = null;
+    let errorEl = null;
+    if (isFlags) {
+      body.appendChild(buildGatingSection());
+    } else {
+      fieldsWrap = document.createElement("div");
+      // Two clean columns: each setting (label + input + hint) is a grid cell.
+      fieldsWrap.style.cssText =
+        "display:grid;grid-template-columns:repeat(2, minmax(0, 1fr));gap:16px 20px;align-items:start;";
+      fieldsWrap.textContent = "Loading…";
+      fieldsWrap.style.opacity = ".7";
+      body.appendChild(fieldsWrap);
 
-    const errorEl = document.createElement("div");
-    errorEl.className = "cb-gtme-error";
-    errorEl.style.display = "none";
-    body.appendChild(errorEl);
+      errorEl = document.createElement("div");
+      errorEl.className = "cb-gtme-error";
+      errorEl.style.display = "none";
+      body.appendChild(errorEl);
+    }
 
-    // Read-only feature-flag & gating reference (renders immediately; doesn't
-    // depend on the app_settings load below).
-    body.appendChild(buildGatingSection());
-
-    function showError(msg) { errorEl.textContent = msg; errorEl.style.display = ""; }
-    function clearError() { errorEl.textContent = ""; errorEl.style.display = "none"; }
+    function showError(msg) { if (errorEl) { errorEl.textContent = msg; errorEl.style.display = ""; } }
+    function clearError() { if (errorEl) { errorEl.textContent = ""; errorEl.style.display = "none"; } }
 
     // key -> { input, initial }
     const editors = new Map();
@@ -229,7 +241,6 @@
         const value = byKey.get(key) || "";
         const field = document.createElement("label");
         field.className = "cb-gtme-field cb-gtme-field-grow";
-        field.style.display = "block";
         const label = document.createElement("span");
         label.className = "cb-gtme-field-label";
         label.textContent = meta.label || key;
@@ -272,21 +283,33 @@
     footer.className = "cb-modal-footer";
     const footerHint = document.createElement("div");
     footerHint.className = "cb-export-modal-footer-hint";
-    footerHint.textContent = "Stored in Supabase \u00b7 maintainer only.";
+    footerHint.textContent = isFlags
+      ? "Read-only reference \u00b7 maintainer only."
+      : "Stored in Supabase \u00b7 maintainer only.";
     const footerActions = document.createElement("div");
     footerActions.className = "cb-modal-footer-actions";
-    const cancelBtn = document.createElement("button");
-    cancelBtn.type = "button";
-    cancelBtn.className = "cb-modal-btn cb-modal-btn-ghost";
-    cancelBtn.textContent = "Cancel";
-    cancelBtn.addEventListener("click", close);
-    const saveBtn = document.createElement("button");
-    saveBtn.type = "button";
-    saveBtn.className = "cb-modal-btn cb-modal-btn-primary";
-    saveBtn.textContent = "Save";
-    saveBtn.addEventListener("click", onSave);
-    footerActions.appendChild(cancelBtn);
-    footerActions.appendChild(saveBtn);
+    let saveBtn = null;
+    if (isFlags) {
+      const doneBtn = document.createElement("button");
+      doneBtn.type = "button";
+      doneBtn.className = "cb-modal-btn cb-modal-btn-primary";
+      doneBtn.textContent = "Done";
+      doneBtn.addEventListener("click", close);
+      footerActions.appendChild(doneBtn);
+    } else {
+      const cancelBtn = document.createElement("button");
+      cancelBtn.type = "button";
+      cancelBtn.className = "cb-modal-btn cb-modal-btn-ghost";
+      cancelBtn.textContent = "Cancel";
+      cancelBtn.addEventListener("click", close);
+      saveBtn = document.createElement("button");
+      saveBtn.type = "button";
+      saveBtn.className = "cb-modal-btn cb-modal-btn-primary";
+      saveBtn.textContent = "Save";
+      saveBtn.addEventListener("click", onSave);
+      footerActions.appendChild(cancelBtn);
+      footerActions.appendChild(saveBtn);
+    }
     footer.appendChild(footerHint);
     footer.appendChild(footerActions);
 
@@ -335,6 +358,13 @@
     document.body.appendChild(backdropEl);
     document.addEventListener("keydown", onKeydown);
 
-    load();
-  };
+    if (!isFlags) load();
+  }
+
+  // Secret configuration — the editable app_settings form (e.g. Slack channels).
+  __cb.openSecretConfig = function openSecretConfig() { openAdminModal("secrets"); };
+  // Feature flags & gating — the read-only reference panel.
+  __cb.openFeatureFlags = function openFeatureFlags() { openAdminModal("flags"); };
+  // Back-compat alias for any caller still using the old name.
+  __cb.openAdminSettings = __cb.openSecretConfig;
 })();

@@ -574,6 +574,13 @@
   color: #d97706;
 }
 
+/* Submenu rows (Admin, Archived): the chevron turns indigo on hover and while
+   the flyout is open, instead of the amber used by active toggle rows. */
+.cb-more-menu-has-submenu:hover .cb-more-menu-icon,
+.cb-more-menu-has-submenu.cb-more-menu-option-active .cb-more-menu-icon {
+  color: #6366f1;
+}
+
 /* Disabled row (e.g. the Canvas/Tables "View" toggle when the user isn't
    allow-listed for canvas). Greyed out, non-interactive, and no hover
    highlight so it reads as "locked" rather than clickable. */
