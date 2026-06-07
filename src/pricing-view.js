@@ -1173,10 +1173,14 @@
       }
       menu.appendChild(b);
     };
-    mk("Rename", () => {
-      __cb._pricingOptionRenaming = opt.id;
-      render();
-    });
+    mk(
+      "Rename",
+      () => {
+        __cb._pricingOptionRenaming = opt.id;
+        render();
+      },
+      opt.minimized,
+    );
     mk(opt.minimized ? "Restore" : "Minimize", () => {
       if (opt.minimized) {
         __cb._pricingOptionJustRestored = opt.id;
