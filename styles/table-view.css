@@ -810,24 +810,14 @@
 
 /* Cost value pill — Clay's segmented credit/action badge group, rebuilt with
    Phosphor StarFour (actions, nightshade) + Coin/Coins (credits, matcha) in
-   duotone weight. Flat (no shadow); full-pill radius and nightshade-200 border.
-   Shares the 22px standard pill height with the frequency + model pills. */
-.cb-table-view-er-cost-pill {
-  display: inline-flex;
-  align-items: stretch;
-  height: 22px;
-  box-sizing: border-box;
-  border: 1px solid #e6e8ec;
-  border-radius: 999px;
-  overflow: hidden;
-  font-variant-numeric: tabular-nums;
-}
+   duotone weight. The pill shell (22px height, full radius, border) comes from
+   the shared .cb-pill primitive; this file only carries the deltas. */
 
 /* Amber outline on a details-popover cost pill: frequency override (annualized)
    or a Records override on the Actual total. Matches the Records-field amber. */
 .cb-table-view-er-cost-pill.cb-table-view-er-cost-pill-override {
-  border-color: #f59e0b;
-  box-shadow: 0 0 0 1.5px rgba(245, 158, 11, 0.18);
+  border-color: var(--cb-amber);
+  box-shadow: 0 0 0 1.5px var(--cb-amber-ring);
 }
 
 /* "Cost per row" details row: the cost pill + the inline editable ×N badge. */
@@ -837,20 +827,17 @@
   gap: 6px;
 }
 
+/* Segment layout (flex, gap, padding) comes from the shared .cb-pill-seg
+   primitive; this carries the cost-pill-specific type + color. */
 .cb-table-view-er-cost-seg {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 0 10px;
   font-size: 11.5px;
   font-weight: 500;
   color: #525a69;
-  background: #ffffff;
-  white-space: nowrap;
+  background: var(--cb-surface);
 }
 
 .cb-table-view-er-cost-seg+.cb-table-view-er-cost-seg {
-  border-left: 1px solid #e6e8ec;
+  border-left: 1px solid var(--cb-border-pill);
 }
 
 .cb-table-view-er-cost-seg svg {
@@ -3007,6 +2994,7 @@
   gap: 10px;
 }
 
+/* Surface (background + border) comes from the .cb-surface primitive. */
 .cb-pricing-metric-card {
   display: flex;
   flex-direction: column;
@@ -3014,9 +3002,7 @@
   justify-content: center;
   gap: 8px;
   padding: 12px 10px;
-  border: 1px solid var(--cb-border);
   border-radius: var(--cb-radius-lg);
-  background: var(--cb-surface);
   text-align: center;
 }
 
@@ -3177,22 +3163,8 @@
   min-width: 0;
 }
 
-/* Credits input + custom Actions volume dropdown trigger share a look. */
-.cb-ptg-input,
-.cb-ptg-vol {
-  width: 100%;
-  box-sizing: border-box;
-  height: var(--cb-input-height);
-  padding: 0 10px;
-  border: 1px solid var(--cb-border);
-  border-radius: var(--cb-radius-sm);
-  background: var(--cb-surface);
-  font-family: inherit;
-  font-size: 13px;
-  color: var(--cb-text-primary);
-  font-variant-numeric: tabular-nums;
-}
-
+/* Credits input + custom Actions volume dropdown trigger share the boxed-control
+   base from the .cb-input-box primitive; only deltas live here. */
 .cb-ptg-input:focus {
   outline: none;
   border-color: var(--cb-accent);

@@ -1,0 +1,52 @@
+/* Quartz CSS primitives — small, composable building blocks layered on top of
+   tokens.css. Feature classes add a primitive as their BASE and keep only their
+   own deltas; since the primitive and the feature class have equal specificity
+   and never declare the same property, the computed style is unchanged. This is
+   a pure de-duplication of repeated declarations, not a visual change.
+
+   Loaded after tokens.css and before the feature stylesheets in the manifest. */
+
+/* Segmented pill shell — the cost badge group, the session pill, etc. The 22px
+   standard pill height + full-radius border; segments live inside. */
+.cb-pill {
+  display: inline-flex;
+  align-items: stretch;
+  height: var(--cb-pill-height);
+  box-sizing: border-box;
+  border: 1px solid var(--cb-border-pill);
+  border-radius: var(--cb-radius-pill);
+  overflow: hidden;
+  font-variant-numeric: tabular-nums;
+}
+
+/* One segment inside a .cb-pill — layout only; the feature owns color/size and
+   the inter-segment divider. */
+.cb-pill-seg {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 10px;
+  white-space: nowrap;
+}
+
+/* Boxed control (text input / dropdown trigger) at the standard 32px height. */
+.cb-input-box {
+  width: 100%;
+  box-sizing: border-box;
+  height: var(--cb-input-height);
+  padding: 0 10px;
+  border: 1px solid var(--cb-border);
+  border-radius: var(--cb-radius-sm);
+  background: var(--cb-surface);
+  font-family: inherit;
+  font-size: 13px;
+  color: var(--cb-text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+/* White card surface: background + border. The feature sets its own radius +
+   padding + layout (radii vary: metric cards use lg, option boxes use md). */
+.cb-surface {
+  background: var(--cb-surface);
+  border: 1px solid var(--cb-border);
+}

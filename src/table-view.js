@@ -1508,7 +1508,7 @@
   function buildCostBadges(credits, actions, opts) {
     opts = opts || {};
     const pill = document.createElement("span");
-    pill.className = "cb-table-view-er-cost-pill cb-session-cost-pill";
+    pill.className = "cb-pill cb-table-view-er-cost-pill cb-session-cost-pill";
     const aNum = Number(actions) || 0;
     const cNum = Number(credits) || 0;
     // Per-record values are small fractions, so show up to 2 decimals instead of
@@ -1520,12 +1520,12 @@
     const showAction = opts.perRecord ? aNum > 0 : Math.round(aNum) > 0;
     if (showAction) {
       const seg = document.createElement("span");
-      seg.className = "cb-table-view-er-cost-seg cb-table-view-er-cost-actions";
+      seg.className = "cb-pill-seg cb-table-view-er-cost-seg cb-table-view-er-cost-actions";
       seg.innerHTML = starFourSvg(12) + `<span>${fmt(aNum)}</span>`;
       pill.appendChild(seg);
     }
     const credSeg = document.createElement("span");
-    credSeg.className = "cb-table-view-er-cost-seg cb-table-view-er-cost-credits";
+    credSeg.className = "cb-pill-seg cb-table-view-er-cost-seg cb-table-view-er-cost-credits";
     const coin = Math.abs(cNum) <= 1 ? coinSvg(12) : coinsSvg(12);
     credSeg.innerHTML = coin + `<span>${fmt(cNum)}</span>`;
     pill.appendChild(credSeg);
@@ -6212,19 +6212,19 @@
     const actions = (Number(c.actions) || 0) * mult;
 
     const pill = document.createElement("span");
-    pill.className = "cb-table-view-er-cost-pill";
+    pill.className = "cb-pill cb-table-view-er-cost-pill";
     if (overridden) pill.classList.add("cb-table-view-er-cost-pill-override");
 
     if (!calculating && actions > 0) {
       const seg = document.createElement("span");
-      seg.className = "cb-table-view-er-cost-seg cb-table-view-er-cost-actions";
+      seg.className = "cb-pill-seg cb-table-view-er-cost-seg cb-table-view-er-cost-actions";
       seg.title = `${formatNumber(actions)} action${actions === 1 ? "" : "s"}`;
       seg.innerHTML = starFourSvg(12) + `<span>${formatNumber(actions)}</span>`;
       pill.appendChild(seg);
     }
 
     const credSeg = document.createElement("span");
-    credSeg.className = "cb-table-view-er-cost-seg cb-table-view-er-cost-credits";
+    credSeg.className = "cb-pill-seg cb-table-view-er-cost-seg cb-table-view-er-cost-credits";
     if (calculating) {
       credSeg.innerHTML = coinSvg(12) + "<span>Calculating\u2026</span>";
     } else if (er.usePrivateKey) {
@@ -6288,7 +6288,7 @@
     }
     if (credits <= 0 && actions <= 0) return null;
     const pill = document.createElement("span");
-    pill.className = "cb-table-view-er-cost-pill";
+    pill.className = "cb-pill cb-table-view-er-cost-pill";
     // Amber when frequency is overridden, or (Actual) when Records is overridden
     // from the imported baseline — same convention as the Records field.
     if (freqOverridden || (which === "actual" && er.recordsOverridden)) {
@@ -6296,13 +6296,13 @@
     }
     if (actions > 0) {
       const seg = document.createElement("span");
-      seg.className = "cb-table-view-er-cost-seg cb-table-view-er-cost-actions";
+      seg.className = "cb-pill-seg cb-table-view-er-cost-seg cb-table-view-er-cost-actions";
       seg.title = `${formatNumber(actions)} action${actions === 1 ? "" : "s"} total`;
       seg.innerHTML = starFourSvg(12) + `<span>${formatNumber(Math.round(actions))}</span>`;
       pill.appendChild(seg);
     }
     const credSeg = document.createElement("span");
-    credSeg.className = "cb-table-view-er-cost-seg cb-table-view-er-cost-credits";
+    credSeg.className = "cb-pill-seg cb-table-view-er-cost-seg cb-table-view-er-cost-credits";
     credSeg.title = `${formatNumber(credits)} credits total`;
     const coin = Math.abs(credits) <= 1 ? coinSvg(12) : coinsSvg(12);
     credSeg.innerHTML = coin + `<span>${formatNumber(Math.round(credits))}</span>`;

@@ -256,7 +256,7 @@
   // icon.
   function buildPricingMetricCard(iconSvg, tier, volume, dollar, kind) {
     const card = document.createElement("div");
-    card.className = "cb-pricing-metric-card" + (kind ? " cb-pricing-metric-" + kind : "");
+    card.className = "cb-surface cb-pricing-metric-card" + (kind ? " cb-pricing-metric-" + kind : "");
 
     const iconWrap = document.createElement("div");
     iconWrap.className = "cb-pricing-metric-iconwrap";
@@ -536,7 +536,7 @@
   function buildPricingVolDropdown(tier, overridden, onPick) {
     const trigger = document.createElement("button");
     trigger.type = "button";
-    trigger.className = "cb-ptg-vol";
+    trigger.className = "cb-input-box cb-ptg-vol";
     if (overridden) trigger.classList.add("cb-pricing-overridden");
     const volSpan = document.createElement("span");
     volSpan.textContent = pricingFmt(actionVolumeForTier(tier));
@@ -979,7 +979,7 @@
       const cInput = document.createElement("input");
       cInput.type = "text";
       cInput.inputMode = "numeric";
-      cInput.className = "cb-ptg-input";
+      cInput.className = "cb-input-box cb-ptg-input";
       if (y.creditsOverridden) cInput.classList.add("cb-pricing-overridden");
       cInput.value = pricingFmt(y.credits);
       const commitCredits = () => {
@@ -1033,7 +1033,7 @@
       const inp = document.createElement("input");
       inp.type = "text";
       inp.inputMode = "decimal";
-      inp.className = "cb-ptg-input cb-ptg-price-input";
+      inp.className = "cb-input-box cb-ptg-input cb-ptg-price-input";
       inp.value = pricingRate(value);
       const commit = () => {
         const raw = parseFloat(inp.value.replace(/[^\d.]/g, ""));
