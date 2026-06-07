@@ -124,6 +124,18 @@
     '<line x1="4" y1="22" x2="4" y2="15"/>' +
     '</svg>';
 
+  // Palette glyph for the Design Explorer admin row.
+  const PALETTE_ICON_SVG =
+    '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" ' +
+    'fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" ' +
+    'stroke-linejoin="round" aria-hidden="true">' +
+    '<circle cx="13.5" cy="6.5" r="1.5" fill="currentColor" stroke="none"/>' +
+    '<circle cx="17.5" cy="10.5" r="1.5" fill="currentColor" stroke="none"/>' +
+    '<circle cx="8.5" cy="7.5" r="1.5" fill="currentColor" stroke="none"/>' +
+    '<circle cx="6.5" cy="12.5" r="1.5" fill="currentColor" stroke="none"/>' +
+    '<path d="M12 2C6.5 2 2 6 2 11c0 4 3 7 7 7 1.5 0 2-1 2-2 0-.5-.2-.9-.5-1.2-.3-.4-.5-.8-.5-1.3 0-1 .9-1.8 2-1.8h2.3c3 0 5.2-2.2 5.2-5.2C19.5 4.8 16 2 12 2z"/>' +
+    '</svg>';
+
   let moreMenuEl = null;
   let moreMenuBackdrop = null;
   // All open left-flyout submenus (Admin, Archived, …). Tracked as a list so
@@ -371,6 +383,14 @@
           icon: FLAG_ICON_SVG,
           title: "Feature flags & gating for your session",
           onClick: () => __cb.openFeatureFlags(),
+        });
+      }
+      if (__cb.openDesignExplorer) {
+        adminToolItems.push({
+          label: "Design Explorer",
+          icon: PALETTE_ICON_SVG,
+          title: "Explore design tokens & primitives (preview only)",
+          onClick: () => __cb.openDesignExplorer(),
         });
       }
       if (adminToolItems.length) {

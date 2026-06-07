@@ -1,0 +1,196 @@
+/* Design Explorer (maintainer-only admin tool) — layout only. Reuses the
+   cb-export-modal shell (styles/export.css) and the real component classes for
+   the live samples; everything here is the gallery scaffolding. Chrome is drawn
+   with the design tokens so the tool dogfoods its own system. */
+
+/* Wider than the default gtme modal, sized to the two-column gallery. */
+.cb-dex-modal {
+  max-width: 880px;
+}
+
+.cb-dex-body {
+  padding: 0;
+}
+
+/* The scope element: token edits set CSS variables here, so only the descendant
+   swatches + samples change (never :root). Two columns: controls | live preview. */
+.cb-dex {
+  display: flex;
+  gap: 20px;
+  align-items: flex-start;
+  padding: 18px 20px 22px;
+}
+
+/* ---- Left column: grouped token controls ---- */
+.cb-dex-tokens {
+  flex: 1;
+  min-width: 0;
+}
+
+.cb-dex-group-title {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--cb-text-faint);
+  margin: 16px 0 6px;
+}
+
+.cb-dex-group-title:first-child {
+  margin-top: 0;
+}
+
+.cb-dex-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 0;
+}
+
+.cb-dex-swatch {
+  flex: 0 0 auto;
+  width: 26px;
+  height: 26px;
+  border-radius: var(--cb-radius-sm);
+  border: 1px solid var(--cb-border);
+  background: var(--cb-surface);
+}
+
+.cb-dex-swatch-shadow {
+  background: var(--cb-surface);
+}
+
+.cb-dex-swatch-radius {
+  background: var(--cb-accent-surface);
+  border-color: var(--cb-accent-border);
+}
+
+.cb-dex-swatch-size {
+  align-self: center;
+  width: 26px;
+  background: var(--cb-accent);
+  border: none;
+  border-radius: 2px;
+}
+
+.cb-dex-rowtext {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.cb-dex-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--cb-text-label);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cb-dex-value {
+  font-size: 11px;
+  color: var(--cb-text-faint);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cb-dex-control {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Native color well, trimmed to a small square. */
+.cb-dex-color {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--cb-border);
+  border-radius: var(--cb-radius-sm);
+  background: none;
+  cursor: pointer;
+}
+
+.cb-dex-color::-webkit-color-swatch-wrapper {
+  padding: 2px;
+}
+
+.cb-dex-color::-webkit-color-swatch {
+  border: none;
+  border-radius: 3px;
+}
+
+/* Hex / freeform inputs reuse .cb-input-box but want a fixed width here. */
+.cb-dex-hex {
+  width: 94px;
+  font-size: 12px;
+}
+
+.cb-dex-text {
+  width: 232px;
+  font-size: 12px;
+}
+
+.cb-dex-control input:focus {
+  outline: none;
+  border-color: var(--cb-accent);
+  box-shadow: 0 0 0 2px var(--cb-accent-ring);
+}
+
+.cb-dex-range {
+  width: 150px;
+  accent-color: var(--cb-accent);
+  cursor: pointer;
+}
+
+/* ---- Right column: sticky live preview ---- */
+.cb-dex-preview {
+  flex: 0 0 300px;
+  position: sticky;
+  top: 0;
+  align-self: flex-start;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px;
+  border: 1px solid var(--cb-border);
+  border-radius: var(--cb-radius-lg);
+  background: var(--cb-surface-subtle);
+}
+
+.cb-dex-preview-heading {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--cb-text-faint);
+}
+
+.cb-dex-sample-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--cb-text-muted);
+  margin-top: 6px;
+}
+
+.cb-dex-sample-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.cb-dex-surface-sample {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px;
+  border-radius: var(--cb-radius-md);
+}

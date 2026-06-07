@@ -87,6 +87,7 @@
 
   const MAINTAINER_SURFACES = [
     { label: "Secret configuration", hint: "Edits app_settings (e.g. Slack channels)." },
+    { label: "Design Explorer", hint: "Interactive design-token + primitive gallery (preview only)." },
     { label: "Submit to deal desk", hint: "Owner-only row in the Export menu." },
     { label: "Export as Table",     hint: "Owner-only row in the Export menu." },
     { label: "Canvas view",         hint: "The Cards / Tables toggle in the More menu." },
