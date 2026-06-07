@@ -609,29 +609,6 @@
   font-weight: 400;
 }
 
-/* "Find in table" footer action: a distinct button pinned to the bottom of the
-   row menu, separated from the list above and tinted so it reads as a button. */
-.cb-table-view-context-menu-footer {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-top: 6px;
-  background: #eef2ff;
-  color: #4338ca;
-  font-weight: 600;
-}
-
-.cb-table-view-context-menu-footer:hover:not(.cb-table-view-context-menu-option-disabled) {
-  background: #e0e7ff;
-  color: #3730a3;
-}
-
-.cb-table-view-context-menu-footer-icon {
-  display: inline-flex;
-  align-items: center;
-  flex: none;
-}
-
 /* ---- Context menu flyout submenu ("Move to") ---- */
 
 .cb-table-view-context-menu-sep {

@@ -4737,21 +4737,37 @@
       wrap.addEventListener("mouseenter", () => positionSubmenu(wrap, panel));
       return wrap;
     }
+    if (item.footer) {
+      // Footer action ("Find in table") — rendered identically to the ER
+      // details-menu footer: a centered, bordered pill with the table icon.
+      const wrap = document.createElement("div");
+      wrap.className = "cb-table-view-er-menu-footer";
+      const fbtn = document.createElement("button");
+      fbtn.type = "button";
+      fbtn.className =
+        "cb-table-view-er-menu-open" +
+        (item.disabled ? " cb-table-view-er-menu-open-disabled" : "");
+      fbtn.innerHTML = tableSvg(13);
+      const fspan = document.createElement("span");
+      fspan.textContent = item.label;
+      fbtn.appendChild(fspan);
+      if (item.disabled) {
+        fbtn.disabled = true;
+        if (item.hint) fbtn.title = item.hint;
+      } else {
+        fbtn.addEventListener("click", () => {
+          closeContextMenu();
+          item.action();
+        });
+      }
+      wrap.appendChild(fbtn);
+      return wrap;
+    }
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className =
       "cb-table-view-context-menu-option" +
-      (item.footer ? " cb-table-view-context-menu-footer" : "") +
       (item.disabled ? " cb-table-view-context-menu-option-disabled" : "");
-    // Footer actions (e.g. "Find in table") read as a distinct button pinned to
-    // the bottom of the menu, with a leading search icon.
-    if (item.footer) {
-      const icon = document.createElement("span");
-      icon.className = "cb-table-view-context-menu-footer-icon";
-      icon.innerHTML =
-        '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>';
-      btn.appendChild(icon);
-    }
     const labelEl = document.createElement("div");
     labelEl.className = "cb-table-view-context-menu-option-label";
     labelEl.textContent = item.label;
@@ -5085,19 +5101,6 @@
         openAddMenu(addBtn);
       });
       introActions.appendChild(addBtn);
-
-      // "Add use case" — creates a new top-level use-case group (table-native
-      // v7.23+) and drops into renaming it.
-      const addUcBtn = document.createElement("button");
-      addUcBtn.type = "button";
-      addUcBtn.className = "cb-table-view-add-er-btn";
-      addUcBtn.title = "Add a use case (top-level group)";
-      addUcBtn.innerHTML = plusSvg(12) + "<span>Add use case</span>";
-      addUcBtn.addEventListener("click", (evt) => {
-        evt.stopPropagation();
-        addUseCase();
-      });
-      introActions.appendChild(addUcBtn);
     }
 
     // Pricing mode: the contract-term toggle is now per option (in each option
