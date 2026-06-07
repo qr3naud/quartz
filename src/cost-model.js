@@ -59,6 +59,12 @@
     const viewMode = opts.viewMode || cb.viewMode;
     const fallbackToProjected = opts.fallbackToProjected !== false;
     const d = (card && card.data) || {};
+    // Frozen enrichment: the rep deactivated it to model "what if we drop this".
+    // It contributes no cost anywhere — every total (table per-row/per-DP, the
+    // canvas summary, use-case/tab totals, and pricing) funnels through here.
+    if (d.frozen) {
+      return { credits: 0, actions: 0, creditsUnknown: false, frozen: true };
+    }
     const sp = d.stats && d.stats.spend;
 
     if (viewMode === "actual" && sp) {

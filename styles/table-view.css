@@ -1106,6 +1106,13 @@
   color: #374151;
 }
 
+/* Frozen row: every enrichment on it is frozen, so its enrichment cost is now
+   zero. Dimmed so a GTME sees at a glance which rows a freeze removes. (Rows
+   with a mix of frozen + active ERs are NOT dimmed — only the frozen pill is.) */
+.cb-table-view-dp-row-frozen td {
+  color: #9ca3af;
+}
+
 /* Unattached-enrichments rows live in their own yellow-headered section
    (.cb-table-view-orphan-group-row, see Group header below). The rows
    themselves now look identical to regular DP rows so reps can fill in
@@ -1316,6 +1323,24 @@
   font-weight: 500;
   white-space: nowrap;
   max-width: 300px;
+}
+
+/* Frozen (deactivated) enrichment pill: greyed + struck-through label so the
+   rep sees which ERs they've removed from the cost. Cost is zeroed upstream
+   (data.frozen short-circuits perRowCost); this is the visual half. */
+.cb-table-view-er-chip-frozen {
+  background: #f3f4f6;
+  opacity: 0.6;
+}
+
+.cb-table-view-er-chip-frozen .cb-table-view-er-chip-label {
+  text-decoration: line-through;
+  color: #9ca3af;
+}
+
+.cb-table-view-er-chip-frozen .cb-table-view-er-chip-icon {
+  filter: grayscale(1);
+  opacity: 0.7;
 }
 
 /* Icon + label region — an unstyled button that opens the details menu. */

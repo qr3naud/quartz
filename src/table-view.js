@@ -2293,6 +2293,22 @@
     cb.tableView?.refresh?.();
   }
 
+  // Toggle an enrichment's "frozen" state. A frozen ER is deactivated for
+  // scoping: its cost is zeroed everywhere (perRowCost short-circuits on
+  // data.frozen), the table greys its pill, and a row greys fully when all its
+  // enrichments are frozen. Lets a GTME see the savings from dropping an ER.
+  // Cost changed, so refresh the summary + group credits, not just the table.
+  function toggleErFrozen(erCardId) {
+    const cb = window.__cb;
+    const er = (cb.canvas?.getCards?.() || []).find((c) => c.id === erCardId);
+    if (!er) return;
+    er.data.frozen = !er.data.frozen;
+    cb.canvas?.refreshCreditTotal?.();
+    cb.canvas?.updateGroupCredits?.();
+    cb.canvas?.notifyChange?.();
+    cb.tableView?.refresh?.();
+  }
+
   // Renders a Coverage <td> from a coverage descriptor (see coverageFillFor).
   function buildCoverageCell(coverage) {
     const td = document.createElement("td");
@@ -3977,6 +3993,10 @@
           }
         : null,
       usePrivateKey: !!d.usePrivateKey,
+      // Frozen (deactivated) ERs grey their pill and contribute no cost; a note
+      // surfaces as a badge on the chip (the ER's own note, not the DP row's).
+      frozen: !!d.frozen,
+      note: d.note || null,
       frequencyId,
       frequencyLabel,
       multiplier,
@@ -5595,6 +5615,32 @@
   // `ctx` carries { rowId } from onRowContextMenu identifying the right-
   // clicked row both insert actions anchor to.
 
+  // Right-click menu for a single enrichment — a chip in the Enrichments
+  // column or a standalone orphan ER row. Intentionally just two items:
+  // leave/edit a note, and freeze/unfreeze (deactivate to model savings).
+  function erContextItems(erCard) {
+    if (!erCard) return [];
+    const cardId = erCard.id;
+    const items = [];
+    const hasNote = !!(erCard.data?.note || "").trim();
+    items.push({
+      label: hasNote ? "Edit note" : "Leave a note",
+      action: () => {
+        const anchor =
+          hostEl?.querySelector(`[data-er-id="${cardId}"]`) ||
+          hostEl?.querySelector(`[data-row-id="${cardId}"] .col-ers`) ||
+          hostEl?.querySelector(`[data-row-id="${cardId}"]`) ||
+          hostEl;
+        openNotePopover(cardId, anchor);
+      },
+    });
+    items.push({
+      label: erCard.data?.frozen ? "Unfreeze" : "Freeze",
+      action: () => toggleErFrozen(cardId),
+    });
+    return items;
+  }
+
   function buildContextItems(ctx) {
     const items = [];
 
@@ -5622,6 +5668,13 @@
         });
       }
       return items;
+    }
+
+    // Enrichment chip right-click (Enrichments column). erCardId is set by the
+    // chip's contextmenu handler and wins over row selection so it always
+    // targets that specific enrichment, regardless of which row is selected.
+    if (ctx?.erCardId != null) {
+      return erContextItems(__cb.canvas?.getCardById?.(ctx.erCardId));
     }
 
     const cardIds = getCardRowsInSelection();
@@ -5666,6 +5719,11 @@
     // from the row (replaces the old column-aware "Insert below" + footer).
     if (ctx?.rowId != null) {
       const card = getCardForRowId(ctx.rowId);
+      // Standalone (orphan) enrichment row → the same note + freeze menu as a
+      // chip, replacing the generic insert/group items.
+      if (card && isErType(card.data?.type)) {
+        return erContextItems(card);
+      }
       if (card?.data?.type === "dp") {
         items.push({ label: "Rename", action: () => startInlineRename(ctx.rowId) });
         // Add-to-group lives under a single "Move to" parent with a flyout
@@ -6640,7 +6698,11 @@
     const primaryCardId = row.cardId;
 
     const tr = document.createElement("tr");
-    tr.className = "cb-table-view-dp-row cb-table-view-orphan-dp-row";
+    const orphanClasses = ["cb-table-view-dp-row", "cb-table-view-orphan-dp-row"];
+    // Grey the orphan ER row when all its enrichment pills are frozen.
+    if (ers.length > 0 && ers.every((e) => e.frozen))
+      orphanClasses.push("cb-table-view-dp-row-frozen");
+    tr.className = orphanClasses.join(" ");
     tr.setAttribute("data-card-id", String(primaryCardId));
     tr.setAttribute("data-row-id", String(primaryCardId));
     tr.setAttribute("data-row-section", sectionId || "orphan");
@@ -6835,6 +6897,11 @@
     const mergeSpan = row.mergeSpan || 1;
     const classes = ["cb-table-view-dp-row"];
     if (!row.connected) classes.push("cb-table-view-dp-row-unconnected");
+    // Whole-row grey only when EVERY enrichment on the row is frozen (so the
+    // row's enrichment cost is fully zero). Multi-ER rows with one active ER
+    // keep their normal style — only the frozen pill greys.
+    if (row.ers && row.ers.length > 0 && row.ers.every((e) => e.frozen))
+      classes.push("cb-table-view-dp-row-frozen");
     if (mergeMode === "first" && mergeSpan > 1) classes.push("cb-table-view-dp-row-merge-first");
     if (mergeMode === "skip") classes.push("cb-table-view-dp-row-merge-follow");
     tr.className = classes.join(" ");
@@ -6988,6 +7055,11 @@
     // Uniform classic-white pill for every kind — the enrichment kind is
     // surfaced in the details-menu badge, not the pill color.
     chip.className = "cb-table-view-er-chip";
+    // Frozen (deactivated) ER: grey the pill. Cost is already zeroed upstream
+    // (perRowCost short-circuits on data.frozen).
+    if (er.frozen) chip.classList.add("cb-table-view-er-chip-frozen");
+    // Lets erContextItems / openNotePopover anchor to this chip by ER id.
+    chip.setAttribute("data-er-id", String(er.id));
     // One-shot pop animation when this chip was just promoted to #1 via "+".
     if (er.isPrimary && er.dpCardId != null && er.dpCardId === justPromotedDpId) {
       chip.classList.add("cb-chip-just-primary");
@@ -6996,6 +7068,14 @@
       er.isWaterfall && er.providerChain
         ? `${er.name} \u2014 ${er.providerChain}`
         : er.name;
+    // Right-click a chip → the enrichment-only menu (Leave a note + Freeze),
+    // not the host row's menu. stopPropagation keeps the row handler from also
+    // firing; preventDefault suppresses the browser's native menu.
+    chip.addEventListener("contextmenu", (evt) => {
+      evt.preventDefault();
+      evt.stopPropagation();
+      openContextMenu(evt.clientX, evt.clientY, { erCardId: er.id });
+    });
 
     // Icon + label form a single clickable trigger that opens the details
     // menu underneath the pill. mousedown stopPropagation keeps the click
@@ -7085,6 +7165,13 @@
         }
       });
       chip.appendChild(x);
+    }
+
+    // The enrichment's own note (set via the chip's right-click "Leave a
+    // note"). Sits inside the pill so it travels with the ER across every row
+    // it chips into, distinct from a data-point row's note badge.
+    if (er.note && String(er.note).trim()) {
+      chip.appendChild(buildNoteBadge(er.id, er.note));
     }
     return chip;
   }
