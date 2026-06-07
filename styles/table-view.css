@@ -1666,12 +1666,16 @@
 }
 
 /* DP-column "+" on orphan-enrichment rows — mirrors the ER add chip so the
-   two "add" affordances read identically. Reveals an inline name input. */
+   two "add" affordances read identically: a round 22x22 button. Reveals an
+   inline name input. */
 .cb-table-view-add-dp-chip {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 3px 5px;
+  flex: none;
+  width: 22px;
+  height: 22px;
+  padding: 0;
   background: transparent;
   color: #6366f1;
   border: 1px dashed #c7d2fe;
