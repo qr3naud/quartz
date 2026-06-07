@@ -3786,10 +3786,10 @@
   color: #4b5563;
 }
 .cb-pam-pin-active {
-  color: var(--cb-accent-strong);
+  color: var(--cb-border);
 }
 .cb-pam-pinned {
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.2), 0 0 0 1px rgba(67, 56, 202, 0.25);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.2), 0 0 0 1px var(--cb-border);
 }
 
 /* Option right-click menu (Rename / Delete). */

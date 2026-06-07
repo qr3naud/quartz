@@ -588,14 +588,18 @@
       pricingAvgPinnedEls.clear();
     }
   }
+  // The pinned matrix for this option+metric key, or null.
+  function findPinnedAvgMatrix(key) {
+    if (!key) return null;
+    for (const el of pricingAvgPinnedEls) {
+      if (el.dataset.pamKey === key) return el;
+    }
+    return null;
+  }
   // True when a pinned matrix already exists for this option+metric key, so the
   // Average cell shouldn't reopen a transient hover over it.
   function isAvgMatrixPinned(key) {
-    if (!key) return false;
-    for (const el of pricingAvgPinnedEls) {
-      if (el.dataset.pamKey === key) return true;
-    }
-    return false;
+    return !!findPinnedAvgMatrix(key);
   }
 
   // Tiny instant tooltip for the "% off list" chips. Native title tooltips are
@@ -1071,12 +1075,16 @@
         openAvgMatrixHover(v, metric, avgVol, years, optName, key, actual);
       });
       v.addEventListener("mouseleave", scheduleAvgHoverClose);
-      // Click the Average value to pin its matrix (opens it first if needed).
-      // pinAvgMatrix dedupes so the same band can't be pinned twice.
+      // Click the Average value to toggle its matrix: pin it (opening the hover
+      // first if needed), or unpin it if this option+metric is already pinned.
       v.addEventListener("mousedown", (e) => e.stopPropagation());
       v.addEventListener("click", (e) => {
         e.stopPropagation();
-        if (isAvgMatrixPinned(key)) return;
+        const pinned = findPinnedAvgMatrix(key);
+        if (pinned) {
+          unpinAvgMatrix(pinned);
+          return;
+        }
         if (!pricingAvgHoverEl) openAvgMatrixHover(v, metric, avgVol, years, optName, key, actual);
         if (pricingAvgHoverEl) pinAvgMatrix(pricingAvgHoverEl);
       });
