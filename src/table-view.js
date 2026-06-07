@@ -4735,19 +4735,21 @@
             action: () => applyGroupMembership(ctx.rowId, { kind: "none" }),
           });
         }
+        // Divider directly under the create / remove actions, separating them
+        // from the list of use cases / groups to move into.
+        moveSubmenu.push({ separator: true });
         const moveTargets = movableGroupTargets().filter(
           (g) => !(g.kind === membership.kind && g.id === membership.id),
         );
-        if (moveTargets.length > 0) {
-          moveSubmenu.push({ separator: true });
-          for (const g of moveTargets) {
-            moveSubmenu.push({
-              label: g.label,
-              action: () =>
-                applyGroupMembership(ctx.rowId, { kind: g.kind, id: g.id }),
-            });
-          }
+        for (const g of moveTargets) {
+          moveSubmenu.push({
+            label: g.label,
+            action: () =>
+              applyGroupMembership(ctx.rowId, { kind: g.kind, id: g.id }),
+          });
         }
+        // Drop a dangling divider when there's nothing to move into.
+        if (moveSubmenu[moveSubmenu.length - 1]?.separator) moveSubmenu.pop();
         items.push({ label: "Move to", submenu: moveSubmenu });
         return items;
       }
@@ -4767,19 +4769,21 @@
             action: () => applyGroupMembership(ctx.rowId, { kind: "none" }),
           });
         }
+        // Divider directly under the New group / Ungroup actions, separating
+        // them from the list of groups to move into.
+        moveSubmenu.push({ separator: true });
         const groupTargets = movableGroupTargets().filter(
           (g) => !(g.kind === membership.kind && g.id === membership.id),
         );
-        if (groupTargets.length > 0) {
-          moveSubmenu.push({ separator: true });
-          for (const g of groupTargets) {
-            moveSubmenu.push({
-              label: g.label,
-              action: () =>
-                applyGroupMembership(ctx.rowId, { kind: g.kind, id: g.id }),
-            });
-          }
+        for (const g of groupTargets) {
+          moveSubmenu.push({
+            label: g.label,
+            action: () =>
+              applyGroupMembership(ctx.rowId, { kind: g.kind, id: g.id }),
+          });
         }
+        // Drop a dangling divider when there's nothing to move into.
+        if (moveSubmenu[moveSubmenu.length - 1]?.separator) moveSubmenu.pop();
         items.push({ label: "Move to", submenu: moveSubmenu });
       }
       // "Insert below" mirrors "Move to": a chevron submenu offering either a
