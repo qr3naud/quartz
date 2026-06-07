@@ -840,15 +840,10 @@
     updateSearchCount();
   }
 
-  // Sentinel key for the "Unattached enrichments" pseudo-section at the
-  // top of the table. Treated like any other group id by collapsedGroups
-  // so the rep's expand / collapse choice survives re-renders.
-  const ORPHAN_SECTION_KEY = "__orphans__";
-
-  // Sentinel key for the "Other" pseudo-section that wraps un-grouped
-  // (flat) DP rows when at least one real cb-group exists. Without the
-  // wrapper, ungrouped DPs visually run together with the grouped ones,
-  // making it unclear which DPs belong to which use case.
+  // Sentinel key for the "Other" pseudo-section at the very bottom — the
+  // unscoped parking lot that wraps un-grouped (flat) DP rows AND unattached
+  // enrichments (orphan ERs with no DP). Treated like any other group id by
+  // collapsedGroups so the rep's expand / collapse choice survives re-renders.
   const OTHER_SECTION_KEY = "__other__";
 
   // ---- Card-type helpers (mirror src/export.js) ----
@@ -3664,6 +3659,38 @@
     }
   }
 
+  // Promote the current selection into its OWN top-level use case. Unlike
+  // groupSelected (which nests the rows as an L2 sub-group under their shared
+  // use case), this forces a top-level group (parentId null) — re-parenting the
+  // cards out of their current use case. Drops straight into renaming it.
+  function createUseCaseFromSelection() {
+    const canvas = __cb.canvas;
+    if (!canvas?.groupCardsByIds) return;
+    const active = document.activeElement;
+    if (active && active.tagName === "INPUT" && hostEl?.contains(active)) {
+      active.blur();
+    }
+    const cardIds = getCardRowsInSelection()
+      .map(parseCardIdFromRowId)
+      .filter((id) => id != null);
+    if (cardIds.length < 1) return;
+    const beforeIds = new Set((canvas.getGroups?.() || []).map((g) => g.id));
+    // parentId null = a use case; forceDirect keeps the table's 2-level tree;
+    // allowSingle so a lone row can become a use case too.
+    canvas.groupCardsByIds(cardIds, "", {
+      skipFocus: true,
+      forceDirect: true,
+      allowSingle: true,
+      parentId: null,
+    });
+    const newGroup = (canvas.getGroups?.() || []).find((g) => !beforeIds.has(g.id));
+    if (newGroup) {
+      pendingFocusGroupId = `g-${newGroup.id}`;
+      clearSelection();
+      if (__cb.tableView?.refresh) __cb.tableView.refresh();
+    }
+  }
+
   function commitGroupLabel(canvasGroupId, value) {
     if (canvasGroupId == null) return;
     // Table-native (v7.23+): write the group's label directly through the model
@@ -4604,6 +4631,18 @@
             },
       );
 
+      // "Create a use case" promotes the selection into its OWN top-level use
+      // case (records + frequency of its own), vs. "Group" which nests a
+      // sub-group under the rows' current use case. Only meaningful when the
+      // rows already live in a use case — otherwise "Group" already produces a
+      // top-level group.
+      if (selUcId != null && !wrapsWholeUseCase) {
+        items.push({
+          label: "Create a use case",
+          action: () => createUseCaseFromSelection(),
+        });
+      }
+
       // Link = "share an enrichment" in the lineage model. Meaningful for one
       // OR MORE enrichments + data point(s) — a DP can derive from multiple
       // enrichments (OR/waterfall or AND/sum chain), and linkCardsByIds unions
@@ -4626,10 +4665,37 @@
     // from the row (replaces the old column-aware "Insert below" + footer).
     if (ctx?.rowId != null) {
       const card = getCardForRowId(ctx.rowId);
-      // Standalone (orphan) enrichment row → the same note + freeze menu as a
-      // chip, replacing the generic insert/group items.
+      // Standalone (orphan) enrichment row → note + freeze (same as a chip),
+      // PLUS a "Move to" submenu so an unattached enrichment can be scoped
+      // into a use case / group — which flips it from "not counted" (it sits in
+      // the excluded "Other" section) to counted. Mirrors the DP "Move to".
       if (card && isErType(card.data?.type)) {
-        return erContextItems(card);
+        const items = erContextItems(card);
+        const membership = currentMembership(card);
+        const moveSubmenu = [
+          { label: "New use case\u2026", action: () => newGroupFromRow(ctx.rowId) },
+        ];
+        if (membership.kind !== "none") {
+          moveSubmenu.push({
+            label: "Remove from use case",
+            action: () => applyGroupMembership(ctx.rowId, { kind: "none" }),
+          });
+        }
+        const moveTargets = movableGroupTargets().filter(
+          (g) => !(g.kind === membership.kind && g.id === membership.id),
+        );
+        if (moveTargets.length > 0) {
+          moveSubmenu.push({ separator: true });
+          for (const g of moveTargets) {
+            moveSubmenu.push({
+              label: g.label,
+              action: () =>
+                applyGroupMembership(ctx.rowId, { kind: g.kind, id: g.id }),
+            });
+          }
+        }
+        items.push({ label: "Move to", submenu: moveSubmenu });
+        return items;
       }
       if (card?.data?.type === "dp") {
         items.push({ label: "Rename", action: () => startInlineRename(ctx.rowId) });
@@ -5308,45 +5374,50 @@
           emitSectionRows(child, `section:${child.groupId}`);
         }
       }
-      // "Other" wrapper around the flat DP rows. Only shown when there's
-      // at least one real cb-group section above — without that, flat
-      // rows are the only DPs and don't need a header. With groups, the
-      // wrapper makes it visually clear which DPs are ungrouped vs.
-      // belonging to a use case. Ungrouped data points sit below every
-      // group section.
-      const showOtherHeader = groupSections.length > 0 && dpRows.length > 0;
+      // "Other" — the unscoped parking lot: ungrouped data points AND
+      // unattached enrichments (orphan ERs, no DP) under ONE collapsible
+      // header at the very bottom, below every use case / group. Excluded
+      // from the grand total (the cost model drops the "other" bucket); each
+      // row still shows its own per-row cost for visibility, and the header
+      // carries a "not counted" cue.
+      //
+      // Shown when there's any unscoped content AND either a real section
+      // exists above OR there are orphan ERs (so the "not counted" cue is
+      // always visible for unattached enrichments). A pure-manual tab with
+      // only ungrouped DPs and no sections keeps the clean headerless layout.
+      const hasSectionsAbove =
+        groupSections.length > 0 || (tableGroups || []).length > 0;
+      const showOtherHeader =
+        dpRows.length + orphanErRows.length > 0 &&
+        (hasSectionsAbove || orphanErRows.length > 0);
       const otherCollapsed =
         showOtherHeader && collapsedGroups.has(OTHER_SECTION_KEY);
       if (showOtherHeader) {
         tbody.appendChild(
-          buildOtherHeaderRow(dpRows.length, headers.length, otherCollapsed),
+          buildOtherHeaderRow(
+            dpRows.length,
+            orphanErRows.length,
+            headers.length,
+            otherCollapsed,
+          ),
         );
         visibleRowOrder.push(OTHER_SECTION_KEY);
         renderedTopKeys.add(OTHER_SECTION_KEY);
       }
       if (!otherCollapsed) {
+        // Ungrouped data points first (normal rows — a DP whose source ER
+        // lives in a use case is still counted there, so they stay editable).
         annotateMergeRuns(dpRows);
         for (const row of dpRows) {
           tbody.appendChild(buildDpRow(row, "flat"));
           visibleRowOrder.push(String(row.cardId));
         }
-      }
-
-      // Unattached enrichments (ERs with no DP) live under their own yellow
-      // header at the very bottom — below every grouped section AND the
-      // ungrouped "Other" data points. Each row looks like a regular DP row
-      // with an editable name input that, when committed, creates a new DP
-      // adjacent to the ER (forming a snap-cluster) so the row promotes
-      // itself to a connected DP row on the next render.
-      if (orphanErRows.length > 0) {
-        const orphansCollapsed = collapsedGroups.has(ORPHAN_SECTION_KEY);
-        tbody.appendChild(buildOrphanGroupHeaderRow(orphanErRows, headers.length, orphansCollapsed));
-        renderedTopKeys.add(ORPHAN_SECTION_KEY);
-        if (!orphansCollapsed) {
-          for (const row of orphanErRows) {
-            tbody.appendChild(buildOrphanDpStyleRow(row, "orphan"));
-            visibleRowOrder.push(String(row.cardId));
-          }
+        // Then unattached enrichments (orphan ERs). Each row keeps its inline
+        // "+ data point" affordance to attach a DP and promote into a real,
+        // counted row. The "orphan" section tag preserves drag-reorder scope.
+        for (const row of orphanErRows) {
+          tbody.appendChild(buildOrphanDpStyleRow(row, "orphan"));
+          visibleRowOrder.push(String(row.cardId));
         }
       }
     }
@@ -5440,75 +5511,13 @@
     }
   }
 
-  // Yellow group-header row that sits above the unattached-enrichments
-  // section. Reuses the .cb-table-view-group-row scaffolding (chevron +
-  // icon + label + count + collapse toggle) so the orphan section
-  // collapses the same way Use Case sections do; the yellow palette is
-  // applied via .cb-table-view-orphan-group-row. Not draggable — orphan
-  // section position is fixed at the top.
-  function buildOrphanGroupHeaderRow(orphanErRows, colSpan, isCollapsed) {
-    const tr = document.createElement("tr");
-    tr.className =
-      "cb-table-view-group-row cb-table-view-orphan-group-row" +
-      (isCollapsed ? " cb-table-view-group-row-collapsed" : "");
-    tr.setAttribute("data-group-id", ORPHAN_SECTION_KEY);
-    tr.setAttribute("role", "button");
-    tr.setAttribute("aria-expanded", isCollapsed ? "false" : "true");
-    tr.tabIndex = 0;
-    const td = document.createElement("td");
-    td.colSpan = colSpan;
-    const wrap = document.createElement("div");
-    wrap.className = "cb-table-view-group-row-inner";
-
-    const chevron = document.createElement("span");
-    chevron.className = "cb-table-view-group-row-chevron";
-    chevron.innerHTML = chevronDownSvg(12);
-    chevron.setAttribute("aria-hidden", "true");
-
-    const icon = document.createElement("span");
-    icon.className = "cb-table-view-group-row-icon";
-    icon.innerHTML = warningSvg(13);
-
-    const label = document.createElement("span");
-    label.className = "cb-table-view-group-row-label";
-    label.textContent = "Unattached enrichments";
-
-    const count = document.createElement("span");
-    count.className = "cb-table-view-group-row-count";
-    const n = orphanErRows.length;
-    count.textContent = `${n} enrichment${n === 1 ? "" : "s"}`;
-
-    wrap.appendChild(chevron);
-    wrap.appendChild(icon);
-    wrap.appendChild(label);
-    wrap.appendChild(count);
-    td.appendChild(wrap);
-    tr.appendChild(td);
-
-    const toggle = () => {
-      if (collapsedGroups.has(ORPHAN_SECTION_KEY)) {
-        collapsedGroups.delete(ORPHAN_SECTION_KEY);
-      } else {
-        collapsedGroups.add(ORPHAN_SECTION_KEY);
-      }
-      render();
-    };
-    tr.addEventListener("click", toggle);
-    tr.addEventListener("keydown", (evt) => {
-      if (evt.key === "Enter" || evt.key === " ") {
-        evt.preventDefault();
-        toggle();
-      }
-    });
-
-    return tr;
-  }
-
-  // "Other" header — wraps the flat (un-grouped) DP rows when at least
-  // one real cb-group exists. Same collapse mechanics as the orphan
-  // section (sentinel key in collapsedGroups). No drag handle, no
-  // editable label — it's a virtual section, not a real cb-group.
-  function buildOtherHeaderRow(dpCount, colSpan, isCollapsed) {
+  // "Other" header — the unscoped parking lot at the very bottom: ungrouped
+  // data points AND unattached enrichments (orphan ERs, no DP) share this one
+  // collapsible section. Excluded from the grand total (the cost model drops
+  // the "other" use-case bucket), so the header carries a "not counted" cue —
+  // reps move items into a use case to price them. Virtual section (sentinel
+  // key in collapsedGroups); no drag handle, no editable label.
+  function buildOtherHeaderRow(dpCount, erCount, colSpan, isCollapsed) {
     const tr = document.createElement("tr");
     tr.className =
       "cb-table-view-group-row cb-table-view-other-group-row" +
@@ -5539,12 +5548,26 @@
 
     const count = document.createElement("span");
     count.className = "cb-table-view-group-row-count";
-    count.textContent = `${dpCount} data point${dpCount === 1 ? "" : "s"}`;
+    const parts = [];
+    if (dpCount > 0) parts.push(`${dpCount} data point${dpCount === 1 ? "" : "s"}`);
+    if (erCount > 0) parts.push(`${erCount} enrichment${erCount === 1 ? "" : "s"}`);
+    count.textContent = parts.join(" \u00b7 ");
+
+    // Amber "not counted" cue so reps see at a glance this section is excluded
+    // from the totals (most pointed for the unattached enrichments here).
+    const cue = document.createElement("span");
+    cue.className = "cb-table-view-other-uncounted";
+    cue.innerHTML = warningSvg(11) + "<span>not counted</span>";
+    attachInfoTip(cue, [
+      "Excluded from the totals.",
+      "Move items into a use case to price them.",
+    ]);
 
     wrap.appendChild(chevron);
     wrap.appendChild(icon);
     wrap.appendChild(label);
     wrap.appendChild(count);
+    wrap.appendChild(cue);
     td.appendChild(wrap);
     tr.appendChild(td);
 
@@ -6825,6 +6848,40 @@
     return wrap;
   }
 
+  // Count the data points vs. enrichments a section owns, deep (its whole
+  // subtree). Counts each card by its immediate groupId within the section
+  // group's subtree, so a use-case (L1) header reflects everything beneath it
+  // and a sub-group (L2) header reflects only itself. Folded orphan-ER rows
+  // count as enrichments (not data points) — fixing the inflated "data points"
+  // tally the old `rows.length` gave. Falls back to the section's own rows for
+  // virtual (non-group) sections.
+  function sectionCounts(section) {
+    const cb = window.__cb;
+    const gid = section.canvasGroupId;
+    if (gid == null || !cb?.model?.getNodes) {
+      let dp = 0;
+      let er = 0;
+      for (const r of section.rows || []) {
+        if (r.kind === "orphan-er") er += r.cardIds?.length || 1;
+        else dp += 1;
+      }
+      return { dp, er };
+    }
+    const subtree = cb.model.groupSubtreeIds
+      ? cb.model.groupSubtreeIds(gid)
+      : new Set([gid]);
+    let dp = 0;
+    let er = 0;
+    for (const n of cb.model.getNodes()) {
+      const d = n && n.data;
+      if (!d || d.type === "comment") continue;
+      if (n.groupId == null || !subtree.has(n.groupId)) continue;
+      if (d.type === "dp") dp += 1;
+      else if (isErType(d.type)) er += 1;
+    }
+    return { dp, er };
+  }
+
   function buildGroupHeaderRow(section, colSpan, isCollapsed, depth = 0, opts = {}) {
     const tr = document.createElement("tr");
     tr.className =
@@ -6959,12 +7016,16 @@
 
     const count = document.createElement("span");
     count.className = "cb-table-view-group-row-count";
-    // Super-group sections get a buildRows-stamped totalRowCount that
-    // sums every row in their inner sub-sections; falling back to
-    // section.rows.length keeps standalone (non-super) sections behaving
-    // exactly as before.
-    const dpCount = section.totalRowCount ?? section.rows.length;
-    count.textContent = `${dpCount} data point${dpCount === 1 ? "" : "s"}`;
+    // Deep, type-aware counts (data points vs. enrichments) for the whole
+    // subtree — see sectionCounts. dpCount is reused by the table (i) tooltip
+    // below.
+    const counts = sectionCounts(section);
+    const dpCount = counts.dp;
+    const countParts = [`${dpCount} data point${dpCount === 1 ? "" : "s"}`];
+    if (counts.er > 0) {
+      countParts.push(`${counts.er} enrichment${counts.er === 1 ? "" : "s"}`);
+    }
+    count.textContent = countParts.join(" \u00b7 ");
 
     wrap.appendChild(chevron);
     wrap.appendChild(icon);
