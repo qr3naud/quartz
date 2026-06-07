@@ -4825,6 +4825,24 @@
   // pendingFocusGroupId so the next render() can focus the section's
   // header input in the table.
 
+  // The L1 use-case ancestor id shared by every given card, or null when they
+  // span multiple use cases (or none). Lets a new group nest under its use case
+  // as an L2 sub-group instead of becoming a top-level use case.
+  function commonUseCaseIdForCards(cardIds) {
+    const model = __cb.model;
+    if (!model || !model.useCaseGroupForCard) return null;
+    let ucId;
+    for (const id of cardIds) {
+      const card = model.getNode(id);
+      if (!card) continue;
+      const uc = model.useCaseGroupForCard(card);
+      const cur = uc ? uc.id : null;
+      if (ucId === undefined) ucId = cur;
+      else if (ucId !== cur) return null;
+    }
+    return ucId === undefined ? null : ucId;
+  }
+
   function groupSelected() {
     const canvas = __cb.canvas;
     if (!canvas?.groupCardsByIds) return;
@@ -4850,10 +4868,22 @@
       .map(parseCardIdFromRowId)
       .filter((id) => id != null);
     if (cardIds.length < 2) return;
+    // Table-native (v7.23+): if the grouped rows all belong to one use case,
+    // the new group nests under it as an L2 sub-group (not a new top-level use
+    // case). Captured BEFORE grouping, which reassigns card.groupId.
+    const parentUseCaseId = commonUseCaseIdForCards(cardIds);
     const beforeIds = new Set(
       (canvas.getGroups?.() || []).map((g) => g.id),
     );
-    canvas.groupCardsByIds(cardIds, "", { skipFocus: true });
+    // forceDirect: the table view is a 2-level tree, so never auto-build a
+    // canvas "super group". parentId nests the new group under its use case at
+    // creation time (before pruning) so an all-rows group doesn't drop the use
+    // case.
+    canvas.groupCardsByIds(cardIds, "", {
+      skipFocus: true,
+      forceDirect: true,
+      parentId: parentUseCaseId,
+    });
     const afterGroups = canvas.getGroups?.() || [];
     // Newest group = the one whose id we didn't see before. There's at
     // most one because groupCardsByIds creates exactly one group per call.
@@ -5179,9 +5209,18 @@
       const c = canvas.getCardById?.(id);
       if (c?.data?.type === "dp") c.data.groupCluster = null;
     }
+    // Nest the new group under the row's use case (L2) when there is one.
+    const parentUseCaseId = commonUseCaseIdForCards(blockIds);
     const beforeIds = new Set((canvas.getGroups?.() || []).map((g) => g.id));
     // allowSingle: a lone DP (no linked enrichments) can still start a group.
-    canvas.groupCardsByIds(blockIds, "", { skipFocus: true, allowSingle: true });
+    // forceDirect: the table is a 2-level tree (no canvas super-groups).
+    // parentId: nest under the use case at creation (before pruning).
+    canvas.groupCardsByIds(blockIds, "", {
+      skipFocus: true,
+      allowSingle: true,
+      forceDirect: true,
+      parentId: parentUseCaseId,
+    });
     const newGroup = (canvas.getGroups?.() || []).find((g) => !beforeIds.has(g.id));
     if (newGroup) {
       // Focus the new section's label input on the next render so the user can
@@ -5818,10 +5857,33 @@
       if (types.size === 1 && types.has("dp")) noun = "data points";
       else if (types.size === 1 && types.has("er")) noun = "enrichments";
 
-      items.push({
-        label: `Group ${cardIds.length} ${noun}`,
-        action: () => groupSelected(),
-      });
+      // Grouping every row of a use case into one sub-group is a no-op nesting
+      // (the sub-group would just mirror the use case), so disable it.
+      const selNumIds = cardIds.map(parseCardIdFromRowId).filter((x) => x != null);
+      const selUcId = commonUseCaseIdForCards(selNumIds);
+      let wrapsWholeUseCase = false;
+      if (selUcId != null && __cb.model?.useCaseGroupForCard) {
+        const selSet = new Set(selNumIds);
+        const ucContent = (__cb.model.getNodes?.() || []).filter((c) => {
+          if (!c.data || c.data.type === "comment") return false;
+          const uc = __cb.model.useCaseGroupForCard(c);
+          return uc && uc.id === selUcId;
+        });
+        wrapsWholeUseCase =
+          ucContent.length > 0 && ucContent.every((c) => selSet.has(c.id));
+      }
+      items.push(
+        wrapsWholeUseCase
+          ? {
+              label: `Group ${cardIds.length} ${noun}`,
+              disabled: true,
+              hint: "Already the whole use case",
+            }
+          : {
+              label: `Group ${cardIds.length} ${noun}`,
+              action: () => groupSelected(),
+            },
+      );
 
       // Link = "share an enrichment" in the lineage model. Meaningful for one
       // OR MORE enrichments + data point(s) — a DP can derive from multiple
@@ -5957,15 +6019,28 @@
     }
     const btn = document.createElement("button");
     btn.type = "button";
-    btn.className = "cb-table-view-context-menu-option";
+    btn.className =
+      "cb-table-view-context-menu-option" +
+      (item.disabled ? " cb-table-view-context-menu-option-disabled" : "");
     const labelEl = document.createElement("div");
     labelEl.className = "cb-table-view-context-menu-option-label";
     labelEl.textContent = item.label;
     btn.appendChild(labelEl);
-    btn.addEventListener("click", () => {
-      closeContextMenu();
-      item.action();
-    });
+    // Optional secondary hint line (e.g. why a disabled item is disabled).
+    if (item.hint) {
+      const hintEl = document.createElement("div");
+      hintEl.className = "cb-table-view-context-menu-option-hint";
+      hintEl.textContent = item.hint;
+      btn.appendChild(hintEl);
+    }
+    if (item.disabled) {
+      btn.disabled = true;
+    } else {
+      btn.addEventListener("click", () => {
+        closeContextMenu();
+        item.action();
+      });
+    }
     return btn;
   }
 

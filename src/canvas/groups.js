@@ -331,16 +331,23 @@
       // forceSuper lets callers (POC import) create a top-level super-group
       // directly from loose cards. A "group of groups" (super with children) is
       // only the auto-detected case: every selection already grouped, spanning
-      // 2+ groups.
-      const isSuper = !!opts?.forceSuper || (allInGroups && touchedGroupIds.size >= 2);
-      const groupOfGroups = allInGroups && touchedGroupIds.size >= 2;
+      // 2+ groups. forceDirect (table-native v7.23+) opts out of that entirely —
+      // the table view is a 2-level tree and parents new groups explicitly.
+      const forceDirect = !!opts?.forceDirect;
+      const isSuper =
+        !forceDirect && (!!opts?.forceSuper || (allInGroups && touchedGroupIds.size >= 2));
+      const groupOfGroups = !forceDirect && allInGroups && touchedGroupIds.size >= 2;
 
       const group = {
         id: getNextGroupId(),
         label: initialLabel || "",
         level: isSuper ? 1 : 0,
         color: null,
-        parentId: null,
+        // Table-native (v7.23+): callers can parent the new group at creation
+        // (e.g. an L2 sub-group under its use case). Setting it now — before the
+        // pruneEmptyGroups() below — keeps the parent use case from being pruned
+        // as "empty" when every one of its cards moves into the new sub-group.
+        parentId: opts?.parentId ?? null,
       };
       groupsRef().push(group);
 
