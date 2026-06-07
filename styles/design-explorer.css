@@ -27,17 +27,75 @@
   min-width: 0;
 }
 
-.cb-dex-group-title {
+/* Collapsible accordion group (single-open). */
+.cb-dex-group {
+  border-bottom: 1px solid var(--cb-border-faint);
+}
+
+.cb-dex-group-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 11px 2px;
+  border: none;
+  background: none;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.cb-dex-group-chevron {
+  display: inline-flex;
+  color: var(--cb-text-faint);
+  transition: transform 0.18s ease;
+}
+
+.cb-dex-group-open .cb-dex-group-chevron {
+  transform: rotate(90deg);
+}
+
+.cb-dex-group-name {
+  flex: 1;
   font-size: 11px;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  color: var(--cb-text-faint);
-  margin: 16px 0 6px;
+  color: var(--cb-text-label);
 }
 
-.cb-dex-group-title:first-child {
-  margin-top: 0;
+.cb-dex-group-count {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--cb-text-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Body collapses via the grid 0fr<->1fr trick; inner clips so rows wipe in/out. */
+.cb-dex-group-body {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 0.2s ease;
+}
+
+.cb-dex-group-open .cb-dex-group-body {
+  grid-template-rows: 1fr;
+}
+
+.cb-dex-group-body-inner {
+  overflow: hidden;
+  min-height: 0;
+}
+
+.cb-dex-group-open .cb-dex-group-body-inner {
+  padding-bottom: 6px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cb-dex-group-body,
+  .cb-dex-group-chevron {
+    transition: none;
+  }
 }
 
 .cb-dex-row {
@@ -173,11 +231,18 @@
   color: var(--cb-text-faint);
 }
 
+/* One preview sample (label + content). Hidden when the active group doesn't
+   use its tokens (display toggled inline by updatePreview). */
+.cb-dex-sample-block {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
 .cb-dex-sample-label {
   font-size: 11px;
   font-weight: 600;
   color: var(--cb-text-muted);
-  margin-top: 6px;
 }
 
 .cb-dex-sample-row {

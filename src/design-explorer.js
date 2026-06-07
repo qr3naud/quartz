@@ -119,9 +119,28 @@
     },
   ];
 
+  // Which preview samples each token group actually affects (by GROUPS index),
+  // so expanding a group shows only the primitives that use its tokens. Keys
+  // match the data-dex-sample blocks in buildSamples().
+  const ALL_SAMPLE_KEYS = ["pill", "inputs", "surface", "badges", "matrix"];
+  const GROUP_SAMPLES = [
+    ["pill", "matrix"], // 0 Metric tones
+    ["surface", "inputs", "pill", "matrix"], // 1 Surfaces & borders
+    ["surface", "inputs"], // 2 Text
+    ["inputs", "surface"], // 3 Accent (indigo)
+    ["badges", "surface"], // 4 Status · green
+    ["badges"], // 5 Status · amber
+    ["badges"], // 6 Status · red
+    ["matrix"], // 7 Overlays
+    ["pill", "inputs", "surface", "matrix"], // 8 Shape scale
+  ];
+
   let modalEl = null;
   let backdropEl = null;
   let scopeEl = null;
+  // Index of the single expanded accordion group (-1 = all collapsed). Persists
+  // across Reset; defaults to the first group when the tool opens.
+  let openGroupIdx = 0;
   // Token name -> overridden value (preview only). Empty = pristine defaults.
   const overrides = new Map();
   // Token name -> shipped default, snapshotted from :root when the tool opens.
@@ -152,6 +171,46 @@
   // The value currently in effect inside the gallery (override if set, else default).
   function currentValue(name) {
     return overrides.has(name) ? overrides.get(name) : defaultValue(name);
+  }
+
+  // Filter the live preview to the samples the active group affects (all when
+  // none is open), and label the preview with the active group's name.
+  function updatePreview(idx) {
+    if (!scopeEl) return;
+    const keys = idx >= 0 && GROUP_SAMPLES[idx] ? GROUP_SAMPLES[idx] : ALL_SAMPLE_KEYS;
+    scopeEl.querySelectorAll("[data-dex-sample]").forEach((el) => {
+      el.style.display = keys.includes(el.dataset.dexSample) ? "" : "none";
+    });
+    const heading = scopeEl.querySelector(".cb-dex-preview-heading");
+    if (heading) {
+      heading.textContent =
+        idx >= 0 && GROUPS[idx] ? `Live preview \u00b7 ${GROUPS[idx].title}` : "Live preview";
+    }
+  }
+
+  // Single-open accordion: expand group `idx` (-1 = collapse all) and sync the
+  // headers' open class / aria-expanded + the contextual preview.
+  function setOpenGroup(idx) {
+    openGroupIdx = idx;
+    if (!scopeEl) return;
+    const groups = scopeEl.querySelectorAll(".cb-dex-group");
+    groups.forEach((g, i) => {
+      const open = i === idx;
+      g.classList.toggle("cb-dex-group-open", open);
+      const head = g.querySelector(".cb-dex-group-head");
+      if (head) head.setAttribute("aria-expanded", open ? "true" : "false");
+    });
+    updatePreview(idx);
+  }
+
+  // (Re)build the gallery into the scope element and apply the current open group.
+  // Used on open and after Reset.
+  function renderGallery() {
+    if (!scopeEl) return;
+    scopeEl.innerHTML = "";
+    scopeEl.appendChild(buildTokensColumn());
+    scopeEl.appendChild(buildSamples());
+    setOpenGroup(openGroupIdx);
   }
 
   // Apply a preview edit: record it + set the variable on the gallery scope only.
@@ -275,17 +334,19 @@
     return l;
   }
 
-  function buildSamples() {
-    const wrap = document.createElement("div");
-    wrap.className = "cb-dex-preview";
+  // One preview block: a labelled sample tagged with a key so the active token
+  // group can show only the samples that actually use its tokens.
+  function sampleBlock(key, labelText, content) {
+    const block = document.createElement("div");
+    block.className = "cb-dex-sample-block";
+    block.dataset.dexSample = key;
+    block.appendChild(sampleLabel(labelText));
+    block.appendChild(content);
+    return block;
+  }
 
-    const heading = document.createElement("div");
-    heading.className = "cb-dex-preview-heading";
-    heading.textContent = "Live preview";
-    wrap.appendChild(heading);
-
-    // Cost pill (.cb-pill + .cb-pill-seg, reusing the real ER cost-pill classes).
-    wrap.appendChild(sampleLabel("Cost pill"));
+  // Cost pill (.cb-pill + .cb-pill-seg, reusing the real ER cost-pill classes).
+  function samplePill() {
     const pill = document.createElement("span");
     pill.className = "cb-pill cb-table-view-er-cost-pill";
     const aSeg = document.createElement("span");
@@ -296,10 +357,11 @@
     cSeg.innerHTML = svgFor("credit") + "<span>1.2M</span>";
     pill.appendChild(aSeg);
     pill.appendChild(cSeg);
-    wrap.appendChild(pill);
+    return pill;
+  }
 
-    // Boxed controls (.cb-input-box) — plain input + the volume-dropdown trigger.
-    wrap.appendChild(sampleLabel("Input + dropdown"));
+  // Boxed controls (.cb-input-box) — plain input + the volume-dropdown trigger.
+  function sampleInputs() {
     const inputRow = document.createElement("div");
     inputRow.className = "cb-dex-sample-row";
     const inp = document.createElement("input");
@@ -318,10 +380,11 @@
     vol.appendChild(volChev);
     inputRow.appendChild(inp);
     inputRow.appendChild(vol);
-    wrap.appendChild(inputRow);
+    return inputRow;
+  }
 
-    // Surface card (.cb-surface) with token-colored text samples inside.
-    wrap.appendChild(sampleLabel("Surface + text"));
+  // Surface card (.cb-surface) with token-colored text samples inside.
+  function sampleSurface() {
     const card = document.createElement("div");
     card.className = "cb-surface cb-dex-surface-sample";
     const t1 = document.createElement("div");
@@ -332,10 +395,11 @@
     t2.textContent = "$12,000 \u00b7 20%";
     card.appendChild(t1);
     card.appendChild(t2);
-    wrap.appendChild(card);
+    return card;
+  }
 
-    // Approval badges (.cb-ptg-approval-badge).
-    wrap.appendChild(sampleLabel("Approval badges"));
+  // Approval badges (.cb-ptg-approval-badge).
+  function sampleBadges() {
     const badges = document.createElement("div");
     badges.className = "cb-dex-sample-row";
     [
@@ -348,15 +412,32 @@
       b.textContent = label;
       badges.appendChild(b);
     });
-    wrap.appendChild(badges);
+    return badges;
+  }
 
-    // Band-matrix crosshair (.cb-pam-* highlights), one per metric tone.
-    wrap.appendChild(sampleLabel("Band matrix crosshair"));
+  // Band-matrix crosshair (.cb-pam-* highlights), one per metric tone.
+  function sampleMatrices() {
     const matrices = document.createElement("div");
     matrices.className = "cb-dex-sample-row";
     matrices.appendChild(buildMiniMatrix("cb-pam-actions"));
     matrices.appendChild(buildMiniMatrix("cb-pam-credits"));
-    wrap.appendChild(matrices);
+    return matrices;
+  }
+
+  function buildSamples() {
+    const wrap = document.createElement("div");
+    wrap.className = "cb-dex-preview";
+
+    const heading = document.createElement("div");
+    heading.className = "cb-dex-preview-heading";
+    heading.textContent = "Live preview";
+    wrap.appendChild(heading);
+
+    wrap.appendChild(sampleBlock("pill", "Cost pill", samplePill()));
+    wrap.appendChild(sampleBlock("inputs", "Input + dropdown", sampleInputs()));
+    wrap.appendChild(sampleBlock("surface", "Surface + text", sampleSurface()));
+    wrap.appendChild(sampleBlock("badges", "Approval badges", sampleBadges()));
+    wrap.appendChild(sampleBlock("matrix", "Band matrix crosshair", sampleMatrices()));
 
     return wrap;
   }
@@ -387,19 +468,50 @@
     return panel;
   }
 
-  // Builds the token-controls column (left) — all groups, all rows.
+  const CHEVRON_SVG =
+    '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>';
+
+  // Builds the token-controls column (left): one collapsible accordion group per
+  // token group. Headers toggle via setOpenGroup (single-open).
   function buildTokensColumn() {
     const col = document.createElement("div");
     col.className = "cb-dex-tokens";
-    for (const group of GROUPS) {
-      const gh = document.createElement("div");
-      gh.className = "cb-dex-group-title";
-      gh.textContent = group.title;
-      col.appendChild(gh);
+    GROUPS.forEach((group, gi) => {
+      const groupEl = document.createElement("div");
+      groupEl.className = "cb-dex-group";
+
+      const head = document.createElement("button");
+      head.type = "button";
+      head.className = "cb-dex-group-head";
+      head.setAttribute("aria-expanded", "false");
+      const chev = document.createElement("span");
+      chev.className = "cb-dex-group-chevron";
+      chev.innerHTML = CHEVRON_SVG;
+      const nm = document.createElement("span");
+      nm.className = "cb-dex-group-name";
+      nm.textContent = group.title;
+      const count = document.createElement("span");
+      count.className = "cb-dex-group-count";
+      count.textContent = String(group.tokens.length);
+      head.appendChild(chev);
+      head.appendChild(nm);
+      head.appendChild(count);
+      // Click the open group to collapse it (none open -> preview shows all).
+      head.addEventListener("click", () => setOpenGroup(openGroupIdx === gi ? -1 : gi));
+
+      const body = document.createElement("div");
+      body.className = "cb-dex-group-body";
+      const inner = document.createElement("div");
+      inner.className = "cb-dex-group-body-inner";
       for (const [name, kind] of group.tokens) {
-        col.appendChild(buildTokenRow(name, kind));
+        inner.appendChild(buildTokenRow(name, kind));
       }
-    }
+      body.appendChild(inner);
+
+      groupEl.appendChild(head);
+      groupEl.appendChild(body);
+      col.appendChild(groupEl);
+    });
     return col;
   }
 
@@ -484,9 +596,8 @@
     // Re-apply any overrides (only matters if reopened within a session; close()
     // clears them, so normally a no-op).
     for (const [name, value] of overrides) scopeEl.style.setProperty(name, value);
-    scopeEl.appendChild(buildTokensColumn());
-    scopeEl.appendChild(buildSamples());
     body.appendChild(scopeEl);
+    renderGallery();
 
     // ---- Footer ----
     const footer = document.createElement("div");
@@ -506,10 +617,9 @@
         if (scopeEl) scopeEl.style.removeProperty(name);
       }
       overrides.clear();
-      // Rebuild the gallery so every control + value snaps back to default.
-      scopeEl.innerHTML = "";
-      scopeEl.appendChild(buildTokensColumn());
-      scopeEl.appendChild(buildSamples());
+      // Rebuild the gallery so every control + value snaps back to default
+      // (keeps the currently-open accordion group).
+      renderGallery();
     });
 
     const copyBtn = document.createElement("button");
