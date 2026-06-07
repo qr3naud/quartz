@@ -90,12 +90,26 @@
         })),
         // Groups are pure data now: membership is each card's `groupId`
         // (serialized above) and nesting is `parentId`. No cardIds, no DOM read.
+        //
+        // Table-native fields (v7.23+): the table view owns the hierarchy. A
+        // top-level group (parentId null) is a "use case" carrying records +
+        // frequency + its import source; `kind` flags special groups (e.g.
+        // waterfall, Phase 2); `order` is the explicit sibling order (replaces
+        // the canvas-y fallback). `level`/`color` are legacy canvas fields kept
+        // only so the deprecated canvas renderer doesn't choke on the blob.
         groups: groupsRef().map((g) => ({
           id: g.id,
           label: g.label || "",
+          parentId: g.parentId ?? null,
+          kind: g.kind || "group",
+          order: g.order ?? null,
+          source: g.source || null,
+          tableId: g.tableId ?? null,
+          viewId: g.viewId ?? null,
+          records: g.records ?? null,
+          frequency: g.frequency ?? null,
           level: g.level || 0,
           color: g.color || null,
-          parentId: g.parentId ?? null,
         })),
         view: { panX: pan.panX, panY: pan.panY, scale: pan.scale },
         nextCardId: nextIds.nextCardId,

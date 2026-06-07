@@ -423,9 +423,18 @@
       groupsRef().push({
         id: gs.id,
         label: gs.label || "",
+        parentId: gs.parentId ?? null,
+        // Table-native fields (v7.23+); default so legacy blobs round-trip.
+        kind: gs.kind || "group",
+        order: gs.order ?? null,
+        source: gs.source || null,
+        tableId: gs.tableId ?? null,
+        viewId: gs.viewId ?? null,
+        records: gs.records ?? null,
+        frequency: gs.frequency ?? null,
+        // Legacy canvas fields.
         level: gs.level || 0,
         color: gs.color || null,
-        parentId: gs.parentId ?? null,
       });
       ensureNextGroupId(gs.id);
     }

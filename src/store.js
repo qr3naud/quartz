@@ -145,6 +145,143 @@
       return call("getImportedTables", {});
     },
 
+    // ---- Table-native group tree (v7.23+) -------------------------------
+    // Groups are an ordered tree. A top-level group (parentId null) is a "use
+    // case" that carries records/frequency/source; nested groups are
+    // sub-groups. Card membership is `card.groupId` (immediate parent). These
+    // are low-level mutators — callers wrap them in update() to capture undo +
+    // persist + notify (see the table view's group ops).
+    getGroup(id) {
+      return state.groups.find((g) => g && g.id === id) || null;
+    },
+    // Immediate child groups of `id` (top-level groups when id == null).
+    childGroups(id) {
+      const pid = id ?? null;
+      return state.groups.filter((g) => (g.parentId ?? null) === pid);
+    },
+    // The top-level ("use case") ancestor group for a card, walking
+    // groupId -> parentId. Null when the card is ungrouped. Cycle-guarded.
+    useCaseGroupForCard(card) {
+      let gid = card && card.groupId != null ? card.groupId : null;
+      const seen = new Set();
+      let group = null;
+      while (gid != null && !seen.has(gid)) {
+        seen.add(gid);
+        group = model.getGroup(gid);
+        if (!group) return null;
+        if (group.parentId == null) return group;
+        gid = group.parentId;
+      }
+      return group && group.parentId == null ? group : null;
+    },
+    // Depth of a group: 0 = top-level (use case), 1 = sub-group, ...
+    groupDepth(id) {
+      let depth = 0;
+      let g = model.getGroup(id);
+      const seen = new Set();
+      while (g && g.parentId != null && !seen.has(g.id)) {
+        seen.add(g.id);
+        depth += 1;
+        g = model.getGroup(g.parentId);
+      }
+      return depth;
+    },
+    // All descendant group ids (inclusive), via parentId.
+    groupSubtreeIds(id) {
+      const ids = new Set([id]);
+      let grew = true;
+      while (grew) {
+        grew = false;
+        for (const g of state.groups) {
+          if (g.parentId != null && ids.has(g.parentId) && !ids.has(g.id)) {
+            ids.add(g.id);
+            grew = true;
+          }
+        }
+      }
+      return ids;
+    },
+    createGroup(opts) {
+      opts = opts || {};
+      const cb = window.__cb;
+      const id =
+        cb && cb.canvas && typeof cb.canvas.allocateGroupId === "function"
+          ? cb.canvas.allocateGroupId()
+          : state.groups.reduce((m, g) => Math.max(m, Number(g.id) || 0), 0) + 1;
+      const siblings = model.childGroups(opts.parentId ?? null);
+      const maxOrder = siblings.reduce(
+        (m, g) => (g.order != null ? Math.max(m, Number(g.order)) : m),
+        -1,
+      );
+      const group = {
+        id,
+        parentId: opts.parentId ?? null,
+        label: opts.label || "",
+        kind: opts.kind || "group",
+        order: opts.order != null ? opts.order : maxOrder + 1,
+        source: opts.source || null,
+        tableId: opts.tableId ?? null,
+        viewId: opts.viewId ?? null,
+        records: opts.records ?? null,
+        frequency: opts.frequency ?? null,
+        level: 0,
+        color: null,
+      };
+      state.groups.push(group);
+      return group;
+    },
+    updateGroup(id, patch) {
+      const g = model.getGroup(id);
+      if (g && patch) Object.assign(g, patch);
+      return g;
+    },
+    setCardGroup(cardId, groupId) {
+      const c = model.getNode(cardId);
+      if (c) c.groupId = groupId ?? null;
+      return c;
+    },
+    // Remove a group. `withCards`: also delete every card in the subtree.
+    // Otherwise the subtree's cards + child groups re-parent to this group's
+    // parent (promote one level) so nothing is orphaned.
+    deleteGroup(id, opts) {
+      const g = model.getGroup(id);
+      if (!g) return;
+      if (opts && opts.withCards) {
+        const ids = model.groupSubtreeIds(id);
+        for (let i = state.cards.length - 1; i >= 0; i--) {
+          const c = state.cards[i];
+          if (c.groupId != null && ids.has(c.groupId)) state.cards.splice(i, 1);
+        }
+        for (let i = state.groups.length - 1; i >= 0; i--) {
+          if (ids.has(state.groups[i].id)) state.groups.splice(i, 1);
+        }
+      } else {
+        const parentId = g.parentId ?? null;
+        for (const c of state.cards) if (c.groupId === id) c.groupId = parentId;
+        for (const child of state.groups) if (child.parentId === id) child.parentId = parentId;
+        const idx = state.groups.findIndex((x) => x.id === id);
+        if (idx >= 0) state.groups.splice(idx, 1);
+      }
+    },
+    // Drop SUB-groups with no member cards and no child groups. Empty
+    // top-level use cases are kept (a freshly created one is valid).
+    pruneEmptyGroups() {
+      let removed = true;
+      while (removed) {
+        removed = false;
+        for (let i = state.groups.length - 1; i >= 0; i--) {
+          const grp = state.groups[i];
+          if (grp.parentId == null) continue; // never prune a use case
+          const hasCards = state.cards.some((c) => c.groupId === grp.id);
+          const hasChild = state.groups.some((g) => g.parentId === grp.id);
+          if (!hasCards && !hasChild) {
+            state.groups.splice(i, 1);
+            removed = true;
+          }
+        }
+      }
+    },
+
     // The single write path + transaction (C3.1 + C3.4). Every write — external
     // (table view, importers, picker, export, overlay) and canvas-internal
     // (canvas.notifyChange delegates here) — runs through update(): apply the

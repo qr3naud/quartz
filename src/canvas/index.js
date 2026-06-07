@@ -1894,7 +1894,18 @@
       color: g.color ?? null,
       parentId: g.parentId ?? null,
       label: g.label || "",
+      // Table-native fields (v7.23+) so canvas consumers don't strip them.
+      kind: g.kind || "group",
+      order: g.order ?? null,
+      source: g.source || null,
+      tableId: g.tableId ?? null,
+      viewId: g.viewId ?? null,
+      records: g.records ?? null,
+      frequency: g.frequency ?? null,
     })),
+    // Mint a fresh group id (and advance the persisted counter) so table-native
+    // group creation in the store stays consistent with serialize's nextGroupId.
+    allocateGroupId: () => nextGroupId++,
     destroy, serialize, restore, setActiveTool, getActiveTool,
     // Lazy canvas DOM (C2.2). hydrateCanvasDom mounts every card element on
     // first switch to the canvas view (idempotent); isDomHydrated lets
