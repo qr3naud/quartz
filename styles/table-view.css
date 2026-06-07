@@ -612,9 +612,12 @@
 /* ---- Context menu flyout submenu ("Move to") ---- */
 
 .cb-table-view-context-menu-sep {
+  /* flex:none so the scrollable submenu column never shrinks the 1px line away;
+     a darker gray than the panel border so it actually reads as a divider. */
+  flex: none;
   height: 1px;
-  background: #e5e7eb;
-  margin: 4px 6px;
+  background: #d1d5db;
+  margin: 5px 8px;
 }
 
 .cb-table-view-context-menu-submenu-wrap {
