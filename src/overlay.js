@@ -1862,8 +1862,10 @@
 
       const creditDollars = totalCredits * creditCost;
       const actionDollars = totalActions * actionCost;
-      setSummaryNumber(creditDollarValue, creditDollars, formatDollar);
-      setSummaryNumber(actionDollarValue, actionDollars, formatDollar);
+      // Card totals round to whole dollars like Total Cost — at scoping volumes
+      // the sub-dollar tail (e.g. $67.695) is noise.
+      setSummaryNumber(creditDollarValue, creditDollars, formatDollarRounded);
+      setSummaryNumber(actionDollarValue, actionDollars, formatDollarRounded);
       setSummaryNumber(totalDollarValue, creditDollars + actionDollars, formatDollarRounded);
 
       // Amber "pinned" outline on Total Cost while a target budget is held
