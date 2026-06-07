@@ -808,6 +808,10 @@
     // ---- Editable "Options" group (deal-level source of truth) -----------
     wrap.appendChild(buildPricingOptionsGroup(optionsData));
 
+    // Keep any pinned band matrices live: their floors + authority pill follow
+    // the current discount / volumes / term, so the approval level updates too.
+    syncPinnedAvgMatrices(optionsData);
+
     for (const { uc, yearRecs, ucCredits, ucActions } of ucData) {
       const box = document.createElement("div");
       box.className = "cb-pricing-uc";
@@ -1291,6 +1295,56 @@
   function unpinAvgMatrix(panel) {
     pricingAvgPinnedEls.delete(panel);
     panel.remove();
+  }
+
+  // Re-render every pinned matrix from the current option data so their floors
+  // and authority pill track live edits (discount, volumes, term, rename) — not
+  // just the state captured at pin time. Each panel keeps its on-screen position
+  // and pinned/draggable state; only its content is rebuilt. Called from
+  // buildPricingBody after the options group renders.
+  function syncPinnedAvgMatrices(optionsData) {
+    if (!pricingAvgPinnedEls.size) return;
+    for (const oldPanel of Array.from(pricingAvgPinnedEls)) {
+      const key = oldPanel.dataset.pamKey || "";
+      const sep = key.indexOf("|");
+      if (sep < 0) continue;
+      const optIdx = Number(key.slice(0, sep));
+      const metric = key.slice(sep + 1);
+      const od = optionsData[optIdx];
+      // Option deleted: drop its now-orphaned pinned panel.
+      if (!od) {
+        unpinAvgMatrix(oldPanel);
+        continue;
+      }
+      const n = od.perYear.length || 1;
+      const avgVolume =
+        metric === "credit"
+          ? od.perYear.reduce((s, y) => s + y.credits, 0) / n
+          : od.perYear.reduce((s, y) => s + y.actionVolume, 0) / n;
+      const actual = metric === "credit" ? od.cpc : od.cpa;
+      const fresh = buildAvgMatrixPanel({
+        metric,
+        avgVolume,
+        years: od.years,
+        optName: od.opt.name,
+        key,
+        actual,
+      });
+      if (!fresh) continue;
+      // Preserve position + pinned/draggable state from the old panel.
+      fresh.style.position = "fixed";
+      if (oldPanel.style.left) fresh.style.left = oldPanel.style.left;
+      if (oldPanel.style.top) fresh.style.top = oldPanel.style.top;
+      fresh.classList.add("cb-pam-pinned");
+      const pin = fresh.querySelector(".cb-pam-pin");
+      if (pin) {
+        pin.classList.add("cb-pam-pin-active");
+        pin.title = "Unpin";
+      }
+      oldPanel.replaceWith(fresh);
+      pricingAvgPinnedEls.delete(oldPanel);
+      pricingAvgPinnedEls.add(fresh);
+    }
   }
 
   // Drag a pinned panel by its header. No-op until the panel is pinned.
