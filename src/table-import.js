@@ -2868,10 +2868,11 @@
     document.body.appendChild(tablePickerBackdrop);
     document.body.appendChild(tablePickerEl);
 
+    // Clamp to the viewport (matches the single + loading pickers) so a narrow
+    // window doesn't push the popover off the right edge. placePopover also
+    // flips above the anchor when there isn't room below.
     if (anchorEl) {
-      const rect = anchorEl.getBoundingClientRect();
-      tablePickerEl.style.top = (rect.bottom + 4) + "px";
-      tablePickerEl.style.left = rect.left + "px";
+      __cb.placePopover(tablePickerEl, anchorEl, { gap: 4 });
     }
   }
 
