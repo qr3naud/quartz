@@ -3575,14 +3575,11 @@
         if (sectionInfo.parentId != null) {
           const parentGroup = groupById.get(sectionInfo.parentId);
           if (parentGroup) {
-            const parentSection = ensureSection({
-              key: `g-${parentGroup.id}`,
-              name: groupNameById.get(parentGroup.id) || "",
-              level: 1,
-              parentId: null,
-              canvasGroupId: parentGroup.id,
-              editable: true,
-            });
+            // Materialize the parent with its FULL section shape (isUseCase /
+            // records / source / tableId). A bare {level,parentId} object would
+            // default isUseCase to false, so a use case whose DPs all live in
+            // sub-groups would lose its header Records/Frequency/cost pills.
+            const parentSection = ensureSection(sectionInfoForGroup(parentGroup));
             // Track the super's min off its children so render can
             // sort top-level sections by topmost-member tableOrder /
             // Y consistently whether the super has direct DPs or only
@@ -3686,14 +3683,9 @@
       if (sectionInfo.parentId != null) {
         const parentGroup = groupById.get(sectionInfo.parentId);
         if (parentGroup) {
-          const parentSection = ensureSection({
-            key: `g-${parentGroup.id}`,
-            name: groupNameById.get(parentGroup.id) || "",
-            level: 1,
-            parentId: null,
-            canvasGroupId: parentGroup.id,
-            editable: true,
-          });
+          // Full section shape so the use-case header keeps its scope pills even
+          // when it only owns sub-groups (see the DP loop above).
+          const parentSection = ensureSection(sectionInfoForGroup(parentGroup));
           for (const row of clusterMap.values()) {
             trackSectionMin(parentSection, row.y, tableOrderForCardId(row.cardId));
           }
