@@ -41,7 +41,6 @@
   const ACTIVE_ATTR = "data-cb-canvases-active";
 
   let active = false;
-  let rgWidthOverridden = false;
   // Cached clean-up handlers we attached to the 4 native options; removed
   // when we tear down so we don't leak listeners on re-injection.
   let nativeClickOffs = [];
@@ -83,7 +82,24 @@
   }
 
   function getOptionsContainer(rg) {
-    return rg?.firstElementChild || null;
+    if (!rg) return null;
+    // Redesigned home (HomeTab.tsx, 2026): the option spans are DIRECT
+    // children of the radiogroup — each role=radio span followed by a hidden
+    // <input> — with no wrapper div. The older layout nested the options
+    // inside a single wrapper (rg.firstElementChild). Detect which by where
+    // the role=radio spans actually live so injection works across both.
+    const directRadios = Array.from(rg.children).filter(
+      (c) => c.getAttribute("role") === "radio",
+    );
+    if (directRadios.length >= 2) return rg;
+    const inner = rg.firstElementChild;
+    if (inner) {
+      const nested = Array.from(inner.children).filter(
+        (c) => c.getAttribute("role") === "radio",
+      );
+      if (nested.length >= 2) return inner;
+    }
+    return rg;
   }
 
   function getNativeOptions(inner) {
@@ -127,14 +143,6 @@
       }
     `;
     document.head.appendChild(style);
-  }
-
-  function buildDivider() {
-    const d = document.createElement("div");
-    d.id = DIVIDER_ID;
-    d.className = "relative h-6 w-px bg-border-secondary";
-    d.setAttribute("aria-hidden", "true");
-    return d;
   }
 
   function buildCanvasesTab(referenceOption) {
@@ -195,19 +203,8 @@
     const nativeOptions = getNativeOptions(inner);
     if (nativeOptions.length < 2) return;
 
-    // Default width of `w-[500px]` is tight for 5 tabs; widen so "Table
-    // activity" doesn't truncate. Inline style beats Tailwind class, so we
-    // leave the class intact and simply record that we touched the style.
-    if (!rgWidthOverridden) {
-      rg.style.width = "620px";
-      rgWidthOverridden = true;
-    }
-
-    const firstOption = nativeOptions[0];
     const secondOption = nativeOptions[1];
-
-    const canvasesTab = buildCanvasesTab(firstOption);
-    const divider = buildDivider();
+    const canvasesTab = buildCanvasesTab(nativeOptions[0]);
 
     canvasesTab.addEventListener("click", (e) => {
       e.preventDefault();
@@ -215,10 +212,22 @@
       activateCanvases();
     });
 
-    // Insert: Workbooks | [Canvases | divider] | Table activity | …
-    // i.e. insert [our tab, divider-after-our-tab] before the second option.
+    // Insert as the SECOND option: All files | Quartz | Recents | Favorites.
+    // The new control is a w-fit pill with no inter-option dividers, so we
+    // just drop our span in (it sits before the second option's span; the
+    // hidden <input> siblings base-ui uses are left untouched).
     inner.insertBefore(canvasesTab, secondOption);
-    inner.insertBefore(divider, secondOption);
+
+    // Re-injection path: when React re-renders the segmented control (e.g. the
+    // Show more/less toggle rebuilds the home header) it can drop our foreign
+    // node. The body MutationObserver calls us again to re-add it — if the
+    // panel is still open, restore the checked look so the tab keeps reading
+    // as selected and the natives stay visually un-checked.
+    if (active) {
+      ensureStyles();
+      rg.setAttribute(ACTIVE_ATTR, "");
+      setOurTabChecked(true);
+    }
 
     // Wire deactivation on the existing native options. We record the
     // teardown handlers so a future re-inject can remove them cleanly.
@@ -245,12 +254,6 @@
       }
     }
     nativeClickOffs = [];
-
-    const rg = findRadioGroup();
-    if (rg && rgWidthOverridden) {
-      rg.style.width = "";
-      rgWidthOverridden = false;
-    }
   }
 
   function activateCanvases() {
@@ -390,10 +393,23 @@
     const reposition = () => positionPanel();
     window.addEventListener("resize", reposition);
     window.addEventListener("scroll", reposition, true);
+
+    // The "Show more/less" toggle collapses/expands the greeting + action
+    // cards that sit ABOVE the sticky header, shifting the tabs row up or down
+    // WITHOUT firing a scroll or resize event — which would otherwise leave
+    // the panel pinned to a stale top, floating away from the tabs. Observe
+    // the content root + sticky header so any such height change re-pins us.
+    let ro = null;
+    if (typeof ResizeObserver !== "undefined") {
+      ro = new ResizeObserver(reposition);
+      ro.observe(contentRoot);
+      ro.observe(stickyHeader);
+    }
     // Stash the teardown hooks on the panel so deactivate can find them.
     panel._cbTeardown = () => {
       window.removeEventListener("resize", reposition);
       window.removeEventListener("scroll", reposition, true);
+      if (ro) ro.disconnect();
     };
 
     document.body.appendChild(panel);
