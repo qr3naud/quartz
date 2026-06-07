@@ -249,14 +249,19 @@
   100% { background-position: -150% 0; }
 }
 
-/* One-shot fade/settle when real avatars first replace the shimmer. */
+/* One-shot entrance when real avatars first replace the shimmer. Scaling the
+   stack (rather than just fading) makes the whole avatar — including each
+   active user's indigo box-shadow ring, which scales with the parent transform
+   — grow in smoothly instead of the ring snapping on at the end. `both` holds
+   the start frame so there's no flash before it runs. */
 .cb-collab-reveal {
-  animation: cbCollabReveal 0.28s ease-out;
+  animation: cbCollabReveal 0.34s cubic-bezier(0.22, 0.61, 0.36, 1) both;
+  transform-origin: center;
 }
 
 @keyframes cbCollabReveal {
-  from { opacity: 0; transform: translateY(-2px); }
-  to { opacity: 1; transform: none; }
+  from { opacity: 0; transform: scale(0.82); }
+  to { opacity: 1; transform: scale(1); }
 }
 
 @media (prefers-reduced-motion: reduce) {

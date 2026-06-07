@@ -175,6 +175,11 @@
     if (cached) {
       __cb.userId = cached.id;
       __cb.user = cached;
+      // Convenience accessors for the acting user's display name + avatar, used
+      // e.g. by the collaborators widget's empty state. Kept in sync with
+      // __cb.user at every assignment below.
+      __cb.userName = cached.name || null;
+      __cb.userProfilePicture = cached.profilePicture || null;
     }
 
     const fresh = await fetchClayUser();
@@ -182,6 +187,8 @@
       const { acting, impersonating } = resolveActingIdentity(fresh, cached);
       __cb.userId = acting.id;
       __cb.user = acting;
+      __cb.userName = acting.name || null;
+      __cb.userProfilePicture = acting.profilePicture || null;
       __cb.isImpersonating = !!impersonating;
       __cb.impersonatedUser = impersonating;
 
@@ -217,6 +224,8 @@
           acting.name = acting.name || dbUser.name;
           acting.profilePicture = dbUser.profilePicture || acting.profilePicture;
           __cb.user = acting;
+          __cb.userName = acting.name || __cb.userName;
+          __cb.userProfilePicture = acting.profilePicture || __cb.userProfilePicture;
           // Cache so the next page load has it synchronously.
           if (acting.profilePicture) saveCachedUser(acting);
         }

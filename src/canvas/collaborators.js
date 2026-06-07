@@ -70,13 +70,13 @@
   }
 
   /** The current (acting) user as a contributor-shaped object, for the empty
-   *  state. Only id + email are reliably on __cb, so the avatar falls back to
-   *  the email's first initial; that's still better than a blank pill. */
+   *  state. Uses the name/avatar exposed by user.js (falls back to the email
+   *  initial if those haven't resolved yet) — still better than a blank pill. */
   function selfContributor() {
     const id = __cb.userId || null;
-    const label = __cb.userEmail || (id ? String(id) : null);
-    if (!id && !label) return null;
-    return { id, name: label || "You", profilePicture: null };
+    const name = __cb.userName || __cb.userEmail || (id ? String(id) : null);
+    if (!id && !name) return null;
+    return { id, name: name || "You", profilePicture: __cb.userProfilePicture || null };
   }
 
   /** Queries Supabase for all contributors to the current workbook. */
@@ -108,8 +108,17 @@
   function renderStack() {
     if (!stackEl) return;
     stackEl.innerHTML = "";
-    // One-shot fade when real avatars first replace the shimmer.
-    stackEl.classList.toggle("cb-collab-reveal", revealOnce);
+    // One-shot entrance when real avatars first replace the shimmer. Apply it
+    // ONLY on the reveal render and never strip it on later re-renders (presence
+    // ticks rebuild the children every few seconds) — stripping it mid-flight is
+    // what made the avatar snap. Remove + reflow + re-add so a later cold reload
+    // can animate again cleanly. The animation lives on the container, so
+    // swapping children underneath it doesn't interrupt it.
+    if (revealOnce) {
+      stackEl.classList.remove("cb-collab-reveal");
+      void stackEl.offsetWidth; // force reflow to restart the animation
+      stackEl.classList.add("cb-collab-reveal");
+    }
 
     // First-load shimmer: placeholder avatars while the initial fetch is in
     // flight. Only when we have nothing yet — a refresh over existing avatars
