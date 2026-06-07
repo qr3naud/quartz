@@ -778,8 +778,18 @@
         deleteBtn.title = "Delete permanently";
         deleteBtn.addEventListener("click", (e) => {
           e.stopPropagation();
-          closeDeletedMenu(menu);
-          permanentlyDeleteTab(ht.id);
+          // Keep the dropdown open so several can be deleted in a row — drop
+          // just this row + refresh the count instead of tearing down the menu.
+          permanentlyDeleteTab(ht.id, { rerender: false });
+          item.remove();
+          const n = menu.querySelectorAll(".cb-hidden-tab-item").length;
+          if (n === 0) {
+            closeDeletedMenu(menu);
+            renderTabBar();
+          } else {
+            triggerBtn.textContent = `${n} deleted`;
+            triggerBtn.title = `${n} deleted tab${n !== 1 ? "s" : ""}`;
+          }
         });
 
         item.appendChild(nameBtn);
@@ -850,8 +860,18 @@
         deleteBtn.title = "Remove saved canvas";
         deleteBtn.addEventListener("click", (e) => {
           e.stopPropagation();
-          closeSavedMenu(savedMenu);
-          removeSavedTemplate(tpl.id);
+          // Keep the dropdown open so several can be removed in a row — drop
+          // just this row + refresh the count instead of tearing down the menu.
+          removeSavedTemplate(tpl.id, { rerender: false });
+          item.remove();
+          const n = savedMenu.querySelectorAll(".cb-hidden-tab-item").length;
+          if (n === 0) {
+            closeSavedMenu(savedMenu);
+            renderTabBar();
+          } else {
+            savedBtn.textContent = `${n} saved`;
+            savedBtn.title = `${n} saved canvas${n !== 1 ? "es" : ""}`;
+          }
         });
 
         item.addEventListener("contextmenu", (e) => {
@@ -1050,7 +1070,7 @@
     __cb.switchTab(newId);
   }
 
-  function permanentlyDeleteTab(tabId) {
+  function permanentlyDeleteTab(tabId, { rerender = true } = {}) {
     if (!__cb.tabStore) return;
     __cb.saveTabs();
 
@@ -1075,7 +1095,7 @@
       }
     } else {
       __cb.saveTabs();
-      renderTabBar();
+      if (rerender) renderTabBar();
     }
   }
 
@@ -1111,12 +1131,12 @@
     __cb.switchTab(newId);
   }
 
-  function removeSavedTemplate(templateId) {
+  function removeSavedTemplate(templateId, { rerender = true } = {}) {
     const templates = loadSavedTemplates();
     const idx = templates.findIndex(t => t.id === templateId);
     if (idx !== -1) templates.splice(idx, 1);
     saveSavedTemplates(templates);
-    renderTabBar();
+    if (rerender) renderTabBar();
   }
 
   function showSavedItemContextMenu(e, tpl, nameBtn, savedMenu) {
