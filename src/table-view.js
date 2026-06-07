@@ -146,6 +146,13 @@
   // Consumed + cleared in render() (mirrors pendingFocusGroupId).
   let pendingRenameCardId = null;
 
+  // "Insert below → Enrichment" context: the target row's group, stashed before
+  // opening the (unlinked) picker so the resulting orphan ER(s) can be dropped
+  // into the same section as the target. Consumed + cleared by
+  // placeInsertedEnrichments (the picker hook); cleared by the other picker
+  // entry points so a cancelled insert can't misplace a later add.
+  let pendingErInsertCtx = null;
+
   // ---- Row identity helpers ----
   //
   // The id types in play here:
@@ -3434,17 +3441,64 @@
   // promotes the adjacency into a fresh cluster id.
   function startAddEnrichment(targetCardId) {
     if (!__cb.canvas || !__cb.startPickerMode) return;
+    pendingErInsertCtx = null;
     if (targetCardId) __cb.linkTargetCardId = targetCardId;
     __cb.startPickerMode();
   }
 
   function startAddOrphanEnrichment() {
     if (!__cb.startPickerMode) return;
+    pendingErInsertCtx = null;
     // No link target → picker drops cards at enrichmentClickPos (null here)
     // which falls through to canvas-center placement in picker.js.
     __cb.linkTargetCardId = null;
     __cb.enrichmentClickPos = null;
     __cb.startPickerMode();
+  }
+
+  // "Insert below → Enrichment": add an UNLINKED (orphan) enrichment via the
+  // picker, dropped just below the target row and into the target's section
+  // (same group / use case), so it reads as a standalone enrichment row rather
+  // than a chip on the data point. Contrast startAddEnrichment, which LINKS the
+  // pick to the DP via placeCardsAdjacentTo.
+  function insertEnrichmentBelow(targetRowId) {
+    const target = getCardForRowId(targetRowId);
+    if (!target || !__cb.startPickerMode) {
+      startAddOrphanEnrichment();
+      return;
+    }
+    pendingErInsertCtx = { groupId: target.groupId ?? null };
+    __cb.linkTargetCardId = null;
+    // Drop just below the target on the canvas so the table's y-ordering slots
+    // the new orphan ER right after the target row within the section.
+    __cb.enrichmentClickPos = {
+      x: Number(target.x) || 0,
+      y: (Number(target.y) || 0) + 80,
+    };
+    __cb.startPickerMode();
+  }
+
+  // Picker hook (picker.js, orphan branch): assign freshly-picked orphan ER(s)
+  // the target row's group so they render in the same section as the target
+  // (unlinked). No-ops unless an "Insert below → Enrichment" is pending.
+  function placeInsertedEnrichments(cards) {
+    if (!pendingErInsertCtx) return;
+    const ctx = pendingErInsertCtx;
+    pendingErInsertCtx = null;
+    const ers = (cards || []).filter((c) => c && isErType(c.data?.type));
+    if (ers.length === 0) return;
+    let changed = false;
+    for (const c of ers) {
+      if (ctx.groupId != null && c.groupId !== ctx.groupId) {
+        c.groupId = ctx.groupId;
+        changed = true;
+      }
+    }
+    if (changed) {
+      __cb.model.update();
+      if (__cb.saveTabs) __cb.saveTabs();
+    }
+    if (__cb.tableView && __cb.tableView.refresh) __cb.tableView.refresh();
   }
 
   // "Scope Ads" / "Scope Audiences" intro shortcuts. Behavior is not wired up
@@ -4728,13 +4782,21 @@
         }
         items.push({ label: "Move to", submenu: moveSubmenu });
       }
+      // "Insert below" mirrors "Move to": a chevron submenu offering either a
+      // data point (slotted right below) or an enrichment (added UNLINKED as an
+      // orphan ER below, not as a chip on this DP).
       items.push({
-        label: "Insert data point below",
-        action: () => insertDataPointBelow(ctx.rowId),
-      });
-      items.push({
-        label: "Insert enrichment below",
-        action: () => startAddEnrichment(parseCardIdFromRowId(ctx.rowId)),
+        label: "Insert below",
+        submenu: [
+          {
+            label: "Data point",
+            action: () => insertDataPointBelow(ctx.rowId),
+          },
+          {
+            label: "Enrichment",
+            action: () => insertEnrichmentBelow(ctx.rowId),
+          },
+        ],
       });
       // Per-row note — anchored to the row's enrichment cell so the editor
       // opens next to where the badge lives.
@@ -7457,6 +7519,12 @@
     // re-clicked while already in projected mode.
     openProjectedMenu(anchorEl) {
       openProjectedMenu(anchorEl);
+    },
+    // Picker hand-off (picker.js, orphan branch): place freshly-picked orphan
+    // enrichments from an "Insert below → Enrichment" into the target row's
+    // section. No-ops otherwise.
+    placeInsertedEnrichments(cards) {
+      placeInsertedEnrichments(cards);
     },
     mount(host) {
       hostEl = host;

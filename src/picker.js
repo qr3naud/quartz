@@ -1292,6 +1292,11 @@
             }
           }
         }
+        // Table view "Insert below → Enrichment": drop the new orphan ER(s)
+        // into the target row's section (unlinked). No-op for other adds.
+        if (typeof __cb.tableView?.placeInsertedEnrichments === "function") {
+          __cb.tableView.placeInsertedEnrichments(cards);
+        }
       }
       // Cards are on the canvas now (addCard is synchronous), so backfill any
       // unresolved function costs.
