@@ -1184,9 +1184,11 @@
   }
 
   // ---- Average-row band matrix: hover to preview, click/pin to keep ----------
-  // Hovering an Average cell opens a transient matrix (Tier / Rep Floor / 1-3 Yr
-  // rep floors) with the active-year column, the landed band, and their
+  // Hovering an Average cell opens a transient matrix (Tier / Floor / 1-3 Yr
+  // floors) with the active-year column, the landed band, and their
   // intersection highlighted in the metric's tone (grey actions / green credits).
+  // The floors shown escalate rep -> manager -> deal desk as the Discount drops
+  // below each authority level (the header pill names the active level).
   // Clicking it (or its pin icon) pins it open + draggable; multiple can be
   // pinned at once to compare. Pinned panels are snapshots taken at pin time.
   let pricingAvgHoverEl = null;
@@ -1215,6 +1217,15 @@
       for (const el of pricingAvgPinnedEls) el.remove();
       pricingAvgPinnedEls.clear();
     }
+  }
+  // True when a pinned matrix already exists for this option+metric key, so the
+  // Average cell shouldn't reopen a transient hover over it.
+  function isAvgMatrixPinned(key) {
+    if (!key) return false;
+    for (const el of pricingAvgPinnedEls) {
+      if (el.dataset.pamKey === key) return true;
+    }
+    return false;
   }
 
   // Tiny instant tooltip for the "% off list" chips. Native title tooltips are
@@ -1310,7 +1321,7 @@
 
   // Builds one matrix panel (header + band table). Starts unpinned.
   function buildAvgMatrixPanel(opts) {
-    const { metric, avgVolume, years, optName, key } = opts || {};
+    const { metric, avgVolume, years, optName, key, actual } = opts || {};
     if (!__cb.pricing) return null;
     const set =
       metric === "credit"
@@ -1321,6 +1332,17 @@
     const selected = __cb.pricing.selectBand(set, avgVolume);
     const selKey = selected ? String(selected.tier) : null;
     const activeYear = Math.min(3, Math.max(1, years || 1));
+
+    // Authority level for the current Discount vs the avg-volume tier's floors
+    // (derived for the option's term). Drives which floor the band table shows
+    // and the header pill: rep (Authorized) -> manager -> deal desk. Mirrors the
+    // thresholds in pricing.approvalForContract.
+    const selFloors = selected ? __cb.pricing.resolveFloors(selected, activeYear) : null;
+    let level = "rep";
+    if (selFloors && Number.isFinite(actual)) {
+      if (actual < selFloors.manager) level = "dealDesk";
+      else if (actual < selFloors.rep) level = "manager";
+    }
 
     const panel = document.createElement("div");
     panel.className =
@@ -1339,6 +1361,15 @@
     const pill = document.createElement("span");
     pill.className = "cb-pam-metricpill";
     pill.textContent = metric === "credit" ? "Credits" : "Actions";
+    // Authority pill: which approval level the current Discount lands in.
+    const AUTH = {
+      rep: { label: "Rep", cls: "cb-pam-authpill-rep" },
+      manager: { label: "Manager", cls: "cb-pam-authpill-manager" },
+      dealDesk: { label: "Deal Desk", cls: "cb-pam-authpill-dealdesk" },
+    };
+    const authPill = document.createElement("span");
+    authPill.className = "cb-pam-authpill " + AUTH[level].cls;
+    authPill.textContent = AUTH[level].label;
     const pin = document.createElement("button");
     pin.type = "button";
     pin.className = "cb-pam-pin";
@@ -1353,6 +1384,7 @@
     });
     header.appendChild(nm);
     header.appendChild(pill);
+    header.appendChild(authPill);
     header.appendChild(pin);
     panel.appendChild(header);
 
@@ -1360,9 +1392,9 @@
     const table = document.createElement("table");
     const thead = document.createElement("thead");
     const htr = document.createElement("tr");
-    // Columns: Tier, Rep Floor (band start volume), then the 1/2/3-year rep
-    // floors. i 0=Tier, 1=Rep Floor, 2..4 = year columns (year = i - 1).
-    ["Tier", "Rep Floor", "1 Yr", "2 Yr", "3 Yr"].forEach((label, i) => {
+    // Columns: Tier, Floor (band start volume), then the 1/2/3-year floors for
+    // the active authority level. i 0=Tier, 1=Floor, 2..4 = year columns (year = i - 1).
+    ["Tier", "Floor", "1 Yr", "2 Yr", "3 Yr"].forEach((label, i) => {
       const th = document.createElement("th");
       th.textContent = label;
       if (i >= 2 && i - 1 === activeYear) th.className = "cb-pam-col-active";
@@ -1387,7 +1419,7 @@
       for (let y = 1; y <= 3; y++) {
         const td = document.createElement("td");
         const floors = __cb.pricing.resolveFloors(b, y);
-        td.textContent = floors ? pricingRate(floors.rep) : "\u2014";
+        td.textContent = floors ? pricingRate(floors[level]) : "\u2014";
         const cls = [];
         if (y === activeYear) cls.push("cb-pam-col-active");
         if (isSel && y === activeYear) cls.push("cb-pam-cell-active");
@@ -1406,9 +1438,9 @@
   }
 
   // Opens the transient hover panel near an Average cell. Pinned panels untouched.
-  function openAvgMatrixHover(anchor, metric, avgVolume, years, optName, key) {
+  function openAvgMatrixHover(anchor, metric, avgVolume, years, optName, key, actual) {
     closeAvgHover();
-    const panel = buildAvgMatrixPanel({ metric, avgVolume, years, optName, key });
+    const panel = buildAvgMatrixPanel({ metric, avgVolume, years, optName, key, actual });
     if (!panel) return;
     panel.addEventListener("mouseenter", () => {
       if (pricingAvgHoverTimer) {
@@ -1610,14 +1642,22 @@
       v.className = "cb-ptg-avg";
       v.textContent = pricingFmt(Math.round(avgVol));
       const key = `${optIdx}|${metric}`;
-      v.addEventListener("mouseenter", () => openAvgMatrixHover(v, metric, avgVol, years, optName, key));
+      // The metric's current Discount (defaults to list) drives the band table's
+      // authority level (rep/manager/dealDesk).
+      const actual = metric === "credit" ? cpc : cpa;
+      v.addEventListener("mouseenter", () => {
+        // Already pinned for this option+metric: don't reopen a hover preview.
+        if (isAvgMatrixPinned(key)) return;
+        openAvgMatrixHover(v, metric, avgVol, years, optName, key, actual);
+      });
       v.addEventListener("mouseleave", scheduleAvgHoverClose);
       // Click the Average value to pin its matrix (opens it first if needed).
       // pinAvgMatrix dedupes so the same band can't be pinned twice.
       v.addEventListener("mousedown", (e) => e.stopPropagation());
       v.addEventListener("click", (e) => {
         e.stopPropagation();
-        if (!pricingAvgHoverEl) openAvgMatrixHover(v, metric, avgVol, years, optName, key);
+        if (isAvgMatrixPinned(key)) return;
+        if (!pricingAvgHoverEl) openAvgMatrixHover(v, metric, avgVol, years, optName, key, actual);
         if (pricingAvgHoverEl) pinAvgMatrix(pricingAvgHoverEl);
       });
       cell.appendChild(v);

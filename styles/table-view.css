@@ -3762,7 +3762,7 @@
   border-bottom: 1px solid #eef1f4;
 }
 
-/* Tier + Rep Floor lead columns are left-aligned labels. */
+/* Tier + Floor lead columns are left-aligned labels. */
 .cb-pricing-avgmatrix th:first-child,
 .cb-pricing-avgmatrix td:first-child,
 .cb-pricing-avgmatrix th:nth-child(2),
@@ -3866,6 +3866,30 @@
 .cb-pam-credits .cb-pam-metricpill {
   background: #e6f7ef;
   color: #0a7a48;
+}
+/* Authority pill (Rep / Manager / Deal Desk) next to the metric pill: the
+   approval level the current Discount lands in. Accent (rep) -> amber (manager)
+   -> red (deal desk), reusing the pin-active indigo and approval-badge tones. */
+.cb-pam-authpill {
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  padding: 1px 7px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+.cb-pam-authpill-rep {
+  background: #eef2ff;
+  color: #4338ca;
+}
+.cb-pam-authpill-manager {
+  background: #fffbeb;
+  color: #b45309;
+}
+.cb-pam-authpill-dealdesk {
+  background: #fef2f2;
+  color: #b91c1c;
 }
 .cb-pam-pin {
   margin-left: auto;
