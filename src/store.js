@@ -263,6 +263,86 @@
         if (idx >= 0) state.groups.splice(idx, 1);
       }
     },
+    // Migration / load-time adapter (v7.23+): derive the table-native group
+    // tree from legacy state so existing scopes (and freshly imported cards
+    // tagged only with data.tableId) render as use cases. Idempotent — safe to
+    // run on every restore:
+    //   - find-or-create one L1 use-case group per distinct card.data.tableId
+    //     (label + records from the importedTables metadata),
+    //   - put each tabled card under its use case UNLESS it already lives in a
+    //     sub-group of that use case (so user sub-grouping survives reloads),
+    //   - prune leftover empties (old emptied cb-groups / comment-clusters),
+    //     keeping user-created empty use cases (source "manual").
+    // Returns true if it changed anything (caller may persist).
+    ensureTableNativeGroups() {
+      const tables = model.getImportedTables() || {};
+      let changed = false;
+      // Existing L1 use-case groups, keyed by their source tableId.
+      const ucByTableId = new Map();
+      for (const g of state.groups) {
+        if ((g.parentId ?? null) === null && g.source === "import-table" && g.tableId != null) {
+          if (!ucByTableId.has(g.tableId)) ucByTableId.set(g.tableId, g);
+        }
+      }
+      const ensureUseCase = (tid, card) => {
+        let uc = ucByTableId.get(tid);
+        if (!uc) {
+          const meta = tables[tid] || {};
+          uc = model.createGroup({
+            parentId: null,
+            source: "import-table",
+            tableId: tid,
+            viewId: (card && card.data && card.data.viewId) ?? null,
+            label: meta.name || (card && card.data && card.data.tableName) || "Table",
+            records: meta.recordCount != null ? Number(meta.recordCount) : null,
+          });
+          ucByTableId.set(tid, uc);
+          changed = true;
+        }
+        return uc;
+      };
+      // Clay column groups arrive as legacy comment-cluster "basic groups": a
+      // titled comment card + member cards sharing a groupCluster. Map each
+      // cluster to its title so we can rebuild it as a real L2 sub-group under
+      // the table's use case (the comment card then renders as an invisible
+      // no-op in the table — its title lives on the L2 group).
+      const titleByCluster = new Map();
+      for (const c of state.cards) {
+        if (c.data && c.data.type === "comment" && c.data.groupCluster != null) {
+          const txt = (c.data.text || c.data.displayName || "").trim();
+          if (txt && !titleByCluster.has(c.data.groupCluster)) {
+            titleByCluster.set(c.data.groupCluster, txt);
+          }
+        }
+      }
+      const l2ByCluster = new Map();
+      // Assign every ungrouped, table-tagged card to its use case (loose) or its
+      // column group's L2 sub-group. Only touches cards with no groupId, so it
+      // never fights user edits and is safe to run on every render.
+      for (const c of state.cards) {
+        const d = c.data || {};
+        if (!d.tableId || d.type === "comment") continue;
+        if (c.groupId != null) continue;
+        const uc = ensureUseCase(d.tableId, c);
+        const cluster = d.groupCluster;
+        if (cluster != null && titleByCluster.has(cluster)) {
+          let l2 = l2ByCluster.get(cluster);
+          if (!l2) {
+            l2 = model.createGroup({
+              parentId: uc.id,
+              source: "import-cluster",
+              label: titleByCluster.get(cluster),
+            });
+            l2ByCluster.set(cluster, l2);
+          }
+          c.groupId = l2.id;
+        } else {
+          c.groupId = uc.id;
+        }
+        changed = true;
+      }
+      return changed;
+    },
     // Drop SUB-groups with no member cards and no child groups. Empty
     // top-level use cases are kept (a freshly created one is valid).
     pruneEmptyGroups() {
@@ -365,6 +445,14 @@
     restore(stateArg, opts) {
       const c = canvas();
       if (c && typeof c.restore === "function") c.restore(stateArg, opts);
+      // Derive the table-native group tree from legacy tags so existing scopes
+      // render as use cases. In-memory only (no undo capture); the derived
+      // groups serialize on the next save.
+      try {
+        model.ensureTableNativeGroups();
+      } catch (err) {
+        console.warn("[Clay Scoping] ensureTableNativeGroups failed:", err);
+      }
       // Notify subscribers after the rebuild (C3.5) so a mounted table view
       // re-renders on restore / tab switch / remote canvas sync. (During the
       // rebuild, `restoring` suppressed per-card notifies.)

@@ -3389,12 +3389,19 @@
       return {
         key: `g-${g.id}`,
         name: groupNameById.get(g.id) || "",
-        // Inner groups (parentId set) render at depth 1 (level 0); top-level
-        // groups carry their own level (1 = super header, 0 = standalone).
-        level: g.parentId != null ? 0 : (g.level || 0),
+        // Table-native (v7.23+): a top-level group is a "use case" (L1, rendered
+        // at depth 0 like a super-group); a nested group is a sub-group (L2,
+        // depth 1). Depth is positional via parentId, not a stored flag.
+        level: g.parentId != null ? 0 : 1,
         parentId: g.parentId ?? null,
         canvasGroupId: g.id,
         editable: true,
+        // Use-case (L1) metadata so the header can show records + apply the
+        // green/purple positional color (see buildGroupHeaderRow).
+        isUseCase: (g.parentId ?? null) === null,
+        records: (g.parentId ?? null) === null ? (g.records ?? null) : null,
+        source: g.source || null,
+        tableId: g.tableId ?? null,
       };
     }
 
@@ -3492,22 +3499,11 @@
     // either a standalone group or an inner group nested under a super
     // (parentId differentiates the two).
     function resolveSectionForCard(card) {
+      // Table-native: membership is the card's immediate group only. The legacy
+      // comment-cluster basic-group sectioning is retired (the migration
+      // adapter folds those cards into their use-case group).
       if (card.groupId != null && groupById.has(card.groupId)) {
         return sectionInfoForGroup(groupById.get(card.groupId));
-      }
-      const cluster = card.data.groupCluster;
-      if (cluster && commentByCluster.has(cluster)) {
-        return {
-          key: `c-${cluster}`,
-          name: commentByCluster.get(cluster),
-          level: 0,
-          parentId: null,
-          canvasGroupId: null,
-          // Editable so the header renders an inline label input — renaming
-          // writes back to the cluster's title comment via commitClusterLabel
-          // (the blur handler routes by section kind).
-          editable: true,
-        };
       }
       return null;
     }
@@ -3535,6 +3531,12 @@
         // top-level, non-null means nested under that super's section).
         level: sectionInfo.level,
         parentId: sectionInfo.parentId,
+        // Use-case (L1) metadata for the header (records pill + positional
+        // color); undefined for non-group sections.
+        isUseCase: !!sectionInfo.isUseCase,
+        records: sectionInfo.records ?? null,
+        source: sectionInfo.source ?? null,
+        tableId: sectionInfo.tableId ?? null,
         rows: [],
         // Tracked for sorting at render time — sections sit above
         // the flat DP rows in topological order, but within that
@@ -3716,6 +3718,13 @@
         ),
       );
     }
+    // Materialize a section for every top-level (use-case) group even when it
+    // has no rows yet, so a freshly created / emptied use case still renders
+    // its header (the rep can then add data points or drop rows into it).
+    for (const g of realGroups) {
+      if ((g.parentId ?? null) !== null) continue;
+      ensureSection(sectionInfoForGroup(g));
+    }
     sortRowsByOrder(flatDpRows);
     sortRowsByOrder(orphanErRows);
     for (const section of groupSectionsMap.values()) {
@@ -3762,6 +3771,11 @@
     // without touching the parentId-based super/inner nesting.
     // -------------------------------------------------------------------------
     function tableTagForCardId(cardId) {
+      // Table-native (v7.23+): imported tables are now real use-case groups
+      // (the migration adapter creates them), so the legacy tableId-block
+      // re-home is disabled — every card renders via the group tree above.
+      return null;
+      // eslint-disable-next-line no-unreachable
       const c = cardById.get(cardId);
       const d = c?.data;
       if (!d || !d.tableId) return null;
@@ -4860,18 +4874,99 @@
 
   function commitGroupLabel(canvasGroupId, value) {
     if (canvasGroupId == null) return;
-    const groupEl = document.querySelector(
-      `.cb-group[data-group-id="${canvasGroupId}"]`,
-    );
-    if (!groupEl) return;
-    const labelInput = groupEl.querySelector(".cb-group-label");
-    if (!labelInput) return;
-    if (labelInput.value === value) return;
-    labelInput.value = value;
-    // Dispatch the same input event the user typing in the canvas would
-    // fire, so canvas/groups.js's listener (sync mirror, updateGroupBounds,
-    // notifyChange) runs without us replicating its bookkeeping.
-    labelInput.dispatchEvent(new Event("input", { bubbles: true }));
+    // Table-native (v7.23+): write the group's label directly through the model
+    // (the canvas is headless now, so there's no .cb-group DOM to drive). The
+    // model.update() captures undo + notifies the table to re-render.
+    const g = __cb.model?.getGroup?.(canvasGroupId);
+    if (!g) return;
+    const v = (value || "").trim();
+    if ((g.label || "") === v) return;
+    __cb.model.update(() => {
+      g.label = v;
+    });
+    if (__cb.saveTabs) __cb.saveTabs();
+  }
+
+  // Commit the per-use-case records count onto the L1 group (table-native
+  // v7.23+). Drives the use case's projected cost (cost-model reads
+  // group.records). Empty / 0 clears it (falls back to the table's imported
+  // count, then the global records).
+  function commitGroupRecords(groupId, rawValue) {
+    const g = __cb.model?.getGroup?.(groupId);
+    if (!g) return;
+    const n = Math.max(0, Math.round(Number(String(rawValue).replace(/[^\d]/g, "")) || 0));
+    const next = n > 0 ? n : null;
+    if ((g.records ?? null) === next) return;
+    __cb.model.update(() => {
+      g.records = next;
+    });
+    __cb.canvas?.refreshCreditTotal?.();
+    __cb.canvas?.updateGroupCredits?.();
+    if (__cb.saveTabs) __cb.saveTabs();
+  }
+
+  // Editable "records" pill shown on a use-case (L1) header.
+  function buildUseCaseRecordsControl(section) {
+    const groupId = section.canvasGroupId;
+    const wrap = document.createElement("span");
+    wrap.className = "cb-uc-records";
+    const input = document.createElement("input");
+    input.type = "text";
+    input.className = "cb-uc-records-input";
+    input.value = section.records != null ? Number(section.records).toLocaleString() : "";
+    input.placeholder = "0";
+    input.title = "Records for this use case (drives projected cost)";
+    input.addEventListener("mousedown", (e) => e.stopPropagation());
+    input.addEventListener("click", (e) => e.stopPropagation());
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") e.target.blur();
+    });
+    input.addEventListener("blur", () => commitGroupRecords(groupId, input.value));
+    const lbl = document.createElement("span");
+    lbl.className = "cb-uc-records-label";
+    lbl.textContent = "records";
+    wrap.appendChild(input);
+    wrap.appendChild(lbl);
+    return wrap;
+  }
+
+  // Promote a sub-group (L2) to a top-level use case (L1).
+  function convertGroupToUseCase(groupId) {
+    const g = __cb.model?.getGroup?.(groupId);
+    if (!g || (g.parentId ?? null) === null) return;
+    __cb.model.update(() => {
+      g.parentId = null;
+      if (!g.source) g.source = "manual";
+    });
+    __cb.canvas?.refreshCreditTotal?.();
+    __cb.canvas?.updateGroupCredits?.();
+    if (__cb.saveTabs) __cb.saveTabs();
+  }
+
+  // Demote a use case (L1) to a sub-group nested under another use case (L2).
+  // Guarded by the caller to the 2-level cap (only offered when the group has
+  // no sub-groups of its own).
+  function nestGroupUnder(groupId, parentId) {
+    const g = __cb.model?.getGroup?.(groupId);
+    const parent = __cb.model?.getGroup?.(parentId);
+    if (!g || !parent || g.id === parentId) return;
+    __cb.model.update(() => {
+      g.parentId = parentId;
+    });
+    __cb.canvas?.refreshCreditTotal?.();
+    __cb.canvas?.updateGroupCredits?.();
+    if (__cb.saveTabs) __cb.saveTabs();
+  }
+
+  // Create a new, empty user use case (top-level group) and drop straight into
+  // renaming its header.
+  function addUseCase() {
+    if (!__cb.model?.createGroup) return;
+    const g = __cb.model.createGroup({ parentId: null, source: "manual", label: "" });
+    __cb.model.update();
+    if (__cb.saveTabs) __cb.saveTabs();
+    pendingFocusGroupId = `g-${g.id}`;
+    if (__cb.tableView?.refresh) __cb.tableView.refresh();
   }
 
   // Rename a legacy comment-cluster "basic group" (Clay-table import) by
@@ -5655,13 +5750,44 @@
       const isTable = !!gr.isTable; // imported-table block ("t-" key)
       const isCluster = !isRealGroup && !isTable && gid.startsWith("c-");
       if (isRealGroup || isCluster || isTable) {
-        const noun = isTable ? "table" : gr.level === 1 ? "super group" : "group";
+        const noun = isTable ? "table" : gr.level === 1 ? "use case" : "group";
         const target = isRealGroup
           ? { canvasGroupId: gr.canvasGroupId }
           : isTable
             ? { tableId: gid.slice(2) }
             : { clusterId: gid.slice(2) };
         items.push({ label: "Rename", action: () => startGroupRename(gr.groupId) });
+        // Convert between levels (table-native v7.23+). Real cb-groups only.
+        if (isRealGroup) {
+          const g = __cb.model?.getGroup?.(gr.canvasGroupId);
+          if (g) {
+            const isTopLevel = (g.parentId ?? null) === null;
+            const hasChildren = (__cb.model?.childGroups?.(g.id) || []).length > 0;
+            if (!isTopLevel) {
+              // Sub-group (L2) -> promote to a use case (L1).
+              items.push({
+                label: "Convert to use case",
+                action: () => convertGroupToUseCase(g.id),
+              });
+            } else if (!hasChildren) {
+              // Use case (L1) -> nest under another use case (L2). Offered only
+              // when it has no sub-groups (keeps the 2-level cap) and there's
+              // another use case to nest under.
+              const others = (__cb.model?.childGroups?.(null) || []).filter(
+                (o) => o.id !== g.id,
+              );
+              if (others.length > 0) {
+                items.push({
+                  label: "Nest under",
+                  submenu: others.map((o) => ({
+                    label: o.label || "Untitled use case",
+                    action: () => nestGroupUnder(g.id, o.id),
+                  })),
+                });
+              }
+            }
+          }
+        }
         items.push({
           label: `Delete ${noun}`,
           action: () => deleteGroupWithCards(target, gr.name, noun),
@@ -6043,6 +6169,12 @@
 
   function render() {
     if (!hostEl) return;
+    // Table-native groups (v7.23+): make sure every imported (tableId-tagged)
+    // card belongs to its use-case group before we read the tree. Idempotent +
+    // render-safe (only assigns ungrouped cards), so it covers fresh imports and
+    // legacy data alike. Persist (debounced, no notify) when it materializes
+    // groups so they survive reload.
+    if (__cb.model?.ensureTableNativeGroups?.()) __cb.saveTabs?.();
     // Pinned band matrices belong to pricing mode only; clear them on the way out.
     if (!__cb.pricingMode) closeAllAvgMatrices(true);
     hostEl.innerHTML = "";
@@ -6148,6 +6280,19 @@
         openAddMenu(addBtn);
       });
       introActions.appendChild(addBtn);
+
+      // "Add use case" — creates a new top-level use-case group (table-native
+      // v7.23+) and drops into renaming it.
+      const addUcBtn = document.createElement("button");
+      addUcBtn.type = "button";
+      addUcBtn.className = "cb-table-view-add-er-btn";
+      addUcBtn.title = "Add a use case (top-level group)";
+      addUcBtn.innerHTML = plusSvg(12) + "<span>Add use case</span>";
+      addUcBtn.addEventListener("click", (evt) => {
+        evt.stopPropagation();
+        addUseCase();
+      });
+      introActions.appendChild(addUcBtn);
     }
 
     // Pricing mode: the contract-term toggle is now per option (in each option
@@ -8019,6 +8164,11 @@
     // Non-table headers keep the inline "N data points" count; table headers
     // tuck the counts behind an (i) icon next to the title (below).
     if (!opts.isTable) wrap.appendChild(count);
+    // Use-case (L1) headers carry an editable per-use-case records pill
+    // (table-native v7.23+) — records live on the group, not the global field.
+    if (section.isUseCase && section.canvasGroupId != null) {
+      wrap.appendChild(buildUseCaseRecordsControl(section));
+    }
 
     // Per-table header (Import Clay Table): an (i) icon next to the title holds
     // the counts (data points / enrichments / rows); the per-use-case scope

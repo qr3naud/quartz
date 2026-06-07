@@ -255,6 +255,13 @@
   // ER's use case, so resolve a DP via its source ER when possible.
   function useCaseKeyForCard(card) {
     const d = (card && card.data) || {};
+    // Table-native (v7.23+): a card's use case is its top-level (L1) group.
+    const uc =
+      cb.model && cb.model.useCaseGroupForCard
+        ? cb.model.useCaseGroupForCard(card)
+        : null;
+    if (uc) return `g-${uc.id}`;
+    // A data point with no group of its own inherits its source ER's use case.
     if (d.type === "dp") {
       const srcKey = d.sourceEnrichmentFieldId;
       if (srcKey != null) {
@@ -268,13 +275,61 @@
         if (er) return useCaseKeyForCard(er);
       }
     }
+    // An enrichment with no group of its own inherits the use case of the
+    // grouped data points it feeds — the rep groups DP rows, and the ER is a
+    // chip on them, so the ER's cost should land in the same use case. (A
+    // grouped DP short-circuits at the top, so there's no recursion.)
+    if (!isNonErType(d.type) && cb.dpErKeys) {
+      const erKey = erLineageKey(card);
+      if (erKey != null) {
+        for (const n of cb.model?.getNodes?.() || []) {
+          if (!n || !n.data || n.data.type !== "dp" || n.groupId == null) continue;
+          if (cb.dpErKeys(n).includes(erKey)) {
+            const g = cb.model.useCaseGroupForCard(n);
+            if (g) return `g-${g.id}`;
+          }
+        }
+      }
+    }
+    // Legacy fallback (pre-migration data): imported-table tag.
     return isImportedTableCard(card) ? `t-${d.tableId}` : OTHER_USE_CASE;
+  }
+
+  // Resolve a use-case group object from a `g-<id>` key (null otherwise).
+  function groupForUseCaseKey(key) {
+    if (typeof key !== "string" || !key.startsWith("g-")) return null;
+    const id = Number(key.slice(2));
+    return (cb.model && cb.model.getGroup && cb.model.getGroup(id)) || null;
   }
 
   // Distinct imported-table use cases that contain at least one cost-bearing ER.
   // Returns [{ key, tableId, name, color, recordCount }], table order is the
   // caller's concern (cost doesn't care). Excludes "other".
   function listUseCases() {
+    // Table-native: every top-level (L1) group is a use case (import-derived or
+    // user-created). The migration adapter guarantees imported tables have one.
+    const groups = cb.model?.getGroups?.() || [];
+    const tops = groups.filter((g) => (g.parentId ?? null) === null);
+    if (tops.length > 0) {
+      const tables = importedTablesMap();
+      return tops
+        .slice()
+        .sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
+        .map((g) => ({
+          key: `g-${g.id}`,
+          groupId: g.id,
+          tableId: g.tableId ?? null,
+          name: g.label || (g.source === "import-table" ? "Table" : "Use case"),
+          color: null,
+          recordCount:
+            g.records != null
+              ? Number(g.records)
+              : g.tableId
+                ? tables[g.tableId]?.recordCount ?? null
+                : null,
+        }));
+    }
+    // Legacy fallback (pre-migration / no groups yet): imported tables.
     const tables = importedTablesMap();
     const seen = new Map();
     for (const n of cb.model?.getNodes?.() || []) {
@@ -304,11 +359,21 @@
   // use-case key. Falls back to the global records/frequency (the single-scope
   // controls) so behavior is identical until 2+ tables exist.
   function useCaseRecords(key) {
+    // Table-native: records live on the L1 use-case group.
+    const g = groupForUseCaseKey(key);
+    if (g) {
+      if (g.records != null && Number(g.records) >= 0) return Number(g.records);
+      if (g.tableId) {
+        const meta = importedTablesMap()[g.tableId];
+        if (meta?.recordCount > 0) return Number(meta.recordCount);
+      }
+      return cb.getRecordsCount ? Number(cb.getRecordsCount()) || 0 : 0;
+    }
+    // Legacy tableId-keyed scope.
     const scope = cb.useCaseScope?.[key];
     if (scope && scope.records != null && Number(scope.records) >= 0) {
       return Number(scope.records);
     }
-    // Default: the table's imported row count, else the global records.
     if (key && key.startsWith("t-")) {
       const meta = importedTablesMap()[key.slice(2)];
       if (meta?.recordCount > 0) return Number(meta.recordCount);
@@ -317,6 +382,11 @@
   }
 
   function useCaseFrequencyId(key) {
+    const g = groupForUseCaseKey(key);
+    if (g) {
+      if (g.frequency) return g.frequency;
+      return cb.getCurrentFrequencyId ? cb.getCurrentFrequencyId() : cb.DEFAULT_FREQUENCY_ID;
+    }
     const scope = cb.useCaseScope?.[key];
     if (scope && scope.frequency) return scope.frequency;
     return cb.getCurrentFrequencyId ? cb.getCurrentFrequencyId() : cb.DEFAULT_FREQUENCY_ID;
@@ -328,6 +398,16 @@
   // state — mirrors __cb.recordsActual for the single-table summary bar. Returns
   // null when there is no resolvable imported count.
   function useCaseRecordsActual(key) {
+    // Table-native: the import baseline for a use-case group is its table's
+    // recordCount (drives the records-override amber on the header).
+    const g = groupForUseCaseKey(key);
+    if (g) {
+      if (g.tableId) {
+        const meta = importedTablesMap()[g.tableId];
+        if (meta && meta.recordCount > 0) return Number(meta.recordCount);
+      }
+      return null;
+    }
     if (key && key.startsWith("t-")) {
       const meta = importedTablesMap()[key.slice(2)];
       if (meta && meta.recordCount > 0) return Number(meta.recordCount);
@@ -451,15 +531,44 @@
     const globalFreq = (tabState && tabState.frequency) || cb.DEFAULT_FREQUENCY_ID;
     const freqMult = (id) => (cb.getFrequencyMultiplier ? cb.getFrequencyMultiplier(id) : 1);
 
-    // Distinct imported-table use cases on this tab (same test as listUseCases).
+    // Table-native: resolve use cases from THIS tab's serialized group tree
+    // (this runs on non-active tabs, so we must NOT read the live model). Only
+    // ER cards are summed below, so groupId-based L1 resolution is enough.
+    const tabGroups = tabState && Array.isArray(tabState.groups) ? tabState.groups : [];
+    const groupById = new Map(tabGroups.map((g) => [g.id, g]));
+    const l1ForCard = (c) => {
+      let gid = c && c.groupId != null ? c.groupId : null;
+      const seen = new Set();
+      let g = null;
+      while (gid != null && !seen.has(gid)) {
+        seen.add(gid);
+        g = groupById.get(gid);
+        if (!g) return null;
+        if ((g.parentId ?? null) == null) return g;
+        gid = g.parentId;
+      }
+      return g && (g.parentId ?? null) == null ? g : null;
+    };
+    const topGroups = tabGroups.filter((g) => (g.parentId ?? null) == null);
+    const useGroups = topGroups.length > 0;
+
+    // Legacy imported-table use cases (only when there's no group tree).
     const ucKeys = new Set();
     for (const c of cards) {
       const d = c && c.data;
       if (!d || isNonErType(d.type)) continue;
       if (isImportedTableCard(c)) ucKeys.add(`t-${d.tableId}`);
     }
-    const multi = ucKeys.size >= 2;
+    const multi = useGroups ? topGroups.length >= 2 : ucKeys.size >= 2;
 
+    const recordsForGroup = (g) => {
+      if (g.records != null && Number(g.records) >= 0) return Number(g.records);
+      if (g.tableId) {
+        const meta = importedTablesMap()[g.tableId];
+        if (meta && meta.recordCount > 0) return Number(meta.recordCount);
+      }
+      return globalRecords;
+    };
     const recordsForKey = (key) => {
       const sc = scope[key];
       if (sc && sc.records != null && Number(sc.records) >= 0) return Number(sc.records);
@@ -482,10 +591,17 @@
       let recs;
       let freqId;
       if (multi) {
-        const key = useCaseKeyForCard(c);
-        if (key === OTHER_USE_CASE) continue; // unscoped, excluded from the quote
-        recs = recordsForKey(key);
-        freqId = d.frequencyCustom ? d.frequency : freqForKey(key);
+        if (useGroups) {
+          const g = l1ForCard(c);
+          if (!g) continue; // unscoped, excluded from the quote
+          recs = recordsForGroup(g);
+          freqId = d.frequencyCustom ? d.frequency : g.frequency || globalFreq;
+        } else {
+          const key = useCaseKeyForCard(c);
+          if (key === OTHER_USE_CASE) continue; // unscoped, excluded
+          recs = recordsForKey(key);
+          freqId = d.frequencyCustom ? d.frequency : freqForKey(key);
+        }
       } else {
         recs = globalRecords;
         freqId = d.frequencyCustom ? d.frequency : d.frequency || globalFreq;

@@ -1889,6 +1889,39 @@
   letter-spacing: 0.02em;
 }
 
+/* Per-use-case records pill on a use-case (L1) header (table-native v7.23+). */
+.cb-uc-records {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 8px;
+}
+
+.cb-uc-records-input {
+  width: 64px;
+  padding: 1px 6px;
+  border: 1px solid #a7f3d0;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #064e3b;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  text-align: right;
+}
+
+.cb-uc-records-input:focus {
+  outline: none;
+  border-color: #34d399;
+  box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.18);
+}
+
+.cb-uc-records-label {
+  font-size: 11px;
+  color: #047857;
+  letter-spacing: 0.02em;
+}
+
 /* Per-table header extras (source row count + "imported X ago"). Rendered as
    quiet metadata after the data-point count, separated by a subtle dot. */
 .cb-table-view-group-row-meta {
