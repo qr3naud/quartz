@@ -4661,15 +4661,6 @@
           }
         }
         items.push({ label: "Move to", submenu: moveSubmenu });
-        // Jump to the data point's source column in Clay's grid. Only imported
-        // DPs carry fieldId + tableId; manual DPs have no column to find, so we
-        // omit the entry (matches the enrichment menu's canOpen gating).
-        if (card.data.fieldId && card.data.tableId) {
-          items.push({
-            label: "Find in table",
-            action: () => __cb.openCardInTable(card),
-          });
-        }
       }
       items.push({
         label: "Insert data point below",
@@ -4692,6 +4683,16 @@
               hostEl?.querySelector(`[data-row-id="${ctx.rowId}"]`);
             openNotePopover(cardId, anchor);
           },
+        });
+      }
+      // "Find in table" jumps to the data point's source column in Clay's grid.
+      // Surfaced as a footer button at the very bottom of the menu. Only imported
+      // DPs carry fieldId + tableId; manual DPs have no column to find.
+      if (card?.data?.type === "dp" && card.data.fieldId && card.data.tableId) {
+        items.push({
+          footer: true,
+          label: "Find in table",
+          action: () => __cb.openCardInTable(card),
         });
       }
     }
@@ -4740,7 +4741,17 @@
     btn.type = "button";
     btn.className =
       "cb-table-view-context-menu-option" +
+      (item.footer ? " cb-table-view-context-menu-footer" : "") +
       (item.disabled ? " cb-table-view-context-menu-option-disabled" : "");
+    // Footer actions (e.g. "Find in table") read as a distinct button pinned to
+    // the bottom of the menu, with a leading search icon.
+    if (item.footer) {
+      const icon = document.createElement("span");
+      icon.className = "cb-table-view-context-menu-footer-icon";
+      icon.innerHTML =
+        '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>';
+      btn.appendChild(icon);
+    }
     const labelEl = document.createElement("div");
     labelEl.className = "cb-table-view-context-menu-option-label";
     labelEl.textContent = item.label;
