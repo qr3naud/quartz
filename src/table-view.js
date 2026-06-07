@@ -5546,18 +5546,24 @@
     label.className = "cb-table-view-group-row-label";
     label.textContent = "Other";
 
-    const count = document.createElement("span");
-    count.className = "cb-table-view-group-row-count";
-    const parts = [];
-    if (dpCount > 0) parts.push(`${dpCount} data point${dpCount === 1 ? "" : "s"}`);
-    if (erCount > 0) parts.push(`${erCount} enrichment${erCount === 1 ? "" : "s"}`);
-    count.textContent = parts.join(" \u00b7 ");
+    // (i) info icon — data points / enrichments behind a hover tip, matching
+    // the use-case headers.
+    const infoParts = [];
+    if (dpCount > 0) infoParts.push(`${dpCount} data point${dpCount === 1 ? "" : "s"}`);
+    if (erCount > 0) infoParts.push(`${erCount} enrichment${erCount === 1 ? "" : "s"}`);
+    const info = document.createElement("span");
+    info.className = "cb-uc-info";
+    info.innerHTML = infoSvg(14);
+    info.setAttribute("aria-label", infoParts.join(", "));
+    attachInfoTip(info, infoParts);
+    info.addEventListener("click", (e) => e.stopPropagation());
+    info.addEventListener("mousedown", (e) => e.stopPropagation());
 
-    // Amber "not counted" cue so reps see at a glance this section is excluded
+    // Amber "Not counted" cue so reps see at a glance this section is excluded
     // from the totals (most pointed for the unattached enrichments here).
     const cue = document.createElement("span");
     cue.className = "cb-table-view-other-uncounted";
-    cue.innerHTML = warningSvg(11) + "<span>not counted</span>";
+    cue.innerHTML = warningSvg(11) + "<span>Not counted</span>";
     attachInfoTip(cue, [
       "Excluded from the totals.",
       "Move items into a use case to price them.",
@@ -5566,7 +5572,7 @@
     wrap.appendChild(chevron);
     wrap.appendChild(icon);
     wrap.appendChild(label);
-    wrap.appendChild(count);
+    wrap.appendChild(info);
     wrap.appendChild(cue);
     td.appendChild(wrap);
     tr.appendChild(td);
