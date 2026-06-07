@@ -949,7 +949,7 @@
       const lbl = document.createElement("div");
       lbl.className = "cb-ptg-rowlabel cb-ptg-yearlabel";
       const lblText = document.createElement("span");
-      lblText.textContent = years > 1 ? `Year ${i + 1}` : "Contract";
+      lblText.textContent = `Year ${i + 1}`;
       lbl.appendChild(lblText);
       // Reset-to-proposed: shown only when this year's volume was overridden.
       if (y.creditsOverridden || y.tierOverridden) {
