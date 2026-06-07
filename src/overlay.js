@@ -204,6 +204,12 @@
     };
     const show = () => {
       clearTimeout(hideTimer);
+      // Close any sibling flyout instantly so two never overlap while the mouse
+      // moves between rows (each row's own hide() keeps a grace delay so moving
+      // into its submenu doesn't dismiss it).
+      for (const other of moreSubmenuEls) {
+        if (other !== submenu && other._cbForceHide) other._cbForceHide();
+      }
       position();
       submenu.style.display = "block";
       row.classList.add("cb-more-menu-option-active");
@@ -213,6 +219,12 @@
         submenu.style.display = "none";
         row.classList.remove("cb-more-menu-option-active");
       }, 160);
+    };
+    // Immediate (no-grace) close, called by a sibling row's show() above.
+    submenu._cbForceHide = () => {
+      clearTimeout(hideTimer);
+      submenu.style.display = "none";
+      row.classList.remove("cb-more-menu-option-active");
     };
     row.addEventListener("mouseenter", show);
     row.addEventListener("mouseleave", hide);
