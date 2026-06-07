@@ -16,14 +16,16 @@
 
   const __cb = (window.__cb = window.__cb || {});
 
-  // Token registry — mirrors the comment groups in styles/tokens.css. Each token
-  // is [name, kind]; kind picks the control + swatch:
+  // Fallback token registry — used only if the runtime fetch+parse of tokens.css
+  // fails. The live registry (GROUPS) is normally auto-discovered from the file
+  // (see ensureRegistry), so new tokens appear without touching this list. Each
+  // token is [name, kind]; kind picks the control:
   //   color  -> <input type=color> + hex text     (e.g. #717989)
   //   alpha  -> text input                          (e.g. rgba(99,102,241,0.15))
   //   shadow -> text input                          (e.g. 0 12px 32px rgba(...))
   //   size   -> range slider in px                  (e.g. 22px)
   //   radius -> range slider in px                  (e.g. 6px)
-  const GROUPS = [
+  const FALLBACK_GROUPS = [
     {
       title: "Metric tones",
       tokens: [
@@ -119,21 +121,74 @@
     },
   ];
 
-  // Which preview samples each token group actually affects (by GROUPS index),
-  // so expanding a group shows only the primitives that use its tokens. Keys
-  // match the data-dex-sample blocks in buildSamples().
-  const ALL_SAMPLE_KEYS = ["pill", "inputs", "surface", "badges", "matrix"];
-  const GROUP_SAMPLES = [
-    ["pill", "matrix"], // 0 Metric tones
-    ["surface", "inputs", "pill", "matrix"], // 1 Surfaces & borders
-    ["surface", "inputs"], // 2 Text
-    ["inputs", "surface"], // 3 Accent (indigo)
-    ["badges", "surface"], // 4 Status · green
-    ["badges"], // 5 Status · amber
-    ["badges"], // 6 Status · red
-    ["matrix"], // 7 Overlays
-    ["pill", "inputs", "surface", "matrix"], // 8 Shape scale
-  ];
+  // The live token registry, auto-discovered from styles/tokens.css at first
+  // open (falls back to FALLBACK_GROUPS). Same shape: [{ title, tokens:[[name,
+  // kind]] }].
+  let GROUPS = null;
+  let registryPromise = null;
+
+  // Infer the control kind from a token's value (so new tokens wire themselves
+  // up): hex -> color; rgb/hsl(a) -> alpha; Npx -> radius (if name has "radius")
+  // else size; anything else (shadows etc.) -> a text input.
+  function inferKind(name, value) {
+    const v = (value || "").trim();
+    if (/^#[0-9a-f]{3,8}$/i.test(v)) return "color";
+    if (/^(rgba?|hsla?)\(/i.test(v)) return "alpha";
+    if (/^-?\d+(\.\d+)?px$/.test(v)) return name.includes("radius") ? "radius" : "size";
+    return "shadow";
+  }
+
+  // Parse the :root { … } block of tokens.css into groups. Group titles come
+  // from /* … */ comment lines (decoration stripped, trimmed at " ("); tokens
+  // from --cb-name: value; lines. The file's top doc comment sits outside :root,
+  // so it's ignored.
+  function parseTokens(cssText) {
+    const m = cssText.match(/:root\s*\{([\s\S]*?)\}/);
+    if (!m) return [];
+    const groups = [];
+    let current = null;
+    for (const rawLine of m[1].split("\n")) {
+      const line = rawLine.trim();
+      if (!line) continue;
+      const cm = line.match(/^\/\*\s*(.*?)\s*\*\/$/);
+      if (cm) {
+        let title = cm[1].replace(/=+/g, "").trim();
+        const cut = title.indexOf(" (");
+        if (cut > 0) title = title.slice(0, cut).trim();
+        current = { title: title || "Tokens", tokens: [] };
+        groups.push(current);
+        continue;
+      }
+      const tm = line.match(/^(--cb-[a-z0-9-]+)\s*:\s*(.+?);/i);
+      if (tm) {
+        if (!current) {
+          current = { title: "Tokens", tokens: [] };
+          groups.push(current);
+        }
+        current.tokens.push([tm[1], inferKind(tm[1], tm[2])]);
+      }
+    }
+    return groups.filter((g) => g.tokens.length);
+  }
+
+  // Resolve GROUPS once (cached). Fetches the extension's own tokens.css (must be
+  // web-accessible) and parses it; falls back to the hardcoded list on failure.
+  function ensureRegistry() {
+    if (registryPromise) return registryPromise;
+    registryPromise = (async () => {
+      try {
+        const url = chrome.runtime.getURL("styles/tokens.css");
+        const text = await (await fetch(url)).text();
+        const parsed = parseTokens(text);
+        GROUPS = parsed.length ? parsed : FALLBACK_GROUPS;
+      } catch (err) {
+        console.warn("[Clay Scoping] design-explorer token fetch failed:", err);
+        GROUPS = FALLBACK_GROUPS;
+      }
+      return GROUPS;
+    })();
+    return registryPromise;
+  }
 
   let modalEl = null;
   let backdropEl = null;
@@ -174,17 +229,27 @@
   }
 
   // Filter the live preview to the samples the active group affects (all when
-  // none is open), and label the preview with the active group's name.
+  // none is open), and label the preview with the active group's name. The match
+  // is derived: a sample shows when one of its declared `uses` prefixes covers a
+  // token short-name (--cb-x -> "x") in the open group — so it self-maintains as
+  // tokens/samples change.
   function updatePreview(idx) {
     if (!scopeEl) return;
-    const keys = idx >= 0 && GROUP_SAMPLES[idx] ? GROUP_SAMPLES[idx] : ALL_SAMPLE_KEYS;
+    const group = idx >= 0 && GROUPS ? GROUPS[idx] : null;
+    const shorts = group ? group.tokens.map(([n]) => n.slice(5)) : null;
     scopeEl.querySelectorAll("[data-dex-sample]").forEach((el) => {
-      el.style.display = keys.includes(el.dataset.dexSample) ? "" : "none";
+      let show = true;
+      if (shorts) {
+        const sample = SAMPLES.find((s) => s.key === el.dataset.dexSample);
+        const uses = sample ? sample.uses : [];
+        show = uses.some((u) => shorts.some((sn) => sn === u || sn.startsWith(u + "-")));
+      }
+      el.style.display = show ? "" : "none";
     });
     const heading = scopeEl.querySelector(".cb-dex-preview-heading");
     if (heading) {
       heading.textContent =
-        idx >= 0 && GROUPS[idx] ? `Live preview \u00b7 ${GROUPS[idx].title}` : "Live preview";
+        group ? `Live preview \u00b7 ${group.title}` : "Live preview";
     }
   }
 
@@ -242,29 +307,23 @@
       : '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="9" r="6"/><path d="M14.5 4.2a6 6 0 0 1 0 11.6"/></svg>';
   }
 
-  // ---- One token row: swatch + name + value + control ----------------------
+  const REVERT_SVG =
+    '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>';
+
+  // ---- One token row: name (click to copy) + value + revert + control ------
   function buildTokenRow(name, kind) {
     const row = document.createElement("div");
     row.className = "cb-dex-row";
-
-    const swatch = document.createElement("span");
-    swatch.className = "cb-dex-swatch cb-dex-swatch-" + kind;
-    if (kind === "color" || kind === "alpha") {
-      swatch.style.background = `var(${name})`;
-    } else if (kind === "shadow") {
-      swatch.style.boxShadow = `var(${name})`;
-    } else if (kind === "radius") {
-      swatch.style.borderRadius = `var(${name})`;
-    } else if (kind === "size") {
-      swatch.style.height = `var(${name})`;
-    }
-    row.appendChild(swatch);
+    if (overrides.has(name)) row.classList.add("cb-dex-row-overridden");
 
     const text = document.createElement("div");
     text.className = "cb-dex-rowtext";
-    const nameEl = document.createElement("code");
+    // The name is a button: click copies this token's CSS line.
+    const nameEl = document.createElement("button");
+    nameEl.type = "button";
     nameEl.className = "cb-dex-name";
     nameEl.textContent = name;
+    nameEl.title = "Copy " + name;
     const valueEl = document.createElement("span");
     valueEl.className = "cb-dex-value";
     valueEl.textContent = currentValue(name);
@@ -272,12 +331,39 @@
     text.appendChild(valueEl);
     row.appendChild(text);
 
+    // Per-row revert: shown only when this token is overridden. Resets just this
+    // token by deleting its override + rebuilding the row from the default.
+    const resetBtn = document.createElement("button");
+    resetBtn.type = "button";
+    resetBtn.className = "cb-dex-reset";
+    resetBtn.title = "Reset to default";
+    resetBtn.setAttribute("aria-label", "Reset to default");
+    resetBtn.innerHTML = REVERT_SVG;
+    if (!overrides.has(name)) resetBtn.style.display = "none";
+    resetBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      overrides.delete(name);
+      if (scopeEl) scopeEl.style.removeProperty(name);
+      row.replaceWith(buildTokenRow(name, kind));
+    });
+    row.appendChild(resetBtn);
+
     const control = document.createElement("div");
     control.className = "cb-dex-control";
     const setAndShow = (value) => {
       setToken(name, value);
       valueEl.textContent = value;
+      resetBtn.style.display = "";
+      row.classList.add("cb-dex-row-overridden");
     };
+
+    // Click the name to copy "--token: value;" with a brief flash.
+    nameEl.addEventListener("click", () => {
+      copyToClipboard(`${name}: ${currentValue(name)};`, () => {
+        nameEl.classList.add("cb-dex-name-copied");
+        setTimeout(() => nameEl.classList.remove("cb-dex-name-copied"), 900);
+      });
+    });
 
     if (kind === "color") {
       const initial = normalizeHex(currentValue(name)) || "#000000";
@@ -424,6 +510,146 @@
     return matrices;
   }
 
+  // Dollar pill (.cb-uc-scope-dollar) — the cost pill with the $ glyph.
+  function sampleDollar() {
+    const pill = document.createElement("span");
+    pill.className = "cb-uc-scope-dollar";
+    const dollar = __cb.dollarSvg
+      ? __cb.dollarSvg(12)
+      : '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>';
+    pill.innerHTML = dollar + "<span>48,000</span>";
+    return pill;
+  }
+
+  // Star/coin metric cards (.cb-pricing-metric-card) — Actions + Credits tones.
+  function metricCard(kind, iconSvg, tierLabel, vol, cost) {
+    const card = document.createElement("div");
+    card.className = "cb-surface cb-pricing-metric-card cb-pricing-metric-" + kind;
+    const iconWrap = document.createElement("div");
+    iconWrap.className = "cb-pricing-metric-iconwrap";
+    const icon = document.createElement("span");
+    icon.className = "cb-pricing-metric-icon";
+    icon.innerHTML = iconSvg;
+    iconWrap.appendChild(icon);
+    if (tierLabel) {
+      const t = document.createElement("span");
+      t.className = "cb-pricing-metric-tier";
+      t.textContent = tierLabel;
+      iconWrap.appendChild(t);
+    }
+    card.appendChild(iconWrap);
+    const d1 = document.createElement("div");
+    d1.className = "cb-pricing-metric-divider";
+    card.appendChild(d1);
+    const v = document.createElement("div");
+    v.className = "cb-pricing-metric-vol";
+    v.textContent = vol;
+    card.appendChild(v);
+    const d2 = document.createElement("div");
+    d2.className = "cb-pricing-metric-divider";
+    card.appendChild(d2);
+    const c = document.createElement("div");
+    c.className = "cb-pricing-metric-cost";
+    c.textContent = cost;
+    card.appendChild(c);
+    return card;
+  }
+  function sampleMetricCards() {
+    const row = document.createElement("div");
+    row.className = "cb-dex-sample-row cb-dex-metric-row";
+    row.appendChild(metricCard("actions", svgFor("action"), "Tier C", "250,000", "$2,000"));
+    row.appendChild(metricCard("credits", svgFor("credit"), null, "1.2M", "$60,000"));
+    return row;
+  }
+
+  // Read-only price / floor boxes + the "% off" chip.
+  function samplePrices() {
+    const row = document.createElement("div");
+    row.className = "cb-dex-sample-row";
+    const rep = document.createElement("div");
+    rep.className = "cb-ptg-repfloor";
+    rep.textContent = "$0.0360";
+    const list = document.createElement("div");
+    list.className = "cb-ptg-repfloor cb-ptg-listbox";
+    list.textContent = "$0.0500";
+    const pct = document.createElement("span");
+    pct.className = "cb-ptg-pct-box";
+    pct.textContent = "28%";
+    row.appendChild(rep);
+    row.appendChild(list);
+    row.appendChild(pct);
+    return row;
+  }
+
+  // Tags + pills: summary term tag, authority pills, metric pills.
+  function sampleTags() {
+    const row = document.createElement("div");
+    row.className = "cb-dex-sample-row";
+    const term = document.createElement("span");
+    term.className = "cb-pricing-summary-term";
+    term.textContent = "2Y";
+    row.appendChild(term);
+    [
+      ["cb-pam-authpill-rep", "Rep"],
+      ["cb-pam-authpill-manager", "Manager"],
+      ["cb-pam-authpill-dealdesk", "Deal desk"],
+    ].forEach(([cls, label]) => {
+      const p = document.createElement("span");
+      p.className = "cb-pam-authpill " + cls;
+      p.textContent = label;
+      row.appendChild(p);
+    });
+    // Metric pills get their tone from a .cb-pam-actions / .cb-pam-credits parent.
+    [
+      ["cb-pam-actions", "Actions"],
+      ["cb-pam-credits", "Credits"],
+    ].forEach(([toneCls, label]) => {
+      const tone = document.createElement("span");
+      tone.className = toneCls;
+      const pill = document.createElement("span");
+      pill.className = "cb-pam-metricpill";
+      pill.textContent = label;
+      tone.appendChild(pill);
+      row.appendChild(tone);
+    });
+    return row;
+  }
+
+  // An input wearing the amber "overridden" outline (.cb-pricing-overridden).
+  function sampleOverridden() {
+    const inp = document.createElement("input");
+    inp.className = "cb-input-box cb-pricing-overridden";
+    inp.value = "250,000";
+    inp.readOnly = true;
+    return inp;
+  }
+
+  // Declarative sample list. `uses` lists the token short-names (--cb-x -> "x")
+  // each sample consumes; updatePreview matches these against the open group's
+  // tokens (prefix-aware) to show only the relevant samples.
+  const SAMPLES = [
+    { key: "pill", label: "Cost pill", build: samplePill,
+      uses: ["action", "credit", "border-pill", "surface", "pill-height", "radius-pill", "pill-text"] },
+    { key: "dollar", label: "Dollar pill", build: sampleDollar,
+      uses: ["action", "border-pill", "surface", "pill-height", "radius-pill", "pill-text"] },
+    { key: "metric", label: "Metric cards", build: sampleMetricCards,
+      uses: ["surface", "border", "radius", "action", "credit", "text"] },
+    { key: "inputs", label: "Input + dropdown", build: sampleInputs,
+      uses: ["border", "surface", "text", "input-height", "radius", "accent"] },
+    { key: "prices", label: "Price + floor boxes", build: samplePrices,
+      uses: ["surface", "text", "radius", "input-height", "border"] },
+    { key: "surface", label: "Surface + text", build: sampleSurface,
+      uses: ["surface", "border", "radius", "accent", "green"] },
+    { key: "tags", label: "Tags + pills", build: sampleTags,
+      uses: ["accent", "amber", "red", "action", "credit"] },
+    { key: "badges", label: "Approval badges", build: sampleBadges,
+      uses: ["green", "amber", "red"] },
+    { key: "matrix", label: "Band matrix crosshair", build: sampleMatrices,
+      uses: ["action", "credit", "shadow", "surface", "border"] },
+    { key: "overridden", label: "Overridden outline", build: sampleOverridden,
+      uses: ["amber", "border", "surface", "text", "input-height", "radius"] },
+  ];
+
   function buildSamples() {
     const wrap = document.createElement("div");
     wrap.className = "cb-dex-preview";
@@ -433,12 +659,9 @@
     heading.textContent = "Live preview";
     wrap.appendChild(heading);
 
-    wrap.appendChild(sampleBlock("pill", "Cost pill", samplePill()));
-    wrap.appendChild(sampleBlock("inputs", "Input + dropdown", sampleInputs()));
-    wrap.appendChild(sampleBlock("surface", "Surface + text", sampleSurface()));
-    wrap.appendChild(sampleBlock("badges", "Approval badges", sampleBadges()));
-    wrap.appendChild(sampleBlock("matrix", "Band matrix crosshair", sampleMatrices()));
-
+    for (const s of SAMPLES) {
+      wrap.appendChild(sampleBlock(s.key, s.label, s.build()));
+    }
     return wrap;
   }
 
@@ -597,21 +820,31 @@
     // clears them, so normally a no-op).
     for (const [name, value] of overrides) scopeEl.style.setProperty(name, value);
     body.appendChild(scopeEl);
-    renderGallery();
+    // Tokens auto-discover from tokens.css; show a brief placeholder, then render
+    // once the registry resolves (guarding against a close/reopen in between).
+    const loading = document.createElement("div");
+    loading.className = "cb-dex-loading";
+    loading.textContent = "Loading tokens\u2026";
+    scopeEl.appendChild(loading);
+    const myScope = scopeEl;
+    ensureRegistry().then(() => {
+      if (scopeEl === myScope) renderGallery();
+    });
 
     // ---- Footer ----
     const footer = document.createElement("div");
     footer.className = "cb-modal-footer";
     const footerHint = document.createElement("div");
     footerHint.className = "cb-export-modal-footer-hint";
-    footerHint.textContent = "Preview only \u00b7 paste Copy CSS into styles/tokens.css to keep.";
+    footerHint.textContent =
+      "Preview only \u00b7 click a token name to copy it, or 'Copy all CSS' to paste into styles/tokens.css.";
     const footerActions = document.createElement("div");
     footerActions.className = "cb-modal-footer-actions";
 
     const resetBtn = document.createElement("button");
     resetBtn.type = "button";
     resetBtn.className = "cb-modal-btn cb-modal-btn-ghost";
-    resetBtn.textContent = "Reset";
+    resetBtn.textContent = "Reset all";
     resetBtn.addEventListener("click", () => {
       for (const name of overrides.keys()) {
         if (scopeEl) scopeEl.style.removeProperty(name);
@@ -625,7 +858,7 @@
     const copyBtn = document.createElement("button");
     copyBtn.type = "button";
     copyBtn.className = "cb-modal-btn cb-modal-btn-ghost";
-    copyBtn.textContent = "Copy CSS";
+    copyBtn.textContent = "Copy all CSS";
     copyBtn.addEventListener("click", () => {
       copyToClipboard(buildCss(), () => {
         const orig = copyBtn.textContent;
