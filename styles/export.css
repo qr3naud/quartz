@@ -4,7 +4,7 @@
    point feels like a first-class part of the topbar.
    ========================================================================== */
 
-/* ---- Topbar Export button (extends cb-toolbar-btn-primary) ---- */
+/* ---- Topbar Export button (extends cb-toolbar-btn) ---- */
 
 .cb-toolbar-export {
   display: inline-flex;
