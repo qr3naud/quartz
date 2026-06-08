@@ -212,8 +212,14 @@
     prefill.appendChild(prefillSummary);
 
     const prefillBody = document.createElement("div");
+    // max-height is sized to fit the three rows so the nested scroll never
+    // engages for the current content — a flex column scroll container clips
+    // its own padding-bottom at the scroll end, which left the last row
+    // (Quartz Link / SFDC) flush against the bottom. Generous bottom padding
+    // gives the section breathing room; the outer modal body still scrolls if
+    // the whole modal outgrows its height.
     prefillBody.style.cssText =
-      "display:flex;flex-direction:column;gap:14px;padding:12px;max-height:200px;overflow-y:auto;border-top:1px solid #e5e7eb;background:#ffffff;";
+      "display:flex;flex-direction:column;gap:14px;padding:14px 12px 18px;max-height:320px;overflow-y:auto;border-top:1px solid #e5e7eb;background:#ffffff;";
 
     // Each row is two equal-weight columns (both fields grow from a 0 basis).
     const row1 = document.createElement("div");
