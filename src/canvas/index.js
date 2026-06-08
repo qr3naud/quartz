@@ -480,16 +480,54 @@
         }
       }
     } else if (linkedErs.length === 0 && linkedDps.length >= 2) {
-      // DP-only link — the table-view "Link N data points" path, where each
-      // DP's enrichment is an inline chip rather than a selected card. Make
-      // the DPs share the FIRST existing lineage key (as primary) while keeping
-      // each DP's own extra links. If none carries one there's nothing to
-      // share, so the link is a no-op in the lineage model.
-      const sharedKey =
-        linkedDps.map((dp) => __cb.dpErKeys(dp)[0]).find((k) => k != null) ?? null;
-      if (sharedKey != null) {
+      // DP-only link — the table-view "Link" path, where each DP's enrichment is
+      // an inline chip rather than a selected card. Make every selected DP share
+      // the SAME multi-ER: the UNION of all their lineage keys (not just the
+      // primary), so a DP deriving from 2+ ERs propagates ALL of them. The
+      // run-share proportions + order come from the "source" DP — the one that
+      // already has stored shares, else the richest (most ERs) — so the linked
+      // DPs end up identical ("keep the multi-er, apply it to more DPs").
+      const keysByDp = linkedDps.map((dp) => __cb.dpErKeys(dp));
+      let sourceIdx = linkedDps.findIndex(
+        (dp) => dp.data && dp.data.sourceEnrichmentShares,
+      );
+      if (sourceIdx < 0) {
+        sourceIdx = 0;
+        for (let i = 1; i < keysByDp.length; i++) {
+          if (keysByDp[i].length > keysByDp[sourceIdx].length) sourceIdx = i;
+        }
+      }
+      // Canonical ordered set: source DP's keys first, then any extra key from
+      // the other DPs (first-seen) so no DP loses its own enrichment.
+      const canonicalKeys = [];
+      const seen = new Set();
+      const pushKey = (k) => {
+        if (k != null && !seen.has(k)) { seen.add(k); canonicalKeys.push(k); }
+      };
+      for (const k of keysByDp[sourceIdx]) pushKey(k);
+      for (let i = 0; i < keysByDp.length; i++) {
+        if (i === sourceIdx) continue;
+        for (const k of keysByDp[i]) pushKey(k);
+      }
+      if (canonicalKeys.length > 0) {
+        const sourceDp = linkedDps[sourceIdx];
+        const hasShares = !!(sourceDp.data && sourceDp.data.sourceEnrichmentShares);
         for (const dp of linkedDps) {
-          __cb.setDpErKeys(dp, [sharedKey, ...__cb.dpErKeys(dp)]);
+          __cb.setDpErKeys(dp, canonicalKeys);
+          // Copy the source's proportions so every DP is the same multi-ER. When
+          // the source has none, leave shares unset — identical set + order means
+          // they all resolve to the same default split.
+          if (hasShares) {
+            for (let i = 0; i < canonicalKeys.length; i++) {
+              const k = canonicalKeys[i];
+              const s = __cb.dpErShare(sourceDp, k);
+              __cb.setDpErShare(
+                dp,
+                k,
+                s != null ? s : __cb.defaultErShare(i, canonicalKeys.length),
+              );
+            }
+          }
         }
       }
     }

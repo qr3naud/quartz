@@ -3159,10 +3159,39 @@
     return { runShare: share, isPrimary: idx === 0, dpCardId, multiEr: true };
   }
 
+  // Keep a multi-ER "fully linked": copy sourceDp's ordered keys + run-shares to
+  // every OTHER DP that links the exact same SET of ERs (order-independent
+  // match), so editing the % / order on one DP applies the same proportion to
+  // every DP the multi-ER spans. Lineage-global (all model nodes), mirroring the
+  // cost split. No model.update here — the caller batches one update.
+  function propagateDpMultiEr(sourceDp) {
+    if (!sourceDp || !sourceDp.data) return;
+    const srcKeys = __cb.dpErKeys(sourceDp);
+    if (srcKeys.length < 2) return; // single-ER: nothing to share
+    const sig = srcKeys.slice().sort().join("|");
+    const hasShares = !!sourceDp.data.sourceEnrichmentShares;
+    for (const c of __cb.model?.getNodes?.() || []) {
+      if (!c || c === sourceDp || !c.data || c.data.type !== "dp") continue;
+      const keys = __cb.dpErKeys(c);
+      if (keys.length !== srcKeys.length) continue;
+      if (keys.slice().sort().join("|") !== sig) continue;
+      __cb.setDpErKeys(c, srcKeys); // unify order
+      if (hasShares) {
+        for (let i = 0; i < srcKeys.length; i++) {
+          const s = __cb.dpErShare(sourceDp, srcKeys[i]);
+          __cb.setDpErShare(c, srcKeys[i], s != null ? s : __cb.defaultErShare(i, srcKeys.length));
+        }
+      } else if (c.data.sourceEnrichmentShares) {
+        delete c.data.sourceEnrichmentShares; // keep them on the same default too
+      }
+    }
+  }
+
   // Commit one ER's run-share (% -> 0..N share) AND its 1-based order on a DP in
   // a single model update. Run-share drives projected cost (share x base); the
   // use case is inferred purely from the sum of the percentages (~100% = clean
   // merge, 200%+ = needs two or more full ERs). Order just re-positions chips.
+  // The edit then propagates to every DP sharing the same multi-ER set.
   function commitDpShareAndOrder(dpCardId, erCardId, pct, pos) {
     const dp = __cb.canvas?.getCardById?.(dpCardId);
     const key = lineageKeyForCardId(erCardId);
@@ -3177,6 +3206,7 @@
       keys.splice(to, 0, key);
       __cb.setDpErKeys(dp, keys);
     }
+    propagateDpMultiEr(dp);
     __cb.model.update();
     if (__cb.saveTabs) __cb.saveTabs();
   }
