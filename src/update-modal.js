@@ -307,6 +307,14 @@
   }
 
   __cb.openUpdateModal = function openUpdateModal() {
+    // In an orphaned tab (the extension was reloaded out from under this page),
+    // the modal can't reach the service worker and chrome.runtime.getManifest()
+    // throws "Extension context invalidated". Surface the reconnect banner
+    // instead of opening a dead modal / throwing.
+    if (window.__cbSupabase && !window.__cbSupabase.isExtensionContextAlive()) {
+      window.__cbSupabase.notifyContextInvalidated();
+      return;
+    }
     closeModal();
 
     // Only the maintainer gets the per-version picker (install/rollback to any

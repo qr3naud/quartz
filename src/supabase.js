@@ -371,4 +371,20 @@
     window.__cbSupabase = api;
     window.cbSupabase = api;
   }
+
+  // Proactively surface the reconnect banner in an orphaned tab, without waiting
+  // for a Supabase call to hit the dead context. Reading chrome.runtime.id is
+  // the clean signal: it goes undefined only when the extension is
+  // reloaded/disabled/updated, and stays defined while the service worker merely
+  // sleeps — so no false positives. Page context only (the popup is short-lived
+  // and re-mints on reopen). Stops itself once it fires; notifyContextInvalidated
+  // applies the grace delay so a normal update's auto-reload pre-empts it.
+  if (inPageContext()) {
+    const orphanPoll = setInterval(() => {
+      if (!isExtensionContextAlive()) {
+        clearInterval(orphanPoll);
+        notifyContextInvalidated();
+      }
+    }, 2000);
+  }
 })();
