@@ -4058,25 +4058,21 @@
     }
   }
 
-  // Every group a row can move into, recognized from BOTH grouping mechanisms
-  // the table renders: real cb-groups (card.groupId — POC use cases, canvas
-  // Group action) AND comment-cluster "basic groups" (card.data.groupCluster —
-  // Clay-table imports + legacy POC). Returned as { kind, id, label } so the
-  // menu can list them and the move action can apply the right membership.
-  // Hierarchical "Move to" targets for `rowId` given its current `membership`:
-  // top-level use cases first (each clickable = move into the use case), and when
-  // a use case has sub-groups it also carries a chevron flyout whose FIRST option
-  // is the use case itself, then a divider, then the sub-groups. The row's
-  // current group is disabled (can't move where it already is) and a childless
-  // current use case is skipped entirely. Legacy comment-clusters are appended
-  // flat. Each entry is a renderContextItem shape ({ label, action?, submenu?,
-  // disabled?, hint? }).
-  function buildMoveToTargets(rowId, membership) {
+  // Hierarchical "Move to" targets for the given current `membership`: top-level
+  // use cases first (each clickable = move into the use case), and when a use
+  // case has sub-groups it also carries a chevron flyout whose FIRST option is
+  // the use case itself, then a divider, then the sub-groups. The current group
+  // is disabled (can't move where it already is) and a childless current use
+  // case is skipped. Legacy comment-clusters are appended flat. `moveFn(kind,
+  // id)` performs the move (single row vs multi-select supply their own). Each
+  // entry is a renderContextItem shape ({ label, action?, submenu?, disabled?,
+  // hint? }).
+  function buildMoveToTargets(membership, moveFn) {
     const model = __cb.model;
     const out = [];
     const ord = (a, b) => (a.order ?? 0) - (b.order ?? 0);
     const isCurrent = (kind, id) => membership.kind === kind && membership.id === id;
-    const moveTo = (kind, id) => () => applyGroupMembership(rowId, { kind, id });
+    const moveTo = (kind, id) => () => moveFn(kind, id);
     const labelOf = (g, fallback) =>
       g.label && g.label.trim() ? g.label.trim() : fallback;
 
@@ -4129,13 +4125,246 @@
     return out;
   }
 
-  // The group a card currently belongs to, across both mechanisms.
-  function currentMembership(card) {
-    if (card?.groupId != null) return { kind: "group", id: card.groupId };
-    if (card?.data?.groupCluster != null) {
-      return { kind: "cluster", id: card.data.groupCluster };
+  // ---- Selection context (one source of truth for the menu's enable logic) ---
+
+  // Display label for a group (use case or sub-group), with a sensible fallback.
+  function groupDisplayLabel(g) {
+    const t = (g && g.label ? g.label : "").trim();
+    if (t) return t;
+    return g && (g.parentId ?? null) === null ? "Untitled use case" : "Untitled group";
+  }
+
+  // The deepest group ALL of `numIds` share: their common immediate cb-group if
+  // identical, else their shared L1 use case, else null. { group, isUseCase }.
+  function homeGroupForCards(numIds) {
+    if (!numIds || numIds.length === 0) return null;
+    let immediate;
+    let same = true;
+    for (const id of numIds) {
+      const c = __cb.canvas?.getCardById?.(id);
+      const gid = c && c.groupId != null ? c.groupId : null;
+      if (immediate === undefined) immediate = gid;
+      else if (immediate !== gid) { same = false; break; }
     }
-    return { kind: "none" };
+    if (same && immediate != null) {
+      const g = __cb.model?.getGroup?.(immediate);
+      if (g) return { group: g, isUseCase: (g.parentId ?? null) === null };
+    }
+    const ucId = commonUseCaseIdForCards(numIds);
+    if (ucId != null) {
+      const g = __cb.model?.getGroup?.(ucId);
+      if (g) return { group: g, isUseCase: true };
+    }
+    return null;
+  }
+
+  // Selectable rows (data points + enrichments) that belong to `group` — for an
+  // L1 use case, everything in it or its sub-groups; for an L2 sub-group, its
+  // immediate members. Comments / inputs are excluded so the count matches the
+  // rows a user can actually select (drives the exact-fill no-op detection).
+  function groupMemberCards(group) {
+    const isUC = (group.parentId ?? null) === null;
+    const out = [];
+    for (const c of __cb.model?.getNodes?.() || []) {
+      if (!c.data) continue;
+      if (!(c.data.type === "dp" || isErType(c.data.type))) continue;
+      if (isUC) {
+        const uc = __cb.model.useCaseGroupForCard?.(c);
+        if (uc && uc.id === group.id) out.push(c);
+      } else if (c.groupId === group.id) {
+        out.push(c);
+      }
+    }
+    return out;
+  }
+
+  // The existing group whose membership the selection EXACTLY fills (use case or
+  // sub-group), else null. Drives the "already a group / use case" no-op guards.
+  function selectionFillsGroup(numIds) {
+    const home = homeGroupForCards(numIds);
+    if (!home || !home.group) return null;
+    const members = groupMemberCards(home.group);
+    const selSet = new Set(numIds);
+    // selection ⊆ members (they all share home), so it fills iff every member is
+    // selected.
+    if (members.length > 0 && members.every((c) => selSet.has(c.id))) {
+      return home.group;
+    }
+    return null;
+  }
+
+  // Move every selected row's block into a target membership (real group,
+  // cluster, or none). The multi-row analogue of applyGroupMembership.
+  function moveCardsTo(numIds, target) {
+    blurActiveCellInput();
+    const blockIds = [
+      ...new Set((numIds || []).flatMap((id) => getBlockForCard(id))),
+    ];
+    applyMembershipToBlock(blockIds, target);
+    if (__cb.tableView?.refresh) __cb.tableView.refresh();
+  }
+
+  // Promote a single row into its OWN top-level use case (parentId null) — the
+  // single-row analogue of createUseCaseFromSelection.
+  function newUseCaseFromRow(rowId) {
+    const canvas = __cb.canvas;
+    if (!canvas?.groupCardsByIds) return;
+    blurActiveCellInput();
+    const blockIds = getBlockCardIdsForRow(rowId);
+    if (blockIds.length === 0) return;
+    for (const id of blockIds) {
+      const c = canvas.getCardById?.(id);
+      if (c?.data?.type === "dp") c.data.groupCluster = null;
+    }
+    const beforeIds = new Set((canvas.getGroups?.() || []).map((g) => g.id));
+    canvas.groupCardsByIds(blockIds, "", {
+      skipFocus: true,
+      allowSingle: true,
+      forceDirect: true,
+      parentId: null,
+    });
+    const newGroup = (canvas.getGroups?.() || []).find((g) => !beforeIds.has(g.id));
+    if (newGroup) {
+      pendingFocusGroupId = `g-${newGroup.id}`;
+      clearSelection();
+      if (__cb.tableView?.refresh) __cb.tableView.refresh();
+    }
+  }
+
+  // "Create" submenu (Group / Use case) for a selection. `actions` supplies the
+  // create fns ({ group, useCase }) so single rows and multi-select reuse it.
+  // Group needs one parent use case and a selection that doesn't already fill a
+  // group; Use case is a no-op only when the selection already fills a use case.
+  // Disabled items keep a reason (mix policy: disable-with-reason for no-ops).
+  function buildCreateSubmenu(numIds, actions) {
+    if (!numIds || numIds.length === 0) return null;
+    const ucId = commonUseCaseIdForCards(numIds);
+    const filled = selectionFillsGroup(numIds);
+    const filledIsUseCase = !!filled && (filled.parentId ?? null) === null;
+    const groupEnabled = ucId != null && !filled;
+    const useCaseEnabled = !filledIsUseCase;
+    // Nothing to create here (the selection already is a use case) → hide Create
+    // rather than show an all-disabled submenu.
+    if (!groupEnabled && !useCaseEnabled) return null;
+    const groupItem = groupEnabled
+      ? { label: "Group", action: actions.group }
+      : {
+          label: "Group",
+          disabled: true,
+          hint:
+            ucId == null
+              ? "Groups live inside a use case"
+              : `Already \u201c${groupDisplayLabel(filled)}\u201d`,
+        };
+    const useCaseItem = useCaseEnabled
+      ? { label: "Use case", action: actions.useCase }
+      : {
+          label: "Use case",
+          disabled: true,
+          hint: `Already \u201c${groupDisplayLabel(filled)}\u201d`,
+        };
+    return [groupItem, useCaseItem];
+  }
+
+  // "Move to" submenu: a context-aware "Remove from group/use case" (when the
+  // rows share one) then the existing-target hierarchy. `moveFn(kind, id)`
+  // performs the move (single row vs multi-select supply their own). No "New…"
+  // here — that lives under "Create".
+  function buildMoveToSubmenu(numIds, moveFn) {
+    const home = homeGroupForCards(numIds);
+    const out = [];
+    if (home && home.group) {
+      if (home.isUseCase) {
+        out.push({
+          label: "Remove from use case",
+          action: () => moveFn("none", null),
+        });
+      } else {
+        const parentUcId = home.group.parentId ?? null;
+        out.push({
+          label: "Remove from group",
+          action: () =>
+            parentUcId != null ? moveFn("group", parentUcId) : moveFn("none", null),
+        });
+      }
+    }
+    const membership =
+      home && home.group ? { kind: "group", id: home.group.id } : { kind: "none" };
+    const targets = buildMoveToTargets(membership, moveFn);
+    if (out.length > 0 && targets.length > 0) out.push({ separator: true });
+    for (const t of targets) out.push(t);
+    return out;
+  }
+
+  // ER card ids that ONLY the given DPs reference — so deleting those DPs can
+  // cascade-delete the enrichments exclusive to them (shared ERs are kept).
+  function exclusiveErIdsForDps(dpIdSet) {
+    const nodes = __cb.model?.getNodes?.() || [];
+    const erByKey = new Map();
+    for (const c of nodes) {
+      if (!c.data || !isErType(c.data.type)) continue;
+      const key = lineageKeyOf(c);
+      if (key != null && !erByKey.has(key)) erByKey.set(key, c.id);
+    }
+    const referencedByDeleted = new Set();
+    for (const id of dpIdSet) {
+      const dp = __cb.canvas?.getCardById?.(id);
+      if (!dp || dp.data?.type !== "dp") continue;
+      for (const k of __cb.dpErKeys(dp)) referencedByDeleted.add(k);
+    }
+    const stillNeeded = new Set();
+    for (const c of nodes) {
+      if (c.data?.type !== "dp" || dpIdSet.has(c.id)) continue;
+      for (const k of __cb.dpErKeys(c)) {
+        if (referencedByDeleted.has(k)) stillNeeded.add(k);
+      }
+    }
+    const out = [];
+    for (const k of referencedByDeleted) {
+      if (stillNeeded.has(k)) continue;
+      const erId = erByKey.get(k);
+      if (erId != null) out.push(erId);
+    }
+    return out;
+  }
+
+  // Delete the given rows. Deleting a data point cascade-deletes the enrichments
+  // ONLY it used (shared ones stay); selected enrichment rows delete outright.
+  // Undoable via the canvas history; confirms only for large removals.
+  function deleteRows(numIds) {
+    const canvas = __cb.canvas;
+    if (!canvas?.removeCard) return;
+    blurActiveCellInput();
+    const ids = (numIds || []).filter((id) => id != null);
+    if (ids.length === 0) return;
+    const dpIds = ids.filter(
+      (id) => canvas.getCardById?.(id)?.data?.type === "dp",
+    );
+    const exclusiveEr = dpIds.length ? exclusiveErIdsForDps(new Set(dpIds)) : [];
+    const toDelete = [...new Set([...ids, ...exclusiveEr])];
+    if (toDelete.length >= 5) {
+      const extra = exclusiveEr.length
+        ? ` and ${exclusiveEr.length} enrichment${exclusiveEr.length === 1 ? "" : "s"} only they use`
+        : "";
+      const msg = `Delete ${ids.length} row${ids.length === 1 ? "" : "s"}${extra}? You can undo this.`;
+      if (!window.confirm(msg)) return;
+    }
+    for (const id of toDelete) canvas.removeCard(id);
+    if (__cb.saveTabs) __cb.saveTabs();
+    clearSelection();
+    if (__cb.tableView?.refresh) __cb.tableView.refresh();
+  }
+
+  // Join groups of menu items with separators, skipping empty groups so there
+  // are never leading / trailing / doubled dividers.
+  function joinMenuGroups(groups) {
+    const out = [];
+    for (const g of groups) {
+      if (!g || g.length === 0) continue;
+      if (out.length > 0) out.push({ separator: true });
+      for (const it of g) out.push(it);
+    }
+    return out;
   }
 
   // Re-parent a block of cards into a target — a real cb-group ({kind:"group"}),
@@ -4822,173 +5051,112 @@
     const cardIds = getCardRowsInSelection();
 
     if (cardIds.length >= 2) {
-      // Multi-select: Group, plus Link when the selection can share one.
       const selCards = cardIds.map(getCardForRowId).filter(Boolean);
       const erCount = selCards.filter((c) => isErType(c.data?.type)).length;
       const dpCards = selCards.filter((c) => c.data?.type === "dp");
       const dpWithLineage = dpCards.some(
         (c) => (c.data?.sourceEnrichmentFieldId ?? null) != null,
       );
-
-      // Grouping every row of a use case into one sub-group is a no-op nesting
-      // (the sub-group would just mirror the use case), so disable it.
       const selNumIds = cardIds.map(parseCardIdFromRowId).filter((x) => x != null);
-      const selUcId = commonUseCaseIdForCards(selNumIds);
-      let wrapsWholeUseCase = false;
-      if (selUcId != null && __cb.model?.useCaseGroupForCard) {
-        const selSet = new Set(selNumIds);
-        const ucContent = (__cb.model.getNodes?.() || []).filter((c) => {
-          if (!c.data || c.data.type === "comment") return false;
-          const uc = __cb.model.useCaseGroupForCard(c);
-          return uc && uc.id === selUcId;
-        });
-        wrapsWholeUseCase =
-          ucContent.length > 0 && ucContent.every((c) => selSet.has(c.id));
-      }
-      // "Create" — a chevron submenu (mirrors "Move to") offering the two
-      // levels explicitly: Group (an L2 sub-group nested under the rows' shared
-      // use case) or Use case (a new top-level container). "Group" needs a
-      // single parent use case, so it's disabled in the unscoped "Other" section
-      // and when the rows span use cases — a top-level "group" there would just
-      // BE a use case (the confusing behavior this replaces). When the selection
-      // already IS an entire use case both are no-ops, so Create is omitted.
-      const canGroup = selUcId != null && !wrapsWholeUseCase;
-      const canUseCase = !wrapsWholeUseCase;
-      if (canGroup || canUseCase) {
-        items.push({
-          label: "Create",
-          submenu: [
-            canGroup
-              ? { label: "Group", action: () => groupSelected() }
-              : {
-                  label: "Group",
-                  disabled: true,
-                  hint:
-                    selUcId == null
-                      ? "Rows must share one use case"
-                      : "Already the whole use case",
-                },
-            canUseCase
-              ? { label: "Use case", action: () => createUseCaseFromSelection() }
-              : { label: "Use case", disabled: true, hint: "Already a use case" },
-          ],
-        });
-      }
 
-      // Link = "share an enrichment" in the lineage model. Meaningful for one
-      // OR MORE enrichments + data point(s) — a DP can derive from multiple
-      // enrichments (OR/waterfall or AND/sum chain), and linkCardsByIds unions
-      // every selected ER onto each DP. Also DP-only where at least one DP
-      // already carries a source enrichment to propagate.
+      // Structure: make a NEW container (Create) or move into / out of an
+      // EXISTING one (Move to). Create owns "new"; Move to owns "existing".
+      const structure = [];
+      const createSub = buildCreateSubmenu(selNumIds, {
+        group: () => groupSelected(),
+        useCase: () => createUseCaseFromSelection(),
+      });
+      if (createSub) structure.push({ label: "Create", submenu: createSub });
+      const moveSub = buildMoveToSubmenu(selNumIds, (kind, id) =>
+        moveCardsTo(selNumIds, { kind, id }),
+      );
+      if (moveSub.length > 0) structure.push({ label: "Move to", submenu: moveSub });
+
+      // Lineage: share an enrichment across the DPs (Link), or detach (Unlink).
+      const lineage = [];
       const canShareEnrichment =
         (erCount >= 1 && dpCards.length >= 1) ||
         (erCount === 0 && dpCards.length >= 2 && dpWithLineage);
       if (canShareEnrichment) {
-        // Divider separates the grouping actions above from linking below.
-        if (items.length > 0) items.push({ separator: true });
-        items.push({
+        lineage.push({
           label: "Link data points and enrichments",
           action: () => linkSelected(),
         });
       }
-      // Unlink — the inverse of Link — for a DP-only selection where at least one
-      // DP carries enrichment links. Detaches every selected DP's enrichments.
-      const linkedDpCards = dpCards.filter(
-        (c) => __cb.dpErKeys(c).length > 0,
-      );
+      const linkedDpCards = dpCards.filter((c) => __cb.dpErKeys(c).length > 0);
       if (erCount === 0 && linkedDpCards.length > 0) {
-        items.push({
+        lineage.push({
           label: "Unlink enrichments",
           action: () => unlinkDpCards(linkedDpCards),
         });
       }
-      return items;
+
+      const destructive = [
+        { label: `Delete ${cardIds.length} rows`, action: () => deleteRows(selNumIds) },
+      ];
+
+      return joinMenuGroups([structure, lineage, destructive]);
     }
 
-    // Single row. Rename applies only to data points; both insert actions are
-    // always offered so the user can grow the table by either kind directly
-    // from the row (replaces the old column-aware "Insert below" + footer).
+    // Single row — grouped logically: Create / Move to (structure), lineage +
+    // annotate (content), then Delete. ER rows and DP rows differ only by which
+    // actions apply (mix policy: hide what can't apply to that kind).
     if (ctx?.rowId != null) {
       const card = getCardForRowId(ctx.rowId);
-      // Standalone (orphan) enrichment row → note + freeze (same as a chip),
-      // PLUS a "Move to" submenu so an unattached enrichment can be scoped
-      // into a use case / group — which flips it from "not counted" (it sits in
-      // the excluded "Other" section) to counted. Mirrors the DP "Move to".
+      const numIds = [parseCardIdFromRowId(ctx.rowId)].filter((x) => x != null);
+      const cardId = numIds[0] ?? null;
+
+      // Orphan enrichment row: note + freeze, scope it (Create / Move to), then
+      // Delete. Rename / Insert / Unlink don't apply to a lone enrichment.
       if (card && isErType(card.data?.type)) {
-        const items = erContextItems(card);
-        const membership = currentMembership(card);
-        const moveSubmenu = [
-          { label: "New use case\u2026", action: () => newGroupFromRow(ctx.rowId) },
+        const annotate = erContextItems(card); // note + freeze
+        const structure = [];
+        const createSub = buildCreateSubmenu(numIds, {
+          group: () => newGroupFromRow(ctx.rowId),
+          useCase: () => newUseCaseFromRow(ctx.rowId),
+        });
+        if (createSub) structure.push({ label: "Create", submenu: createSub });
+        const moveSub = buildMoveToSubmenu(numIds, (kind, id) =>
+          applyGroupMembership(ctx.rowId, { kind, id }),
+        );
+        if (moveSub.length > 0) structure.push({ label: "Move to", submenu: moveSub });
+        const destructive = [
+          { label: "Delete enrichment", action: () => deleteRows(numIds) },
         ];
-        if (membership.kind !== "none") {
-          moveSubmenu.push({
-            label: "Remove from use case",
-            action: () => applyGroupMembership(ctx.rowId, { kind: "none" }),
-          });
-        }
-        // Divider directly under the create / remove actions, separating them
-        // from the hierarchy of use cases (each with its sub-groups) to move into.
-        moveSubmenu.push({ separator: true });
-        for (const t of buildMoveToTargets(ctx.rowId, membership)) moveSubmenu.push(t);
-        // Drop a dangling divider when there's nothing to move into.
-        if (moveSubmenu[moveSubmenu.length - 1]?.separator) moveSubmenu.pop();
-        items.push({ label: "Move to", submenu: moveSubmenu });
-        return items;
+        return joinMenuGroups([annotate, structure, destructive]);
       }
+
       if (card?.data?.type === "dp") {
-        items.push({ label: "Rename", action: () => startInlineRename(ctx.rowId) });
-        // Add-to-group lives under a single "Move to" parent with a flyout
-        // submenu: New group + Ungroup at the top, then every group this row
-        // can move into. Recognizes both real cb-groups and comment-cluster
-        // basic groups (Clay-table imports), and skips the row's current group.
-        const membership = currentMembership(card);
-        const moveSubmenu = [
-          { label: "New group\u2026", action: () => newGroupFromRow(ctx.rowId) },
+        const edit = [
+          { label: "Rename", action: () => startInlineRename(ctx.rowId) },
         ];
-        if (membership.kind !== "none") {
-          moveSubmenu.push({
-            label: "Ungroup",
-            action: () => applyGroupMembership(ctx.rowId, { kind: "none" }),
-          });
-        }
-        // Divider directly under the New group / Ungroup actions, separating
-        // them from the hierarchy of use cases (each with its sub-groups).
-        moveSubmenu.push({ separator: true });
-        for (const t of buildMoveToTargets(ctx.rowId, membership)) moveSubmenu.push(t);
-        // Drop a dangling divider when there's nothing to move into.
-        if (moveSubmenu[moveSubmenu.length - 1]?.separator) moveSubmenu.pop();
-        items.push({ label: "Move to", submenu: moveSubmenu });
-        // Unlink — detach ALL enrichments from this DP (inverse of Link). Only
-        // when it actually links one (a "Not connected" DP has nothing to undo).
+        const createSub = buildCreateSubmenu(numIds, {
+          group: () => newGroupFromRow(ctx.rowId),
+          useCase: () => newUseCaseFromRow(ctx.rowId),
+        });
+        if (createSub) edit.push({ label: "Create", submenu: createSub });
+        const moveSub = buildMoveToSubmenu(numIds, (kind, id) =>
+          applyGroupMembership(ctx.rowId, { kind, id }),
+        );
+        if (moveSub.length > 0) edit.push({ label: "Move to", submenu: moveSub });
+        edit.push({
+          label: "Insert below",
+          submenu: [
+            { label: "Data point", action: () => insertDataPointBelow(ctx.rowId) },
+            { label: "Enrichment", action: () => insertEnrichmentBelow(ctx.rowId) },
+          ],
+        });
+
+        const content = [];
+        // Unlink only when the DP actually links an enrichment (else hidden).
         if (__cb.dpErKeys(card).length > 0) {
-          items.push({
+          content.push({
             label: "Unlink enrichments",
             action: () => unlinkDpCards([card]),
           });
         }
-      }
-      // "Insert below" mirrors "Move to": a chevron submenu offering either a
-      // data point (slotted right below) or an enrichment (added UNLINKED as an
-      // orphan ER below, not as a chip on this DP).
-      items.push({
-        label: "Insert below",
-        submenu: [
-          {
-            label: "Data point",
-            action: () => insertDataPointBelow(ctx.rowId),
-          },
-          {
-            label: "Enrichment",
-            action: () => insertEnrichmentBelow(ctx.rowId),
-          },
-        ],
-      });
-      // Per-row note — anchored to the row's enrichment cell so the editor
-      // opens next to where the badge lives.
-      const cardId = parseCardIdFromRowId(ctx.rowId);
-      if (cardId != null) {
         const hasNote = !!(card?.data?.note || "").trim();
-        items.push({
+        content.push({
           label: hasNote ? "Edit note" : "Leave a note",
           action: () => {
             const anchor =
@@ -4997,16 +5165,21 @@
             openNotePopover(cardId, anchor);
           },
         });
-      }
-      // "Find in table" jumps to the data point's source column in Clay's grid.
-      // Surfaced as a footer button at the very bottom of the menu. Only imported
-      // DPs carry fieldId + tableId; manual DPs have no column to find.
-      if (card?.data?.type === "dp" && card.data.fieldId && card.data.tableId) {
-        items.push({
-          footer: true,
-          label: "Find in table",
-          action: () => __cb.openCardInTable(card),
-        });
+
+        const destructive = [
+          { label: "Delete data point", action: () => deleteRows(numIds) },
+        ];
+
+        const out = joinMenuGroups([edit, content, destructive]);
+        // Footer: "Find in table" for imported DPs (manual DPs have no column).
+        if (card.data.fieldId && card.data.tableId) {
+          out.push({
+            footer: true,
+            label: "Find in table",
+            action: () => __cb.openCardInTable(card),
+          });
+        }
+        return out;
       }
     }
     return items;
