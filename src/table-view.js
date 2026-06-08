@@ -6183,8 +6183,10 @@
       dpInput.addEventListener("blur", () => commitDpName(row.cardId, dpInput.value));
       dpCell.appendChild(dpInput);
     } else {
-      // Static text — clicking anywhere on the row (including the name)
-      // selects it. Renaming happens via the right-click menu.
+      // Static text — single click anywhere on the row (including the name)
+      // selects it; DOUBLE-click the name renames inline (quick entry point
+      // alongside the right-click "Rename"). Selection only toggles classes (no
+      // re-render), so the dblclick fires reliably on the same element.
       const dpText = document.createElement("div");
       dpText.className = "cb-table-view-dp-name";
       if (row.name) {
@@ -6193,6 +6195,12 @@
         dpText.classList.add("cb-table-view-dp-name-empty");
         dpText.textContent = "Untitled data point";
       }
+      dpText.addEventListener("dblclick", (evt) => {
+        evt.preventDefault();
+        evt.stopPropagation();
+        pendingRenameCardId = row.cardId;
+        render();
+      });
       dpCell.appendChild(dpText);
     }
     tr.appendChild(dpCell);
@@ -7359,6 +7367,19 @@
         // placeholder so the row isn't blank when not being renamed.
         labelEl.classList.add("cb-table-view-group-row-label-empty");
         labelEl.textContent = "Untitled group";
+      }
+      // DOUBLE-click the title to rename inline (quick entry point alongside the
+      // right-click "Rename"). Stop the click from reaching the row's collapse
+      // toggle — the toggle re-renders, which would swallow the second click;
+      // collapse still works via the chevron / the rest of the header row.
+      if (section.editable) {
+        labelEl.classList.add("cb-table-view-group-row-label-renamable");
+        labelEl.addEventListener("click", (evt) => evt.stopPropagation());
+        labelEl.addEventListener("dblclick", (evt) => {
+          evt.preventDefault();
+          evt.stopPropagation();
+          startGroupRename(section.groupId);
+        });
       }
     }
 

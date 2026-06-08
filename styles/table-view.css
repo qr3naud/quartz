@@ -1827,6 +1827,13 @@
   letter-spacing: 0.005em;
 }
 
+/* The title doubles as the rename affordance (double-click). Single click on it
+   is a no-op (collapse lives on the chevron / rest of the row), so a text caret
+   signals "edit me" rather than the row's pointer. */
+.cb-table-view-group-row-label-renamable {
+  cursor: text;
+}
+
 /* Nameless group (freshly created, not being renamed): muted placeholder. */
 .cb-table-view-group-row-label-empty {
   font-weight: 500;
