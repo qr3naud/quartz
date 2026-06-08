@@ -5054,6 +5054,11 @@
 
       const panel = document.createElement("div");
       panel.className = "cb-table-view-context-submenu";
+      // A panel that itself holds nested flyouts (e.g. use cases with sub-groups)
+      // must not clip them — overflow-y:auto would hide the second-level flyout.
+      if (item.submenu.some((s) => s && s.submenu)) {
+        panel.classList.add("cb-table-view-context-submenu-nested");
+      }
       for (const sub of item.submenu) panel.appendChild(renderContextItem(sub));
       wrap.appendChild(panel);
 
