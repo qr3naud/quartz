@@ -4845,28 +4845,33 @@
         wrapsWholeUseCase =
           ucContent.length > 0 && ucContent.every((c) => selSet.has(c.id));
       }
-      items.push(
-        wrapsWholeUseCase
-          ? {
-              label: "Create a group",
-              disabled: true,
-              hint: "Already the whole use case",
-            }
-          : {
-              label: "Create a group",
-              action: () => groupSelected(),
-            },
-      );
-
-      // "Create a use case" promotes the selection into its OWN top-level use
-      // case (records + frequency of its own), vs. "Group" which nests a
-      // sub-group under the rows' current use case. Only meaningful when the
-      // rows already live in a use case — otherwise "Group" already produces a
-      // top-level group.
-      if (selUcId != null && !wrapsWholeUseCase) {
+      // "Create" — a chevron submenu (mirrors "Move to") offering the two
+      // levels explicitly: Group (an L2 sub-group nested under the rows' shared
+      // use case) or Use case (a new top-level container). "Group" needs a
+      // single parent use case, so it's disabled in the unscoped "Other" section
+      // and when the rows span use cases — a top-level "group" there would just
+      // BE a use case (the confusing behavior this replaces). When the selection
+      // already IS an entire use case both are no-ops, so Create is omitted.
+      const canGroup = selUcId != null && !wrapsWholeUseCase;
+      const canUseCase = !wrapsWholeUseCase;
+      if (canGroup || canUseCase) {
         items.push({
-          label: "Create a use case",
-          action: () => createUseCaseFromSelection(),
+          label: "Create",
+          submenu: [
+            canGroup
+              ? { label: "Group", action: () => groupSelected() }
+              : {
+                  label: "Group",
+                  disabled: true,
+                  hint:
+                    selUcId == null
+                      ? "Rows must share one use case"
+                      : "Already the whole use case",
+                },
+            canUseCase
+              ? { label: "Use case", action: () => createUseCaseFromSelection() }
+              : { label: "Use case", disabled: true, hint: "Already a use case" },
+          ],
         });
       }
 
