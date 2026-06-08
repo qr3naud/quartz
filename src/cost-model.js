@@ -206,6 +206,13 @@
   // the projected billable fraction so a fallback/secondary ER costs share x base.
   function erShareMult(erCard, shareMap) {
     if (!shareMap) return 1;
+    // A pinned or copied-from-Actual coverage (coverageCustom) already encodes
+    // the ER's billed rows (coverageRows = the rows it ran on), so applying the
+    // run-share on top would double-discount. Treat the multiplier as 1 there —
+    // the run-share % stays a display / attribution figure (the per-DP chip and
+    // group badge still split by it), and coverage alone drives the projected
+    // total, so "copy from Actual" lands projected ≈ actual.
+    if (erCard && erCard.data && erCard.data.coverageCustom) return 1;
     const key = erLineageKey(erCard);
     if (key == null) return 1;
     const m = shareMap.get(key);
