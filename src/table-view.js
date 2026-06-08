@@ -107,6 +107,10 @@
   // escapes the table's overflow clipping.
   let erShareMenuEl = null;
   let erShareMenuBackdrop = null;
+  // Capture-phase outside-mousedown unbind for the run-share popover, so it
+  // commits/closes even when the click lands on the ER details menu (which sits
+  // a z-index tier above the popover's backdrop and would otherwise swallow it).
+  let erShareMenuOutsideUnbind = null;
 
   // ER chip details menu — anchored popover opened by clicking an ER pill.
   // Single open instance at a time; lives at document.body level (like the
@@ -124,10 +128,12 @@
   // Grouped model picker spawned from the details-menu Model pill (AI columns).
   let erMenuModelPickerEl = null;
   let erMenuModelPickerBackdrop = null;
+  let erMenuModelPickerOutsideUnbind = null;
   // "Use private key / use Clay credits" toggle spawned from the cost pill's
   // credit segment.
   let erMenuKeyToggleEl = null;
   let erMenuKeyToggleBackdrop = null;
+  let erMenuKeyToggleOutsideUnbind = null;
 
   // Blue duotone key glyph copied verbatim from the canvas credit pill
   // (src/canvas/cards.js) so the table-view private-key toggle is pixel-identical.
@@ -3218,6 +3224,7 @@
   function closeErShareMenu() {
     // Defensive: blur + Enter can both fire commit -> closeErShareMenu, and a
     // commit re-render can detach the nodes first, so guard the removals.
+    if (erShareMenuOutsideUnbind) { erShareMenuOutsideUnbind(); erShareMenuOutsideUnbind = null; }
     try { if (erShareMenuEl) erShareMenuEl.remove(); } catch (e) { /* already detached */ }
     try { if (erShareMenuBackdrop) erShareMenuBackdrop.remove(); } catch (e) { /* already detached */ }
     erShareMenuEl = null;
@@ -3336,6 +3343,12 @@
     document.body.appendChild(erShareMenuBackdrop);
     document.body.appendChild(pop);
     erShareMenuEl = pop;
+    // Capture-phase outside mousedown -> commit (mirrors the backdrop), so an
+    // edit isn't lost when the click lands on the ER details menu, which sits a
+    // z-index tier above our backdrop and would otherwise swallow it. commit()
+    // is idempotent, so this never double-fires with the backdrop or focusout.
+    erShareMenuOutsideUnbind =
+      window.__cb.bindOutsideMousedown?.(pop, commit) ?? null;
     pop.style.position = "fixed";
     pop.style.zIndex = "9999999";
     __cb.placePopover?.(pop, anchorEl || hostEl, { gap: 6, align: "left" });
@@ -3382,6 +3395,7 @@
   // dropdown. Picking a model commits via commitModel; selection triggers a
   // table refresh that closes the details menu.
   function closeErMenuModelPicker() {
+    if (erMenuModelPickerOutsideUnbind) { erMenuModelPickerOutsideUnbind(); erMenuModelPickerOutsideUnbind = null; }
     if (erMenuModelPickerEl) { erMenuModelPickerEl.remove(); erMenuModelPickerEl = null; }
     if (erMenuModelPickerBackdrop) { erMenuModelPickerBackdrop.remove(); erMenuModelPickerBackdrop = null; }
   }
@@ -3467,6 +3481,10 @@
     document.body.appendChild(erMenuModelPickerBackdrop);
     document.body.appendChild(picker);
     erMenuModelPickerEl = picker;
+    // Capture-phase outside mousedown so the picker closes even when the click
+    // lands on the ER details menu chrome above its backdrop.
+    erMenuModelPickerOutsideUnbind =
+      window.__cb.bindOutsideMousedown?.(picker, closeErMenuModelPicker) ?? null;
 
     // Clamp the picker to the viewport. Provider submenus always fly out to the
     // LEFT (see pickers.css + builder above), so there's no right-edge flip to
@@ -3504,6 +3522,7 @@
   }
 
   function closeErMenuKeyToggle() {
+    if (erMenuKeyToggleOutsideUnbind) { erMenuKeyToggleOutsideUnbind(); erMenuKeyToggleOutsideUnbind = null; }
     if (erMenuKeyToggleEl) { erMenuKeyToggleEl.remove(); erMenuKeyToggleEl = null; }
     if (erMenuKeyToggleBackdrop) { erMenuKeyToggleBackdrop.remove(); erMenuKeyToggleBackdrop = null; }
   }
@@ -3544,6 +3563,10 @@
     // Track the element so closeErMenuKeyToggle can actually remove it — without
     // this assignment each toggle orphaned on document.body and never closed.
     erMenuKeyToggleEl = el;
+    // Capture-phase outside mousedown so it closes even when the click lands on
+    // the ER details menu chrome above its backdrop.
+    erMenuKeyToggleOutsideUnbind =
+      window.__cb.bindOutsideMousedown?.(el, closeErMenuKeyToggle) ?? null;
     el.style.zIndex = "9999999";
     window.__cb.placePopover?.(el, anchorEl, { gap: 4 });
   }

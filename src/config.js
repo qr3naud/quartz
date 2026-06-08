@@ -584,11 +584,35 @@
 
       window.__cb._freqPickerEl = menu;
       window.__cb._freqPickerBackdrop = backdrop;
+      // Also dismiss on a capture-phase outside mousedown so the picker closes
+      // even when opened from inside another popover (e.g. the ER details menu),
+      // where a click on the parent menu never reaches our backdrop.
+      window.__cb._freqPickerOutsideUnbind = window.__cb.bindOutsideMousedown(
+        menu,
+        window.__cb.closeFrequencyPicker,
+      );
     },
     closeFrequencyPicker() {
       const cb = window.__cb;
       if (cb._freqPickerEl) { cb._freqPickerEl.remove(); cb._freqPickerEl = null; }
       if (cb._freqPickerBackdrop) { cb._freqPickerBackdrop.remove(); cb._freqPickerBackdrop = null; }
+      if (cb._freqPickerOutsideUnbind) { cb._freqPickerOutsideUnbind(); cb._freqPickerOutsideUnbind = null; }
+    },
+
+    // Dismiss a body-mounted popover on the next mousedown that lands outside
+    // `menuEl`. Uses the CAPTURE phase so it fires before any parent popover's
+    // bubble-phase stopPropagation — that's why a picker opened from inside the
+    // ER details menu still closes when you click the menu chrome (the backdrop
+    // alone can't, since the menu sits a z-index tier above it). Returns an
+    // unbind fn; call it from the popover's close path. The existing backdrop
+    // stays — it still blocks click-through to the content below.
+    bindOutsideMousedown(menuEl, closeFn) {
+      const handler = (evt) => {
+        if (menuEl && menuEl.contains(evt.target)) return; // click inside — keep open
+        closeFn();
+      };
+      document.addEventListener("mousedown", handler, true);
+      return () => document.removeEventListener("mousedown", handler, true);
     },
 
     // ---- Provider chain popover (waterfall cards) ----
