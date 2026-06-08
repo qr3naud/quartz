@@ -548,6 +548,94 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* ---- SE Captain chip (Request POC modal) ----
+   The captain is auto-resolved from the requester's SFDC manager and shown as a
+   removable person chip (avatar + name + ✕). The slot reserves a row height so
+   the layout doesn't jump between the loading / empty / chip states. Avatars are
+   initials for now; they become real photos once captains are Quartz users. */
+.cb-poc-captain-slot {
+  display: flex;
+  align-items: center;
+  min-height: 36px;
+}
+
+.cb-poc-captain-empty {
+  font-size: 12.5px;
+  color: #6b7280;
+}
+
+.cb-poc-captain-undo {
+  margin-left: 2px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: #4f46e5;
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.cb-poc-captain-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 34px;
+  padding: 0 6px;
+  border: 1px solid #e2e8f0;
+  border-radius: 999px;
+  background: #f8fafc;
+  max-width: 100%;
+}
+
+.cb-poc-captain-avatar {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: #6366f1;
+  color: #ffffff;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.cb-poc-captain-name {
+  font-size: 13px;
+  font-weight: 500;
+  color: #1f2937;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cb-poc-captain-remove {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  margin-left: 2px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: #64748b;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+
+.cb-poc-captain-remove:hover {
+  background: #e2e8f0;
+  color: #0f172a;
+}
+
 /* ---- Admin > Secret Configuration ----
    Snug modal that hugs the label|control grid (560px = 200 + 16 gap + 300 +
    the body's 44px horizontal padding), instead of the wide default used by the
@@ -585,6 +673,38 @@
   display: flex;
   align-items: center;
   height: 52px;
+}
+
+/* Full-width JSON setting (e.g. se_captain_map): the label row carries a hint
+   and the control row holds a monospace textarea; both span the grid. */
+.cb-secret-json-hint {
+  font-size: 11.5px;
+  font-weight: 400;
+  line-height: 1.4;
+  color: #6b7280;
+  white-space: normal;
+}
+
+.cb-secret-json {
+  width: 100%;
+  min-height: 200px;
+  padding: 10px 12px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #1f2937;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  resize: vertical;
+  tab-size: 2;
+  transition: border-color 0.12s, box-shadow 0.12s;
+}
+
+.cb-secret-json:focus {
+  outline: none;
+  border-color: #6366f1;
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.18);
 }
 
 /* Custom channel dropdown */

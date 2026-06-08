@@ -131,6 +131,14 @@
     let neededBy = "";
     let submitting = false;
 
+    // SE Captain — auto-resolved from the requester's SFDC manager via the
+    // poc-captain edge function (see cb:poccaptain:get). The rep can remove the
+    // chip to skip tagging; we send that opt-out on submit (the server always
+    // re-resolves *who* from the JWT, so the client only toggles inclusion).
+    let seCaptain = null;        // { name, email } | null
+    let seCaptainLoading = true; // true until the resolve call settles
+    let seCaptainOptout = false; // true once the rep removes the chip
+
     // Track whether the rep edited a prefillable field, so the async SFDC
     // hydrate below never clobbers something they typed.
     let accountTouched = false;
@@ -242,6 +250,89 @@
     prefillBody.appendChild(row3);
     prefill.appendChild(prefillBody);
     body.appendChild(prefill);
+
+    // SE Captain — derived from the requester's manager in Salesforce. Shown as
+    // a removable chip (avatar + name). Auto-populates on open; the rep can ✕ it
+    // to skip tagging a captain. (Custom field wrapper, not buildField, so the
+    // chip's ✕ button isn't wrapped in a <label>.)
+    const captainSlot = document.createElement("div");
+    captainSlot.className = "cb-poc-captain-slot";
+    const captainField = document.createElement("div");
+    captainField.className = "cb-gtme-field cb-gtme-field-grow";
+    const captainLabel = document.createElement("span");
+    captainLabel.className = "cb-gtme-field-label";
+    captainLabel.textContent = "SE Captain";
+    captainField.appendChild(captainLabel);
+    captainField.appendChild(captainSlot);
+    body.appendChild(captainField);
+
+    function captainInitials(nm) {
+      const parts = String(nm || "").trim().split(/\s+/).filter(Boolean);
+      if (!parts.length) return "?";
+      if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+      return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+    }
+
+    function renderCaptainSlot() {
+      captainSlot.innerHTML = "";
+      if (seCaptainLoading) {
+        const hint = document.createElement("span");
+        hint.className = "cb-poc-captain-empty";
+        hint.textContent = "Resolving from Salesforce\u2026";
+        captainSlot.appendChild(hint);
+        return;
+      }
+      if (!seCaptain) {
+        const hint = document.createElement("span");
+        hint.className = "cb-poc-captain-empty";
+        hint.textContent = "No SE Captain mapped for your manager.";
+        captainSlot.appendChild(hint);
+        return;
+      }
+      if (seCaptainOptout) {
+        const hint = document.createElement("span");
+        hint.className = "cb-poc-captain-empty";
+        hint.textContent = "Won\u2019t tag an SE Captain. ";
+        const undo = document.createElement("button");
+        undo.type = "button";
+        undo.className = "cb-poc-captain-undo";
+        undo.textContent = "Undo";
+        undo.addEventListener("click", () => { seCaptainOptout = false; renderCaptainSlot(); });
+        hint.appendChild(undo);
+        captainSlot.appendChild(hint);
+        return;
+      }
+      // The captain chip (avatar initials + name + remove). Avatars become real
+      // once captains are Quartz users; initials stand in until then.
+      const chip = document.createElement("span");
+      chip.className = "cb-poc-captain-chip";
+      const avatar = document.createElement("span");
+      avatar.className = "cb-poc-captain-avatar";
+      avatar.textContent = captainInitials(seCaptain.name);
+      const nameEl = document.createElement("span");
+      nameEl.className = "cb-poc-captain-name";
+      nameEl.textContent = seCaptain.name;
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "cb-poc-captain-remove";
+      remove.setAttribute("aria-label", "Remove SE Captain");
+      remove.innerHTML =
+        '<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
+      remove.addEventListener("click", () => { seCaptainOptout = true; renderCaptainSlot(); });
+      chip.appendChild(avatar);
+      chip.appendChild(nameEl);
+      chip.appendChild(remove);
+      captainSlot.appendChild(chip);
+    }
+    renderCaptainSlot();
+
+    // Resolve the captain in the background; the modal opens immediately.
+    sendMessage({ type: "cb:poccaptain:get" }).then((resp) => {
+      seCaptainLoading = false;
+      const c = resp && resp.ok && resp.data && resp.data.ok ? resp.data.captain : null;
+      seCaptain = c && c.name ? { name: c.name, email: c.email || null } : null;
+      renderCaptainSlot();
+    }).catch(() => { seCaptainLoading = false; seCaptain = null; renderCaptainSlot(); });
 
     // Always-visible: the fields that need the rep's input.
     const dateInput = buildInput("", "", "date");
@@ -405,6 +496,7 @@
           comments: comments.trim(),
           loom_url: loom.trim(),
           needed_by: neededBy || null,
+          se_captain_optout: seCaptainOptout,
         },
       });
 

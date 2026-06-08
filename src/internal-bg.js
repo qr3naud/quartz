@@ -329,6 +329,25 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     return true;
   }
 
+  // cb:poccaptain:get — resolves the SE Captain to tag for the current
+  // requester (their SFDC manager -> app_settings.se_captain_map) so the
+  // Request POC modal can render the captain chip. Identity is set server-side
+  // from the JWT; no payload. Returns { ok, captain: {name,email}|null, manager }.
+  if (msg.type === "cb:poccaptain:get") {
+    (async () => {
+      try {
+        const res = await callProxy("poc-captain", { method: "GET" });
+        const text = await res.text();
+        let data = null;
+        try { data = text ? JSON.parse(text) : null; } catch {}
+        sendResponse({ ok: res.ok, status: res.status, data, rawText: text || undefined });
+      } catch (err) {
+        sendResponse({ ok: false, error: err?.message || String(err) });
+      }
+    })();
+    return true;
+  }
+
   // cb:slack:channels — lists the Slack channels the bot is a member of, for
   // the Admin > Secret Configuration channel dropdown (slack-channels function).
   if (msg.type === "cb:slack:channels") {
