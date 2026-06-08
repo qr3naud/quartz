@@ -3662,6 +3662,23 @@
     if (__cb.saveTabs) __cb.saveTabs();
   }
 
+  // Detach EVERY enrichment from one or more data points (the row-level
+  // "Unlink", inverse of Link). Clears each DP's lineage keys + run-shares so it
+  // renders as "Not connected"; the ER cards stay (becoming orphan rows if
+  // nothing else references them). Batches one model update.
+  function unlinkDpCards(cards) {
+    let changed = false;
+    for (const dp of cards || []) {
+      if (!dp || dp.data?.type !== "dp") continue;
+      if (__cb.dpErKeys(dp).length === 0) continue;
+      __cb.setDpErKeys(dp, []);
+      changed = true;
+    }
+    if (!changed) return;
+    __cb.model.update();
+    if (__cb.saveTabs) __cb.saveTabs();
+  }
+
   function startAddDataPoint(text) {
     const canvas = __cb.canvas;
     if (!canvas?.addDataPointCard) return null;
@@ -4046,24 +4063,68 @@
   // Group action) AND comment-cluster "basic groups" (card.data.groupCluster —
   // Clay-table imports + legacy POC). Returned as { kind, id, label } so the
   // menu can list them and the move action can apply the right membership.
-  function movableGroupTargets() {
+  // Hierarchical "Move to" targets for `rowId` given its current `membership`:
+  // top-level use cases first (each clickable = move into the use case), and when
+  // a use case has sub-groups it also carries a chevron flyout whose FIRST option
+  // is the use case itself, then a divider, then the sub-groups. The row's
+  // current group is disabled (can't move where it already is) and a childless
+  // current use case is skipped entirely. Legacy comment-clusters are appended
+  // flat. Each entry is a renderContextItem shape ({ label, action?, submenu?,
+  // disabled?, hint? }).
+  function buildMoveToTargets(rowId, membership) {
+    const model = __cb.model;
     const out = [];
-    for (const g of (__cb.model?.getGroups?.() || [])) {
-      out.push({
-        kind: "group",
-        id: g.id,
-        label: (g.label && g.label.trim()) ? g.label.trim() : "Untitled group",
-      });
+    const ord = (a, b) => (a.order ?? 0) - (b.order ?? 0);
+    const isCurrent = (kind, id) => membership.kind === kind && membership.id === id;
+    const moveTo = (kind, id) => () => applyGroupMembership(rowId, { kind, id });
+    const labelOf = (g, fallback) =>
+      g.label && g.label.trim() ? g.label.trim() : fallback;
+
+    for (const uc of (model?.childGroups?.(null) || []).slice().sort(ord)) {
+      const children = (model?.childGroups?.(uc.id) || []).slice().sort(ord);
+      const ucCurrent = isCurrent("group", uc.id);
+      if (ucCurrent && children.length === 0) continue; // nothing reachable here
+      const ucLabel = labelOf(uc, "Untitled use case");
+      const entry = {
+        label: ucLabel,
+        action: ucCurrent ? undefined : moveTo("group", uc.id),
+        disabled: ucCurrent,
+      };
+      if (children.length > 0) {
+        const sub = [
+          {
+            label: ucLabel,
+            hint: "Whole use case",
+            action: ucCurrent ? undefined : moveTo("group", uc.id),
+            disabled: ucCurrent,
+          },
+          { separator: true },
+        ];
+        for (const ch of children) {
+          const chCurrent = isCurrent("group", ch.id);
+          sub.push({
+            label: labelOf(ch, "Untitled group"),
+            action: chCurrent ? undefined : moveTo("group", ch.id),
+            disabled: chCurrent,
+          });
+        }
+        entry.submenu = sub;
+      }
+      out.push(entry);
     }
+
+    // Legacy comment-cluster basic groups (flat — no parent/child hierarchy).
     const seen = new Set();
-    for (const node of (__cb.model?.getNodes?.() || [])) {
+    for (const node of (model?.getNodes?.() || [])) {
       if (node.data?.type !== "comment") continue;
       const cid = node.data.groupCluster;
       if (cid == null || seen.has(cid)) continue;
       const text = (node.data.text || node.data.displayName || "").trim();
       if (!text) continue;
       seen.add(cid);
-      out.push({ kind: "cluster", id: cid, label: text });
+      const cur = isCurrent("cluster", cid);
+      if (cur) continue;
+      out.push({ label: text, action: moveTo("cluster", cid) });
     }
     return out;
   }
@@ -4768,10 +4829,6 @@
       const dpWithLineage = dpCards.some(
         (c) => (c.data?.sourceEnrichmentFieldId ?? null) != null,
       );
-      const types = new Set(selCards.map((c) => (c.data?.type === "dp" ? "dp" : "er")));
-      let noun = "rows";
-      if (types.size === 1 && types.has("dp")) noun = "data points";
-      else if (types.size === 1 && types.has("er")) noun = "enrichments";
 
       // Grouping every row of a use case into one sub-group is a no-op nesting
       // (the sub-group would just mirror the use case), so disable it.
@@ -4791,12 +4848,12 @@
       items.push(
         wrapsWholeUseCase
           ? {
-              label: `Group ${cardIds.length} ${noun}`,
+              label: "Create a group",
               disabled: true,
               hint: "Already the whole use case",
             }
           : {
-              label: `Group ${cardIds.length} ${noun}`,
+              label: "Create a group",
               action: () => groupSelected(),
             },
       );
@@ -4822,9 +4879,22 @@
         (erCount >= 1 && dpCards.length >= 1) ||
         (erCount === 0 && dpCards.length >= 2 && dpWithLineage);
       if (canShareEnrichment) {
+        // Divider separates the grouping actions above from linking below.
+        if (items.length > 0) items.push({ separator: true });
         items.push({
-          label: `Link ${cardIds.length} ${noun} (share enrichment)`,
+          label: "Link data points and enrichments",
           action: () => linkSelected(),
+        });
+      }
+      // Unlink — the inverse of Link — for a DP-only selection where at least one
+      // DP carries enrichment links. Detaches every selected DP's enrichments.
+      const linkedDpCards = dpCards.filter(
+        (c) => __cb.dpErKeys(c).length > 0,
+      );
+      if (erCount === 0 && linkedDpCards.length > 0) {
+        items.push({
+          label: "Unlink enrichments",
+          action: () => unlinkDpCards(linkedDpCards),
         });
       }
       return items;
@@ -4852,18 +4922,9 @@
           });
         }
         // Divider directly under the create / remove actions, separating them
-        // from the list of use cases / groups to move into.
+        // from the hierarchy of use cases (each with its sub-groups) to move into.
         moveSubmenu.push({ separator: true });
-        const moveTargets = movableGroupTargets().filter(
-          (g) => !(g.kind === membership.kind && g.id === membership.id),
-        );
-        for (const g of moveTargets) {
-          moveSubmenu.push({
-            label: g.label,
-            action: () =>
-              applyGroupMembership(ctx.rowId, { kind: g.kind, id: g.id }),
-          });
-        }
+        for (const t of buildMoveToTargets(ctx.rowId, membership)) moveSubmenu.push(t);
         // Drop a dangling divider when there's nothing to move into.
         if (moveSubmenu[moveSubmenu.length - 1]?.separator) moveSubmenu.pop();
         items.push({ label: "Move to", submenu: moveSubmenu });
@@ -4886,21 +4947,20 @@
           });
         }
         // Divider directly under the New group / Ungroup actions, separating
-        // them from the list of groups to move into.
+        // them from the hierarchy of use cases (each with its sub-groups).
         moveSubmenu.push({ separator: true });
-        const groupTargets = movableGroupTargets().filter(
-          (g) => !(g.kind === membership.kind && g.id === membership.id),
-        );
-        for (const g of groupTargets) {
-          moveSubmenu.push({
-            label: g.label,
-            action: () =>
-              applyGroupMembership(ctx.rowId, { kind: g.kind, id: g.id }),
-          });
-        }
+        for (const t of buildMoveToTargets(ctx.rowId, membership)) moveSubmenu.push(t);
         // Drop a dangling divider when there's nothing to move into.
         if (moveSubmenu[moveSubmenu.length - 1]?.separator) moveSubmenu.pop();
         items.push({ label: "Move to", submenu: moveSubmenu });
+        // Unlink — detach ALL enrichments from this DP (inverse of Link). Only
+        // when it actually links one (a "Not connected" DP has nothing to undo).
+        if (__cb.dpErKeys(card).length > 0) {
+          items.push({
+            label: "Unlink enrichments",
+            action: () => unlinkDpCards([card]),
+          });
+        }
       }
       // "Insert below" mirrors "Move to": a chevron submenu offering either a
       // data point (slotted right below) or an enrichment (added UNLINKED as an
@@ -4962,8 +5022,13 @@
       wrap.className = "cb-table-view-context-menu-submenu-wrap";
       const btn = document.createElement("button");
       btn.type = "button";
+      // A parent can ALSO be a direct target (e.g. a use case with sub-groups):
+      // clicking the row runs its action while the flyout still opens on hover.
+      const actionable = typeof item.action === "function" && !item.disabled;
       btn.className =
-        "cb-table-view-context-menu-option cb-table-view-context-menu-option-parent";
+        "cb-table-view-context-menu-option cb-table-view-context-menu-option-parent" +
+        (actionable ? " cb-table-view-context-menu-option-actionable" : "") +
+        (item.disabled ? " cb-table-view-context-menu-option-disabled" : "");
       const labelEl = document.createElement("div");
       labelEl.className = "cb-table-view-context-menu-option-label";
       labelEl.textContent = item.label;
@@ -4972,9 +5037,19 @@
       chev.className = "cb-table-view-context-menu-chevron";
       chev.innerHTML = chevronRightSvg(13);
       btn.appendChild(chev);
-      // Clicking the parent only toggles the flyout (hover already opens it);
-      // never close the menu or run an action.
-      btn.addEventListener("click", (evt) => evt.stopPropagation());
+      if (actionable) {
+        // Clicking the parent commits its action (move into the use case);
+        // hovering still reveals the flyout for the sub-groups.
+        btn.addEventListener("click", (evt) => {
+          evt.stopPropagation();
+          closeContextMenu();
+          item.action();
+        });
+      } else {
+        // Plain/disabled parent: click only toggles the flyout (hover opens it),
+        // never closes the menu or runs an action.
+        btn.addEventListener("click", (evt) => evt.stopPropagation());
+      }
       wrap.appendChild(btn);
 
       const panel = document.createElement("div");

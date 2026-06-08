@@ -650,6 +650,19 @@
   color: #4338ca;
 }
 
+/* A disabled parent (e.g. the use case the row already lives in) still opens its
+   flyout so the sub-groups stay reachable, but the row itself stays greyed and
+   non-actionable even while the wrap is hovered. */
+.cb-table-view-context-menu-submenu-wrap:hover
+  .cb-table-view-context-menu-option-parent.cb-table-view-context-menu-option-disabled,
+.cb-table-view-context-menu-submenu-wrap:hover
+  .cb-table-view-context-menu-option-parent.cb-table-view-context-menu-option-disabled
+  .cb-table-view-context-menu-chevron {
+  background: transparent;
+  color: #9ca3af;
+  cursor: not-allowed;
+}
+
 /* The flyout panel — its own floating surface (NOT .cb-table-view-context-menu,
    which is position:fixed). Opens to the right of the parent by default. */
 .cb-table-view-context-submenu {
