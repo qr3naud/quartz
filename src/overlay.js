@@ -124,6 +124,17 @@
     '<path d="M12 2C6.5 2 2 6 2 11c0 4 3 7 7 7 1.5 0 2-1 2-2 0-.5-.2-.9-.5-1.2-.3-.4-.5-.8-.5-1.3 0-1 .9-1.8 2-1.8h2.3c3 0 5.2-2.2 5.2-5.2C19.5 4.8 16 2 12 2z"/>' +
     '</svg>';
 
+  // People glyph for the SE Captain mapping admin row.
+  const CAPTAINS_ICON_SVG =
+    '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" ' +
+    'fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" ' +
+    'stroke-linejoin="round" aria-hidden="true">' +
+    '<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>' +
+    '<circle cx="9" cy="7" r="4"/>' +
+    '<path d="M23 21v-2a4 4 0 0 0-3-3.87"/>' +
+    '<path d="M16 3.13a4 4 0 0 1 0 7.75"/>' +
+    '</svg>';
+
   let moreMenuEl = null;
   let moreMenuBackdrop = null;
   // All open left-flyout submenus (Admin, Archived, …). Tracked as a list so
@@ -347,6 +358,7 @@
       // reads like "Archived" and scales as more admin tools are added.
       //   - Secret Configuration: edits public.app_settings in Supabase (e.g.
       //     the POC request Slack channel) — src/admin-settings.js.
+      //   - SE Captain Mapping: edits the manager→captain map — src/captain-map.js.
       //   - Feature Flags: read-only feature-flag & gating reference.
       const adminToolItems = [];
       if (__cb.openSecretConfig) {
@@ -355,6 +367,14 @@
           icon: ADMIN_ICON_SVG,
           title: "Edit operational settings (e.g. the Slack channel)",
           onClick: () => __cb.openSecretConfig(),
+        });
+      }
+      if (__cb.openCaptainMap) {
+        adminToolItems.push({
+          label: "SE Captain Mapping",
+          icon: CAPTAINS_ICON_SVG,
+          title: "Map each manager to the SE Captain tagged on their POC requests",
+          onClick: () => __cb.openCaptainMap(),
         });
       }
       if (__cb.openFeatureFlags) {

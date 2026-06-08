@@ -223,6 +223,26 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     return true;
   }
 
+  // cb:sfdc:searchUsers — { q }. Typeahead search of active SFDC users for the
+  // SE Captain mapping admin modal (manager + captain pickers).
+  if (msg.type === "cb:sfdc:searchUsers") {
+    (async () => {
+      try {
+        const res = await callProxy("sfdc-search-users", {
+          method: "POST",
+          body: { q: msg.q ?? "" },
+        });
+        const text = await res.text();
+        let data = null;
+        try { data = text ? JSON.parse(text) : null; } catch {}
+        sendResponse({ ok: res.ok, status: res.status, data, rawText: text || undefined });
+      } catch (err) {
+        sendResponse({ ok: false, error: err?.message || String(err) });
+      }
+    })();
+    return true;
+  }
+
   // cb:dust:probeKey — health check (no API key payload anymore; SW asks
   // dust-proxy which hits Dust on our behalf).
   if (msg.type === "cb:dust:probeKey") {

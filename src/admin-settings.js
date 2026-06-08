@@ -36,11 +36,6 @@
       label: "Deal desk Slack channel",
       slack: true,
     },
-    se_captain_map: {
-      label: "SE Captain mapping",
-      json: true,
-      hint: 'Keyed by the manager\u2019s Salesforce user id. Value: { "managerName", "captainName", "captainEmail" }. A requester whose manager isn\u2019t listed gets no captain.',
-    },
   };
 
   // Fetch the Slack channels the bot is a member of via the slack-channels Edge
@@ -284,12 +279,6 @@
       return input;
     }
 
-    // Pretty-print a stored JSON string for editing; leave it untouched if it
-    // doesn't parse (so a hand-broken value is still recoverable in the box).
-    function prettyJson(raw) {
-      try { return JSON.stringify(JSON.parse(raw), null, 2); } catch { return raw; }
-    }
-
     // Custom channel dropdown rendered into `cell`. States:
     //   - loading (slackChannels === null): a disabled "Loading channels…" trigger
     //   - failed (false): a plain text input so the admin isn't blocked
@@ -428,11 +417,14 @@
       slackControlRebuilders.clear();
       // Render every known setting (so unset ones still show and can be
       // created), then any extra keys already in the DB we have no metadata for.
+      // se_captain_map has its own dedicated editor (src/captain-map.js), so it
+      // is hidden here rather than rendered as a raw text field.
+      const HIDDEN_KEYS = new Set(["se_captain_map"]);
       const byKey = new Map();
       for (const r of rows || []) byKey.set(r.key, r.value || "");
       const keys = [
         ...Object.keys(KNOWN),
-        ...[...byKey.keys()].filter((k) => !(k in KNOWN)),
+        ...[...byKey.keys()].filter((k) => !(k in KNOWN) && !HIDDEN_KEYS.has(k)),
       ];
       for (const key of keys) {
         const meta = KNOWN[key] || {};
@@ -450,32 +442,7 @@
         const editor = { getValue: () => value, initial: value };
         editors.set(key, editor);
 
-        if (meta.json) {
-          // JSON blob: a full-width row (label + textarea span both grid
-          // columns) since it doesn't fit the single-line control column.
-          labelCell.style.gridColumn = "1 / -1";
-          labelCell.style.height = "auto";
-          labelCell.style.flexDirection = "column";
-          labelCell.style.alignItems = "flex-start";
-          labelCell.style.gap = "2px";
-          labelCell.style.whiteSpace = "normal";
-          labelCell.style.overflow = "visible";
-          labelCell.style.paddingTop = "6px";
-          if (meta.hint) {
-            const hint = document.createElement("div");
-            hint.className = "cb-secret-json-hint";
-            hint.textContent = meta.hint;
-            labelCell.appendChild(hint);
-          }
-          controlCell.style.gridColumn = "1 / -1";
-          const ta = document.createElement("textarea");
-          ta.className = "cb-secret-json";
-          ta.spellcheck = false;
-          ta.value = value ? prettyJson(value) : "";
-          controlCell.appendChild(ta);
-          editor.getValue = () => ta.value;
-          editor.json = true;
-        } else if (meta.slack) {
+        if (meta.slack) {
           // Re-rendered in place when the channel list resolves.
           const rebuild = () => buildChannelDropdown(controlCell, value, editor);
           slackControlRebuilders.set(key, rebuild);
@@ -546,20 +513,8 @@
       clearError();
       const changed = [];
       for (const [key, ed] of editors.entries()) {
-        let value = ed.getValue().trim();
-        if (ed.json) {
-          // Validate + normalize JSON so a hand-edit can't store a broken blob,
-          // and compare normalized values so pretty-printing isn't a "change".
-          if (value) {
-            try { value = JSON.stringify(JSON.parse(value)); }
-            catch (e) { showError(`"${key}" is not valid JSON: ${e?.message || e}`); return; }
-          }
-          let initialNorm = ed.initial;
-          try { initialNorm = ed.initial ? JSON.stringify(JSON.parse(ed.initial)) : ed.initial; } catch {}
-          if (value !== initialNorm) changed.push({ key, value });
-        } else if (value !== ed.initial) {
-          changed.push({ key, value });
-        }
+        const value = ed.getValue().trim();
+        if (value !== ed.initial) changed.push({ key, value });
       }
       if (!changed.length) { saveBtn.textContent = "Saved ✓"; setTimeout(() => { saveBtn.textContent = "Save"; }, 1500); return; }
 

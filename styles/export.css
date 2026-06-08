@@ -636,6 +636,242 @@
   color: #0f172a;
 }
 
+/* ---- SE Captain mapping modal (src/captain-map.js) ----
+   Its own admin modal: rows of manager -> captain, each side a person block or
+   a name typeahead. The picker results panel floats on <body> (position:fixed)
+   so it never clips inside the scrolling modal body. */
+.cb-capmap-modal {
+  width: 620px;
+  max-width: 94vw;
+}
+
+.cb-capmap-intro {
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: #4b5563;
+}
+
+.cb-capmap-intro strong {
+  color: #1f2937;
+  font-weight: 600;
+}
+
+.cb-capmap-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.cb-capmap-loading {
+  padding: 8px 0;
+  font-size: 13px;
+  color: #6b7280;
+}
+
+.cb-capmap-empty {
+  padding: 16px 12px;
+  border: 1px dashed #e5e7eb;
+  border-radius: 8px;
+  font-size: 13px;
+  color: #6b7280;
+  text-align: center;
+}
+
+.cb-capmap-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 0;
+  border-bottom: 1px solid #f1f5f9;
+}
+
+.cb-capmap-row:last-child {
+  border-bottom: none;
+}
+
+.cb-capmap-side {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.cb-capmap-arrow {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  color: #9ca3af;
+}
+
+.cb-capmap-person {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.cb-capmap-avatar {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: #6366f1;
+  color: #ffffff;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.cb-capmap-person-text {
+  min-width: 0;
+}
+
+.cb-capmap-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: #1f2937;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cb-capmap-sub {
+  font-size: 11.5px;
+  color: #6b7280;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cb-capmap-change {
+  margin-left: 4px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: #4f46e5;
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.cb-capmap-change:hover {
+  text-decoration: underline;
+}
+
+.cb-capmap-remove {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: #94a3b8;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+
+.cb-capmap-remove:hover {
+  background: #fee2e2;
+  color: #dc2626;
+}
+
+.cb-capmap-add {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  align-self: flex-start;
+  margin-top: 4px;
+  padding: 7px 12px;
+  border: 1px dashed #c7d2fe;
+  border-radius: 8px;
+  background: #eef2ff;
+  color: #4338ca;
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s;
+}
+
+.cb-capmap-add:hover {
+  background: #e0e7ff;
+  border-color: #a5b4fc;
+}
+
+/* Typeahead picker (manager / captain) */
+.cb-capmap-picker {
+  position: relative;
+  width: 100%;
+}
+
+.cb-capmap-picker-input {
+  width: 100%;
+}
+
+.cb-capmap-picker-panel {
+  position: fixed;
+  z-index: 10000000;
+  max-height: 260px;
+  overflow-y: auto;
+  padding: 4px;
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.14);
+}
+
+.cb-capmap-picker-status {
+  padding: 8px 10px;
+  font-size: 12.5px;
+  color: #6b7280;
+}
+
+.cb-capmap-picker-opt {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+}
+
+.cb-capmap-picker-opt:hover {
+  background: #f1f5f9;
+}
+
+.cb-capmap-picker-opt-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.cb-capmap-picker-opt-name {
+  font-size: 13px;
+  font-weight: 500;
+  color: #1f2937;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cb-capmap-picker-opt-sub {
+  font-size: 11px;
+  color: #6b7280;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 /* ---- Admin > Secret Configuration ----
    Snug modal that hugs the label|control grid (560px = 200 + 16 gap + 300 +
    the body's 44px horizontal padding), instead of the wide default used by the
@@ -673,38 +909,6 @@
   display: flex;
   align-items: center;
   height: 52px;
-}
-
-/* Full-width JSON setting (e.g. se_captain_map): the label row carries a hint
-   and the control row holds a monospace textarea; both span the grid. */
-.cb-secret-json-hint {
-  font-size: 11.5px;
-  font-weight: 400;
-  line-height: 1.4;
-  color: #6b7280;
-  white-space: normal;
-}
-
-.cb-secret-json {
-  width: 100%;
-  min-height: 200px;
-  padding: 10px 12px;
-  border: 1px solid #d1d5db;
-  border-radius: 6px;
-  background: #ffffff;
-  color: #1f2937;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 12px;
-  line-height: 1.5;
-  resize: vertical;
-  tab-size: 2;
-  transition: border-color 0.12s, box-shadow 0.12s;
-}
-
-.cb-secret-json:focus {
-  outline: none;
-  border-color: #6366f1;
-  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.18);
 }
 
 /* Custom channel dropdown */
