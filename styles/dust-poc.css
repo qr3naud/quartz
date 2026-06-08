@@ -3,8 +3,8 @@
  *
  * Small popover anchored under the "Generate POC" topbar button. Two states:
  * an API-key prompt the first time, then a customer-name form. Visual idiom
- * mirrors .cb-table-picker / .cb-poc-import-* so the popover feels native to
- * the rest of the extension.
+ * mirrors .cb-table-picker so the popover feels native to the rest of the
+ * extension.
  * ========================================================================= */
 
 /* Topbar "Generate POC" button — same icon-to-label spacing as Export

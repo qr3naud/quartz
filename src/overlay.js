@@ -55,18 +55,6 @@
     '<circle cx="12" cy="12" r="1.6"/>' +
     '<circle cx="12" cy="19" r="1.6"/></svg>';
 
-  // Cloud-upload glyph for the "Upload POC" row — mirrors the icon the
-  // button carried when it lived in the table-view header (uploadSvg in
-  // src/table-view.js) so the relocated action reads the same.
-  const UPLOAD_ICON_SVG =
-    '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" ' +
-    'fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" ' +
-    'stroke-linejoin="round" aria-hidden="true">' +
-    '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>' +
-    '<polyline points="17 8 12 3 7 8"/>' +
-    '<line x1="12" y1="3" x2="12" y2="15"/>' +
-    '</svg>';
-
   // Arrow-right-left swap glyph for the Canvas / Tables view row. Reads
   // as "swap between views" in both directions so the same icon works
   // regardless of which view is currently active.
@@ -306,26 +294,6 @@
       if (__cb.openUpdateModal) __cb.openUpdateModal();
     });
     moreMenuEl.appendChild(updateItem);
-
-    // Upload POC — bulk-imports data points from a POC overview doc. Used to
-    // live as a button in the table-view header; relocated here to keep that
-    // header compact. A plain action row (icon + label, no state pill),
-    // available to everyone. Opens the modal in src/poc-import.js.
-    if (__cb.startPocImport) {
-      const uploadItem = document.createElement("button");
-      uploadItem.type = "button";
-      uploadItem.className = "cb-export-menu-option cb-more-menu-option";
-      uploadItem.title = "Import data points from a POC overview document";
-      uploadItem.innerHTML =
-        `<span class="cb-more-menu-icon">${UPLOAD_ICON_SVG}</span>` +
-        `<span class="cb-more-menu-label">Upload POC</span>`;
-      uploadItem.addEventListener("click", (evt) => {
-        evt.stopPropagation();
-        closeMoreMenu();
-        __cb.startPocImport();
-      });
-      moreMenuEl.appendChild(uploadItem);
-    }
 
     // Request POC moved out of this menu into the guided rail as a first-class
     // step (see the cb-toolbar-request-poc button + updateGuidedFlow in

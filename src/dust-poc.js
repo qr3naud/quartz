@@ -514,7 +514,7 @@
       setTimeout(() => { if (popoverEl) closePopover(); }, 1000);
     } catch (err) {
       console.error("[Clay Scoping] POC data-point import failed:", err);
-      setStatus(statusEl, "error", err?.message || "Import failed. Try the Upload POC flow.");
+      setStatus(statusEl, "error", err?.message || "Import failed. Check the doc is shared as \u201cAnyone with the link\u201d and try again.");
     } finally {
       btn.disabled = false;
       btn.classList.remove("cb-dust-poc-btn-loading");

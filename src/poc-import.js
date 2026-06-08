@@ -8,17 +8,17 @@
   //
   // Reps starting fresh on a POC have a "POC Overview" doc with one or more
   // Use Cases, each declaring a "Required data points:" list. Instead of
-  // hand-typing every data point into the table view, this module accepts
-  // either a Google Doc URL (publicly shared via "Anyone with the link") or
-  // a paste of the doc contents, parses out the Use Cases + their bullets,
-  // and stamps them on the canvas as one cluster per Use Case using the
-  // same comment-card + groupCluster primitives src/table-import.js uses
-  // for "basic groups". The table view then renders these clusters as
-  // group-header rows with the data points listed underneath.
+  // hand-typing every data point into the table view, this module fetches a
+  // publicly shared Google Doc ("Anyone with the link"), parses out the Use
+  // Cases + their bullets, and stamps them on the canvas as one cluster per
+  // Use Case using the same comment-card + groupCluster primitives
+  // src/table-import.js uses for "basic groups". The table view then renders
+  // these clusters as group-header rows with the data points listed underneath.
+  //
+  // Headless only: the standalone "Upload POC" modal was retired; the Dust
+  // "Generate POC -> Import data points" flow (src/dust-poc.js) calls
+  // __cb.importPocFromDocUrl with the doc URL it already has.
   // ---------------------------------------------------------------------------
-
-  let modalEl = null;
-  let backdropEl = null;
 
   // ---- Google Doc fetching --------------------------------------------------
 
@@ -394,181 +394,7 @@
     return { groups: totalGroupsAdded, dataPoints: totalDpAdded };
   }
 
-  // ---- Modal UI -------------------------------------------------------------
-
-  function closeModal() {
-    if (modalEl) {
-      modalEl.remove();
-      modalEl = null;
-    }
-    if (backdropEl) {
-      backdropEl.remove();
-      backdropEl = null;
-    }
-    document.removeEventListener("keydown", onKeydown);
-  }
-
-  function onKeydown(evt) {
-    if (evt.key === "Escape") {
-      evt.preventDefault();
-      closeModal();
-    }
-  }
-
-  function showModal() {
-    closeModal();
-
-    backdropEl = document.createElement("div");
-    backdropEl.className = "cb-poc-import-backdrop";
-    backdropEl.addEventListener("click", closeModal);
-
-    modalEl = document.createElement("div");
-    modalEl.className = "cb-poc-import-modal";
-    modalEl.addEventListener("click", (evt) => evt.stopPropagation());
-
-    const header = document.createElement("div");
-    header.className = "cb-poc-import-header";
-    const title = document.createElement("div");
-    title.className = "cb-poc-import-title";
-    title.textContent = "Upload POC document";
-    const sub = document.createElement("div");
-    sub.className = "cb-poc-import-sub";
-    sub.textContent =
-      "Drop in a Google Doc link or paste the contents. Each \u201cUse Case\u201d with a \u201cRequired data points\u201d list becomes a group on your canvas.";
-    header.appendChild(title);
-    header.appendChild(sub);
-    modalEl.appendChild(header);
-
-    const body = document.createElement("div");
-    body.className = "cb-poc-import-body";
-
-    const urlField = document.createElement("div");
-    urlField.className = "cb-poc-import-field";
-    const urlLabel = document.createElement("label");
-    urlLabel.className = "cb-poc-import-label";
-    urlLabel.textContent = "Google Doc link";
-    const urlHint = document.createElement("span");
-    urlHint.className = "cb-poc-import-hint";
-    urlHint.textContent = "Must be shared as \u201cAnyone with the link\u201d";
-    urlLabel.appendChild(urlHint);
-    const urlInput = document.createElement("input");
-    urlInput.type = "url";
-    urlInput.className = "cb-poc-import-input";
-    urlInput.placeholder = "https://docs.google.com/document/d/\u2026";
-    urlInput.autocomplete = "off";
-    urlField.appendChild(urlLabel);
-    urlField.appendChild(urlInput);
-    body.appendChild(urlField);
-
-    const orRow = document.createElement("div");
-    orRow.className = "cb-poc-import-or";
-    orRow.textContent = "or";
-    body.appendChild(orRow);
-
-    const pasteField = document.createElement("div");
-    pasteField.className = "cb-poc-import-field";
-    const pasteLabel = document.createElement("label");
-    pasteLabel.className = "cb-poc-import-label";
-    pasteLabel.textContent = "Paste doc contents";
-    const pasteArea = document.createElement("textarea");
-    pasteArea.className = "cb-poc-import-textarea";
-    pasteArea.placeholder =
-      "Paste the POC overview here. The importer will extract every \u201cRequired data points\u201d list it finds.";
-    pasteArea.rows = 10;
-    pasteField.appendChild(pasteLabel);
-    pasteField.appendChild(pasteArea);
-    body.appendChild(pasteField);
-
-    const status = document.createElement("div");
-    status.className = "cb-poc-import-status";
-    body.appendChild(status);
-
-    modalEl.appendChild(body);
-
-    const footer = document.createElement("div");
-    footer.className = "cb-poc-import-footer";
-    const cancelBtn = document.createElement("button");
-    cancelBtn.type = "button";
-    cancelBtn.className = "cb-poc-import-btn cb-poc-import-btn-secondary";
-    cancelBtn.textContent = "Cancel";
-    cancelBtn.addEventListener("click", closeModal);
-    const importBtn = document.createElement("button");
-    importBtn.type = "button";
-    importBtn.className = "cb-poc-import-btn cb-poc-import-btn-primary";
-    importBtn.textContent = "Import";
-    importBtn.addEventListener("click", () => doImport(urlInput, pasteArea, status, importBtn));
-    footer.appendChild(cancelBtn);
-    footer.appendChild(importBtn);
-    modalEl.appendChild(footer);
-
-    document.body.appendChild(backdropEl);
-    document.body.appendChild(modalEl);
-    document.addEventListener("keydown", onKeydown);
-
-    // Default focus follows the rep's likely first action: paste contents.
-    setTimeout(() => pasteArea.focus(), 0);
-  }
-
-  function setStatus(statusEl, kind, text) {
-    statusEl.className = `cb-poc-import-status cb-poc-import-status-${kind}`;
-    statusEl.textContent = text;
-  }
-
-  function clearStatus(statusEl) {
-    statusEl.className = "cb-poc-import-status";
-    statusEl.textContent = "";
-  }
-
-  async function doImport(urlInput, pasteArea, statusEl, importBtn) {
-    const url = urlInput.value.trim();
-    const pasted = pasteArea.value;
-
-    if (!url && !pasted.trim()) {
-      setStatus(statusEl, "error", "Add a Google Doc link or paste contents to continue.");
-      return;
-    }
-
-    importBtn.disabled = true;
-    importBtn.classList.add("cb-poc-import-btn-loading");
-
-    try {
-      let text = pasted;
-      if (url) {
-        const docId = extractGoogleDocId(url);
-        if (!docId) {
-          throw new Error("That doesn't look like a Google Doc link. Expected /document/d/<id>/...");
-        }
-        setStatus(statusEl, "info", "Fetching doc\u2026");
-        text = await fetchGoogleDoc(docId);
-      }
-
-      const parsed = parsePocDoc(text);
-      const result = applyImport(parsed);
-
-      const groupsLabel = result.groups === 1 ? "group" : "groups";
-      const dpsLabel = result.dataPoints === 1 ? "data point" : "data points";
-      setStatus(
-        statusEl,
-        "success",
-        `Imported ${result.groups} ${groupsLabel} (${result.dataPoints} ${dpsLabel}).`,
-      );
-      // Brief delay so the rep sees the success message before the modal
-      // closes — same UX pattern other Clay modals use after a save.
-      setTimeout(closeModal, 700);
-    } catch (err) {
-      console.error("[Clay Scoping] POC import failed:", err);
-      setStatus(statusEl, "error", err?.message || "Import failed. Try pasting the doc contents directly.");
-    } finally {
-      importBtn.disabled = false;
-      importBtn.classList.remove("cb-poc-import-btn-loading");
-    }
-  }
-
   // ---- Public API -----------------------------------------------------------
-
-  __cb.startPocImport = function () {
-    showModal();
-  };
 
   // Headless one-click import: fetch + parse + stamp a Google Doc straight
   // onto the canvas, skipping the modal. Used by the Generate POC "Import

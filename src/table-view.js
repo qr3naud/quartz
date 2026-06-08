@@ -3769,6 +3769,115 @@
     render();
   }
 
+  // Header "Add multiple data points" action: a small modal where the rep
+  // pastes a comma- (or newline-) separated list; each entry becomes a data
+  // point via the same startAddDataPoint path as the single add. Reuses the
+  // shared cb-export-modal shell so it matches the extension's other modals.
+  function openBulkAddDataPoints() {
+    const backdrop = document.createElement("div");
+    backdrop.className = "cb-export-modal-backdrop";
+
+    function close() {
+      backdrop.remove();
+      document.removeEventListener("keydown", onKey);
+    }
+    function onKey(evt) {
+      if (evt.key === "Escape") { evt.preventDefault(); close(); }
+    }
+    // Click on the dimmed area (not the modal) closes.
+    backdrop.addEventListener("mousedown", (evt) => {
+      if (evt.target === backdrop) close();
+    });
+
+    const modal = document.createElement("div");
+    modal.className = "cb-export-modal cb-gtme-modal cb-bulk-dp-modal";
+
+    const header = document.createElement("div");
+    header.className = "cb-export-modal-header";
+    const titleWrap = document.createElement("div");
+    titleWrap.className = "cb-export-modal-title-wrap";
+    const title = document.createElement("h2");
+    title.className = "cb-export-modal-title";
+    title.textContent = "Add multiple data points";
+    const subtitle = document.createElement("div");
+    subtitle.className = "cb-export-modal-subtitle";
+    subtitle.textContent =
+      "Paste a comma-separated list of the data points you want to add.";
+    titleWrap.appendChild(title);
+    titleWrap.appendChild(subtitle);
+    const closeBtn = document.createElement("button");
+    closeBtn.type = "button";
+    closeBtn.className = "cb-export-modal-close";
+    closeBtn.setAttribute("aria-label", "Close");
+    closeBtn.innerHTML =
+      '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
+    closeBtn.addEventListener("click", close);
+    header.appendChild(titleWrap);
+    header.appendChild(closeBtn);
+
+    const body = document.createElement("div");
+    body.className = "cb-export-modal-body";
+    const textarea = document.createElement("textarea");
+    textarea.className = "cb-bulk-dp-textarea";
+    textarea.placeholder = "Company domain, LinkedIn URL, Job title, \u2026";
+    textarea.rows = 6;
+    body.appendChild(textarea);
+
+    function submit() {
+      // Tolerate commas and newlines; trim, drop empties, and de-dupe the
+      // pasted list case-insensitively so an accidental repeat is ignored.
+      const names = textarea.value
+        .split(/[,\n]+/)
+        .map((s) => s.trim())
+        .filter(Boolean);
+      const seen = new Set();
+      let added = 0;
+      for (const name of names) {
+        const k = name.toLowerCase();
+        if (seen.has(k)) continue;
+        seen.add(k);
+        if (startAddDataPoint(name)) added++;
+      }
+      if (added === 0) { textarea.focus(); return; }
+      render();
+      close();
+    }
+
+    // Cmd/Ctrl+Enter submits; plain Enter stays a newline (multi-line input).
+    textarea.addEventListener("keydown", (evt) => {
+      if ((evt.metaKey || evt.ctrlKey) && evt.key === "Enter") {
+        evt.preventDefault();
+        submit();
+      }
+    });
+
+    const footer = document.createElement("div");
+    footer.className = "cb-modal-footer";
+    const footerActions = document.createElement("div");
+    footerActions.className = "cb-modal-footer-actions";
+    const cancelBtn = document.createElement("button");
+    cancelBtn.type = "button";
+    cancelBtn.className = "cb-modal-btn cb-modal-btn-ghost";
+    cancelBtn.textContent = "Cancel";
+    cancelBtn.addEventListener("click", close);
+    const addBtn = document.createElement("button");
+    addBtn.type = "button";
+    addBtn.className = "cb-modal-btn cb-modal-btn-primary";
+    addBtn.textContent = "Add";
+    addBtn.addEventListener("click", submit);
+    footerActions.appendChild(cancelBtn);
+    footerActions.appendChild(addBtn);
+    footer.appendChild(footerActions);
+
+    modal.appendChild(header);
+    modal.appendChild(body);
+    modal.appendChild(footer);
+    backdrop.appendChild(modal);
+    document.body.appendChild(backdrop);
+    document.addEventListener("keydown", onKey);
+    setTimeout(() => textarea.focus(), 0);
+  }
+
   // Create a new data point and slot it immediately after `targetRowId`
   // within the same section, then open its name for inline editing.
   function insertDataPointBelow(targetRowId) {
@@ -5430,6 +5539,7 @@
     closeContextMenu();
     const items = [
       { label: "Add data point", action: () => addDataPointInteractive() },
+      { label: "Add multiple data points", action: () => openBulkAddDataPoints() },
       { label: "Add enrichment", action: () => startAddOrphanEnrichment() },
     ];
 
@@ -5733,7 +5843,7 @@
       const td = document.createElement("td");
       td.colSpan = headers.length;
       td.textContent =
-        "No data points yet. Use \u201cUpload POC\u201d from the \u22ee menu to import from a doc, or \u201c+ Add data point\u201d / \u201cAdd enrichment\u201d above to get started.";
+        "No data points yet. Use \u201cAdd\u201d above to add a data point (or paste several at once), or \u201cAdd enrichment\u201d to get started.";
       empty.appendChild(td);
       tbody.appendChild(empty);
     } else {

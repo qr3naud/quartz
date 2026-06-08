@@ -3836,3 +3836,32 @@
   background: transparent;
   cursor: default;
 }
+
+/* ==========================================================================
+   "Add multiple data points" modal (reuses the shared cb-export-modal shell)
+   ========================================================================== */
+
+/* A single paste field doesn't need the 640px gtme width — keep it snug. */
+.cb-bulk-dp-modal {
+  max-width: 480px;
+}
+
+.cb-bulk-dp-textarea {
+  width: 100%;
+  min-height: 120px;
+  resize: vertical;
+  padding: 10px 12px;
+  border: 1px solid var(--cb-border-strong);
+  border-radius: 8px;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--cb-text-primary);
+  box-sizing: border-box;
+}
+
+.cb-bulk-dp-textarea:focus {
+  outline: none;
+  border-color: var(--cb-accent);
+  box-shadow: 0 0 0 2px var(--cb-accent-ring);
+}
