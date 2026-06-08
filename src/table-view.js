@@ -2755,6 +2755,10 @@
       iconUrl: d.iconUrl || null,
       iconSvgHtml: d.iconSvgHtml || null,
       model,
+      // Numeric "Clay Credit Budget" (runBudget) when this AI column's per-row
+      // cost was set from it at import — drives the conditional "Clay Budgeted"
+      // provenance row in the details menu. null = not budgeted.
+      clayBudget: d.clayBudget ?? null,
       // Per-row cost (view-mode-aware) for the details menu — in Actual mode this
       // is measured spend ÷ rows that ran (coverage.ran via actualRowDenominator).
       cost: erPerRowCost(er),
@@ -3352,6 +3356,10 @@
     if (!card) return;
     const d = card.data;
     d.selectedModel = model.id;
+    // Manually picking a model drops the column's "Clay Credit Budget"
+    // (runBudget) provenance — the per-row cost is now the picked model's flat
+    // credit, so the "Clay Budgeted" details row no longer applies.
+    d.clayBudget = null;
     if (d.usePrivateKey) {
       d._originalCredits = model.credits;
     } else {
@@ -6591,6 +6599,25 @@
     return pill;
   }
 
+  // Read-only provenance pill for the "Clay Budgeted" row: shows the per-row
+  // "Clay Credit Budget" (runBudget) that an expensive Use AI model's cost was
+  // set from, so the rep knows the number came from the column's configured
+  // budget rather than a misread. Reuses buildErMenuCostNode's coin glyph.
+  function buildClayBudgetNode(er) {
+    const budget = Number(er.clayBudget) || 0;
+    const pill = document.createElement("span");
+    pill.className = "cb-pill cb-table-view-er-cost-pill";
+    pill.title =
+      "Per-row cost uses the Clay Credit Budget set on this column in Clay " +
+      "(the maximum credits to spend per row for this AI model).";
+    const seg = document.createElement("span");
+    seg.className = "cb-pill-seg cb-table-view-er-cost-seg cb-table-view-er-cost-credits";
+    const coin = Math.abs(budget) <= 1 ? coinSvg(12) : coinsSvg(12);
+    seg.innerHTML = coin + `<span>${formatNumber(budget)}</span>`;
+    pill.appendChild(seg);
+    return pill;
+  }
+
   // Builds (or rebuilds) the menu's contents into `menu`. Split out from
   // openErChipMenu so the menu can be re-rendered in place after an edit
   // (frequency / model / private-key) without tearing it down — the user keeps
@@ -6639,6 +6666,13 @@
 
     if (er.isAi && er.model) {
       costSection.appendChild(erMenuRow("Model", buildErMenuModelNode(er)));
+    }
+
+    // Provenance row: the per-row cost above was set from the column's "Clay
+    // Credit Budget" (runBudget) on an expensive Use AI model. Hidden for BYOK
+    // (Clay bills 0, so the budget doesn't apply).
+    if (er.isAi && er.clayBudget != null && !er.usePrivateKey) {
+      costSection.appendChild(erMenuRow("Clay Budgeted", buildClayBudgetNode(er)));
     }
     menu.appendChild(costSection);
 

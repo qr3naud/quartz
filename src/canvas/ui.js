@@ -40,6 +40,9 @@
 
     function applyModel(card, model) {
       card.data.selectedModel = model.id;
+      // Manual model change drops the runBudget-derived cost provenance, so the
+      // "Clay Budgeted" details row stops showing for this card.
+      card.data.clayBudget = null;
 
       const tilde = window.__cb.aiTilde(model.id);
       if (card.data.usePrivateKey) {

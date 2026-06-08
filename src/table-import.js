@@ -613,10 +613,25 @@
     // matches what the canvas's model picker shows when the user later
     // changes models, so the imported cost is consistent with the
     // post-import cost.
+    let clayBudget = null;
     if (ai && modelOptions && selectedModel) {
       const modelOpt = modelOptions.find((m) => m.id === selectedModel);
       if (modelOpt && Number.isFinite(modelOpt.credits)) {
         credits = modelOpt.credits;
+      }
+      // Expensive Use AI models are priced by the user's "Clay Credit Budget"
+      // (the runBudget input) when they set one — exactly what Clay does in
+      // getActionCost (libs/shared/src/credits/credit-cost-utils.ts:346-355).
+      // Stamp clayBudget so the details view can flag where the number came
+      // from. BYOK still zeroes `credits` below; the details row is gated on
+      // usePrivateKey so it won't show in that case.
+      const budget = __cb.resolveExpensiveModelBudget(
+        field?.typeSettings?.inputsBinding,
+        selectedModel
+      );
+      if (budget != null) {
+        credits = budget;
+        clayBudget = budget;
       }
     }
 
@@ -728,6 +743,10 @@
       coverageCustom: false,
       modelOptions,
       selectedModel,
+      // Numeric "Clay Credit Budget" (runBudget) when an expensive Use AI
+      // model's per-row cost was set from it; null otherwise. Drives the
+      // conditional "Clay Budgeted" row in the ER details view.
+      clayBudget,
       requiresApiKey,
       usePrivateKey,
       fieldId: fieldId ?? field?.id,
@@ -1732,18 +1751,29 @@
             "model"
           );
           let modelCredit = null;
+          let matchedModelId = null;
           if (modelOptions && rawModel) {
             const matched = __cb.matchKnownModel?.(
               String(rawModel).replace(/^"|"$/g, "").trim(),
               modelOptions
             );
-            if (matched && Number.isFinite(matched.credits)) modelCredit = matched.credits;
+            if (matched) {
+              matchedModelId = matched.id;
+              if (Number.isFinite(matched.credits)) modelCredit = matched.credits;
+            }
           }
           if (modelCredit == null) modelCredit = catalogCredits;
           if (stepStats?.cost?.unlimited || stepStats?.cost?.isPrivateKey) {
             stepCredits = 0;
           } else {
-            stepCredits = modelCredit;
+            // Expensive Use AI step priced by its "Clay Credit Budget"
+            // (runBudget) when set — parity with standalone AI cards and
+            // Clay's getActionCost (credit-cost-utils.ts:346-355).
+            const budget = __cb.resolveExpensiveModelBudget(
+              stepField?.typeSettings?.inputsBinding,
+              matchedModelId || String(rawModel || "").replace(/^"|"$/g, "").trim()
+            );
+            stepCredits = budget != null ? budget : modelCredit;
           }
         } else {
           const baseOverride = importPlanIsModern() ? catalogCredits : null;

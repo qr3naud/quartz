@@ -571,6 +571,14 @@
       }
     }
 
+    // Expensive Use AI models are priced by the user's "Clay Credit Budget"
+    // (runBudget) when set — same rule as imported cards and Clay's getActionCost
+    // (credit-cost-utils.ts:346-355). Reflecting it here keeps the Old vs New
+    // per-row credit count honest; otherwise an expensive model would compare at
+    // its flat base cost, which can be drastically lower than the budgeted spend.
+    const budget = __cb.resolveExpensiveModelBudget?.(inputsBinding, matched?.id);
+    if (budget != null) return { credits: budget, matched };
+
     const credits = matched && Number.isFinite(matched.credits) ? matched.credits : null;
     return { credits, matched };
   }

@@ -462,6 +462,49 @@
       return window.__cb.isVariableModelId(modelId) ? "~" : "";
     },
 
+    // Whether an AI model is "expensive" enough that Clay exposes a per-row
+    // "Clay Credit Budget" (runBudget) for it on a Use AI column. Faithful
+    // mirror of isModelExpensive in libs/shared/src/ai/models.ts:1113-1138
+    // (which itself is copied from public-actions/shared/ai-utils.ts).
+    // KEEP THIS IN SYNC with models.ts when the expensive-model set changes.
+    isModelExpensive(modelId) {
+      const model = (modelId || "").trim().replace(/^"|"$/g, "").trim();
+      if (!model) return false;
+      // gpt-4o-mini is cheap even though it contains "gpt-4o".
+      if (model.includes("gpt-4o-mini")) return false;
+      return (
+        model === "gpt-4.1" || // exact: gpt-4.1-mini / -nano are not expensive
+        model === "gpt-5.4" ||
+        model === "gpt-5" || // exact: gpt-5-mini / -nano are not expensive
+        model === "gpt-5.1" ||
+        model.includes("gpt-4o") ||
+        model.includes("o1") ||
+        model.includes("o3") ||
+        model.includes("o4-mini") ||
+        model.includes("sonnet") ||
+        model.includes("opus") ||
+        model.includes("gemini-2.5-pro") ||
+        model.includes("gemini-3-pro") ||
+        model.includes("gemini-3.1-pro")
+      );
+    },
+
+    // For an expensive Use AI model, the per-row credit cost is the user's
+    // "Clay Credit Budget" (the runBudget input) when they set one — exactly
+    // what Clay's getActionCost does (credit-cost-utils.ts:346-355:
+    // `Number(budget) || calculateCreditCostForModel(model, 'use-ai')`).
+    // Returns the numeric budget (> 0) or null so callers fall back to the
+    // flat per-model credit for non-expensive models, unset budgets, or
+    // per-row formula bindings (Number(...) → NaN).
+    resolveExpensiveModelBudget(inputsBinding, modelId) {
+      const cb = window.__cb;
+      if (!cb.isModelExpensive(modelId)) return null;
+      const raw = cb.readInputBindingValue?.(inputsBinding, "runBudget");
+      if (raw == null) return null;
+      const n = Number(String(raw).replace(/^"|"$/g, "").trim());
+      return Number.isFinite(n) && n > 0 ? n : null;
+    },
+
     DEFAULT_AI_MODEL: "clay-argon",
 
     AI_PROVIDER_ICONS: {
