@@ -2934,6 +2934,36 @@
       touched = true;
     }
 
+    // Multi-ER data points: copy the MEASURED run-share (each linked ER's actual
+    // ran ÷ the widest linked ER, mirroring the Actual chip badge) into the
+    // projected stored shares, so the % badges in Projected reflect what Actual
+    // measured rather than the default split. Cost stays coverage-driven — the
+    // ERs above are now coverageCustom, so cost.erShareMult ignores the share —
+    // so this is a display copy and never double-discounts.
+    const erByKey = new Map();
+    for (const c of cards) {
+      if (!isErType(c.data?.type)) continue;
+      const k = lineageKeyOf(c);
+      if (k != null && !erByKey.has(k)) erByKey.set(k, c);
+    }
+    for (const dp of cards) {
+      if (dp.data?.type !== "dp") continue;
+      const keys = cb.dpErKeys(dp);
+      if (keys.length < 2) continue;
+      let maxRan = 0;
+      for (const k of keys) {
+        const er = erByKey.get(k);
+        if (er) maxRan = Math.max(maxRan, erActualRanCount(er));
+      }
+      if (maxRan <= 0) continue; // no measured signal yet — keep projected shares
+      for (let i = 0; i < keys.length; i++) {
+        const er = erByKey.get(keys[i]);
+        if (!er) continue;
+        cb.setDpErShare(dp, keys[i], Math.min(1, erActualRanCount(er) / maxRan));
+      }
+      touched = true;
+    }
+
     if (!touched) return;
     // update() captures one undo snapshot, notifies subscribers (which refreshes
     // the table) and schedules persist; saveTabs forces an immediate write to
@@ -7178,9 +7208,9 @@
       b.className =
         "cb-uc-cost-menu-option" +
         (current === unit ? " cb-uc-cost-menu-option-active" : "");
-      b.innerHTML =
-        `<span class="cb-uc-cost-menu-check">${current === unit ? "\u2713" : ""}</span>` +
-        `<span>${label}</span>`;
+      // Selection is shown by the green-surface highlight on the active option
+      // (see styles/table-view.css), not a checkmark.
+      b.textContent = label;
       b.addEventListener("click", (e) => {
         e.stopPropagation();
         setCostUnit(unit);

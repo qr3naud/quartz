@@ -2757,14 +2757,14 @@
 .cb-uc-cost-menu-option {
   display: flex;
   align-items: center;
-  gap: 6px;
   width: 100%;
-  padding: 7px 8px;
+  padding: 7px 10px;
   border: none;
   border-radius: 6px;
   background: none;
   font-family: inherit;
-  font-size: 12.5px;
+  font-size: 13px;
+  font-weight: 500;
   color: #374151;
   text-align: left;
   cursor: pointer;
@@ -2774,18 +2774,15 @@
   background: #f3f4f6;
 }
 
+/* Selected unit: green-surface highlight (no checkmark), same type as the
+   other options — mirrors the frequency picker's active treatment. */
 .cb-uc-cost-menu-option-active {
-  color: #111827;
-  font-weight: 600;
+  background: var(--cb-green-surface);
+  color: var(--cb-green);
 }
 
-.cb-uc-cost-menu-check {
-  display: inline-flex;
-  justify-content: center;
-  width: 14px;
-  flex-shrink: 0;
-  color: #16a34a;
-  font-size: 12px;
+.cb-uc-cost-menu-option-active:hover {
+  background: var(--cb-green-hover);
 }
 
 /* Table headers fill the row so margin-left:auto on the scope controls (and the
