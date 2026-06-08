@@ -1477,30 +1477,6 @@
   border-color: #a5b4fc;
 }
 
-.cb-table-view-er-chip-share-primary {
-  background: #eef2ff;
-  border-color: #a5b4fc;
-}
-
-/* One-shot "pop + reorder" cue when a chip is promoted to #1 via "+". */
-.cb-table-view-er-chip.cb-chip-just-primary {
-  animation: cb-chip-pop 0.32s ease;
-}
-
-@keyframes cb-chip-pop {
-  0% {
-    transform: scale(0.86);
-  }
-
-  55% {
-    transform: scale(1.08);
-  }
-
-  100% {
-    transform: scale(1);
-  }
-}
-
 /* Run-share popover (the % badge editor). Mirrors the note popover surface. */
 .cb-table-view-share-popover {
   display: flex;
@@ -1540,24 +1516,41 @@
   font-variant-numeric: tabular-nums;
 }
 
-.cb-table-view-share-action {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 8px;
-  background: #f9fafb;
-  border: 1px solid #e5e7eb;
-  border-radius: 6px;
+/* Inferred-use-case hint under the three inputs (Σ <total>% · clean merge /
+   needs all). No buttons — the math is read off the percentages. */
+.cb-table-view-share-sum {
+  margin-top: 2px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #6b7280;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Run-share value in the ER details menu. Static span in Actual; an editable
+   indigo pill (opens the popover) in Projected. */
+.cb-table-view-er-menu-share {
   font-size: 12px;
   color: #374151;
+  font-variant-numeric: tabular-nums;
+}
+
+.cb-table-view-er-menu-share-edit {
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  padding: 0 8px;
+  background: #ffffff;
+  color: #4f46e5;
+  border: 1px solid #c7d2fe;
+  border-radius: 999px;
+  font-weight: 600;
   cursor: pointer;
-  text-align: left;
   transition: background 0.12s, border-color 0.12s;
 }
 
-.cb-table-view-share-action:hover {
-  background: #f3f4f6;
-  border-color: #d1d5db;
+.cb-table-view-er-menu-share-edit:hover {
+  background: #eef2ff;
+  border-color: #a5b4fc;
 }
 
 /* "+ Add enrichment" mini-chip on each DP row. Lower visual weight than the

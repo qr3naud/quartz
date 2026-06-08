@@ -113,6 +113,11 @@
         ? cb.getCurrentFrequencyId()
         : cb.DEFAULT_FREQUENCY_ID;
       const records = cb.getRecordsCount ? cb.getRecordsCount() : 0;
+      // Per-ER projected run-share (a multi-ER fallback/secondary bills only
+      // share x base, not full coverage). Built once and folded into billMult
+      // below so the summary total tracks the per-DP cost split. Actual mode
+      // (above) is unaffected — it uses measured spend.
+      const shareMap = cb.cost.buildErShareMap(cardsRef());
       for (const c of cardsRef()) {
         if (isNonErType(c.data.type)) continue;
         // perRowCost returns 0 credits for private-key ERs, so the
@@ -127,7 +132,8 @@
         // Coverage (rows that run) scales the weighted (total) slots only — the
         // per-row "Avg" boxes stay honest about a single execution. Fill no
         // longer discounts cost (it's a performance metric).
-        const billMult = mult * cb.cost.billableFraction(c, records);
+        const billMult =
+          mult * cb.cost.billableFraction(c, records) * cb.cost.erShareMult(c, shareMap);
         creditTotal += credits;
         weightedCreditTotal += credits * billMult;
         actionExecTotal += actions;

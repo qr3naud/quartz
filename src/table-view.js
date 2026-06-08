@@ -107,9 +107,6 @@
   // escapes the table's overflow clipping.
   let erShareMenuEl = null;
   let erShareMenuBackdrop = null;
-  // One-shot marker: the DP whose primary ER was just promoted via "+", so the
-  // next render plays the pop+reorder animation on its #1 chip exactly once.
-  let justPromotedDpId = null;
 
   // ER chip details menu — anchored popover opened by clicking an ER pill.
   // Single open instance at a time; lives at document.body level (like the
@@ -120,6 +117,10 @@
   // can be re-rendered in place (keeping it open) when the table re-renders.
   let erChipMenuCardId = null;
   let erChipMenuPos = null;
+  // When the details menu was opened from a multi-ER DP chip, the host DP's id —
+  // so an in-place refresh (which rebuilds plain ER card data) can re-derive the
+  // per-(DP,ER) run-share and keep the Run-share row alive + current.
+  let erChipMenuShareDpId = null;
   // Grouped model picker spawned from the details-menu Model pill (AI columns).
   let erMenuModelPickerEl = null;
   let erMenuModelPickerBackdrop = null;
@@ -3096,48 +3097,86 @@
     return __cb.canvas.erLineageKeyOf ? __cb.canvas.erLineageKeyOf(er) : lineageKeyOf(er);
   }
 
-  // Write one ER's run-share (percentage 0..N) on a DP. Values can exceed 100%
-  // in aggregate — that IS the AND/sum semantic.
-  function commitDpShare(dpCardId, erCardId, pct) {
+  // The DP's row base for the run-share popover: the widest linked ER's coverage
+  // numerator — measured coverage.ran when present, else the projected
+  // coverageRows, else the scoped records. The % <-> rows conversion keys off
+  // this (rows = share x base), so it reads "13% of ~650 rows".
+  function dpRowBase(dpCardId) {
+    const records = __cb.getRecordsCount ? Number(__cb.getRecordsCount()) || 0 : 0;
+    const dp = __cb.canvas?.getCardById?.(dpCardId);
+    if (!dp) return records;
+    const erByKey = new Map();
+    for (const c of __cb.model?.getNodes?.() || []) {
+      if (!c.data || !isErType(c.data.type)) continue;
+      const k = lineageKeyOf(c);
+      if (k != null && !erByKey.has(k)) erByKey.set(k, c);
+    }
+    let base = 0;
+    for (const key of __cb.dpErKeys(dp)) {
+      const er = erByKey.get(key);
+      if (!er) continue;
+      const d = er.data || {};
+      const ran = Number(d.stats?.coverage?.ran) || 0;
+      const cov = ran > 0 ? ran : d.coverageRows != null ? Number(d.coverageRows) : records;
+      if (cov > base) base = cov;
+    }
+    return base > 0 ? base : records;
+  }
+
+  // Re-derive the per-(DP, ER) run-share context outside the main render loop
+  // (used by the details menu's in-place refresh). Mirrors buildRows' resolution
+  // exactly: projected = stored share else the primary-weighted default split;
+  // actual = measured cellCount (else coverage.ran) vs the widest linked ER.
+  function erRunShareFor(dpCardId, erCardId) {
+    const dp = __cb.canvas?.getCardById?.(dpCardId);
+    if (!dp) return null;
+    const key = lineageKeyForCardId(erCardId);
+    const keys = __cb.dpErKeys(dp);
+    const idx = keys.indexOf(key);
+    if (idx < 0) return null;
+    const n = keys.length;
+    if (n <= 1) return { runShare: 1, isPrimary: idx === 0, dpCardId, multiEr: false };
+    let share;
+    if (window.__cb?.viewMode === "actual") {
+      const erByKey = new Map();
+      for (const c of __cb.model?.getNodes?.() || []) {
+        if (!c.data || !isErType(c.data.type)) continue;
+        const k = lineageKeyOf(c);
+        if (k != null && !erByKey.has(k)) erByKey.set(k, c);
+      }
+      const ranOf = (k) => {
+        const d = erByKey.get(k)?.data || {};
+        const cells = Number(d.stats?.spend?.cellCount) || 0;
+        return cells > 0 ? cells : Number(d.stats?.coverage?.ran) || 0;
+      };
+      let maxRan = 0;
+      for (const k of keys) maxRan = Math.max(maxRan, ranOf(k));
+      share = maxRan > 0 ? Math.min(1, ranOf(key) / maxRan) : idx === 0 ? 1 : 0;
+    } else {
+      const stored = __cb.dpErShare(dp, key);
+      share = stored != null ? stored : __cb.defaultErShare(idx, n);
+    }
+    return { runShare: share, isPrimary: idx === 0, dpCardId, multiEr: true };
+  }
+
+  // Commit one ER's run-share (% -> 0..N share) AND its 1-based order on a DP in
+  // a single model update. Run-share drives projected cost (share x base); the
+  // use case is inferred purely from the sum of the percentages (~100% = clean
+  // merge, 200%+ = needs two or more full ERs). Order just re-positions chips.
+  function commitDpShareAndOrder(dpCardId, erCardId, pct, pos) {
     const dp = __cb.canvas?.getCardById?.(dpCardId);
     const key = lineageKeyForCardId(erCardId);
     if (!dp || key == null) return;
     materializeDpShares(dp);
     __cb.setDpErShare(dp, key, Math.max(0, Number(pct) || 0) / 100);
-    __cb.model.update();
-    if (__cb.saveTabs) __cb.saveTabs();
-  }
-
-  // "+" / sum: promote this ER to primary (#1) at 100%, keep the others as
-  // independent additive shares. Total then exceeds 100% = "summed X% of time".
-  function promoteErToPrimarySum(dpCardId, erCardId) {
-    const dp = __cb.canvas?.getCardById?.(dpCardId);
-    const key = lineageKeyForCardId(erCardId);
-    if (!dp || key == null) return;
     const keys = __cb.dpErKeys(dp);
-    if (!keys.includes(key)) return;
-    const prev = {};
-    for (let i = 0; i < keys.length; i++) {
-      prev[keys[i]] = __cb.dpErShare(dp, keys[i]) ?? __cb.defaultErShare(i, keys.length);
+    const from = keys.indexOf(key);
+    const to = Math.min(keys.length - 1, Math.max(0, (Number(pos) || 1) - 1));
+    if (from >= 0 && from !== to) {
+      keys.splice(from, 1);
+      keys.splice(to, 0, key);
+      __cb.setDpErKeys(dp, keys);
     }
-    const reordered = [key, ...keys.filter((k) => k !== key)];
-    __cb.setDpErKeys(dp, reordered);
-    __cb.setDpErShare(dp, key, 1);
-    for (const k of reordered) {
-      if (k === key) continue;
-      __cb.setDpErShare(dp, k, prev[k] ?? __cb.defaultErShare(1, reordered.length));
-    }
-    justPromotedDpId = dpCardId;
-    __cb.model.update();
-    if (__cb.saveTabs) __cb.saveTabs();
-  }
-
-  // Reset to the OR/split model: clear stored shares so the primary-weighted
-  // default (summing to 100%) applies again.
-  function resetDpSharesToSplit(dpCardId) {
-    const dp = __cb.canvas?.getCardById?.(dpCardId);
-    if (!dp) return;
-    if (dp.data.sourceEnrichmentShares) delete dp.data.sourceEnrichmentShares;
     __cb.model.update();
     if (__cb.saveTabs) __cb.saveTabs();
   }
@@ -3151,16 +3190,23 @@
     erShareMenuBackdrop = null;
   }
 
-  // Small popover anchored to a chip's % badge: edit this ER's run-share, and
-  // (for a non-primary ER) promote it to an AND/sum primary, or reset to split.
+  // Popover anchored to a chip's % badge (or the details-menu Run-share row).
+  // Three linked rows — % of rows, the equivalent row count (share x base off
+  // the coverage numerator), and the chip order (1..N) — with NO preset buttons:
+  // the merge (~100%) vs needs-all (200%+) use case is inferred from the sum,
+  // shown as a Σ hint. % and rows stay in sync live; commit writes share+order
+  // in one model update.
   function openErShareMenu(er, anchorEl) {
     closeErShareMenu();
+    const dp = __cb.canvas?.getCardById?.(er.dpCardId);
+    const key = lineageKeyForCardId(er.id);
+    const keys = dp ? __cb.dpErKeys(dp) : [];
+    const n = keys.length || 1;
+    const curIdx = Math.max(0, keys.indexOf(key));
+    const base = dpRowBase(er.dpCardId);
+
     erShareMenuBackdrop = document.createElement("div");
     erShareMenuBackdrop.className = "cb-table-view-note-backdrop";
-    erShareMenuBackdrop.addEventListener("mousedown", (evt) => {
-      evt.stopPropagation();
-      closeErShareMenu();
-    });
 
     const pop = document.createElement("div");
     pop.className = "cb-table-view-share-popover";
@@ -3168,58 +3214,90 @@
 
     const title = document.createElement("div");
     title.className = "cb-table-view-share-title";
-    title.textContent = er.isPrimary ? "Primary \u2014 run-share" : "Run-share";
+    title.textContent = "Run-share";
     pop.appendChild(title);
 
-    const row = document.createElement("div");
-    row.className = "cb-table-view-share-row";
-    const input = document.createElement("input");
-    input.type = "number";
-    input.min = "0";
-    input.max = "1000";
-    input.className = "cb-table-view-share-input";
-    input.value = String(Math.round((er.runShare ?? 0) * 100));
-    const pctLabel = document.createElement("span");
-    pctLabel.textContent = "% of rows";
-    let committed = false;
-    const commit = () => {
-      if (committed) return; // blur + Enter can both fire — commit once
-      committed = true;
-      commitDpShare(er.dpCardId, er.id, input.value);
-      closeErShareMenu();
+    const pctToRows = (pct) => (base > 0 ? Math.round(((Number(pct) || 0) / 100) * base) : 0);
+    const rowsToPct = (rows) => (base > 0 ? Math.round(((Number(rows) || 0) / base) * 100) : 0);
+
+    const mkRow = (labelText) => {
+      const row = document.createElement("div");
+      row.className = "cb-table-view-share-row";
+      const input = document.createElement("input");
+      input.type = "number";
+      input.min = "0";
+      input.className = "cb-table-view-share-input";
+      const label = document.createElement("span");
+      label.textContent = labelText;
+      row.appendChild(input);
+      row.appendChild(label);
+      pop.appendChild(row);
+      return input;
     };
-    input.addEventListener("keydown", (evt) => {
-      if (evt.key === "Enter") { evt.preventDefault(); commit(); }
-      else if (evt.key === "Escape") { evt.preventDefault(); committed = true; closeErShareMenu(); }
+
+    // Row 1: % of rows.
+    const pctInput = mkRow("% of rows");
+    pctInput.max = "1000";
+    pctInput.value = String(Math.round((er.runShare ?? 0) * 100));
+
+    // Row 2: equivalent rows (= % x base) — linked to row 1 both ways.
+    const rowsInput = mkRow(base > 0 ? `of ~${formatNumber(base)} rows` : "rows");
+    rowsInput.value = String(pctToRows(pctInput.value));
+
+    // Row 3: order (1..N) — reposition this chip among the DP's ERs.
+    const orderInput = mkRow(n > 1 ? `order (1\u2013${n})` : "order");
+    orderInput.min = "1";
+    orderInput.max = String(n);
+    orderInput.value = String(curIdx + 1);
+
+    // Σ hint: the inferred use case, read off the sum of all ERs' shares.
+    const sumEl = document.createElement("div");
+    sumEl.className = "cb-table-view-share-sum";
+    const renderSum = () => {
+      let total = 0;
+      for (let i = 0; i < keys.length; i++) {
+        const k = keys[i];
+        if (k === key) { total += Math.round(Number(pctInput.value) || 0); continue; }
+        const stored = dp ? __cb.dpErShare(dp, k) : null;
+        const s = stored != null ? stored : __cb.defaultErShare(i, keys.length);
+        total += Math.round(s * 100);
+      }
+      const mode = total >= 150 ? "needs all" : "clean merge";
+      sumEl.textContent = keys.length > 1 ? `\u03a3 ${total}% \u00b7 ${mode}` : `${total}%`;
+    };
+    renderSum();
+    pop.appendChild(sumEl);
+
+    pctInput.addEventListener("input", () => {
+      rowsInput.value = String(pctToRows(pctInput.value));
+      renderSum();
     });
-    input.addEventListener("blur", commit);
-    row.appendChild(input);
-    row.appendChild(pctLabel);
-    pop.appendChild(row);
+    rowsInput.addEventListener("input", () => {
+      pctInput.value = String(rowsToPct(rowsInput.value));
+      renderSum();
+    });
 
-    if (!er.isPrimary) {
-      const sumBtn = document.createElement("button");
-      sumBtn.type = "button";
-      sumBtn.className = "cb-table-view-share-action";
-      sumBtn.innerHTML = plusSvg(11) + "<span>Sum with primary (make #1)</span>";
-      sumBtn.addEventListener("click", (evt) => {
-        evt.stopPropagation();
-        promoteErToPrimarySum(er.dpCardId, er.id);
-        closeErShareMenu();
-      });
-      pop.appendChild(sumBtn);
-    }
-
-    const splitBtn = document.createElement("button");
-    splitBtn.type = "button";
-    splitBtn.className = "cb-table-view-share-action";
-    splitBtn.textContent = "Reset to split (100% total)";
-    splitBtn.addEventListener("click", (evt) => {
-      evt.stopPropagation();
-      resetDpSharesToSplit(er.dpCardId);
+    let committed = false;
+    function commit() {
+      if (committed) return; // blur + outside click + Enter can all fire
+      committed = true;
+      const pos = Math.min(n, Math.max(1, Math.round(Number(orderInput.value) || curIdx + 1)));
+      commitDpShareAndOrder(er.dpCardId, er.id, pctInput.value, pos);
       closeErShareMenu();
+    }
+    for (const input of [pctInput, rowsInput, orderInput]) {
+      input.addEventListener("keydown", (evt) => {
+        if (evt.key === "Enter") { evt.preventDefault(); commit(); }
+        else if (evt.key === "Escape") { evt.preventDefault(); committed = true; closeErShareMenu(); }
+      });
+    }
+    pop.addEventListener("focusout", (evt) => {
+      if (!pop.contains(evt.relatedTarget)) commit();
     });
-    pop.appendChild(splitBtn);
+    erShareMenuBackdrop.addEventListener("mousedown", (evt) => {
+      evt.stopPropagation();
+      commit();
+    });
 
     document.body.appendChild(erShareMenuBackdrop);
     document.body.appendChild(pop);
@@ -3227,8 +3305,8 @@
     pop.style.position = "fixed";
     pop.style.zIndex = "9999999";
     __cb.placePopover?.(pop, anchorEl || hostEl, { gap: 6, align: "left" });
-    input.focus();
-    input.select();
+    pctInput.focus();
+    pctInput.select();
   }
 
   // Table-view-safe model switch for AI columns. Mirrors the canvas applyModel
@@ -5526,9 +5604,6 @@
     // Re-apply search highlights against the freshly-built rows. No scroll —
     // a background model update shouldn't yank the user's scroll position.
     if (searchQuery.trim()) applySearchHighlight({ scroll: false });
-    // The promote-to-primary pop animation is one-shot: clear the marker after
-    // the render that consumed it so later renders don't replay it.
-    justPromotedDpId = null;
   }
 
   // Re-render with the given DP row's name as a focused input (the rename
@@ -6108,10 +6183,6 @@
     if (er.frozen) chip.classList.add("cb-table-view-er-chip-frozen");
     // Lets erContextItems / openNotePopover anchor to this chip by ER id.
     chip.setAttribute("data-er-id", String(er.id));
-    // One-shot pop animation when this chip was just promoted to #1 via "+".
-    if (er.isPrimary && er.dpCardId != null && er.dpCardId === justPromotedDpId) {
-      chip.classList.add("cb-chip-just-primary");
-    }
     chip.title =
       er.isWaterfall && er.providerChain
         ? `${er.name} \u2014 ${er.providerChain}`
@@ -6146,20 +6217,19 @@
     chip.appendChild(trigger);
 
     // Run-share % badge — only on a data point row that links 2+ ERs. Shows
-    // the fraction of rows this ER runs (drives the weighted per-row cost).
-    // Clicking opens the share popover (split vs sum + editable %). Hidden in
-    // Actual mode for the primary (always 100%); secondary shows measured %.
+    // the fraction of rows this ER runs (drives the projected per-row cost).
+    // Clicking opens the share popover (% / rows / order). Read-only in Actual
+    // mode, where the % is measured (coverage.ran vs the widest ER).
     if (er.multiEr && er.runShare != null && er.dpCardId != null) {
       const actual = window.__cb?.viewMode === "actual";
       const shareBtn = document.createElement("button");
       shareBtn.type = "button";
       shareBtn.className = "cb-table-view-er-chip-share";
-      if (er.isPrimary) shareBtn.classList.add("cb-table-view-er-chip-share-primary");
       const pct = Math.round(er.runShare * 100);
       shareBtn.textContent = pct + "%";
       shareBtn.title = actual
         ? `Ran on ~${pct}% of rows`
-        : "Run-share \u2014 click to edit (split vs sum)";
+        : "Run-share \u2014 click to edit % / rows / order";
       shareBtn.addEventListener("mousedown", (evt) => evt.stopPropagation());
       shareBtn.addEventListener("click", (evt) => {
         evt.stopPropagation();
@@ -6280,6 +6350,7 @@
     if (erChipMenuBackdrop) { erChipMenuBackdrop.remove(); erChipMenuBackdrop = null; }
     erChipMenuCardId = null;
     erChipMenuPos = null;
+    erChipMenuShareDpId = null;
     document.removeEventListener("keydown", onErChipMenuKey);
   }
 
@@ -6440,6 +6511,34 @@
     return badge;
   }
 
+  // Run-share value for the details menu (multi-ER DP chips only) — a second
+  // entry point to the % / rows / order editor. Projected is an editable pill
+  // that opens the popover; Actual shows the measured "X% · ~N rows" read-only.
+  function buildErMenuShareNode(er, which) {
+    const pct = Math.round((er.runShare ?? 0) * 100);
+    const base = dpRowBase(er.dpCardId);
+    const rows = Math.round((er.runShare ?? 0) * base);
+    const text = base > 0 ? `${pct}% \u00b7 ~${formatNumber(rows)} rows` : `${pct}%`;
+    if (which === "actual") {
+      const span = document.createElement("span");
+      span.className = "cb-table-view-er-menu-share";
+      span.textContent = text;
+      span.title = `Ran on ~${pct}% of rows`;
+      return span;
+    }
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "cb-table-view-er-menu-share cb-table-view-er-menu-share-edit";
+    btn.textContent = text;
+    btn.title = "Run-share \u2014 click to edit % / rows / order";
+    btn.addEventListener("mousedown", (evt) => evt.stopPropagation());
+    btn.addEventListener("click", (evt) => {
+      evt.stopPropagation();
+      openErShareMenu(er, btn);
+    });
+    return btn;
+  }
+
   // Model value — an indigo pill (mirrors the canvas model chip) that opens the
   // same grouped provider/model picker. AI columns only.
   function buildErMenuModelNode(er) {
@@ -6501,6 +6600,12 @@
 
     // Frequency on its own row, beneath the two pills it drives.
     costSection.appendChild(erMenuRow("Frequency", buildErMenuFrequencyNode(er)));
+
+    // Run-share row — only when this chip belongs to a multi-ER DP. A second
+    // entry point to the % / rows / order editor (the chip % badge is the other).
+    if (er.multiEr && er.dpCardId != null && er.runShare != null) {
+      costSection.appendChild(erMenuRow("Run-share" + modeLabel, buildErMenuShareNode(er, which)));
+    }
 
     if (er.isAi && er.model) {
       costSection.appendChild(erMenuRow("Model", buildErMenuModelNode(er)));
@@ -6599,7 +6704,14 @@
     if (erMenuModelPickerEl || erMenuKeyToggleEl || window.__cb._freqPickerEl) return;
     const card = __cb.canvas?.getCardById?.(erChipMenuCardId);
     if (!card) { closeErChipMenu(); return; }
-    renderErMenuBody(erChipMenuEl, buildErChipData(card));
+    const data = buildErChipData(card);
+    // Re-attach the per-(DP,ER) run-share context lost by the plain rebuild, so
+    // the Run-share row stays and reflects the just-committed value.
+    if (erChipMenuShareDpId != null) {
+      const ctx = erRunShareFor(erChipMenuShareDpId, erChipMenuCardId);
+      if (ctx) Object.assign(data, ctx);
+    }
+    renderErMenuBody(erChipMenuEl, data);
     if (erChipMenuPos) positionErMenu(erChipMenuPos.left, erChipMenuPos.top);
   }
 
@@ -6629,6 +6741,9 @@
     document.body.appendChild(menu);
     erChipMenuEl = menu;
     erChipMenuCardId = er.id;
+    // Remember the host DP when this chip belongs to a multi-ER DP, so a refresh
+    // can re-derive the Run-share row instead of dropping it.
+    erChipMenuShareDpId = er.multiEr && er.dpCardId != null ? er.dpCardId : null;
 
     renderErMenuBody(menu, er);
 
