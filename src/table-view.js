@@ -3816,7 +3816,7 @@
     header.appendChild(closeBtn);
 
     const body = document.createElement("div");
-    body.className = "cb-export-modal-body";
+    body.className = "cb-export-modal-body cb-gtme-body";
     const textarea = document.createElement("textarea");
     textarea.className = "cb-bulk-dp-textarea";
     textarea.placeholder = "Company domain, LinkedIn URL, Job title, \u2026";
