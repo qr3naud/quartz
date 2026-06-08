@@ -55,6 +55,10 @@
   // True while the global (all-workspaces) view is active. Gates whether the
   // audience filter is rendered and applied.
   let isGlobalMode = false;
+  // Name search query (lowercased). Applied by applyRowFilters alongside the
+  // owner/audience filters. Only updated on Enter (no live filtering); reset to
+  // "" on every deactivate.
+  let searchQuery = "";
 
   function isHomeUrl() {
     return window.location.pathname.endsWith("/home");
@@ -305,6 +309,7 @@
     selectedOwnerId = "";
     selectedAudience = "internal";
     isGlobalMode = false;
+    searchQuery = "";
 
     const panel = document.getElementById(PANEL_ID);
     if (panel) {
@@ -331,7 +336,7 @@
     const headingRow = document.createElement("div");
     // Mirror Clay's native heading row (no vertical padding); the row height is
     // matched to the native one just below so our heading lines up vertically.
-    headingRow.className = "mx-auto grid w-full grid-cols-[1fr_auto] gap-1 px-8";
+    headingRow.className = "mx-auto grid w-full grid-cols-[1fr_auto] items-center gap-1 px-8";
     const headingWrap = document.createElement("div");
     headingWrap.className = "flex max-w-full flex-row items-center gap-2";
     // The native heading row is taller than its text because of the "New"
@@ -385,6 +390,54 @@
     // in the Name column still aligns with the "Canvases" heading above.
     const tableWrap = document.createElement("div");
     tableWrap.className = "pb-8";
+
+    // Search box — mirrors Clay's native home search (SearchInputWithUrlSync):
+    // a rounded bordered box with a leading magnifying-glass icon that darkens
+    // on focus and an accent focus ring. Sits in the heading row's right column,
+    // the same spot the native search occupies. Filters the canvas list by name
+    // on Enter only (no live filtering). Built with inline styles + JS focus so
+    // it's robust to Clay's tree-shaken Tailwind build.
+    const searchWrap = document.createElement("div");
+    searchWrap.style.cssText =
+      "display:flex;align-items:center;gap:8px;width:220px;height:31px;padding:0 11px;" +
+      "background:#fff;border:1px solid var(--color-border-primary,#d6d9df);" +
+      "border-radius:6px;transition:box-shadow .12s,border-color .12s;";
+    const searchIcon = document.createElement("span");
+    searchIcon.style.cssText =
+      "display:inline-flex;flex:none;color:var(--color-content-placeholder,#9ca3af);";
+    searchIcon.innerHTML =
+      '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" ' +
+      'viewBox="0 0 256 256" aria-hidden="true"><path d="M229.66,218.34l-50.07-50.06a88.11,' +
+      '88.11,0,1,0-11.31,11.31l50.06,50.07a8,8,0,0,0,11.32-11.32ZM40,112a72,72,0,1,1,72,72A72.08,' +
+      '72.08,0,0,1,40,112Z"></path></svg>';
+    const searchInput = document.createElement("input");
+    searchInput.type = "text";
+    searchInput.setAttribute("aria-label", "Search");
+    searchInput.placeholder = "Search";
+    searchInput.value = searchQuery;
+    searchInput.style.cssText =
+      "flex:1;min-width:0;border:none;outline:none;background:transparent;" +
+      "font-family:inherit;font-size:14px;color:var(--color-content-primary,#1f2937);";
+    searchWrap.appendChild(searchIcon);
+    searchWrap.appendChild(searchInput);
+    searchInput.addEventListener("focus", () => {
+      searchWrap.style.borderColor = "var(--color-content-action,#4f46e5)";
+      searchWrap.style.boxShadow = "0 0 0 1px var(--color-content-action,#4f46e5)";
+      searchIcon.style.color = "var(--color-content-primary,#1f2937)";
+    });
+    searchInput.addEventListener("blur", () => {
+      searchWrap.style.borderColor = "var(--color-border-primary,#d6d9df)";
+      searchWrap.style.boxShadow = "none";
+      searchIcon.style.color = "var(--color-content-placeholder,#9ca3af)";
+    });
+    searchInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        searchQuery = searchInput.value.trim().toLowerCase();
+        applyRowFilters(tableWrap);
+      }
+    });
+    headingRow.appendChild(searchWrap);
 
     panel.appendChild(headingRow);
     panel.appendChild(filterBar);
@@ -697,6 +750,8 @@
       // "1" when the owner's email is @clay.com — drives the Internal/External
       // filter in global mode.
       tr.dataset.ownerInternal = owner?.isInternal ? "1" : "0";
+      // Lowercased name for the search filter (applyRowFilters).
+      tr.dataset.name = (name || "").toLowerCase();
 
       if (workspaceId) {
         tr.style.cursor = "pointer";
@@ -779,7 +834,8 @@
         (selectedAudience === "internal"
           ? tr.dataset.ownerInternal === "1"
           : tr.dataset.ownerInternal === "0");
-      tr.style.display = ownerOk && audienceOk ? "" : "none";
+      const searchOk = !searchQuery || (tr.dataset.name || "").includes(searchQuery);
+      tr.style.display = ownerOk && audienceOk && searchOk ? "" : "none";
     }
   }
 
