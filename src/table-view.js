@@ -940,8 +940,12 @@
     const cov = erCard?.data?.stats?.coverage;
     const attempted = Number(cov?.attempted ?? cov?.ran) || 0;
     const denom = attempted > 0 ? attempted : tot;
+    // `nonNull` / `denom` are surfaced so the table's Fill cell can show the
+    // underlying ratio on hover (a bare "1%" is opaque; "~10 / 789" is not).
     return {
       pct: Math.min(100, Math.max(0, Math.round((nonNull / denom) * 100))),
+      nonNull: Math.round(nonNull),
+      denom,
     };
   }
 
@@ -980,7 +984,16 @@
         const af = actualFillPct(erCard, dpCard);
         fill = af.loading
           ? { mode: "actual", loading: true }
-          : { mode: "actual", pct: af.pct };
+          : {
+              mode: "actual",
+              pct: af.pct,
+              // Ratio + the enrichment that defines the denominator, for the
+              // Fill cell's hover tooltip (see buildFillCell). The ER's display
+              // name lives on displayName/text (mirrors buildErChipData).
+              nonNull: af.nonNull,
+              denom: af.denom,
+              denomLabel: erCard?.data?.displayName || erCard?.data?.text || null,
+            };
       } else {
         fill = { mode: "projected", pct: fillRatePct(dpCard.data.fillRate) };
       }
@@ -1200,6 +1213,19 @@
       suffix.textContent = "%";
       td.appendChild(numSpan);
       td.appendChild(suffix);
+      // Hover tooltip: expose the underlying ratio so a low fill % is legible
+      // (e.g. "1%" reads as "~10 / 789"). Numerator = non-empty cells in this
+      // column (from its nullPercentage); denominator = rows the data point's
+      // widest linked enrichment ran on — the same number the Coverage cell
+      // divides against. Naming the enrichment makes it obvious WHY the
+      // denominator can dwarf the rows that actually produced this column.
+      if (fill.denom != null && fill.nonNull != null) {
+        const numTxt = Number(fill.nonNull).toLocaleString();
+        const denomTxt = Number(fill.denom).toLocaleString();
+        td.title = fill.denomLabel
+          ? `~${numTxt} / ${denomTxt} filled \u2014 non-empty cells \u00F7 rows \u201C${fill.denomLabel}\u201D ran on`
+          : `~${numTxt} / ${denomTxt} filled \u2014 non-empty cells \u00F7 rows the enrichment ran on`;
+      }
     } else {
       td.className = "col-fill cb-table-view-cell-muted";
       td.textContent = "\u2014";
