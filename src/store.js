@@ -307,13 +307,21 @@
         return uc;
       };
       // Clay column groups arrive as legacy comment-cluster "basic groups": a
-      // titled comment card + member cards sharing a groupCluster. Map each
-      // cluster to its title so we can rebuild it as a real L2 sub-group under
-      // the table's use case (the comment card then renders as an invisible
-      // no-op in the table — its title lives on the L2 group).
+      // comment card + member cards sharing a groupCluster. ONLY basic column
+      // groups emit a comment card on import (waterfalls don't), so the
+      // presence of a comment is our marker that "this cluster is a Clay
+      // column group" — we rebuild each as a real L2 sub-group under the
+      // table's use case (the comment card then renders as an invisible no-op
+      // in the table — its title lives on the L2 group). Named groups keep
+      // their title; UNNAMED groups (Clay's default "Group" header has no
+      // stored name) get a synthetic "Group N" label, numbered per use case,
+      // so the column grouping survives import instead of flattening loose
+      // into the use case.
       const titleByCluster = new Map();
+      const clustersWithComment = new Set();
       for (const c of state.cards) {
         if (c.data && c.data.type === "comment" && c.data.groupCluster != null) {
+          clustersWithComment.add(c.data.groupCluster);
           const txt = (c.data.text || c.data.displayName || "").trim();
           if (txt && !titleByCluster.has(c.data.groupCluster)) {
             titleByCluster.set(c.data.groupCluster, txt);
@@ -328,6 +336,18 @@
           if (!l2ByCluster.has(g.clusterKey)) l2ByCluster.set(g.clusterKey, g);
         }
       }
+      // Seed the per-use-case "Group N" counter from existing synthetic labels
+      // so re-imports of newly-added unnamed groups continue the sequence
+      // instead of colliding with a number that's already in use.
+      const unnamedCountByUc = new Map();
+      for (const g of state.groups) {
+        if (g.parentId == null || g.source !== "import-cluster") continue;
+        const m = /^Group (\d+)$/.exec((g.label || "").trim());
+        if (m) {
+          const prev = unnamedCountByUc.get(g.parentId) || 0;
+          unnamedCountByUc.set(g.parentId, Math.max(prev, Number(m[1])));
+        }
+      }
       // Assign every ungrouped, table-tagged card to its use case (loose) or its
       // column group's L2 sub-group. Only touches cards with no groupId, so it
       // never fights user edits and is safe to run on every render.
@@ -337,14 +357,20 @@
         if (c.groupId != null) continue;
         const uc = ensureUseCase(d.tableId, c);
         const cluster = d.groupCluster;
-        if (cluster != null && titleByCluster.has(cluster)) {
+        if (cluster != null && clustersWithComment.has(cluster)) {
           let l2 = l2ByCluster.get(cluster);
           if (!l2) {
+            let label = titleByCluster.get(cluster);
+            if (!label) {
+              const n = (unnamedCountByUc.get(uc.id) || 0) + 1;
+              unnamedCountByUc.set(uc.id, n);
+              label = `Group ${n}`;
+            }
             l2 = model.createGroup({
               parentId: uc.id,
               source: "import-cluster",
               clusterKey: cluster,
-              label: titleByCluster.get(cluster),
+              label,
             });
             l2ByCluster.set(cluster, l2);
           }
