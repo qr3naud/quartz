@@ -3301,6 +3301,9 @@
     const n = keys.length || 1;
     const curIdx = Math.max(0, keys.indexOf(key));
     const base = dpRowBase(er.dpCardId);
+    // Actual mode = measured run-share (this ER's runs ÷ the widest linked ER).
+    // Same popover, but read-only: inputs disabled, no order/Σ, no commit.
+    const readOnly = window.__cb?.viewMode === "actual";
 
     erShareMenuBackdrop = document.createElement("div");
     erShareMenuBackdrop.className = "cb-table-view-note-backdrop";
@@ -3311,7 +3314,7 @@
 
     const title = document.createElement("div");
     title.className = "cb-table-view-share-title";
-    title.textContent = "Run-share";
+    title.textContent = readOnly ? "Run-share \u00b7 measured" : "Run-share";
     pop.appendChild(title);
 
     const pctToRows = (pct) => (base > 0 ? Math.round(((Number(pct) || 0) / 100) * base) : 0);
@@ -3340,6 +3343,44 @@
     // Row 2: equivalent rows (= % x base) — linked to row 1 both ways.
     const rowsInput = mkRow(base > 0 ? `of ~${formatNumber(base)} rows` : "rows");
     rowsInput.value = String(pctToRows(pctInput.value));
+
+    // Read-only (Actual) view: the % is measured, so skip the order row, the
+    // editable Σ hint, and all commit wiring. Inputs are disabled; a short note
+    // names the denominator (mirrors the Fill cell tooltip). Outside-click,
+    // backdrop, Enter, and Escape all just close.
+    if (readOnly) {
+      pctInput.disabled = true;
+      rowsInput.disabled = true;
+      const note = document.createElement("div");
+      note.className = "cb-table-view-share-sum";
+      note.textContent =
+        "Measured \u2014 rows that ran \u00f7 the widest linked enrichment";
+      pop.appendChild(note);
+
+      const close = () => closeErShareMenu();
+      pop.tabIndex = -1;
+      pop.addEventListener("keydown", (evt) => {
+        if (evt.key === "Escape" || evt.key === "Enter") {
+          evt.preventDefault();
+          close();
+        }
+      });
+      erShareMenuBackdrop.addEventListener("mousedown", (evt) => {
+        evt.stopPropagation();
+        close();
+      });
+
+      document.body.appendChild(erShareMenuBackdrop);
+      document.body.appendChild(pop);
+      erShareMenuEl = pop;
+      erShareMenuOutsideUnbind =
+        window.__cb.bindOutsideMousedown?.(pop, close) ?? null;
+      pop.style.position = "fixed";
+      pop.style.zIndex = "9999999";
+      __cb.placePopover?.(pop, anchorEl || hostEl, { gap: 6, align: "left" });
+      pop.focus({ preventScroll: true });
+      return;
+    }
 
     // Row 3: order (1..N) — reposition this chip among the DP's ERs.
     const orderInput = mkRow(n > 1 ? `order (1\u2013${n})` : "order");
@@ -6711,8 +6752,9 @@
 
     // Run-share % badge — only on a data point row that links 2+ ERs. Shows
     // the fraction of rows this ER runs (drives the projected per-row cost).
-    // Clicking opens the share popover (% / rows / order). Read-only in Actual
-    // mode, where the % is measured (coverage.ran vs the widest ER).
+    // Clicking opens the share popover (% / rows / order) in both modes; in
+    // Actual the popover is read-only since the % is measured (this ER's runs
+    // vs the widest linked ER).
     if (er.multiEr && er.runShare != null && er.dpCardId != null) {
       const actual = window.__cb?.viewMode === "actual";
       const shareBtn = document.createElement("button");
@@ -6721,12 +6763,11 @@
       const pct = Math.round(er.runShare * 100);
       shareBtn.textContent = pct + "%";
       shareBtn.title = actual
-        ? `Ran on ~${pct}% of rows`
+        ? `Ran on ~${pct}% of rows \u2014 click for the breakdown`
         : "Run-share \u2014 click to edit % / rows / order";
       shareBtn.addEventListener("mousedown", (evt) => evt.stopPropagation());
       shareBtn.addEventListener("click", (evt) => {
         evt.stopPropagation();
-        if (actual) return; // measured, read-only
         openErShareMenu(er, shareBtn);
       });
       chip.appendChild(shareBtn);
