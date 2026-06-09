@@ -1241,12 +1241,24 @@
         const field = fieldById[fid];
         if (!field) return;
         if (field.type === "action" || field.type === "source") {
+          // A free LOOKUP / read-from-another-table action (carries a
+          // referencedTableId, but isn't a billable subroutine) is itself the
+          // producer of the columns extracted from it (e.g. "Attended in 2025?"
+          // = {{lookup}}?.record?.segment). Link it and STOP — descending into
+          // its key inputs (the lookup key, which traces back to a source) would
+          // otherwise bleed through and mis-attribute the DP to that source.
+          const isFreeLookup =
+            field.type === "action" &&
+            !fieldIsBillable(field) &&
+            !!field.typeSettings?.referencedTableId &&
+            field.typeSettings?.actionKey !== "execute-subroutine";
           // Sources are free but still LINK as a data point's origin: a mapped
           // column ("[Final]" etc.) extracted from a "Rows from: X" source
           // should show that source as its enrichment instead of an empty ER
-          // column. Billable actions link as before; only sources bypass the
-          // billable gate (free non-source actions stay unlinked).
-          if (field.type === "source" || fieldIsBillable(field)) addKey(fid);
+          // column. Billable actions link as before; only sources + free
+          // lookups bypass the billable gate (other free actions stay unlinked).
+          if (field.type === "source" || fieldIsBillable(field) || isFreeLookup) addKey(fid);
+          if (isFreeLookup) return;
           // Continue through this action's inputs to reach upstream ancestors
           // (the expensive ER feeding a cheap AI column). A free action still
           // forwards its inputs so a billable ancestor behind it is captured.
@@ -1321,9 +1333,15 @@
         const f = fieldById[key];
         if (!f || (f.type !== "action" && f.type !== "source")) continue;
         // Sources are free yet must still import as a card so the DPs that map
-        // from them render a "Source" enrichment; only non-source actions keep
-        // the billable gate (a free action stays out of the canvas).
-        if (f.type !== "source" && !fieldIsBillable(f)) continue;
+        // from them render a "Source" enrichment; free read-lookups (carry a
+        // referencedTableId, not a billable subroutine) likewise import so their
+        // extracted DPs link to the lookup instead of bleeding to the source.
+        // Other free actions keep the billable gate (they stay off the canvas).
+        const isFreeLookup =
+          f.type === "action" &&
+          !!f.typeSettings?.referencedTableId &&
+          f.typeSettings?.actionKey !== "execute-subroutine";
+        if (f.type !== "source" && !isFreeLookup && !fieldIsBillable(f)) continue;
         promotedSeen.add(key);
         promotedErFields.push(f);
       }
