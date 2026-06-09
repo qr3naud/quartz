@@ -3461,43 +3461,65 @@
 
     const title = document.createElement("div");
     title.className = "cb-table-view-share-title";
-    title.textContent = readOnly ? "Run-share \u00b7 measured" : "Run-share";
+    title.textContent = readOnly ? "Run-share \u00b7 Actual" : "Run-share \u00b7 Projected";
     pop.appendChild(title);
 
+    // Body section under the header — its top border IS the divider, positioned
+    // exactly like the details menu's section divider (padding-top + border-top).
+    const body = document.createElement("div");
+    body.className = "cb-table-view-share-body";
+    pop.appendChild(body);
+
+    const RUN_TIP = [
+      "Run rate \u2014 rows this enrichment ran on \u00f7 the table's total rows.",
+      "How much of the table it covered.",
+    ];
+    const SUCCESS_TIP = [
+      "Success rate \u2014 rows that returned a value \u00f7 the rows it ran on.",
+      "Its hit rate on the rows it ran.",
+    ];
+
+    // Left side of a row: the label + an (i) info icon with a custom tooltip.
+    const mkLeft = (labelText, tipLines) => {
+      const left = document.createElement("span");
+      left.className = "cb-table-view-share-mlabelwrap";
+      const lab = document.createElement("span");
+      lab.className = "cb-table-view-share-mlabel";
+      lab.textContent = labelText;
+      left.appendChild(lab);
+      const info = document.createElement("span");
+      info.className = "cb-uc-info";
+      info.innerHTML = infoSvg(13);
+      attachInfoTip(info, tipLines, { delayMs: 60 });
+      info.addEventListener("mousedown", (e) => e.stopPropagation());
+      info.addEventListener("click", (e) => e.stopPropagation());
+      left.appendChild(info);
+      return left;
+    };
+
+    // Row = label (+ info) on the left, a small indigo pill (white bg) on the
+    // right (mirrors the details menu).
+    const pctOf = (r) => (r == null ? "\u2014" : Math.round(r * 100) + "%");
+    const mkPillRow = (labelText, valueText, tipLines) => {
+      const row = document.createElement("div");
+      row.className = "cb-table-view-share-mrow";
+      const pill = document.createElement("span");
+      pill.className = "cb-table-view-share-mpill";
+      pill.textContent = valueText;
+      row.appendChild(mkLeft(labelText, tipLines));
+      row.appendChild(pill);
+      body.appendChild(row);
+      return row;
+    };
+
     if (readOnly) {
-      // Two cost-independent run-status metrics, read-only:
-      //   Run rate     = rows it ran on ÷ total rows
-      //   Success rate = rows that returned a value ÷ rows it ran
-      const pctOf = (r) => (r == null ? "\u2014" : Math.round(r * 100) + "%");
-      const mkMetric = (pctText, labelText, detailText) => {
-        const row = document.createElement("div");
-        row.className = "cb-table-view-share-metric";
-        const big = document.createElement("div");
-        big.className = "cb-table-view-share-metric-pct";
-        big.textContent = pctText;
-        const txt = document.createElement("div");
-        txt.className = "cb-table-view-share-metric-text";
-        const lab = document.createElement("div");
-        lab.className = "cb-table-view-share-metric-label";
-        lab.textContent = labelText;
-        txt.appendChild(lab);
-        if (detailText) {
-          const det = document.createElement("div");
-          det.className = "cb-table-view-share-metric-detail";
-          det.textContent = detailText;
-          txt.appendChild(det);
-        }
-        row.appendChild(big);
-        row.appendChild(txt);
-        pop.appendChild(row);
-      };
+      // Two cost-independent run-status metrics, read-only. Run rate shows the
+      // exact ratio (matches the details pill); success rate the %.
       const ranTxt = formatNumber(er.runRows || 0);
       const totTxt = formatNumber(er.totalRows || 0);
       const hitTxt = formatNumber(er.succeededRows || 0);
-      mkMetric(pctOf(er.runRate), "run rate",
-        er.totalRows > 0 ? `${ranTxt} / ${totTxt} rows ran` : null);
-      mkMetric(pctOf(er.successRate), "success rate",
-        er.runRows > 0 ? `${hitTxt} / ${ranTxt} returned a value` : null);
+      mkPillRow("Run rate", er.totalRows > 0 ? `${ranTxt} / ${totTxt}` : pctOf(er.runRate), RUN_TIP);
+      mkPillRow("Success rate", er.runRows > 0 ? `${hitTxt} / ${ranTxt}` : pctOf(er.successRate), SUCCESS_TIP);
 
       const close = () => closeErShareMenu();
       pop.tabIndex = -1;
@@ -3524,57 +3546,43 @@
     // total — the editable coverage that drives catalog cost (via the shared
     // commitErCoverageEdit, the same wiring the Coverage column uses). Success
     // rate is the measured hit rate, read-only (single-sourced from run status).
-    const runLabel = document.createElement("div");
-    runLabel.className = "cb-table-view-share-metric-label";
-    runLabel.textContent = "run rate";
-    pop.appendChild(runLabel);
-
     const mkNum = (val, title) => {
       const input = document.createElement("input");
       input.type = "number";
       input.min = "0";
-      input.className = "cb-table-view-share-input";
+      input.className = "cb-table-view-share-minput";
       input.value = val != null ? String(val) : "";
       input.title = title;
       input.addEventListener("mousedown", (e) => e.stopPropagation());
       input.addEventListener("click", (e) => e.stopPropagation());
       return input;
     };
-    const editRow = document.createElement("div");
-    editRow.className = "cb-table-view-share-row";
     const rowsIn = mkNum(er.projectedRunRows, "Rows this enrichment runs on (drives projected cost)");
+    const totIn = mkNum(er.projectedRunTotal, "Attempted total (defaults to the record count)");
+
+    // Run rate row: label (+ info) left, editable rows / total on the right.
+    const runRow = document.createElement("div");
+    runRow.className = "cb-table-view-share-mrow";
+    const runEdit = document.createElement("span");
+    runEdit.className = "cb-table-view-share-medit";
     const sep = document.createElement("span");
     sep.className = "cb-table-view-cov-sep";
     sep.textContent = "/";
-    const totIn = mkNum(er.projectedRunTotal, "Attempted total (defaults to the record count)");
-    editRow.appendChild(rowsIn);
-    editRow.appendChild(sep);
-    editRow.appendChild(totIn);
-    pop.appendChild(editRow);
+    runEdit.appendChild(rowsIn);
+    runEdit.appendChild(sep);
+    runEdit.appendChild(totIn);
+    runRow.appendChild(mkLeft("Run rate", RUN_TIP));
+    runRow.appendChild(runEdit);
+    body.appendChild(runRow);
 
-    // Success rate (measured, read-only) — the historical hit rate.
-    const succPct = er.successRate != null ? Math.round(er.successRate * 100) : null;
-    const sm = document.createElement("div");
-    sm.className = "cb-table-view-share-metric";
-    const smBig = document.createElement("div");
-    smBig.className = "cb-table-view-share-metric-pct";
-    smBig.textContent = succPct != null ? succPct + "%" : "\u2014";
-    const smTxt = document.createElement("div");
-    smTxt.className = "cb-table-view-share-metric-text";
-    const smLab = document.createElement("div");
-    smLab.className = "cb-table-view-share-metric-label";
-    smLab.textContent = "success rate";
-    smTxt.appendChild(smLab);
-    if (er.runRows > 0) {
-      const smDet = document.createElement("div");
-      smDet.className = "cb-table-view-share-metric-detail";
-      smDet.textContent =
-        `${formatNumber(er.succeededRows)} / ${formatNumber(er.runRows)} returned a value`;
-      smTxt.appendChild(smDet);
-    }
-    sm.appendChild(smBig);
-    sm.appendChild(smTxt);
-    pop.appendChild(sm);
+    // Success rate row: label left, measured ratio pill on the right (read-only).
+    mkPillRow(
+      "Success rate",
+      er.runRows > 0
+        ? `${formatNumber(er.succeededRows || 0)} / ${formatNumber(er.runRows || 0)}`
+        : (er.successRate != null ? Math.round(er.successRate * 100) + "%" : "\u2014"),
+      SUCCESS_TIP,
+    );
 
     // Commit both coverage values once focus leaves the popover (not on each
     // input's blur, which would re-render and drop the second input mid-edit).
@@ -7370,12 +7378,6 @@
     // Frequency on its own row, beneath the two pills it drives.
     costSection.appendChild(erMenuRow("Frequency", buildErMenuFrequencyNode(er)));
 
-    // Run-share row — only when this chip belongs to a multi-ER DP. A second
-    // entry point to the % / rows / order editor (the chip % badge is the other).
-    if (er.multiEr && er.dpCardId != null && er.runShare != null) {
-      costSection.appendChild(erMenuRow("Run-share" + modeLabel, buildErMenuShareNode(er, which)));
-    }
-
     if (er.isAi && er.model) {
       costSection.appendChild(erMenuRow("Model", buildErMenuModelNode(er)));
     }
@@ -7386,6 +7388,14 @@
     if (er.isAi && er.clayBudget != null && !er.usePrivateKey) {
       costSection.appendChild(erMenuRow("Clay Budgeted", buildClayBudgetNode(er)));
     }
+
+    // Run-share row — LAST in the section, only when this chip belongs to a
+    // multi-ER DP. A second entry point to the run rate editor (the chip %
+    // badge is the other).
+    if (er.multiEr && er.dpCardId != null && er.runShare != null) {
+      costSection.appendChild(erMenuRow("Run-share" + modeLabel, buildErMenuShareNode(er, which)));
+    }
+
     menu.appendChild(costSection);
 
     // Footer: "Find in table" scrolls the source column into view (reuses the

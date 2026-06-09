@@ -899,6 +899,7 @@
    type + the internal divider. Matches the model/cost pill weight (not bold). */
 .cb-table-view-er-share-pill {
   cursor: pointer;
+  border-color: #c7d2fe;
   transition: border-color 0.12s, background 0.12s;
 }
 
@@ -909,7 +910,7 @@
 .cb-table-view-er-share-seg {
   font-size: 11.5px;
   font-weight: 500;
-  color: var(--cb-pill-text);
+  color: #4338ca;
   background: var(--cb-surface);
   font-variant-numeric: tabular-nums;
 }
@@ -1622,43 +1623,68 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* Read-only (measured) run-share popover: each metric is a big % paired with
-   its label + the exact ratio underneath. Rows divided by a hairline. */
-.cb-table-view-share-metric {
+/* Body under the run-share popover header. Its top border is the divider,
+   positioned like the details menu's section divider (padding-top + border-top). */
+.cb-table-view-share-body {
   display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 7px 2px;
-}
-
-.cb-table-view-share-metric+.cb-table-view-share-metric {
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 8px;
   border-top: 1px solid #f1f5f9;
 }
 
-.cb-table-view-share-metric-pct {
-  min-width: 46px;
-  font-size: 18px;
-  font-weight: 600;
-  color: #111827;
-  line-height: 1;
-  font-variant-numeric: tabular-nums;
+/* Label + (i) info icon on the left of a popover row. */
+.cb-table-view-share-mlabelwrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
 }
 
-.cb-table-view-share-metric-text {
+/* Run-share popover row: label on the left, value on the right (mirrors the
+   details menu). The value is a small indigo pill (white bg) when read-only,
+   or compact editable inputs in Projected. */
+.cb-table-view-share-mrow {
   display: flex;
-  flex-direction: column;
-  gap: 2px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
 }
 
-.cb-table-view-share-metric-label {
+.cb-table-view-share-mlabel {
   font-size: 12px;
-  font-weight: 500;
   color: #374151;
 }
 
-.cb-table-view-share-metric-detail {
+.cb-table-view-share-mpill {
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 9px;
+  background: #ffffff;
+  border: 1px solid #c7d2fe;
+  border-radius: 999px;
+  color: #4338ca;
   font-size: 11px;
-  color: #9ca3af;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+.cb-table-view-share-medit {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.cb-table-view-share-minput {
+  width: 52px;
+  height: 22px;
+  padding: 0 6px;
+  background: #ffffff;
+  border: 1px solid #c7d2fe;
+  border-radius: 6px;
+  color: #4338ca;
+  font-size: 11px;
+  text-align: center;
   font-variant-numeric: tabular-nums;
 }
 
