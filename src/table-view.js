@@ -5726,6 +5726,25 @@
 
   function render() {
     if (!hostEl) return;
+    // Capture the scroll position BEFORE we wipe the DOM so every re-render
+    // (group collapse/expand, rename, add-data-point, expand/collapse-all,
+    // pricing collapse) restores it in place instead of snapping to the top.
+    // Normal mode scrolls the inner table container; pricing mode has no inner
+    // scroller and scrolls hostEl (.cb-table-view-area) itself. restoreScroll()
+    // re-resolves the scroller after the rebuild and clamps to its new size.
+    const prevScroller =
+      hostEl.querySelector(".cb-table-view-table-container") || hostEl;
+    const prevScrollTop = prevScroller.scrollTop;
+    const prevScrollLeft = prevScroller.scrollLeft;
+    const restoreScroll = () => {
+      if (prevScrollTop <= 0 && prevScrollLeft <= 0) return;
+      const nextScroller =
+        hostEl.querySelector(".cb-table-view-table-container") || hostEl;
+      const maxTop = nextScroller.scrollHeight - nextScroller.clientHeight;
+      const maxLeft = nextScroller.scrollWidth - nextScroller.clientWidth;
+      nextScroller.scrollTop = Math.min(prevScrollTop, Math.max(0, maxTop));
+      nextScroller.scrollLeft = Math.min(prevScrollLeft, Math.max(0, maxLeft));
+    };
     // Table-native groups (v7.23+): make sure every imported (tableId-tagged)
     // card belongs to its use-case group before we read the tree. Idempotent +
     // render-safe (only assigns ungrouped cards), so it covers fresh imports and
@@ -5850,6 +5869,7 @@
     if (__cb.pricingMode) {
       wrap.appendChild(__cb.pricingView.buildPricingBody());
       hostEl.appendChild(wrap);
+      restoreScroll();
       return;
     }
 
@@ -6102,6 +6122,11 @@
     // (Group action stashes the new section's key here; we focus the
     // matching label input now that it's in the DOM).
     applySelectionClasses();
+    // Restore scroll before the focus pass below: a plain re-render (group
+    // toggle, rename of an on-screen row) keeps its position, while
+    // add-data-point can still scroll its freshly-focused (off-screen) row
+    // into view via input.focus().
+    restoreScroll();
     if (pendingFocusGroupId) {
       const labelInput = hostEl.querySelector(
         `[data-row-id="${pendingFocusGroupId}"] .cb-table-view-group-row-label-input`,
@@ -8272,25 +8297,11 @@
       // Skip during an active drag so the dragged row's DOM doesn't get
       // torn down mid-gesture (which would crash mouseup with no source).
       if (dragInProgress) return;
-      // The single scroll viewport is the INNER .cb-table-view-table-container
-      // (hostEl / .cb-table-view-area is overflow:hidden). render() rebuilds
-      // that container from scratch, resetting it to (0,0) — so every commit
-      // (coverage/fill edit, chip-×, row-×, picker-confirm) snaps the user
-      // back to the top. Capture both axes off the old container and restore
-      // them onto the freshly-built one so the re-render feels in-place.
-      const prevScroller = hostEl.querySelector(".cb-table-view-table-container");
-      const prevTop = prevScroller ? prevScroller.scrollTop : 0;
-      const prevLeft = prevScroller ? prevScroller.scrollLeft : 0;
+      // render() rebuilds the table from scratch but captures + restores the
+      // scroll position itself, so a background commit (coverage/fill edit,
+      // chip-×, row-×, picker-confirm) stays in place instead of snapping the
+      // user back to the top.
       render();
-      if (prevTop > 0 || prevLeft > 0) {
-        const nextScroller = hostEl.querySelector(".cb-table-view-table-container");
-        if (nextScroller) {
-          const maxTop = nextScroller.scrollHeight - nextScroller.clientHeight;
-          const maxLeft = nextScroller.scrollWidth - nextScroller.clientWidth;
-          nextScroller.scrollTop = Math.min(prevTop, Math.max(0, maxTop));
-          nextScroller.scrollLeft = Math.min(prevLeft, Math.max(0, maxLeft));
-        }
-      }
       // The details menu lives on document.body (survives the table rebuild) —
       // re-render its contents in place so an edit keeps it open with fresh data
       // instead of tearing it down.
