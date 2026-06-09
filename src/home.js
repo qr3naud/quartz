@@ -349,22 +349,9 @@
       ? nativeHeadingRowEl.getBoundingClientRect().height
       : 0;
     headingWrap.style.minHeight = `${nativeHeadingRowH > 0 ? nativeHeadingRowH : 57}px`;
-    // Clay-heart icon next to the heading (same chrome.runtime.getURL pattern
-    // as the tab's key icon). Must be listed in web_accessible_resources.
-    const heartIcon = document.createElement("img");
-    heartIcon.alt = "";
-    heartIcon.setAttribute("aria-hidden", "true");
-    heartIcon.style.width = "22px";
-    heartIcon.style.height = "22px";
-    heartIcon.style.flexShrink = "0";
-    heartIcon.style.objectFit = "contain";
-    if (typeof chrome !== "undefined" && chrome.runtime?.getURL) {
-      heartIcon.src = chrome.runtime.getURL("icons/clay-heart.png");
-    }
     const heading = document.createElement("h4");
     heading.className = "truncate text-xl font-bold font-sans tracking-tight";
-    heading.textContent = "You're gonna love this new tool";
-    headingWrap.appendChild(heartIcon);
+    heading.textContent = "Quartz";
     headingWrap.appendChild(heading);
     headingRow.appendChild(headingWrap);
 
