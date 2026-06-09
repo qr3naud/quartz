@@ -696,11 +696,12 @@
     // Amber "Pricing" button — enters the customer-facing multi-year pricing
     // view: the scope summary collapses into cost/savings cards, the
     // Projected/Actual toggle becomes a 1/2/3-year term toggle, and the table
-    // collapses to per-use-case per-year volume editors. Internal-only (same
-    // gate as Export-to-GTME); the bands + approval stay behind the in-view
-    // "View Bands" control so the main view is safe to screen-share.
+    // collapses to per-use-case per-year volume editors. Maintainer-only (the
+    // signed `is_admin` claim, via canUsePricingView); the bands + approval stay
+    // behind the in-view "View Bands" control so the main view is safe to
+    // screen-share.
     let pricingBtn = null;
-    if (__cb.hasFeature?.("gtme_export")) {
+    if (__cb.canUsePricingView?.()) {
       pricingBtn = document.createElement("button");
       pricingBtn.className = "cb-toolbar-btn cb-toolbar-pricing";
       pricingBtn.type = "button";
@@ -2047,7 +2048,10 @@
     // the cost/savings strip (CSS keys off .cb-summary-pricing) and flips the
     // table view (term toggle + per-use-case year editors + View Bands).
     __cb.setPricingMode = function (on) {
-      const next = !!on;
+      // Clamp to the maintainer gate: this is the single chokepoint for the
+      // button click and both restore paths (openCanvas, switchTab), so a
+      // non-maintainer can never enter — or be restored into — pricing mode.
+      const next = !!on && !!__cb.canUsePricingView?.();
       __cb.pricingMode = next;
       if (__cb.overlayEl) __cb.overlayEl.setAttribute("data-cb-pricing-mode", next ? "on" : "off");
       summaryBar.classList.toggle("cb-summary-pricing", next);

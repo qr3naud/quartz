@@ -204,6 +204,14 @@
       return !!window.__cb.isAdmin;
     },
 
+    // The amber Pricing button (overlay.js) and the multi-year pricing view it
+    // toggles are maintainer-only — same signed `is_admin` gate as the canvas
+    // view and the "Old vs New Pricing" modal. setPricingMode also clamps on
+    // this, so a non-maintainer can't be restored into a persisted pricing view.
+    canUsePricingView() {
+      return !!window.__cb.isAdmin;
+    },
+
     // "projected" (default — catalog credits × records) vs "actual" (real
     // spend pulled from Clay's realtime credit usage warehouse, attached to
     // ER cards via data.stats.spend at import time). Toggled by the
