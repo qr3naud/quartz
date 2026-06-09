@@ -2344,8 +2344,10 @@
       let widest = -1;
       for (const k of linkedKeys) {
         const e = erByKey.get(k);
+        // Widest by run-status rows (what ran), not billed cellCount, so the
+        // coverage + fill the row divides against ignore re-run inflation.
         const cov = actualMode
-          ? erRanCount(e)
+          ? erRunRows(e)
           : Number(e.data.coverageRows ?? Infinity);
         if (cov > widest) { widest = cov; erCard = e; }
       }
@@ -2853,6 +2855,16 @@
         ? { ran: Number(d.stats.coverage.ran) || 0, total: Number(d.stats.coverage.total) || 0 }
         : null;
 
+    // Run-status snapshot for the Actual badge + popover (cost-independent):
+    //   runRate     = rows it ran on ÷ total        (how much of the table)
+    //   successRate = rows that returned a value ÷ rows it ran  (hit rate)
+    const _cov = d.stats?.coverage;
+    const runRows = erRunRows(er);
+    const succeededRows = erSucceededRows(er);
+    const totalRows = _cov ? Number(_cov.total) || 0 : 0;
+    const runRate = totalRows > 0 ? runRows / totalRows : null;
+    const successRate = runRows > 0 ? succeededRows / runRows : null;
+
     return {
       id: er.id,
       name: d.displayName || d.text || (isWaterfall ? "Waterfall" : "Untitled enrichment"),
@@ -2917,6 +2929,13 @@
       dpCardId: opts && opts.dpCardId != null ? opts.dpCardId : null,
       // True when the DP links 2+ ERs — the chip shows its run-share badge.
       multiEr: opts ? !!opts.multiEr : false,
+      // Run-status snapshot (Actual): run rate (ran/total) + success rate
+      // (returned-a-value/ran), and the raw counts the popover/badge render.
+      runRows,
+      succeededRows,
+      totalRows,
+      runRate,
+      successRate,
     };
   }
 
@@ -2978,14 +2997,30 @@
     if (__cb.saveTabs) __cb.saveTabs();
   }
 
-  // Actual "rows this enrichment ran on" — measured cells, falling back to
-  // coverage attempts. Mirrors erRanCount in buildRows so the widest-ER pick
-  // for a DP's fill matches what Actual mode displays.
+  // Rows an enrichment RAN on, from run-status (coverage.attempted) — NOT billed
+  // cellCount. This is the snapshot of what actually executed, so re-runs don't
+  // inflate it (billing/cellCount inflates by execution count). It's the basis
+  // for the Actual run-rate / success-rate display and the widest-ER pick a data
+  // point's coverage + fill divide against. Billed cellCount stays the cost-split
+  // basis (erRanCount in buildRows). Falls back to coverage.ran (success) for
+  // legacy stats blocks that predate `attempted`.
+  function erRunRows(er) {
+    const cov = er?.data?.stats?.coverage;
+    return Number(cov?.attempted ?? cov?.ran) || 0;
+  }
+
+  // Rows that returned a value (success minus ran-but-empty), for the
+  // success-rate metric. Falls back to coverage.ran when `succeeded` is absent.
+  function erSucceededRows(er) {
+    const cov = er?.data?.stats?.coverage;
+    if (cov?.succeeded != null) return Number(cov.succeeded) || 0;
+    return Number(cov?.ran) || 0;
+  }
+
+  // Back-compat alias for the widest-ER pick + the copy-from-Actual routine.
+  // Run-status-based now (see erRunRows) so it matches the Actual display.
   function erActualRanCount(er) {
-    const d = er?.data || {};
-    const cells = Number(d.stats?.spend?.cellCount) || 0;
-    if (cells > 0) return cells;
-    return Number(d.stats?.coverage?.ran) || 0;
+    return erRunRows(er);
   }
 
   // The widest linked enrichment for a data point (max actual run count). The
@@ -3399,6 +3434,58 @@
     title.textContent = readOnly ? "Run-share \u00b7 measured" : "Run-share";
     pop.appendChild(title);
 
+    if (readOnly) {
+      // Two cost-independent run-status metrics, read-only:
+      //   Run rate     = rows it ran on ÷ total rows
+      //   Success rate = rows that returned a value ÷ rows it ran
+      const pctOf = (r) => (r == null ? "\u2014" : Math.round(r * 100) + "%");
+      const mkStat = (valueText, labelText, detailText) => {
+        const row = document.createElement("div");
+        row.className = "cb-table-view-share-row";
+        const val = document.createElement("span");
+        val.className = "cb-table-view-share-stat-val";
+        val.textContent = valueText;
+        const label = document.createElement("span");
+        label.textContent = labelText;
+        row.appendChild(val);
+        row.appendChild(label);
+        pop.appendChild(row);
+        if (detailText) {
+          const sub = document.createElement("div");
+          sub.className = "cb-table-view-share-sum";
+          sub.textContent = detailText;
+          pop.appendChild(sub);
+        }
+      };
+      const ranTxt = formatNumber(er.runRows || 0);
+      const totTxt = formatNumber(er.totalRows || 0);
+      const hitTxt = formatNumber(er.succeededRows || 0);
+      mkStat(pctOf(er.runRate), "run rate",
+        er.totalRows > 0 ? `${ranTxt} / ${totTxt} rows ran` : null);
+      mkStat(pctOf(er.successRate), "success rate",
+        er.runRows > 0 ? `${hitTxt} / ${ranTxt} returned a value` : null);
+
+      const close = () => closeErShareMenu();
+      pop.tabIndex = -1;
+      pop.addEventListener("keydown", (evt) => {
+        if (evt.key === "Escape" || evt.key === "Enter") { evt.preventDefault(); close(); }
+      });
+      erShareMenuBackdrop.addEventListener("mousedown", (evt) => {
+        evt.stopPropagation();
+        close();
+      });
+      document.body.appendChild(erShareMenuBackdrop);
+      document.body.appendChild(pop);
+      erShareMenuEl = pop;
+      erShareMenuOutsideUnbind =
+        window.__cb.bindOutsideMousedown?.(pop, close) ?? null;
+      pop.style.position = "fixed";
+      pop.style.zIndex = "9999999";
+      __cb.placePopover?.(pop, anchorEl || hostEl, { gap: 6, align: "left" });
+      pop.focus({ preventScroll: true });
+      return;
+    }
+
     const pctToRows = (pct) => (base > 0 ? Math.round(((Number(pct) || 0) / 100) * base) : 0);
     const rowsToPct = (rows) => (base > 0 ? Math.round(((Number(rows) || 0) / base) * 100) : 0);
 
@@ -3425,44 +3512,6 @@
     // Row 2: equivalent rows (= % x base) — linked to row 1 both ways.
     const rowsInput = mkRow(base > 0 ? `of ~${formatNumber(base)} rows` : "rows");
     rowsInput.value = String(pctToRows(pctInput.value));
-
-    // Read-only (Actual) view: the % is measured, so skip the order row, the
-    // editable Σ hint, and all commit wiring. Inputs are disabled; a short note
-    // names the denominator (mirrors the Fill cell tooltip). Outside-click,
-    // backdrop, Enter, and Escape all just close.
-    if (readOnly) {
-      pctInput.disabled = true;
-      rowsInput.disabled = true;
-      const note = document.createElement("div");
-      note.className = "cb-table-view-share-sum";
-      note.textContent =
-        "Measured \u2014 rows that ran \u00f7 the widest linked enrichment";
-      pop.appendChild(note);
-
-      const close = () => closeErShareMenu();
-      pop.tabIndex = -1;
-      pop.addEventListener("keydown", (evt) => {
-        if (evt.key === "Escape" || evt.key === "Enter") {
-          evt.preventDefault();
-          close();
-        }
-      });
-      erShareMenuBackdrop.addEventListener("mousedown", (evt) => {
-        evt.stopPropagation();
-        close();
-      });
-
-      document.body.appendChild(erShareMenuBackdrop);
-      document.body.appendChild(pop);
-      erShareMenuEl = pop;
-      erShareMenuOutsideUnbind =
-        window.__cb.bindOutsideMousedown?.(pop, close) ?? null;
-      pop.style.position = "fixed";
-      pop.style.zIndex = "9999999";
-      __cb.placePopover?.(pop, anchorEl || hostEl, { gap: 6, align: "left" });
-      pop.focus({ preventScroll: true });
-      return;
-    }
 
     // Row 3: order (1..N) — reposition this chip among the DP's ERs.
     const orderInput = mkRow(n > 1 ? `order (1\u2013${n})` : "order");
@@ -6874,10 +6923,16 @@
       const shareBtn = document.createElement("button");
       shareBtn.type = "button";
       shareBtn.className = "cb-table-view-er-chip-share";
-      const pct = Math.round(er.runShare * 100);
+      // Actual badge = run rate (rows it ran on ÷ total, from run-status), so a
+      // re-run column reads its true "1%" instead of the billing-inflated cost
+      // share. Projected keeps the editable cost-split share.
+      const ratio = actual && er.runRate != null ? er.runRate : er.runShare;
+      const pct = Math.round((ratio ?? 0) * 100);
       shareBtn.textContent = pct + "%";
       shareBtn.title = actual
-        ? `Ran on ~${pct}% of rows \u2014 click for the breakdown`
+        ? (er.totalRows > 0
+            ? `Ran on ${formatNumber(er.runRows)} / ${formatNumber(er.totalRows)} rows (${pct}%) \u2014 click for the breakdown`
+            : `Ran on ~${pct}% of rows \u2014 click for the breakdown`)
         : "Run-share \u2014 click to edit % / rows / order";
       shareBtn.addEventListener("mousedown", (evt) => evt.stopPropagation());
       shareBtn.addEventListener("click", (evt) => {
@@ -7168,10 +7223,24 @@
     const rows = Math.round((er.runShare ?? 0) * base);
     const text = base > 0 ? `${pct}% \u00b7 ~${formatNumber(rows)} rows` : `${pct}%`;
     if (which === "actual") {
-      const span = document.createElement("span");
-      span.className = "cb-table-view-er-menu-share";
-      span.textContent = text;
-      span.title = `Ran on ~${pct}% of rows`;
+      // Actual = run rate (run-status), consistent with the chip badge; the
+      // title carries the success rate too. Clickable → read-only breakdown.
+      const runPct = er.runRate != null ? Math.round(er.runRate * 100) : pct;
+      const succPct = er.successRate != null ? Math.round(er.successRate * 100) : null;
+      const span = document.createElement("button");
+      span.type = "button";
+      span.className = "cb-table-view-er-menu-share cb-table-view-er-menu-share-edit";
+      span.textContent = er.totalRows > 0
+        ? `${runPct}% \u00b7 ~${formatNumber(er.runRows)} rows`
+        : `${runPct}%`;
+      span.title = succPct != null
+        ? `Ran ${formatNumber(er.runRows)}/${formatNumber(er.totalRows)} (${runPct}%) \u00b7 returned a value ${formatNumber(er.succeededRows)}/${formatNumber(er.runRows)} (${succPct}%)`
+        : `Ran on ~${runPct}% of rows`;
+      span.addEventListener("mousedown", (evt) => evt.stopPropagation());
+      span.addEventListener("click", (evt) => {
+        evt.stopPropagation();
+        openErShareMenu(er, span);
+      });
       return span;
     }
     const btn = document.createElement("button");

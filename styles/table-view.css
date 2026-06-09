@@ -1583,6 +1583,14 @@
 
 /* Inferred-use-case hint under the three inputs (Σ <total>% · clean merge /
    needs all). No buttons — the math is read off the percentages. */
+.cb-table-view-share-stat-val {
+  min-width: 64px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #111827;
+  font-variant-numeric: tabular-nums;
+}
+
 .cb-table-view-share-sum {
   margin-top: 2px;
   font-size: 11px;

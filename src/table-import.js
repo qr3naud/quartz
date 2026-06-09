@@ -72,7 +72,9 @@
       // Coverage numerator = success only (matches deriveActionStatsFromDataProfile);
       // `attempted` is carried for the fill-rate denominator so fill % is
       // "of the records the waterfall attempted, how many got a result."
-      out.coverage = { ran: coverageRan, total: coverageTotal, attempted: coverageAttempted };
+      // succeeded = rows that returned a value across the chain (fillSuccess);
+      // mirrors deriveActionStatsFromDataProfile's no-data-peeled success.
+      out.coverage = { ran: coverageRan, total: coverageTotal, attempted: coverageAttempted, succeeded: fillSuccess };
       out.fillRate = { success: fillSuccess, ran: coverageAttempted };
     }
     if (spendCredits > 0 || spendActions > 0 || spendCells > 0) {
@@ -307,6 +309,10 @@
   // Claygent Domain" showed 650/650 while most cells said "Missing input").
   const COND_SKIP_STATUS = "ERROR_RUN_CONDITION_NOT_MET";
   const INPUT_MISSING_STATUSES = new Set(["ERROR_MISSING_INPUT", "ERROR_BLANK_TOKEN"]);
+  // Rows that ran to completion but produced no value. The server folds these
+  // into successCount, but they are NOT a "hit": the success-rate metric peels
+  // them out so it reads "of the rows that ran, how many returned a value."
+  const NO_DATA_STATUS = "SUCCESS_NO_DATA";
 
   function deriveActionStatsFromDataProfile(dp) {
     if (!dp) return null;
@@ -317,11 +323,13 @@
 
     let condNotMet = 0;     // not-run rows the server counted as success
     let inputMissing = 0;   // not-run rows the server counted as error
+    let noData = 0;         // ran but returned nothing (folded into success)
     if (Array.isArray(dp.statusBreakdown)) {
       for (const entry of dp.statusBreakdown) {
         const c = Number(entry?.count) || 0;
         if (entry?.status === COND_SKIP_STATUS) condNotMet += c;
         else if (INPUT_MISSING_STATUSES.has(entry?.status)) inputMissing += c;
+        else if (entry?.status === NO_DATA_STATUS) noData += c;
       }
     }
 
@@ -332,10 +340,12 @@
     // "covered"); `attempted` is kept as the fill-rate denominator so fill % is
     // unaffected by the success-only coverage numerator.
     const attempted = adjustedSuccess + adjustedError + inProgress;
+    // Rows that returned an actual value (ran minus the ran-but-empty ones).
+    const succeeded = Math.max(0, adjustedSuccess - noData);
 
     if (attempted <= 0 || total <= 0) return null;
     return {
-      coverage: { ran: adjustedSuccess, total, attempted },
+      coverage: { ran: adjustedSuccess, total, attempted, succeeded },
       fillRate: { success: adjustedSuccess, ran: attempted },
       condNotMet: condNotMet + inputMissing,
     };
