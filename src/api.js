@@ -631,6 +631,102 @@
     return res.json();
   };
 
+  // Finds the FIRST record (in the view's display order) whose `fieldId` cell is
+  // empty, WITHOUT mutating the view. Reads the view's persisted filter + sort,
+  // ANDs in an emptiness clause for the field, and asks the ad-hoc /find
+  // endpoint (POST /v3/tables/:id/find) for a single match. `operator` is the
+  // emptiness operator: "EMPTY" for basic columns, or a run-status operator
+  // ("NO_RESULTS"/"HAS_NOT_RUN") for action columns. Returns the recordId
+  // string, or null when nothing is missing. Throws on network/HTTP error so
+  // the caller can surface a toast. Used by the table-view "spotcheck" button.
+  //
+  // The view-filter -> pagination-filter conversion mirrors the server's
+  // gridViewFilterConfigToPaginationFilter (apps/api/v3/tables/services/
+  // view.service.ts) so /find matches exactly what the grid shows.
+  __cb.fetchFirstEmptyRecord = async function (tableId, viewId, fieldId, operator = "EMPTY") {
+    if (!tableId || !fieldId) return null;
+
+    const toField = (it) => ({
+      type: "FIELD",
+      fieldId: it.fieldId,
+      filterConfig: { type: "OPERATOR", operator: it.type, value: it.value },
+    });
+    const viewFilterToPagination = (vf) => {
+      if (!vf || !Array.isArray(vf.items)) return null;
+      const operands = [];
+      for (const it of vf.items) {
+        if (!it || it.disabled) continue;
+        if (it.filterType === "Group") {
+          const enabled = (it.items || []).filter((x) => x && !x.disabled);
+          if (!enabled.length) continue;
+          operands.push({
+            type: it.combinationMode === "OR" ? "OR" : "AND",
+            operands: enabled.map(toField),
+          });
+        } else {
+          operands.push(toField(it));
+        }
+      }
+      if (!operands.length) return null;
+      return { type: vf.combinationMode === "OR" ? "OR" : "AND", operands };
+    };
+
+    // View filter + sort make the match respect the view's display order. Best
+    // effort: if the view fetch fails, fall back to an unfiltered default-order
+    // search (still finds a genuinely-missing cell).
+    let viewFilter = null;
+    let sorts = [];
+    if (viewId) {
+      try {
+        const vres = await fetch(
+          `https://api.clay.com/v3/tables/${tableId}/views/${viewId}`,
+          { credentials: "include" }
+        );
+        if (vres.ok) {
+          const vbody = await vres.json();
+          const view = vbody?.result ?? vbody;
+          viewFilter = viewFilterToPagination(view?.filter);
+          const items = view?.sort?.items;
+          if (Array.isArray(items)) {
+            sorts = items
+              .filter((s) => s && s.fieldId)
+              .map((s) => ({
+                fieldId: s.fieldId,
+                sortOrder:
+                  String(s.direction || "").toLowerCase() === "desc" ? "desc" : "asc",
+              }));
+          }
+        }
+      } catch (_e) {
+        /* non-fatal — fall through to an unfiltered search */
+      }
+    }
+
+    const emptyClause = {
+      type: "FIELD",
+      fieldId,
+      filterConfig: { type: "OPERATOR", operator },
+    };
+    const filter = viewFilter
+      ? { type: "AND", operands: [viewFilter, emptyClause] }
+      : emptyClause;
+    const body = sorts.length ? { filter, sorts } : { filter };
+
+    const res = await fetch(
+      `https://api.clay.com/v3/tables/${tableId}/find?limit=1`,
+      {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      }
+    );
+    if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
+    const data = await res.json();
+    const first = Array.isArray(data?.results) ? data.results[0] : null;
+    return first?.id ?? null;
+  };
+
   // The bulk runstatus endpoint returns the literal string "_pending" while
   // its Redis cache is cold and the backend is still computing per-field
   // counts. Poll a few times so cards can populate, then give up so the

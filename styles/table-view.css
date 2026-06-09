@@ -1312,6 +1312,46 @@
   }
 }
 
+/* "Spotcheck missing data" button — sits at the right edge of the Fill cell and
+   is revealed on row hover. Clicking jumps the grid to the first empty cell. */
+.cb-table-view-table td.col-fill {
+  position: relative;
+}
+
+.cb-fill-spotcheck {
+  position: absolute;
+  right: 3px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: #9ca3af;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.1s ease, color 0.1s ease, background 0.1s ease;
+}
+
+.cb-table-view-table tr:hover .cb-fill-spotcheck {
+  opacity: 1;
+}
+
+.cb-fill-spotcheck:hover {
+  color: #16a34a;
+  background: rgba(22, 163, 74, 0.1);
+}
+
+.cb-fill-spotcheck:disabled {
+  cursor: default;
+  opacity: 1;
+}
+
 /* ---- ER chips ---- */
 
 .cb-table-view-er-chips {

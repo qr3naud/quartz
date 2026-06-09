@@ -3321,7 +3321,12 @@
   // carry both fieldId and tableId — earlier cards / picker-dropped cards
   // return early and the menu never appears for them anyway (the cards.js
   // guard checks the same fields before showing the menu).
-  __cb.openCardInTable = function (card) {
+  // Optional `recordId` deep-links to a specific CELL: Clay's VirtualizedGrid
+  // consumes `?recordId=&fieldId=` (useQuerySchemaActions) to scroll to the
+  // row x column intersection AND draw its green emphasis ring. Without it this
+  // behaves as before (column-only focus). The table-view "spotcheck" button
+  // passes the first missing record id.
+  __cb.openCardInTable = function (card, recordId) {
     const data = card?.data;
     if (!data?.fieldId || !data?.tableId) return;
     const ids = __cb.parseIdsFromUrl();
@@ -3330,9 +3335,10 @@
     if (!workspaceId || !workbookId) return;
 
     const base = `/workspaces/${workspaceId}/workbooks/${workbookId}/tables/${data.tableId}`;
-    const url = data.viewId
-      ? `${base}/views/${data.viewId}?fieldId=${encodeURIComponent(data.fieldId)}`
-      : `${base}?fieldId=${encodeURIComponent(data.fieldId)}`;
+    const params = new URLSearchParams({ fieldId: data.fieldId });
+    if (recordId) params.set("recordId", recordId);
+    const qs = params.toString();
+    const url = data.viewId ? `${base}/views/${data.viewId}?${qs}` : `${base}?${qs}`;
 
     // Same-table jump: the extension is already overlaying this exact table, so
     // the grid (and the target column's neighborhood) is mounted. Soft-navigate

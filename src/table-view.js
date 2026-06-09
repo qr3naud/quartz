@@ -1232,11 +1232,72 @@
         attachInfoTip(td, [ratioLine, whyLine], { delayMs: 120 });
         td.setAttribute("aria-label", `${ratioLine} \u2014 ${whyLine}`);
       }
+      // "Spotcheck" affordance: when a DP column isn't fully filled, reveal a
+      // small target button (on row hover) that jumps to + highlights the first
+      // missing cell in the grid. Gated to imported DPs (need fieldId/tableId)
+      // and to <100% fill (nothing to find at 100%).
+      const cardForFill = __cb.canvas?.getCardById?.(cardId);
+      if (
+        cardForFill?.data?.fieldId &&
+        cardForFill?.data?.tableId &&
+        Number(fill.pct) < 100
+      ) {
+        const spot = document.createElement("button");
+        spot.type = "button";
+        spot.className = "cb-fill-spotcheck";
+        spot.title = "Jump to the first missing cell in the table";
+        spot.setAttribute("aria-label", "Find first missing cell in the table");
+        spot.innerHTML = targetSvg(12);
+        spot.addEventListener("mousedown", (e) => e.stopPropagation());
+        spot.addEventListener("click", (e) => {
+          e.stopPropagation();
+          spotcheckMissing(cardForFill, spot);
+        });
+        td.appendChild(spot);
+      }
     } else {
       td.className = "col-fill cb-table-view-cell-muted";
       td.textContent = "\u2014";
     }
     return td;
+  }
+
+  // "Spotcheck": jump to (and highlight) the first row whose cell for this data
+  // point is empty, so a low fill rate is verifiable in one click. Uses the
+  // ad-hoc /find endpoint (no view mutation) + the ?recordId=&fieldId= deep
+  // link, which makes Clay scroll to the cell and draw its emphasis ring.
+  // `anchorBtn` (optional) gets an inline spinner while the lookup is in flight.
+  async function spotcheckMissing(card, anchorBtn) {
+    const data = card?.data || {};
+    if (!data.fieldId || !data.tableId) {
+      __cb.showOverlayToast?.("This data point isn't linked to a table column.");
+      return;
+    }
+    let restore = null;
+    if (anchorBtn) {
+      restore = anchorBtn.innerHTML;
+      anchorBtn.disabled = true;
+      anchorBtn.innerHTML = '<span class="cb-table-view-fill-spinner"></span>';
+    }
+    try {
+      const recordId = await __cb.fetchFirstEmptyRecord(
+        data.tableId,
+        data.viewId,
+        data.fieldId,
+      );
+      if (!recordId) {
+        __cb.showOverlayToast?.("No missing cells in the current view.");
+        return;
+      }
+      __cb.openCardInTable(card, recordId);
+    } catch (_e) {
+      __cb.showOverlayToast?.("Couldn't check for missing data \u2014 try again.");
+    } finally {
+      if (anchorBtn && restore != null) {
+        anchorBtn.disabled = false;
+        anchorBtn.innerHTML = restore;
+      }
+    }
   }
 
   // ---- Actual-spend session cutoff picker ---------------------------------
@@ -5415,6 +5476,13 @@
             openNotePopover(cardId, anchor);
           },
         });
+
+        if (card.data.fieldId && card.data.tableId) {
+          content.push({
+            label: "Find first missing data",
+            action: () => spotcheckMissing(card),
+          });
+        }
 
         const destructive = [
           { label: "Delete data point", action: () => deleteRows(numIds) },
