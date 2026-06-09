@@ -888,6 +888,58 @@
     return card;
   }
 
+  // Seed the table-view row order for a freshly imported table so data points
+  // that share the SAME enrichment set start adjacent. The Enrichments cell
+  // only rowspan-merges CONTIGUOUS rows with an identical erKey, but the import
+  // grid + clusterByLineage layout interleaves same-ER DPs (e.g. "Score" gets
+  // split from "Country Score (2)/(3)"). We do a stable group-by erKey over the
+  // cards' natural placement order and stamp sequential `tableOrder`, so each
+  // enrichment's rows render as one merged section by default.
+  //
+  // This sets only the INITIAL order: drag-to-reorder owns `tableOrder` after
+  // import and freely overwrites it (render never re-clusters), so manual
+  // ordering and the row context menu are unaffected. Re-importing re-seeds.
+  function seedTableOrderByLineage(tableId) {
+    if (!__cb.canvas || !__cb.model || tableId == null) return;
+    const nodes = __cb.model.getNodes();
+    const dps = nodes.filter(
+      (c) => c.data?.type === "dp" && c.data?.tableId === tableId,
+    );
+    if (dps.length === 0) return;
+
+    // Base the sequence past the max tableOrder of every OTHER card (excluding
+    // the DPs we're about to reseed) so a re-import re-seeds this table's block
+    // in a stable position below unrelated content, and a fresh import starts
+    // at 0.
+    const reseeding = new Set(dps.map((c) => c.id));
+    let maxOrder = -1;
+    for (const c of nodes) {
+      if (reseeding.has(c.id)) continue;
+      if (typeof c.tableOrder === "number" && c.tableOrder > maxOrder) {
+        maxOrder = c.tableOrder;
+      }
+    }
+
+    // Stable group-by erKey (sorted lineage key set). Empty key -> a per-card
+    // singleton bucket so unlinked DPs keep their natural slot instead of all
+    // clumping into one block.
+    const buckets = new Map();
+    for (const card of dps) {
+      const keys = (__cb.dpErKeys ? __cb.dpErKeys(card) : null)
+        || card.data.sourceEnrichmentFieldIds
+        || [];
+      const erKey = keys.length ? keys.slice().sort().join("|") : `\u0000solo_${card.id}`;
+      if (!buckets.has(erKey)) buckets.set(erKey, []);
+      buckets.get(erKey).push(card);
+    }
+
+    let next = maxOrder + 1;
+    for (const group of buckets.values()) {
+      for (const card of group) card.tableOrder = next++;
+    }
+    __cb.canvas.notifyChange?.();
+  }
+
   function addInputCardFromField(field, x, y, tableId, viewId) {
     return __cb.canvas.addInputCard(field.name, {
       x,
@@ -2168,6 +2220,11 @@
       }
       importedAny = true;
     }
+
+    // Seed the initial table-view row order so each enrichment's data points
+    // are contiguous (and the Enrichments cell merges into one section). Only
+    // sets defaults; drag-to-reorder takes over afterward.
+    if (importedAny) seedTableOrderByLineage(tableId);
 
     if (importedAny && __cb.canvas.refreshClusters) {
       // Importer drops new cards adjacent to each other; snap-derive
