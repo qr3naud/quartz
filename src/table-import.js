@@ -1241,7 +1241,12 @@
         const field = fieldById[fid];
         if (!field) return;
         if (field.type === "action" || field.type === "source") {
-          if (fieldIsBillable(field)) addKey(fid);
+          // Sources are free but still LINK as a data point's origin: a mapped
+          // column ("[Final]" etc.) extracted from a "Rows from: X" source
+          // should show that source as its enrichment instead of an empty ER
+          // column. Billable actions link as before; only sources bypass the
+          // billable gate (free non-source actions stay unlinked).
+          if (field.type === "source" || fieldIsBillable(field)) addKey(fid);
           // Continue through this action's inputs to reach upstream ancestors
           // (the expensive ER feeding a cheap AI column). A free action still
           // forwards its inputs so a billable ancestor behind it is captured.
@@ -1315,7 +1320,10 @@
         if (importedErIds.has(key) || promotedSeen.has(key)) continue;
         const f = fieldById[key];
         if (!f || (f.type !== "action" && f.type !== "source")) continue;
-        if (!fieldIsBillable(f)) continue;
+        // Sources are free yet must still import as a card so the DPs that map
+        // from them render a "Source" enrichment; only non-source actions keep
+        // the billable gate (a free action stays out of the canvas).
+        if (f.type !== "source" && !fieldIsBillable(f)) continue;
         promotedSeen.add(key);
         promotedErFields.push(f);
       }
