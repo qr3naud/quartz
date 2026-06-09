@@ -1247,7 +1247,7 @@
         spot.className = "cb-fill-spotcheck";
         spot.title = "Jump to the first missing cell in the table";
         spot.setAttribute("aria-label", "Find first missing cell in the table");
-        spot.innerHTML = targetSvg(12);
+        spot.innerHTML = targetSvg(16);
         spot.addEventListener("mousedown", (e) => e.stopPropagation());
         spot.addEventListener("click", (e) => {
           e.stopPropagation();

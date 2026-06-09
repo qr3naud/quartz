@@ -1320,22 +1320,21 @@
 
 .cb-fill-spotcheck {
   position: absolute;
-  right: 3px;
+  right: 2px;
   top: 50%;
   transform: translateY(-50%);
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 18px;
-  height: 18px;
+  width: 22px;
+  height: 22px;
   padding: 0;
   border: none;
-  border-radius: 4px;
   background: transparent;
   color: #9ca3af;
   cursor: pointer;
   opacity: 0;
-  transition: opacity 0.1s ease, color 0.1s ease, background 0.1s ease;
+  transition: opacity 0.1s ease, color 0.1s ease;
 }
 
 .cb-table-view-table tr:hover .cb-fill-spotcheck {
@@ -1344,7 +1343,6 @@
 
 .cb-fill-spotcheck:hover {
   color: #16a34a;
-  background: rgba(22, 163, 74, 0.1);
 }
 
 .cb-fill-spotcheck:disabled {
