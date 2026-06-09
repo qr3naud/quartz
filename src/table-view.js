@@ -1245,9 +1245,14 @@
         const spot = document.createElement("button");
         spot.type = "button";
         spot.className = "cb-fill-spotcheck";
-        spot.title = "Jump to the first missing cell in the table";
         spot.setAttribute("aria-label", "Find first missing cell in the table");
         spot.innerHTML = targetSvg(16);
+        // Same custom tip as the Fill cell (no native `title` — it'd double up).
+        attachInfoTip(
+          spot,
+          ["Spotcheck missing data", "Jump to the first empty cell in this column"],
+          { delayMs: 120 },
+        );
         spot.addEventListener("mousedown", (e) => e.stopPropagation());
         spot.addEventListener("click", (e) => {
           e.stopPropagation();
@@ -1659,6 +1664,12 @@
   // section is expanded or collapsed, and isn't clipped by the table's overflow.
   // The native `title` attribute is unreliable inside the overlay, so we build
   // our own. `lines` render one per row.
+  // Module-level so only ONE info tip is visible at a time. The Fill cell's
+  // ratio tip lives on the <td> and the spotcheck button's tip on a child of
+  // that td; moving onto a child doesn't fire the parent's mouseleave, so
+  // without this they'd stack. show() drops any other tip before mounting.
+  let activeInfoTip = null;
+
   function attachInfoTip(iconEl, lines, opts) {
     const delayMs = (opts && opts.delayMs) || 0;
     let tip = null;
@@ -1670,12 +1681,17 @@
       }
       if (tip) {
         tip.remove();
+        if (activeInfoTip === tip) activeInfoTip = null;
         tip = null;
       }
       document.removeEventListener("scroll", hide, true);
     };
     const show = () => {
       hide();
+      if (activeInfoTip) {
+        activeInfoTip.remove();
+        activeInfoTip = null;
+      }
       tip = document.createElement("div");
       tip.className = "cb-uc-info-tip";
       for (const l of lines) {
@@ -1684,6 +1700,7 @@
         tip.appendChild(d);
       }
       document.body.appendChild(tip);
+      activeInfoTip = tip;
       const r = iconEl.getBoundingClientRect();
       const w = tip.offsetWidth;
       let left = r.left + r.width / 2 - w / 2;
