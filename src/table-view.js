@@ -2246,6 +2246,13 @@
           multiEr,
         }));
       }
+      // Always surface the highest run-rate (run-status) enrichment first, in
+      // both modes. This sorts the chip DISPLAY only — cost was already summed
+      // above (order-independent), so credits/actions are unchanged. Run rate is
+      // stamped at import, so it's available in Projected too. isPrimary tracks
+      // the new order.
+      ers.sort((a, b) => (b.runRate ?? -1) - (a.runRate ?? -1));
+      ers.forEach((e, i) => { e.isPrimary = i === 0; });
       dpInfoMap.set(dpId, { credits, actions, creditsUnknown, ers, enrichmentCount: n });
     }
 
@@ -3456,30 +3463,34 @@
       //   Run rate     = rows it ran on ÷ total rows
       //   Success rate = rows that returned a value ÷ rows it ran
       const pctOf = (r) => (r == null ? "\u2014" : Math.round(r * 100) + "%");
-      const mkStat = (valueText, labelText, detailText) => {
+      const mkMetric = (pctText, labelText, detailText) => {
         const row = document.createElement("div");
-        row.className = "cb-table-view-share-row";
-        const val = document.createElement("span");
-        val.className = "cb-table-view-share-stat-val";
-        val.textContent = valueText;
-        const label = document.createElement("span");
-        label.textContent = labelText;
-        row.appendChild(val);
-        row.appendChild(label);
-        pop.appendChild(row);
+        row.className = "cb-table-view-share-metric";
+        const big = document.createElement("div");
+        big.className = "cb-table-view-share-metric-pct";
+        big.textContent = pctText;
+        const txt = document.createElement("div");
+        txt.className = "cb-table-view-share-metric-text";
+        const lab = document.createElement("div");
+        lab.className = "cb-table-view-share-metric-label";
+        lab.textContent = labelText;
+        txt.appendChild(lab);
         if (detailText) {
-          const sub = document.createElement("div");
-          sub.className = "cb-table-view-share-sum";
-          sub.textContent = detailText;
-          pop.appendChild(sub);
+          const det = document.createElement("div");
+          det.className = "cb-table-view-share-metric-detail";
+          det.textContent = detailText;
+          txt.appendChild(det);
         }
+        row.appendChild(big);
+        row.appendChild(txt);
+        pop.appendChild(row);
       };
       const ranTxt = formatNumber(er.runRows || 0);
       const totTxt = formatNumber(er.totalRows || 0);
       const hitTxt = formatNumber(er.succeededRows || 0);
-      mkStat(pctOf(er.runRate), "run rate",
+      mkMetric(pctOf(er.runRate), "run rate",
         er.totalRows > 0 ? `${ranTxt} / ${totTxt} rows ran` : null);
-      mkStat(pctOf(er.successRate), "success rate",
+      mkMetric(pctOf(er.successRate), "success rate",
         er.runRows > 0 ? `${hitTxt} / ${ranTxt} returned a value` : null);
 
       const close = () => closeErShareMenu();
@@ -7240,25 +7251,34 @@
     const rows = Math.round((er.runShare ?? 0) * base);
     const text = base > 0 ? `${pct}% \u00b7 ~${formatNumber(rows)} rows` : `${pct}%`;
     if (which === "actual") {
-      // Actual = run rate (run-status), consistent with the chip badge; the
-      // title carries the success rate too. Clickable → read-only breakdown.
-      const runPct = er.runRate != null ? Math.round(er.runRate * 100) : pct;
+      // Segmented pill (built like the cost pill): run rate ratio | success
+      // rate %, divider between. Non-bold, model-pill type, exact counts (no
+      // "~"). Clickable → read-only breakdown popover.
       const succPct = er.successRate != null ? Math.round(er.successRate * 100) : null;
-      const span = document.createElement("button");
-      span.type = "button";
-      span.className = "cb-table-view-er-menu-share cb-table-view-er-menu-share-edit";
-      span.textContent = er.totalRows > 0
-        ? `${runPct}% \u00b7 ~${formatNumber(er.runRows)} rows`
-        : `${runPct}%`;
-      span.title = succPct != null
-        ? `Ran ${formatNumber(er.runRows)}/${formatNumber(er.totalRows)} (${runPct}%) \u00b7 returned a value ${formatNumber(er.succeededRows)}/${formatNumber(er.runRows)} (${succPct}%)`
-        : `Ran on ~${runPct}% of rows`;
-      span.addEventListener("mousedown", (evt) => evt.stopPropagation());
-      span.addEventListener("click", (evt) => {
+      const pill = document.createElement("button");
+      pill.type = "button";
+      pill.className = "cb-pill cb-table-view-er-share-pill";
+      pill.title =
+        "Run rate (rows ran / total) \u00b7 success rate (returned a value / ran) \u2014 click for the breakdown";
+
+      const runSeg = document.createElement("span");
+      runSeg.className = "cb-pill-seg cb-table-view-er-share-seg";
+      runSeg.textContent = er.totalRows > 0
+        ? `${formatNumber(er.runRows)} / ${formatNumber(er.totalRows)}`
+        : "\u2014";
+      pill.appendChild(runSeg);
+
+      const succSeg = document.createElement("span");
+      succSeg.className = "cb-pill-seg cb-table-view-er-share-seg";
+      succSeg.textContent = succPct != null ? `${succPct}%` : "\u2014";
+      pill.appendChild(succSeg);
+
+      pill.addEventListener("mousedown", (evt) => evt.stopPropagation());
+      pill.addEventListener("click", (evt) => {
         evt.stopPropagation();
-        openErShareMenu(er, span);
+        openErShareMenu(er, pill);
       });
-      return span;
+      return pill;
     }
     const btn = document.createElement("button");
     btn.type = "button";

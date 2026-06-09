@@ -893,6 +893,31 @@
   background: var(--cb-surface-muted);
 }
 
+/* Run-share pill in the details menu — segmented like the cost pill
+   (run rate ratio | success rate %). Shell + segment layout come from the
+   shared .cb-pill / .cb-pill-seg primitives; this carries the share-specific
+   type + the internal divider. Matches the model/cost pill weight (not bold). */
+.cb-table-view-er-share-pill {
+  cursor: pointer;
+  transition: border-color 0.12s, background 0.12s;
+}
+
+.cb-table-view-er-share-pill:hover {
+  border-color: #a5b4fc;
+}
+
+.cb-table-view-er-share-seg {
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--cb-pill-text);
+  background: var(--cb-surface);
+  font-variant-numeric: tabular-nums;
+}
+
+.cb-table-view-er-share-seg+.cb-table-view-er-share-seg {
+  border-left: 1px solid var(--cb-border-pill);
+}
+
 /* Model value pill — indigo selectable pill (mirrors the canvas model chip),
    opens the same grouped model picker on click. */
 .cb-table-view-er-menu-model {
@@ -1594,6 +1619,46 @@
   font-size: 11px;
   font-weight: 600;
   color: #6b7280;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Read-only (measured) run-share popover: each metric is a big % paired with
+   its label + the exact ratio underneath. Rows divided by a hairline. */
+.cb-table-view-share-metric {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 2px;
+}
+
+.cb-table-view-share-metric+.cb-table-view-share-metric {
+  border-top: 1px solid #f1f5f9;
+}
+
+.cb-table-view-share-metric-pct {
+  min-width: 46px;
+  font-size: 18px;
+  font-weight: 600;
+  color: #111827;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.cb-table-view-share-metric-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.cb-table-view-share-metric-label {
+  font-size: 12px;
+  font-weight: 500;
+  color: #374151;
+}
+
+.cb-table-view-share-metric-detail {
+  font-size: 11px;
+  color: #9ca3af;
   font-variant-numeric: tabular-nums;
 }
 
