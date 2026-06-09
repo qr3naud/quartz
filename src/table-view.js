@@ -2246,12 +2246,12 @@
           multiEr,
         }));
       }
-      // Always surface the highest run-rate (run-status) enrichment first, in
-      // both modes. This sorts the chip DISPLAY only — cost was already summed
-      // above (order-independent), so credits/actions are unchanged. Run rate is
-      // stamped at import, so it's available in Projected too. isPrimary tracks
-      // the new order.
-      ers.sort((a, b) => (b.runRate ?? -1) - (a.runRate ?? -1));
+      // Always surface the highest run-rate enrichment first, in both modes.
+      // Display-only sort — cost was already summed above (order-independent),
+      // so credits/actions are unchanged. Actual sorts by measured run rate;
+      // Projected by the editable coverage run rate. isPrimary tracks the order.
+      const rrOf = (e) => (actualMode ? e.runRate : e.projectedRunRate) ?? -1;
+      ers.sort((a, b) => rrOf(b) - rrOf(a));
       ers.forEach((e, i) => { e.isPrimary = i === 0; });
       dpInfoMap.set(dpId, { credits, actions, creditsUnknown, ers, enrichmentCount: n });
     }
@@ -2889,6 +2889,13 @@
     const runRate = totalRows > 0 ? runRows / totalRows : null;
     const successRate = runRows > 0 ? succeededRows / runRows : null;
 
+    // Projected run rate = rows this ER is SET to run on ÷ its attempted total
+    // (the editable coverage that drives projected/catalog cost). Mirrors
+    // coverageFillFor's projected branch; success rate stays the measured one.
+    const projRunRows = d.coverageRows != null ? Number(d.coverageRows) || 0 : scopedRecords;
+    const projRunTotal = d.coverageTotalCustom ? (Number(d.coverageTotal) || 0) : scopedRecords;
+    const projectedRunRate = projRunTotal > 0 ? Math.min(1, projRunRows / projRunTotal) : null;
+
     return {
       id: er.id,
       name: d.displayName || d.text || (isWaterfall ? "Waterfall" : "Untitled enrichment"),
@@ -2960,6 +2967,11 @@
       totalRows,
       runRate,
       successRate,
+      // Projected run rate (editable coverage, drives catalog cost). Success
+      // rate in Projected reuses the measured successRate above (read-only).
+      projectedRunRows: projRunRows,
+      projectedRunTotal: projRunTotal,
+      projectedRunRate,
     };
   }
 
@@ -3436,14 +3448,8 @@
   // in one model update.
   function openErShareMenu(er, anchorEl) {
     closeErShareMenu();
-    const dp = __cb.canvas?.getCardById?.(er.dpCardId);
-    const key = lineageKeyForCardId(er.id);
-    const keys = dp ? __cb.dpErKeys(dp) : [];
-    const n = keys.length || 1;
-    const curIdx = Math.max(0, keys.indexOf(key));
-    const base = dpRowBase(er.dpCardId);
-    // Actual mode = measured run-share (this ER's runs ÷ the widest linked ER).
-    // Same popover, but read-only: inputs disabled, no order/Σ, no commit.
+    // Actual mode = measured run-share (read-only run rate + success rate).
+    // Projected = editable run rate (coverage, drives cost) + measured success.
     const readOnly = window.__cb?.viewMode === "actual";
 
     erShareMenuBackdrop = document.createElement("div");
@@ -3514,75 +3520,74 @@
       return;
     }
 
-    const pctToRows = (pct) => (base > 0 ? Math.round(((Number(pct) || 0) / 100) * base) : 0);
-    const rowsToPct = (rows) => (base > 0 ? Math.round(((Number(rows) || 0) / base) * 100) : 0);
+    // Projected (editable): run rate = rows this ER runs on / its attempted
+    // total — the editable coverage that drives catalog cost (via the shared
+    // commitErCoverageEdit, the same wiring the Coverage column uses). Success
+    // rate is the measured hit rate, read-only (single-sourced from run status).
+    const runLabel = document.createElement("div");
+    runLabel.className = "cb-table-view-share-metric-label";
+    runLabel.textContent = "run rate";
+    pop.appendChild(runLabel);
 
-    const mkRow = (labelText) => {
-      const row = document.createElement("div");
-      row.className = "cb-table-view-share-row";
+    const mkNum = (val, title) => {
       const input = document.createElement("input");
       input.type = "number";
       input.min = "0";
       input.className = "cb-table-view-share-input";
-      const label = document.createElement("span");
-      label.textContent = labelText;
-      row.appendChild(input);
-      row.appendChild(label);
-      pop.appendChild(row);
+      input.value = val != null ? String(val) : "";
+      input.title = title;
+      input.addEventListener("mousedown", (e) => e.stopPropagation());
+      input.addEventListener("click", (e) => e.stopPropagation());
       return input;
     };
+    const editRow = document.createElement("div");
+    editRow.className = "cb-table-view-share-row";
+    const rowsIn = mkNum(er.projectedRunRows, "Rows this enrichment runs on (drives projected cost)");
+    const sep = document.createElement("span");
+    sep.className = "cb-table-view-cov-sep";
+    sep.textContent = "/";
+    const totIn = mkNum(er.projectedRunTotal, "Attempted total (defaults to the record count)");
+    editRow.appendChild(rowsIn);
+    editRow.appendChild(sep);
+    editRow.appendChild(totIn);
+    pop.appendChild(editRow);
 
-    // Row 1: % of rows.
-    const pctInput = mkRow("% of rows");
-    pctInput.max = "1000";
-    pctInput.value = String(Math.round((er.runShare ?? 0) * 100));
+    // Success rate (measured, read-only) — the historical hit rate.
+    const succPct = er.successRate != null ? Math.round(er.successRate * 100) : null;
+    const sm = document.createElement("div");
+    sm.className = "cb-table-view-share-metric";
+    const smBig = document.createElement("div");
+    smBig.className = "cb-table-view-share-metric-pct";
+    smBig.textContent = succPct != null ? succPct + "%" : "\u2014";
+    const smTxt = document.createElement("div");
+    smTxt.className = "cb-table-view-share-metric-text";
+    const smLab = document.createElement("div");
+    smLab.className = "cb-table-view-share-metric-label";
+    smLab.textContent = "success rate";
+    smTxt.appendChild(smLab);
+    if (er.runRows > 0) {
+      const smDet = document.createElement("div");
+      smDet.className = "cb-table-view-share-metric-detail";
+      smDet.textContent =
+        `${formatNumber(er.succeededRows)} / ${formatNumber(er.runRows)} returned a value`;
+      smTxt.appendChild(smDet);
+    }
+    sm.appendChild(smBig);
+    sm.appendChild(smTxt);
+    pop.appendChild(sm);
 
-    // Row 2: equivalent rows (= % x base) — linked to row 1 both ways.
-    const rowsInput = mkRow(base > 0 ? `of ~${formatNumber(base)} rows` : "rows");
-    rowsInput.value = String(pctToRows(pctInput.value));
-
-    // Row 3: order (1..N) — reposition this chip among the DP's ERs.
-    const orderInput = mkRow(n > 1 ? `order (1\u2013${n})` : "order");
-    orderInput.min = "1";
-    orderInput.max = String(n);
-    orderInput.value = String(curIdx + 1);
-
-    // Σ hint: the inferred use case, read off the sum of all ERs' shares.
-    const sumEl = document.createElement("div");
-    sumEl.className = "cb-table-view-share-sum";
-    const renderSum = () => {
-      let total = 0;
-      for (let i = 0; i < keys.length; i++) {
-        const k = keys[i];
-        if (k === key) { total += Math.round(Number(pctInput.value) || 0); continue; }
-        const stored = dp ? __cb.dpErShare(dp, k) : null;
-        const s = stored != null ? stored : __cb.defaultErShare(i, keys.length);
-        total += Math.round(s * 100);
-      }
-      const mode = total >= 150 ? "needs all" : "clean merge";
-      sumEl.textContent = keys.length > 1 ? `\u03a3 ${total}% \u00b7 ${mode}` : `${total}%`;
-    };
-    renderSum();
-    pop.appendChild(sumEl);
-
-    pctInput.addEventListener("input", () => {
-      rowsInput.value = String(pctToRows(pctInput.value));
-      renderSum();
-    });
-    rowsInput.addEventListener("input", () => {
-      pctInput.value = String(rowsToPct(rowsInput.value));
-      renderSum();
-    });
-
+    // Commit both coverage values once focus leaves the popover (not on each
+    // input's blur, which would re-render and drop the second input mid-edit).
+    // Total first (denominator), then rows (clamped to it).
     let committed = false;
     function commit() {
-      if (committed) return; // blur + outside click + Enter can all fire
+      if (committed) return;
       committed = true;
-      const pos = Math.min(n, Math.max(1, Math.round(Number(orderInput.value) || curIdx + 1)));
-      commitDpShareAndOrder(er.dpCardId, er.id, pctInput.value, pos);
+      commitErCoverageEdit(er.id, "total", totIn.value);
+      commitErCoverageEdit(er.id, "rows", rowsIn.value);
       closeErShareMenu();
     }
-    for (const input of [pctInput, rowsInput, orderInput]) {
+    for (const input of [rowsIn, totIn]) {
       input.addEventListener("keydown", (evt) => {
         if (evt.key === "Enter") { evt.preventDefault(); commit(); }
         else if (evt.key === "Escape") { evt.preventDefault(); committed = true; closeErShareMenu(); }
@@ -3599,17 +3604,15 @@
     document.body.appendChild(erShareMenuBackdrop);
     document.body.appendChild(pop);
     erShareMenuEl = pop;
-    // Capture-phase outside mousedown -> commit (mirrors the backdrop), so an
-    // edit isn't lost when the click lands on the ER details menu, which sits a
-    // z-index tier above our backdrop and would otherwise swallow it. commit()
+    // Capture-phase outside mousedown -> commit (mirrors the backdrop). commit()
     // is idempotent, so this never double-fires with the backdrop or focusout.
     erShareMenuOutsideUnbind =
       window.__cb.bindOutsideMousedown?.(pop, commit) ?? null;
     pop.style.position = "fixed";
     pop.style.zIndex = "9999999";
     __cb.placePopover?.(pop, anchorEl || hostEl, { gap: 6, align: "left" });
-    pctInput.focus();
-    pctInput.select();
+    rowsIn.focus();
+    rowsIn.select();
   }
 
   // Table-view-safe model switch for AI columns. Mirrors the canvas applyModel
@@ -6951,17 +6954,22 @@
       const shareBtn = document.createElement("button");
       shareBtn.type = "button";
       shareBtn.className = "cb-table-view-er-chip-share";
-      // Actual badge = run rate (rows it ran on ÷ total, from run-status), so a
-      // re-run column reads its true "1%" instead of the billing-inflated cost
-      // share. Projected keeps the editable cost-split share.
-      const ratio = actual && er.runRate != null ? er.runRate : er.runShare;
+      // Badge = run rate in BOTH modes. Actual: rows it ran on ÷ total (run
+      // status), so a re-run column reads its true "1%" not the billing-inflated
+      // cost share. Projected: rows it's SET to run on ÷ total (editable
+      // coverage, drives cost). Falls back to the cost-split share if neither.
+      const ratio = actual
+        ? (er.runRate != null ? er.runRate : er.runShare)
+        : (er.projectedRunRate != null ? er.projectedRunRate : er.runShare);
       const pct = Math.round((ratio ?? 0) * 100);
       shareBtn.textContent = pct + "%";
       shareBtn.title = actual
         ? (er.totalRows > 0
             ? `Ran on ${formatNumber(er.runRows)} / ${formatNumber(er.totalRows)} rows (${pct}%) \u2014 click for the breakdown`
             : `Ran on ~${pct}% of rows \u2014 click for the breakdown`)
-        : "Run-share \u2014 click to edit % / rows / order";
+        : (er.projectedRunTotal > 0
+            ? `Runs on ${formatNumber(er.projectedRunRows)} / ${formatNumber(er.projectedRunTotal)} rows (${pct}%) \u2014 click to edit`
+            : "Run rate \u2014 click to edit");
       shareBtn.addEventListener("mousedown", (evt) => evt.stopPropagation());
       shareBtn.addEventListener("click", (evt) => {
         evt.stopPropagation();
@@ -7242,55 +7250,43 @@
     return badge;
   }
 
-  // Run-share value for the details menu (multi-ER DP chips only) — a second
-  // entry point to the % / rows / order editor. Projected is an editable pill
-  // that opens the popover; Actual shows the measured "X% · ~N rows" read-only.
+  // Run-share value for the details menu (multi-ER DP chips only). Segmented
+  // pill (built like the cost pill): run rate ratio | success rate %, divider
+  // between, model-pill weight (not bold), exact counts (no "~"). Clicking opens
+  // the popover — read-only in Actual, editable run rate in Projected. The run
+  // rate ratio is mode-appropriate (measured in Actual, editable coverage in
+  // Projected); success rate is the measured hit rate in both.
   function buildErMenuShareNode(er, which) {
-    const pct = Math.round((er.runShare ?? 0) * 100);
-    const base = dpRowBase(er.dpCardId);
-    const rows = Math.round((er.runShare ?? 0) * base);
-    const text = base > 0 ? `${pct}% \u00b7 ~${formatNumber(rows)} rows` : `${pct}%`;
-    if (which === "actual") {
-      // Segmented pill (built like the cost pill): run rate ratio | success
-      // rate %, divider between. Non-bold, model-pill type, exact counts (no
-      // "~"). Clickable → read-only breakdown popover.
-      const succPct = er.successRate != null ? Math.round(er.successRate * 100) : null;
-      const pill = document.createElement("button");
-      pill.type = "button";
-      pill.className = "cb-pill cb-table-view-er-share-pill";
-      pill.title =
-        "Run rate (rows ran / total) \u00b7 success rate (returned a value / ran) \u2014 click for the breakdown";
+    const actual = which === "actual";
+    const runRows = actual ? er.runRows : er.projectedRunRows;
+    const runTotal = actual ? er.totalRows : er.projectedRunTotal;
+    const succPct = er.successRate != null ? Math.round(er.successRate * 100) : null;
 
-      const runSeg = document.createElement("span");
-      runSeg.className = "cb-pill-seg cb-table-view-er-share-seg";
-      runSeg.textContent = er.totalRows > 0
-        ? `${formatNumber(er.runRows)} / ${formatNumber(er.totalRows)}`
-        : "\u2014";
-      pill.appendChild(runSeg);
+    const pill = document.createElement("button");
+    pill.type = "button";
+    pill.className = "cb-pill cb-table-view-er-share-pill";
+    pill.title = actual
+      ? "Run rate (rows ran / total) \u00b7 success rate (returned a value / ran) \u2014 click for the breakdown"
+      : "Run rate (rows run / total, editable) \u00b7 success rate (measured) \u2014 click to edit";
 
-      const succSeg = document.createElement("span");
-      succSeg.className = "cb-pill-seg cb-table-view-er-share-seg";
-      succSeg.textContent = succPct != null ? `${succPct}%` : "\u2014";
-      pill.appendChild(succSeg);
+    const runSeg = document.createElement("span");
+    runSeg.className = "cb-pill-seg cb-table-view-er-share-seg";
+    runSeg.textContent = runTotal > 0
+      ? `${formatNumber(runRows)} / ${formatNumber(runTotal)}`
+      : "\u2014";
+    pill.appendChild(runSeg);
 
-      pill.addEventListener("mousedown", (evt) => evt.stopPropagation());
-      pill.addEventListener("click", (evt) => {
-        evt.stopPropagation();
-        openErShareMenu(er, pill);
-      });
-      return pill;
-    }
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.className = "cb-table-view-er-menu-share cb-table-view-er-menu-share-edit";
-    btn.textContent = text;
-    btn.title = "Run-share \u2014 click to edit % / rows / order";
-    btn.addEventListener("mousedown", (evt) => evt.stopPropagation());
-    btn.addEventListener("click", (evt) => {
+    const succSeg = document.createElement("span");
+    succSeg.className = "cb-pill-seg cb-table-view-er-share-seg";
+    succSeg.textContent = succPct != null ? `${succPct}%` : "\u2014";
+    pill.appendChild(succSeg);
+
+    pill.addEventListener("mousedown", (evt) => evt.stopPropagation());
+    pill.addEventListener("click", (evt) => {
       evt.stopPropagation();
-      openErShareMenu(er, btn);
+      openErShareMenu(er, pill);
     });
-    return btn;
+    return pill;
   }
 
   // Model value — an indigo pill (mirrors the canvas model chip) that opens the
