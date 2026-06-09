@@ -1222,9 +1222,15 @@
       if (fill.denom != null && fill.nonNull != null) {
         const numTxt = Number(fill.nonNull).toLocaleString();
         const denomTxt = Number(fill.denom).toLocaleString();
-        td.title = fill.denomLabel
-          ? `~${numTxt} / ${denomTxt} filled \u2014 non-empty cells \u00F7 rows \u201C${fill.denomLabel}\u201D ran on`
-          : `~${numTxt} / ${denomTxt} filled \u2014 non-empty cells \u00F7 rows the enrichment ran on`;
+        const ratioLine = `~${numTxt} / ${denomTxt} filled`;
+        const whyLine = fill.denomLabel
+          ? `non-empty cells \u00F7 rows \u201C${fill.denomLabel}\u201D ran on`
+          : `non-empty cells \u00F7 rows the enrichment ran on`;
+        // Custom two-line tip (body-appended, ~120ms) instead of the native
+        // `title`: the browser tooltip is slow (~1s) and unreliable inside the
+        // overlay. aria-label keeps the ratio available to screen readers.
+        attachInfoTip(td, [ratioLine, whyLine], { delayMs: 120 });
+        td.setAttribute("aria-label", `${ratioLine} \u2014 ${whyLine}`);
       }
     } else {
       td.className = "col-fill cb-table-view-cell-muted";
@@ -1592,9 +1598,15 @@
   // section is expanded or collapsed, and isn't clipped by the table's overflow.
   // The native `title` attribute is unreliable inside the overlay, so we build
   // our own. `lines` render one per row.
-  function attachInfoTip(iconEl, lines) {
+  function attachInfoTip(iconEl, lines, opts) {
+    const delayMs = (opts && opts.delayMs) || 0;
     let tip = null;
+    let showTimer = null;
     const hide = () => {
+      if (showTimer) {
+        clearTimeout(showTimer);
+        showTimer = null;
+      }
       if (tip) {
         tip.remove();
         tip = null;
@@ -1620,7 +1632,16 @@
       // Hide if the table scrolls — the fixed tip would otherwise float away.
       document.addEventListener("scroll", hide, true);
     };
-    iconEl.addEventListener("mouseenter", show);
+    // Optional show-delay: much snappier than the native ~1s title delay, but a
+    // small gap avoids flicker when the pointer sweeps a column of tips. delayMs
+    // 0 (the default) preserves the original instant behavior for existing
+    // callers (the header / use-case (i) icons).
+    const onEnter = () => {
+      if (delayMs <= 0) { show(); return; }
+      if (showTimer) clearTimeout(showTimer);
+      showTimer = setTimeout(() => { showTimer = null; show(); }, delayMs);
+    };
+    iconEl.addEventListener("mouseenter", onEnter);
     iconEl.addEventListener("mouseleave", hide);
     iconEl.addEventListener("mousedown", hide);
   }
