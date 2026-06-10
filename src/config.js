@@ -99,7 +99,7 @@
       return null;
     },
 
-    INJECTED_ATTR: "data-clay-brainstorm-injected",
+    INJECTED_ATTR: "data-quartz-injected",
 
     // Base URL for the GTME pricing calculator. The "Export to GTME Calculator"
     // flow (gated by the `gtme_export` feature flag) opens

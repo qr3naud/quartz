@@ -1014,7 +1014,7 @@
         customerName: customerName.trim(),
         contractLengthMonths,
         source: {
-          kind: "clay-brainstorm",
+          kind: "quartz",
           workbookId: __cb.currentWorkbookId || undefined,
           exportedAt: new Date().toISOString(),
         },
