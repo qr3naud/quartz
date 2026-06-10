@@ -1,5 +1,8 @@
-# Internal-only docs (architecture, business context) — kept on disk, never pushed to GitHub
+# Internal-only docs (architecture, business context, maintainer notes) — kept
+# on disk, never pushed to GitHub. AGENTS.md lives at docs/AGENTS.md; the root
+# entry below catches any accidental re-creation at the repo root.
 docs/
+AGENTS.md
 
 # Personal Cursor rules/config — kept on disk for agents, never pushed to GitHub
 .cursor/
@@ -11,10 +14,13 @@ dist/
 # extension is loaded. Per-machine, per-install — never check it in.
 _metadata/
 
-# Supabase CLI runtime cache — created by `supabase functions deploy` etc.
-# Per-machine; never check it in. supabase/config.toml and supabase/functions/
-# + supabase/migrations/ are the only things from supabase/ that belong in git.
-supabase/.temp/
+# Entire Supabase project (Edge Function source, migrations, seed data,
+# config.toml) is internal-only — kept on disk for deploys, never pushed to
+# the public repo.
+supabase/
+
+# SFDC connection tester + credentials — internal-only, never pushed.
+scripts/sfdc/
 
 # Private RSA key that pins the extension ID via manifest "key". Only the
 # public half lives in manifest.json; this private half stays off GitHub.
