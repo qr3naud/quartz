@@ -8409,6 +8409,150 @@
     );
   }
 
+  // ---- CSV / spreadsheet export ----
+  //
+  // Flattens the same row model render() paints (buildRows + annotateMergeRuns)
+  // into a column matrix the Export menu serializes to CSV (src/export.js).
+  // Honors the live __cb.viewMode — credits/coverage/fill already arrive
+  // mode-aware from buildRows(). Works even when the table isn't mounted
+  // (buildRows reads the model, not the DOM), so it's callable from the canvas
+  // view too. Merge runs (contiguous DPs sharing an identical ER set) blank the
+  // Enrichments cell on the follower rows so a spreadsheet reads them as one
+  // merged block — mirroring the on-screen rowspan.
+
+  const EXPORT_COLUMNS = [
+    "Use case",
+    "Data point",
+    "Coverage",
+    "Fill rate (%)",
+    "Actions / row",
+    "Credits / row",
+    "Enrichments",
+  ];
+
+  // Coverage descriptor (from coverageFillFor) -> the same text the Coverage
+  // cell shows: "rows / total" (projected, per-ER) or "ran / total" (actual);
+  // a bare rows count for the read-only projected fallback; blank otherwise.
+  function exportCoverageText(coverage) {
+    if (!coverage) return "";
+    if (coverage.mode === "projected") {
+      if (coverage.editable) {
+        const rows = Number(coverage.rows) || 0;
+        const total = Number(coverage.total) || 0;
+        return `${rows.toLocaleString()} / ${total.toLocaleString()}`;
+      }
+      return coverage.rows ? Number(coverage.rows).toLocaleString() : "";
+    }
+    if (coverage.mode === "actual" && coverage.total) {
+      const ran = Number(coverage.ran) || 0;
+      const total = Number(coverage.total) || 0;
+      return `${ran.toLocaleString()} / ${total.toLocaleString()}`;
+    }
+    return "";
+  }
+
+  // Fill descriptor -> the percentage number (the column header carries the
+  // "%"). Blank for orphan rows (no DP fill) and while an Actual profile loads.
+  function exportFillText(fill) {
+    if (!fill || fill.loading || fill.pct == null) return "";
+    return String(fill.pct);
+  }
+
+  // Enrichment chips -> "; "-joined names; waterfalls append their provider
+  // chain in parens, mirroring the chip tooltip (buildErChipEl).
+  function exportEnrichmentsText(ers) {
+    if (!ers || ers.length === 0) return "";
+    return ers
+      .map((er) =>
+        er.isWaterfall && er.providerChain ? `${er.name} (${er.providerChain})` : er.name,
+      )
+      .join("; ");
+  }
+
+  // One flat record per visible row, keyed by EXPORT_COLUMNS. `useCase` is the
+  // section label. A `mergeMode === "skip"` row (a follower in a merge run)
+  // blanks its Enrichments cell — the canonical CSV "merge".
+  function exportRowRecord(row, useCase) {
+    const isOrphan = row.kind === "orphan-er";
+    const enrich = row.mergeMode === "skip" ? "" : exportEnrichmentsText(row.ers);
+    return {
+      "Use case": useCase || "",
+      "Data point": isOrphan ? "" : row.name || "",
+      Coverage: exportCoverageText(row.coverageFill && row.coverageFill.coverage),
+      "Fill rate (%)": exportFillText(row.coverageFill && row.coverageFill.fill),
+      "Actions / row": formatNumber(row.actions),
+      "Credits / row": row.creditsUnknown ? "?" : formatNumber(row.credits),
+      Enrichments: enrich,
+    };
+  }
+
+  // Walk the buildRows() output in the exact order render() paints it, stamping
+  // merge runs per section, and return { viewMode, columns, rows } for the CSV
+  // serializer.
+  function buildExportData() {
+    const { orphanErRows, groupSections, dpRows, tableGroups } = buildRows();
+    const records = [];
+
+    // Annotate the DP rows for a section, then emit every row (DP + orphan-ER)
+    // in order under the given use-case label.
+    const pushSection = (rows, useCase) => {
+      annotateMergeRuns(rows.filter((r) => r.kind === "dp"));
+      for (const row of rows) records.push(exportRowRecord(row, useCase));
+    };
+
+    // 1. Imported-table super-groups (legacy; usually empty post v7.23): the
+    //    table's sub-sections first, then its loose rows (render() order).
+    for (const tg of tableGroups || []) {
+      const tableName = tg.tableName || "";
+      for (const sub of tg.sections || []) {
+        const label = sub.groupName ? `${tableName} / ${sub.groupName}` : tableName;
+        pushSection(sub.rows, label);
+      }
+      pushSection(tg.rows, tableName);
+    }
+
+    // 2. Canvas groups / use cases: top-level sections (depth 0) then their
+    //    nested child sections (depth 1), matching render()'s topLevel walk.
+    const topLevel = (groupSections || []).filter((s) => !s.parentId);
+    const childrenByParent = new Map();
+    for (const s of groupSections || []) {
+      if (s.parentId == null) continue;
+      const key = `g-${s.parentId}`;
+      if (!childrenByParent.has(key)) childrenByParent.set(key, []);
+      childrenByParent.get(key).push(s);
+    }
+    for (const list of childrenByParent.values()) {
+      list.sort((a, b) =>
+        compareByTableOrderThenY(a.minTableOrder, a.minY, b.minTableOrder, b.minY),
+      );
+    }
+    for (const section of topLevel) {
+      pushSection(section.rows, section.groupName || "");
+      for (const child of childrenByParent.get(section.groupId) || []) {
+        const label = section.groupName
+          ? `${section.groupName} / ${child.groupName || ""}`
+          : child.groupName || "";
+        pushSection(child.rows, label);
+      }
+    }
+
+    // 3. "Other" — ungrouped DPs then unattached enrichments. Labelled "Other"
+    //    only when there's grouped content above (matches the header gate in
+    //    render()); a pure-flat tab leaves the use-case column blank.
+    const hasSectionsAbove =
+      (groupSections || []).length > 0 || (tableGroups || []).length > 0;
+    const otherLabel = hasSectionsAbove || orphanErRows.length > 0 ? "Other" : "";
+    annotateMergeRuns(dpRows);
+    for (const row of dpRows) records.push(exportRowRecord(row, otherLabel));
+    for (const row of orphanErRows) records.push(exportRowRecord(row, otherLabel));
+
+    return {
+      viewMode: window.__cb && window.__cb.viewMode === "actual" ? "actual" : "projected",
+      columns: EXPORT_COLUMNS.slice(),
+      rows: records,
+    };
+  }
+
   // ---- Public API ----
 
   __cb.tableView = {
@@ -8510,6 +8654,12 @@
     },
     isMounted() {
       return !!hostEl;
+    },
+    // Flattened, view-mode-aware row matrix for the CSV export (src/export.js).
+    // Mirrors what render() paints (buildRows + annotateMergeRuns) and works
+    // even when the table isn't mounted, since buildRows() reads the model.
+    getExportData() {
+      return buildExportData();
     },
   };
 })();

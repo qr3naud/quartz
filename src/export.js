@@ -19,6 +19,7 @@
   // while these surfaces are still being iterated on. The runtime filter sits
   // at the top of openExportMenu.
   const EXPORT_OPTIONS = [
+    { id: "csv",      label: "Export to CSV",             enabled: true },
     { id: "gtme",     label: "Export to GTME Calculator", enabled: true,  feature: "gtme_export" },
     { id: "dealdesk", label: "Submit to deal desk",       enabled: true,  feature: "gtme_export", ownerOnly: true },
     { id: "dealops",  label: "Export to DealOps",         enabled: false, feature: "gtme_export" },
@@ -85,6 +86,7 @@
           if (opt.id === "table") __cb.openExportTableModal();
           else if (opt.id === "gtme") __cb.openGtmeExportModal();
           else if (opt.id === "dealdesk" && __cb.openDealDeskModal) __cb.openDealDeskModal();
+          else if (opt.id === "csv") __cb.exportCurrentTableCsv();
         });
       }
       menuEl.appendChild(item);
@@ -115,6 +117,94 @@
     menuEl.style.top = (rect.bottom + 6) + "px";
     menuEl.style.right = Math.max(8, window.innerWidth - rect.right) + "px";
     menuEl.style.zIndex = "9999999";
+  };
+
+  // ==========================================================================
+  // EXPORT TO CSV
+  //
+  // Downloads the current main table view (src/table-view.js) for the active
+  // scoping tab as a CSV, honoring the live Projected/Actual mode. The row
+  // matrix comes from __cb.tableView.getExportData(), which reuses the table's
+  // own buildRows()/annotateMergeRuns() so the file mirrors exactly what's on
+  // screen — including merged-enrichment runs (the Enrichments cell is blank on
+  // a run's follower rows, the canonical CSV "merge").
+  //
+  // Available to every export user (no feature/owner gate) — unlike the
+  // owner-only "Export as Table" modal below.
+  // ==========================================================================
+
+  // Wrap a value for CSV: quote + double inner quotes when it contains a comma,
+  // quote, or newline. Mirrors the escaper in src/pricing-comparison.js.
+  function csvEscape(value) {
+    const s = String(value == null ? "" : value);
+    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  }
+
+  // Force-name a text download via a synthetic <a download> click (same pattern
+  // as downloadJson below). Revoke the object URL after the click so the Blob
+  // doesn't leak until the page closes.
+  function downloadTextFile(filename, text, mime) {
+    const blob = new Blob([text], { type: mime });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 0);
+  }
+
+  // Filename-safe slug from the active tab name: lowercase, non-alphanumeric ->
+  // hyphen, collapse repeats, trim. Falls back to "scoping".
+  function slugifyTabName(s) {
+    const base = String(s || "")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "");
+    return base || "scoping";
+  }
+
+  function activeTabName() {
+    const store = __cb.tabStore;
+    if (!store || !Array.isArray(store.tabs)) return "";
+    const active = store.tabs.find((t) => t.id === store.activeId);
+    return active ? active.name || "" : "";
+  }
+
+  __cb.exportCurrentTableCsv = function exportCurrentTableCsv() {
+    // Flush the live canvas into the active tab so getExportData() reads current
+    // state (mirrors the GTME export flow).
+    if (__cb.saveTabs) __cb.saveTabs();
+
+    const data =
+      __cb.tableView && __cb.tableView.getExportData
+        ? __cb.tableView.getExportData()
+        : null;
+
+    if (!data || !data.rows || data.rows.length === 0) {
+      __cb.showOverlayToast?.(
+        "Nothing to export \u2014 add data points to this tab first.",
+      );
+      return;
+    }
+
+    const columns = data.columns;
+    const headerLine = columns.map(csvEscape).join(",");
+    const bodyLines = data.rows.map((row) =>
+      columns.map((col) => csvEscape(row[col])).join(","),
+    );
+    const csv = [headerLine, ...bodyLines].join("\n");
+
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+    const filename = `clay-scoping-${slugifyTabName(activeTabName())}-${data.viewMode}-${stamp}.csv`;
+    downloadTextFile(filename, csv, "text/csv;charset=utf-8");
+
+    __cb.showOverlayToast?.(
+      `CSV downloaded \u2014 ${data.viewMode} view, ${data.rows.length} ${
+        data.rows.length === 1 ? "row" : "rows"
+      }.`,
+    );
   };
 
   // ---- Per-DP row computation (mirrors updateDpCosts in canvas/credits.js) ----
