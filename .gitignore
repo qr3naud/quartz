@@ -1,6 +1,9 @@
 # Internal-only docs (architecture, business context) — kept on disk, never pushed to GitHub
 docs/
 
+# Personal Cursor rules/config — kept on disk for agents, never pushed to GitHub
+.cursor/
+
 # Local build output, if any. Per-machine; never tracked alongside source.
 dist/
 
