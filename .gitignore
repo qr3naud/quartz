@@ -34,4 +34,5 @@ scripts/updater/quartz-key.pem
 __pycache__/
 *.pyc
 
+# Local secrets (ANTHROPIC_API_KEY, etc.) — per-machine, never pushed.
 .env
