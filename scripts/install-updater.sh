@@ -61,6 +61,9 @@ BROWSER_DIRS=(
   "$SUPPORT/BraveSoftware/Brave-Browser"
   "$SUPPORT/Microsoft Edge"
   "$SUPPORT/Arc/User Data"
+  # Custom --user-data-dir profiles (e.g. the Playwright MCP's dedicated
+  # Chrome) keep their own NativeMessagingHosts; cover them if present.
+  "$HOME/chrome-mcp-profile"
 )
 
 installed=0
