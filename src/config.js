@@ -349,13 +349,11 @@
     // the legacy scalar `data.sourceEnrichmentFieldId` is kept in sync (= the
     // primary) so pre-migration readers and persisted blobs keep working.
     //
-    // Run-share (0..1) per ER key lives on `data.sourceEnrichmentShares`
-    // (keyed by ER key). It weights the projected per-row cost
-    // (cost = Σ share_i × creditsPerRow_i). Shares summing to 100% = OR/split;
-    // a primary at 100% + additive others (>100% total) = AND/sum. Absent =
-    // use the mode default (even-ish split in projected; measured cells in
-    // actual). The default primary weight for the 2-ER split is 0.6 / 0.4.
-    DEFAULT_PRIMARY_SHARE: 0.6,
+    // Projected multi-ER weighting is NOT stored per (DP, ER) edge anymore:
+    // each linked ER's weight is its own projected run rate (editable coverage,
+    // default 100% → two linked ERs are additive; see cost.projectedRunRate).
+    // The legacy `data.sourceEnrichmentShares` map is only pruned/cleared here
+    // (setDpErKeys / setDpErShare) so old persisted blobs stay tidy.
 
     dpErKeys(card) {
       const d = card && card.data;
@@ -413,14 +411,8 @@
       }
     },
 
-    // Stored projected run-share for one (DP, ER) edge, or null when unset.
-    dpErShare(card, key) {
-      const m = card && card.data && card.data.sourceEnrichmentShares;
-      if (!m || key == null) return null;
-      const v = m[String(key)];
-      return typeof v === "number" && isFinite(v) ? v : null;
-    },
-
+    // Legacy stored-share cleanup (null clears the entry). The shares no
+    // longer drive cost — kept so detach paths can tidy old persisted data.
     setDpErShare(card, key, share) {
       const d = card && card.data;
       if (!d || key == null) return;
@@ -436,15 +428,6 @@
       }
       if (!d.sourceEnrichmentShares) d.sourceEnrichmentShares = {};
       d.sourceEnrichmentShares[s] = Math.max(0, Number(share) || 0);
-    },
-
-    // Default projected run-share for the ER at `index` of `n` linked ERs,
-    // used when the DP has no stored shares. Primary-weighted 60/40 for two;
-    // generalizes for N>2 (primary 0.6, the rest split 0.4 evenly).
-    defaultErShare(index, n) {
-      if (!n || n <= 1) return 1;
-      if (index === 0) return window.__cb.DEFAULT_PRIMARY_SHARE;
-      return (1 - window.__cb.DEFAULT_PRIMARY_SHARE) / (n - 1);
     },
 
     getModelOptions() {

@@ -2209,9 +2209,9 @@
     }
 
     // Resolve each DP's per-ER run-share, then accumulate its chips + weighted
-    // cost. Projected: stored share (dpErShare) else the primary-weighted
-    // default split (60/40). Actual: measured ran_i / widest-ran (primary 1.0).
-    // DP credits = Σ share_i × (ER credits / #DPs).
+    // cost. Projected: the ER's own RUN RATE (editable coverage, default 100%
+    // → two untouched ERs are additive). Actual: measured ran_i / widest-ran
+    // (primary 1.0). DP credits = Σ share_i × (ER credits / #DPs).
     for (const [dpId, { card: dpCard, keys }] of dpKeysById) {
       const n = keys.length;
       const multiEr = n > 1;
@@ -2232,8 +2232,7 @@
         } else if (actualMode) {
           share = maxRan > 0 ? Math.min(1, erRanCount(er) / maxRan) : (i === 0 ? 1 : 0);
         } else {
-          const stored = __cb.dpErShare(dpCard, key);
-          share = stored != null ? stored : __cb.defaultErShare(i, n);
+          share = __cb.cost.projectedRunRate(er);
         }
         const pk = perDpByKey.get(key);
         credits += share * pk.perDpCredits;
@@ -3113,35 +3112,9 @@
       touched = true;
     }
 
-    // Multi-ER data points: copy the MEASURED run-share (each linked ER's actual
-    // ran ÷ the widest linked ER, mirroring the Actual chip badge) into the
-    // projected stored shares, so the % badges in Projected reflect what Actual
-    // measured rather than the default split. Cost stays coverage-driven — the
-    // ERs above are now coverageCustom, so cost.erShareMult ignores the share —
-    // so this is a display copy and never double-discounts.
-    const erByKey = new Map();
-    for (const c of cards) {
-      if (!isErType(c.data?.type)) continue;
-      const k = lineageKeyOf(c);
-      if (k != null && !erByKey.has(k)) erByKey.set(k, c);
-    }
-    for (const dp of cards) {
-      if (dp.data?.type !== "dp") continue;
-      const keys = cb.dpErKeys(dp);
-      if (keys.length < 2) continue;
-      let maxRan = 0;
-      for (const k of keys) {
-        const er = erByKey.get(k);
-        if (er) maxRan = Math.max(maxRan, erActualRanCount(er));
-      }
-      if (maxRan <= 0) continue; // no measured signal yet — keep projected shares
-      for (let i = 0; i < keys.length; i++) {
-        const er = erByKey.get(keys[i]);
-        if (!er) continue;
-        cb.setDpErShare(dp, keys[i], Math.min(1, erActualRanCount(er) / maxRan));
-      }
-      touched = true;
-    }
+    // Multi-ER data points need no extra copy: the per-ER coverage written
+    // above IS the run rate that drives both the Projected % badges and the
+    // DP cost split (cost.projectedRunRate), so projected lands ≈ actual.
 
     if (!touched) return;
     // update() captures one undo snapshot, notifies subscribers (which refreshes
@@ -3298,17 +3271,7 @@
     if (__cb.saveTabs) __cb.saveTabs();
   }
 
-  // ---- Run-share (multi-ER) mutations + popover --------------------------
-
-  // Freeze a DP's effective shares into stored values so editing one ER's share
-  // doesn't drop the others back to their implicit defaults.
-  function materializeDpShares(dp) {
-    if (dp.data.sourceEnrichmentShares) return;
-    const keys = __cb.dpErKeys(dp);
-    for (let i = 0; i < keys.length; i++) {
-      __cb.setDpErShare(dp, keys[i], __cb.defaultErShare(i, keys.length));
-    }
-  }
+  // ---- Run-share (multi-ER) context + popover --------------------------
 
   function lineageKeyForCardId(cardId) {
     const er = __cb.canvas?.getCardById?.(cardId);
@@ -3316,35 +3279,9 @@
     return __cb.canvas.erLineageKeyOf ? __cb.canvas.erLineageKeyOf(er) : lineageKeyOf(er);
   }
 
-  // The DP's row base for the run-share popover: the widest linked ER's coverage
-  // numerator — measured coverage.ran when present, else the projected
-  // coverageRows, else the scoped records. The % <-> rows conversion keys off
-  // this (rows = share x base), so it reads "13% of ~650 rows".
-  function dpRowBase(dpCardId) {
-    const records = __cb.getRecordsCount ? Number(__cb.getRecordsCount()) || 0 : 0;
-    const dp = __cb.canvas?.getCardById?.(dpCardId);
-    if (!dp) return records;
-    const erByKey = new Map();
-    for (const c of __cb.model?.getNodes?.() || []) {
-      if (!c.data || !isErType(c.data.type)) continue;
-      const k = lineageKeyOf(c);
-      if (k != null && !erByKey.has(k)) erByKey.set(k, c);
-    }
-    let base = 0;
-    for (const key of __cb.dpErKeys(dp)) {
-      const er = erByKey.get(key);
-      if (!er) continue;
-      const d = er.data || {};
-      const ran = Number(d.stats?.coverage?.ran) || 0;
-      const cov = ran > 0 ? ran : d.coverageRows != null ? Number(d.coverageRows) : records;
-      if (cov > base) base = cov;
-    }
-    return base > 0 ? base : records;
-  }
-
   // Re-derive the per-(DP, ER) run-share context outside the main render loop
   // (used by the details menu's in-place refresh). Mirrors buildRows' resolution
-  // exactly: projected = stored share else the primary-weighted default split;
+  // exactly: projected = the ER's own run rate (editable coverage);
   // actual = measured cellCount (else coverage.ran) vs the widest linked ER.
   function erRunShareFor(dpCardId, erCardId) {
     const dp = __cb.canvas?.getCardById?.(dpCardId);
@@ -3372,62 +3309,10 @@
       for (const k of keys) maxRan = Math.max(maxRan, ranOf(k));
       share = maxRan > 0 ? Math.min(1, ranOf(key) / maxRan) : idx === 0 ? 1 : 0;
     } else {
-      const stored = __cb.dpErShare(dp, key);
-      share = stored != null ? stored : __cb.defaultErShare(idx, n);
+      const er = __cb.canvas?.getCardById?.(erCardId);
+      share = er ? __cb.cost.projectedRunRate(er) : 1;
     }
     return { runShare: share, isPrimary: idx === 0, dpCardId, multiEr: true };
-  }
-
-  // Keep a multi-ER "fully linked": copy sourceDp's ordered keys + run-shares to
-  // every OTHER DP that links the exact same SET of ERs (order-independent
-  // match), so editing the % / order on one DP applies the same proportion to
-  // every DP the multi-ER spans. Lineage-global (all model nodes), mirroring the
-  // cost split. No model.update here — the caller batches one update.
-  function propagateDpMultiEr(sourceDp) {
-    if (!sourceDp || !sourceDp.data) return;
-    const srcKeys = __cb.dpErKeys(sourceDp);
-    if (srcKeys.length < 2) return; // single-ER: nothing to share
-    const sig = srcKeys.slice().sort().join("|");
-    const hasShares = !!sourceDp.data.sourceEnrichmentShares;
-    for (const c of __cb.model?.getNodes?.() || []) {
-      if (!c || c === sourceDp || !c.data || c.data.type !== "dp") continue;
-      const keys = __cb.dpErKeys(c);
-      if (keys.length !== srcKeys.length) continue;
-      if (keys.slice().sort().join("|") !== sig) continue;
-      __cb.setDpErKeys(c, srcKeys); // unify order
-      if (hasShares) {
-        for (let i = 0; i < srcKeys.length; i++) {
-          const s = __cb.dpErShare(sourceDp, srcKeys[i]);
-          __cb.setDpErShare(c, srcKeys[i], s != null ? s : __cb.defaultErShare(i, srcKeys.length));
-        }
-      } else if (c.data.sourceEnrichmentShares) {
-        delete c.data.sourceEnrichmentShares; // keep them on the same default too
-      }
-    }
-  }
-
-  // Commit one ER's run-share (% -> 0..N share) AND its 1-based order on a DP in
-  // a single model update. Run-share drives projected cost (share x base); the
-  // use case is inferred purely from the sum of the percentages (~100% = clean
-  // merge, 200%+ = needs two or more full ERs). Order just re-positions chips.
-  // The edit then propagates to every DP sharing the same multi-ER set.
-  function commitDpShareAndOrder(dpCardId, erCardId, pct, pos) {
-    const dp = __cb.canvas?.getCardById?.(dpCardId);
-    const key = lineageKeyForCardId(erCardId);
-    if (!dp || key == null) return;
-    materializeDpShares(dp);
-    __cb.setDpErShare(dp, key, Math.max(0, Number(pct) || 0) / 100);
-    const keys = __cb.dpErKeys(dp);
-    const from = keys.indexOf(key);
-    const to = Math.min(keys.length - 1, Math.max(0, (Number(pos) || 1) - 1));
-    if (from >= 0 && from !== to) {
-      keys.splice(from, 1);
-      keys.splice(to, 0, key);
-      __cb.setDpErKeys(dp, keys);
-    }
-    propagateDpMultiEr(dp);
-    __cb.model.update();
-    if (__cb.saveTabs) __cb.saveTabs();
   }
 
   function closeErShareMenu() {
@@ -3441,11 +3326,10 @@
   }
 
   // Popover anchored to a chip's % badge (or the details-menu Run-share row).
-  // Three linked rows — % of rows, the equivalent row count (share x base off
-  // the coverage numerator), and the chip order (1..N) — with NO preset buttons:
-  // the merge (~100%) vs needs-all (200%+) use case is inferred from the sum,
-  // shown as a Σ hint. % and rows stay in sync live; commit writes share+order
-  // in one model update.
+  // Projected: an editable run rate (rows / attempted total — the ER's
+  // coverage, which drives both the % badge and the projected cost; default
+  // 100%, so two ERs on one DP are additive) plus the measured success rate
+  // (read-only). Actual: both metrics measured, read-only.
   function openErShareMenu(er, anchorEl) {
     closeErShareMenu();
     // Actual mode = measured run-share (read-only run rate + success rate).

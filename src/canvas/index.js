@@ -467,10 +467,9 @@
       // Explicit ER(s) + DP(s): every linked DP gains EVERY selected ER's key,
       // UNIONed with its existing links — so a data point can derive from more
       // than one enrichment. ensureErLineageKey synthesizes + persists a stable
-      // key for canvas / picker-authored ERs that carry no Clay fieldId. New
-      // links default to the OR/split share model (no stored share -> the
-      // primary-weighted default); the table view's "+" promotes one ER to an
-      // AND/sum primary.
+      // key for canvas / picker-authored ERs that carry no Clay fieldId. Each
+      // linked ER's projected weight is its own run rate (editable coverage,
+      // default 100% → additive), so no per-link share is stored here.
       const erKeys = linkedErs
         .map((er) => ensureErLineageKey(er))
         .filter((k) => k != null);
@@ -483,19 +482,13 @@
       // DP-only link — the table-view "Link" path, where each DP's enrichment is
       // an inline chip rather than a selected card. Make every selected DP share
       // the SAME multi-ER: the UNION of all their lineage keys (not just the
-      // primary), so a DP deriving from 2+ ERs propagates ALL of them. The
-      // run-share proportions + order come from the "source" DP — the one that
-      // already has stored shares, else the richest (most ERs) — so the linked
-      // DPs end up identical ("keep the multi-er, apply it to more DPs").
+      // primary), so a DP deriving from 2+ ERs propagates ALL of them. The key
+      // order comes from the "source" DP — the richest (most ERs) — so the
+      // linked DPs end up identical ("keep the multi-er, apply it to more DPs").
       const keysByDp = linkedDps.map((dp) => __cb.dpErKeys(dp));
-      let sourceIdx = linkedDps.findIndex(
-        (dp) => dp.data && dp.data.sourceEnrichmentShares,
-      );
-      if (sourceIdx < 0) {
-        sourceIdx = 0;
-        for (let i = 1; i < keysByDp.length; i++) {
-          if (keysByDp[i].length > keysByDp[sourceIdx].length) sourceIdx = i;
-        }
+      let sourceIdx = 0;
+      for (let i = 1; i < keysByDp.length; i++) {
+        if (keysByDp[i].length > keysByDp[sourceIdx].length) sourceIdx = i;
       }
       // Canonical ordered set: source DP's keys first, then any extra key from
       // the other DPs (first-seen) so no DP loses its own enrichment.
@@ -510,24 +503,8 @@
         for (const k of keysByDp[i]) pushKey(k);
       }
       if (canonicalKeys.length > 0) {
-        const sourceDp = linkedDps[sourceIdx];
-        const hasShares = !!(sourceDp.data && sourceDp.data.sourceEnrichmentShares);
         for (const dp of linkedDps) {
           __cb.setDpErKeys(dp, canonicalKeys);
-          // Copy the source's proportions so every DP is the same multi-ER. When
-          // the source has none, leave shares unset — identical set + order means
-          // they all resolve to the same default split.
-          if (hasShares) {
-            for (let i = 0; i < canonicalKeys.length; i++) {
-              const k = canonicalKeys[i];
-              const s = __cb.dpErShare(sourceDp, k);
-              __cb.setDpErShare(
-                dp,
-                k,
-                s != null ? s : __cb.defaultErShare(i, canonicalKeys.length),
-              );
-            }
-          }
         }
       }
     }

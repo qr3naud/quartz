@@ -156,67 +156,25 @@
     return coverageRatio(erCard, records);
   }
 
-  // Map<erLineageKey, projected run-share multiplier (0..1+)> = the average
-  // (DP, ER) run-share across EVERY DP that links the ER (single-ER DPs and
-  // DPs with no stored share fall back to the split default; single-ER links
-  // contribute 1). Built once per recompute (one pass over DPs) so the
-  // projected total can bill a multi-ER ER for only its share of rows
-  // (share x base) instead of full coverage. Averaging keeps it consistent with
-  // the per-DP cost split (Σ share across an ER's DPs ÷ #DPs), so the grand
-  // total never double-counts. An ER that feeds no DP is absent → treated as 1
-  // (standalone / single-ER-only ERs are unaffected). Pure: reads card.data via
-  // the __cb lineage accessors, so it works on live AND serialized cards.
-  function buildErShareMap(cards) {
-    const dpErKeys = cb.dpErKeys;
-    if (!dpErKeys) return new Map();
-    const dpErShare = cb.dpErShare;
-    const defaultErShare = cb.defaultErShare;
-    const acc = new Map(); // key -> { sum, n }
-    for (const c of cards) {
-      if (!c || !c.data || c.data.type !== "dp") continue;
-      const keys = dpErKeys(c);
-      const n = keys.length;
-      for (let i = 0; i < n; i++) {
-        const key = keys[i];
-        let share;
-        if (n <= 1) {
-          share = 1;
-        } else {
-          const stored = dpErShare ? dpErShare(c, key) : null;
-          share =
-            stored != null
-              ? stored
-              : defaultErShare
-                ? defaultErShare(i, n)
-                : 1 / n;
-        }
-        const e = acc.get(key) || { sum: 0, n: 0 };
-        e.sum += share;
-        e.n += 1;
-        acc.set(key, e);
-      }
-    }
-    const map = new Map();
-    for (const [k, e] of acc) map.set(k, e.n > 0 ? e.sum / e.n : 1);
-    return map;
-  }
-
-  // Projected run-share multiplier for one ER, from a prebuilt buildErShareMap
-  // (1 when the ER feeds no DP or the map is absent). Callers multiply this into
-  // the projected billable fraction so a fallback/secondary ER costs share x base.
-  function erShareMult(erCard, shareMap) {
-    if (!shareMap) return 1;
-    // A pinned or copied-from-Actual coverage (coverageCustom) already encodes
-    // the ER's billed rows (coverageRows = the rows it ran on), so applying the
-    // run-share on top would double-discount. Treat the multiplier as 1 there —
-    // the run-share % stays a display / attribution figure (the per-DP chip and
-    // group badge still split by it), and coverage alone drives the projected
-    // total, so "copy from Actual" lands projected ≈ actual.
-    if (erCard && erCard.data && erCard.data.coverageCustom) return 1;
-    const key = erLineageKey(erCard);
-    if (key == null) return 1;
-    const m = shareMap.get(key);
-    return m == null ? 1 : m;
+  // Projected run rate (0..1) for an ER = rows it's set to run on ÷ its
+  // attempted total — the editable coverage pair the run-rate popover edits,
+  // both defaulting to the ER's scoped records (per-use-case records when the
+  // ER lives in an imported table, the global Records otherwise). This is the
+  // SINGLE projected weight for an ER on a multi-ER data point: a DP linking
+  // two ERs costs Σ credits_i × runRate_i, so two untouched ERs (100% each)
+  // are additive — the healthy default. Mirrors buildErChipData's
+  // projectedRunRate so the chip % badge and the cost always agree.
+  function projectedRunRate(erCard) {
+    const d = (erCard && erCard.data) || {};
+    const ucKey = useCaseKeyForCard(erCard);
+    const scoped =
+      useCaseCount() >= 1 && ucKey && ucKey !== OTHER_USE_CASE
+        ? Number(useCaseRecords(ucKey)) || 0
+        : Number(cb.getRecordsCount ? cb.getRecordsCount() : 0) || 0;
+    const rows = d.coverageRows != null ? Number(d.coverageRows) || 0 : scoped;
+    const total = d.coverageTotalCustom ? Number(d.coverageTotal) || 0 : scoped;
+    if (!(total > 0)) return 1;
+    return Math.max(0, Math.min(1, rows / total));
   }
 
   // Measured (Actual) coverage ratio for an ER = stats.coverage.ran / total,
@@ -531,9 +489,6 @@
     opts = opts || {};
     const projected = (opts.viewMode || cb.viewMode) !== "actual";
     const freqMult = (id) => (cb.getFrequencyMultiplier ? cb.getFrequencyMultiplier(id) : 1);
-    // Projected only: per-ER run-share multiplier (a fallback/secondary ER bills
-    // share x base, not full coverage). Built once. Actual reads measured spend.
-    const shareMap = projected ? buildErShareMap(cards) : null;
     const buckets = new Map(); // key -> { credits, actions }
     for (const c of cards) {
       const d = c && c.data;
@@ -556,11 +511,12 @@
       const freqId = d.frequencyCustom ? d.frequency : useCaseFrequencyId(key);
       const mult = freqMult(freqId);
       const recs = useCaseRecords(key);
-      // Projected: coverage (rows that run). Actual: measured coverage ran/total,
-      // so (spend/ran) × recs × (ran/total) = spend × recs/total (ran cancels).
-      // x recs turns the per-row figure into the use case's absolute volume.
+      // Projected: coverage (rows that run — the same run rate the multi-ER DP
+      // split uses). Actual: measured coverage ran/total, so (spend/ran) × recs
+      // × (ran/total) = spend × recs/total (ran cancels). x recs turns the
+      // per-row figure into the use case's absolute volume.
       const billable = projected
-        ? billableFraction(c, recs) * erShareMult(c, shareMap)
+        ? billableFraction(c, recs)
         : actualCoverageRatio(c);
       const b = buckets.get(key) || { credits: 0, actions: 0 };
       b.credits += pr.credits * mult * billable * recs;
@@ -653,9 +609,6 @@
 
     let credits = 0;
     let actions = 0;
-    // Projected only: per-ER run-share multiplier (mirrors computeUseCaseTotals);
-    // reads serialized card.data via the lineage accessors, so it's tab-safe.
-    const shareMap = projected ? buildErShareMap(cards) : null;
     for (const c of cards) {
       const d = c && c.data;
       if (!d || isNonErType(d.type)) continue;
@@ -686,7 +639,7 @@
       if (pr.noSpend) continue;
       const mult = freqMult(freqId);
       const billable = projected
-        ? billableFraction(c, recs) * erShareMult(c, shareMap)
+        ? billableFraction(c, recs)
         : actualCoverageRatio(c);
       credits += pr.credits * mult * billable * recs;
       actions += pr.actions * mult * billable * recs;
@@ -712,8 +665,6 @@
     const cards = cb.model?.getNodes?.() || [];
     const freqMult = (id) => (cb.getFrequencyMultiplier ? cb.getFrequencyMultiplier(id) : 1);
     const hasImported = listUseCases().length > 0;
-    // Projected only: per-ER run-share multiplier (mirrors computeUseCaseTotals).
-    const shareMap = projected ? buildErShareMap(cards) : null;
     const buckets = new Map(); // key -> { perRowCredits, perRowActions }
     for (const c of cards) {
       const d = c && c.data;
@@ -743,10 +694,9 @@
           ? cb.getRecordsCount?.() || 0
           : useCaseRecords(key);
       // Coverage baseline at the use case's own records (defaults to 1 after
-      // syncUseCaseCoverage; <1 only when the rep set a custom coverage). In
-      // projected, a multi-ER fallback/secondary also bills only share x base.
-      const billable =
-        billableFraction(c, baseRecs) * (projected ? erShareMult(c, shareMap) : 1);
+      // syncUseCaseCoverage; <1 only when the rep set a custom coverage / run
+      // rate — the same run rate the multi-ER DP split uses).
+      const billable = billableFraction(c, baseRecs);
       const b = buckets.get(key) || { perRowCredits: 0, perRowActions: 0 };
       b.perRowCredits += pr.credits * mult * billable;
       b.perRowActions += pr.actions * mult * billable;
@@ -811,8 +761,7 @@
     fillFraction,
     buildErFillMap,
     billableFraction,
-    buildErShareMap,
-    erShareMult,
+    projectedRunRate,
     DEFAULT_SESSION_GAP_MS,
     bucketRunsIntoSessions,
     OTHER_USE_CASE,

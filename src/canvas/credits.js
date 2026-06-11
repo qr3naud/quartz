@@ -113,11 +113,6 @@
         ? cb.getCurrentFrequencyId()
         : cb.DEFAULT_FREQUENCY_ID;
       const records = cb.getRecordsCount ? cb.getRecordsCount() : 0;
-      // Per-ER projected run-share (a multi-ER fallback/secondary bills only
-      // share x base, not full coverage). Built once and folded into billMult
-      // below so the summary total tracks the per-DP cost split. Actual mode
-      // (above) is unaffected — it uses measured spend.
-      const shareMap = cb.cost.buildErShareMap(cardsRef());
       for (const c of cardsRef()) {
         if (isNonErType(c.data.type)) continue;
         // perRowCost returns 0 credits for private-key ERs, so the
@@ -129,11 +124,11 @@
         const mult = cb.getFrequencyMultiplier
           ? cb.getFrequencyMultiplier(freqId)
           : 1;
-        // Coverage (rows that run) scales the weighted (total) slots only — the
-        // per-row "Avg" boxes stay honest about a single execution. Fill no
-        // longer discounts cost (it's a performance metric).
-        const billMult =
-          mult * cb.cost.billableFraction(c, records) * cb.cost.erShareMult(c, shareMap);
+        // Coverage (rows that run — the same run rate the multi-ER DP split
+        // uses) scales the weighted (total) slots only — the per-row "Avg"
+        // boxes stay honest about a single execution. Fill no longer discounts
+        // cost (it's a performance metric).
+        const billMult = mult * cb.cost.billableFraction(c, records);
         creditTotal += credits;
         weightedCreditTotal += credits * billMult;
         actionExecTotal += actions;
@@ -184,13 +179,13 @@
       return { erByKey, dpCountByKey };
     }
 
-    // Projected run-share for a DP's linked ER (mirrors table-view): stored
-    // override, else the primary-weighted default split (1.0 for a lone ER).
-    function dpShareFor(card, key, idx, n) {
+    // Projected weight for one linked ER on a multi-ER DP (mirrors table-view):
+    // the ER's own run rate (editable coverage, default 100%), so two untouched
+    // ERs are additive. 1.0 for a lone ER (its coverage is applied downstream).
+    function dpShareFor(er, n) {
       const cb = window.__cb;
       if (n <= 1) return 1;
-      const stored = cb.dpErShare ? cb.dpErShare(card, key) : null;
-      return stored != null ? stored : (cb.defaultErShare ? cb.defaultErShare(idx, n) : 1 / n);
+      return cb.cost.projectedRunRate ? cb.cost.projectedRunRate(er) : 1;
     }
 
     function updateDpCosts() {
@@ -217,7 +212,7 @@
         }
 
         costEl.classList.add("cb-dp-cost-linked");
-        // DP cost = Σ share_i × (ER credits / # DPs that ER feeds).
+        // DP cost = Σ runRate_i × (ER credits / # DPs that ER feeds).
         let perDpCost = 0;
         for (let i = 0; i < keys.length; i++) {
           const er = erByKey.get(keys[i]);
@@ -225,7 +220,7 @@
           const credits = er.data.usePrivateKey
             ? 0
             : (er.data.credits != null ? Number(er.data.credits) : 0);
-          perDpCost += dpShareFor(card, keys[i], i, keys.length) * (credits / count);
+          perDpCost += dpShareFor(er, keys.length) * (credits / count);
         }
         if (perDpCost > 0) {
           const display = perDpCost % 1 === 0 ? perDpCost : perDpCost.toFixed(1);
@@ -266,22 +261,29 @@
 
         // Data point members contribute their per-DP share of each source ER's
         // cost — the exact figure updateDpCosts renders on the canvas pill.
+        // Multi-ER: the share IS the ER's run rate (coverage), so the weighted
+        // slot uses it directly — multiplying billableFraction in again would
+        // double-discount. Single-ER: per-row stays honest (share 1) and the
+        // weighted slot applies coverage, as before.
         for (const c of members) {
           if (c.data.type !== "dp") continue;
           const keys = window.__cb.dpErKeys(c).filter((k) => erByKey.has(k));
           for (let i = 0; i < keys.length; i++) {
             const er = erByKey.get(keys[i]);
             const count = dpCountByKey.get(keys[i]) || 1;
-            const cov = window.__cb.cost.billableFraction(er, records);
-            const share = dpShareFor(c, keys[i], i, keys.length);
+            const share = dpShareFor(er, keys.length);
+            const w =
+              keys.length > 1
+                ? share
+                : window.__cb.cost.billableFraction(er, records);
             if (!er.data.usePrivateKey && er.data.credits != null && er.data.credits > 0) {
               sum += share * (er.data.credits / count);
-              weightedSum += share * (er.data.credits / count) * cov;
+              weightedSum += w * (er.data.credits / count);
               hasCredits = true;
             }
             if (er.data.actionExecutions != null && er.data.actionExecutions > 0) {
               actionSum += share * (er.data.actionExecutions / count);
-              weightedActionSum += share * (er.data.actionExecutions / count) * cov;
+              weightedActionSum += w * (er.data.actionExecutions / count);
             }
           }
         }
