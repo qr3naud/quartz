@@ -4393,11 +4393,19 @@
     }
 
     // Legacy comment-cluster basic groups (flat — no parent/child hierarchy).
+    // Skip clusters already represented as real L2 sub-groups (table-native
+    // import): the title comment card survives migration, so without this filter
+    // "Find Contacts" would appear both in the use-case flyout AND as a flat
+    // sibling that moves via groupCluster instead of card.groupId.
+    const migratedClusters = new Set();
+    for (const g of model?.getGroups?.() || []) {
+      if (g.clusterKey != null) migratedClusters.add(g.clusterKey);
+    }
     const seen = new Set();
     for (const node of (model?.getNodes?.() || [])) {
       if (node.data?.type !== "comment") continue;
       const cid = node.data.groupCluster;
-      if (cid == null || seen.has(cid)) continue;
+      if (cid == null || seen.has(cid) || migratedClusters.has(cid)) continue;
       const text = (node.data.text || node.data.displayName || "").trim();
       if (!text) continue;
       seen.add(cid);
