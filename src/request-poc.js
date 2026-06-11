@@ -480,9 +480,16 @@
     async function refreshRecent() {
       const supa = window.__cbSupabase;
       if (!supa) { recentList.textContent = ""; return; }
+      if (!workbookId) {
+        recentList.innerHTML = "";
+        recentList.textContent = "No requests yet.";
+        recentList.style.opacity = ".7";
+        return;
+      }
       try {
         const rows = await supa.supabaseFetch("poc_requests", "GET", {
           query: {
+            workbook_id: `eq.${workbookId}`,
             select: "account_name,requester_name,needed_by,status,slack_permalink,created_at",
             order: "created_at.desc",
             limit: "8",
