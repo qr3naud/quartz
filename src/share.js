@@ -214,22 +214,71 @@
       errEl.style.display = "";
     }
 
-    function showResult(url) {
+    function showResult(data) {
       resultWrap.style.display = "";
       resultWrap.innerHTML = "";
+
+      const linkRow = document.createElement("div");
+      linkRow.className = "cb-share-result-link";
       const urlInput = document.createElement("input");
       urlInput.type = "text";
       urlInput.className = "cb-gtme-input cb-share-url";
       urlInput.readOnly = true;
-      urlInput.value = url;
+      urlInput.value = data.url;
       urlInput.addEventListener("focus", () => urlInput.select());
       const copyBtn = document.createElement("button");
       copyBtn.type = "button";
       copyBtn.className = "cb-export-modal-done cb-share-copy";
       copyBtn.textContent = "Copy";
-      copyBtn.addEventListener("click", () => copyToClipboard(url, copyBtn));
-      resultWrap.appendChild(urlInput);
-      resultWrap.appendChild(copyBtn);
+      copyBtn.addEventListener("click", () => copyToClipboard(data.url, copyBtn));
+      linkRow.appendChild(urlInput);
+      linkRow.appendChild(copyBtn);
+      resultWrap.appendChild(linkRow);
+
+      // AI narrative status + preview, so a silent fallback is never mistaken
+      // for a generated narrative. Full template also goes to the console.
+      const status = document.createElement("div");
+      status.className =
+        "cb-share-ai-status" + (data.aiGenerated ? "" : " cb-share-ai-fallback");
+      status.textContent = data.aiGenerated
+        ? "AI narrative generated ✓"
+        : `AI narrative failed — page uses default sections without prose${data.aiError ? ` (${data.aiError})` : ""}`;
+      resultWrap.appendChild(status);
+
+      const modules = (data.template && data.template.modules) || [];
+      const prosed = modules.filter((m) => m.prose || m.useCaseProse);
+      if (prosed.length) {
+        const preview = document.createElement("details");
+        preview.className = "cb-share-ai-preview";
+        const summary = document.createElement("summary");
+        summary.textContent = "Preview generated narrative";
+        preview.appendChild(summary);
+        for (const m of prosed) {
+          const block = document.createElement("div");
+          block.className = "cb-share-ai-preview-block";
+          const h = document.createElement("strong");
+          h.textContent = m.type;
+          block.appendChild(h);
+          if (m.prose) {
+            const p = document.createElement("p");
+            p.textContent = m.prose;
+            block.appendChild(p);
+          }
+          for (const [uc, prose] of Object.entries(m.useCaseProse || {})) {
+            const p = document.createElement("p");
+            p.textContent = `${uc}: ${prose}`;
+            block.appendChild(p);
+          }
+          preview.appendChild(block);
+        }
+        resultWrap.appendChild(preview);
+      }
+      console.log("[cb-share] published link", {
+        url: data.url,
+        aiGenerated: data.aiGenerated,
+        aiError: data.aiError || null,
+        template: data.template,
+      });
     }
 
     async function refreshList() {
@@ -328,7 +377,7 @@
           },
         });
         if (resp && resp.ok && resp.data && resp.data.ok && resp.data.url) {
-          showResult(resp.data.url);
+          showResult(resp.data);
           refreshList();
         } else {
           const detail =

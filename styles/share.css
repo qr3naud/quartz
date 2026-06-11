@@ -65,8 +65,45 @@
 
 .cb-share-result {
   display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.cb-share-result-link {
+  display: flex;
   gap: 8px;
   align-items: center;
+}
+
+.cb-share-ai-status {
+  font-size: 12px;
+  color: #16a34a;
+}
+
+.cb-share-ai-status.cb-share-ai-fallback {
+  color: #d97706;
+}
+
+.cb-share-ai-preview {
+  font-size: 12px;
+  color: #475569;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+
+.cb-share-ai-preview summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.cb-share-ai-preview-block {
+  margin-top: 8px;
+}
+
+.cb-share-ai-preview-block p {
+  margin: 4px 0 0;
+  line-height: 1.5;
 }
 
 .cb-share-url {
