@@ -17,6 +17,14 @@
  *   - scoping doc     -> workbook URL + #cb-open
  *   - SFDC opp link   -> __cb.sfdc.getLinkedOpportunity().url
  *
+ * Lifecycle: once a request exists for the workbook the modal opens in SUBMIT
+ * mode — the request folds into a summary and the SE completes the POC
+ * (comments + Loom), which posts in the request's Slack thread and appends a
+ * "POC submitted" line to the original message (poc-request-complete edge
+ * function via cb:pocrequest:complete). The Slack message's Claim button is
+ * handled server-side by poc-slack-interact. "Re-request" in the header
+ * reopens the blank request form.
+ *
  * Reuses the cb-export-modal / cb-gtme-* styles from styles/export.css.
  */
 (function () {
@@ -69,10 +77,17 @@
     return "$" + Math.round(num).toLocaleString();
   }
 
+  // Lifecycle: open (requested) -> claimed (SE clicked Claim in Slack) ->
+  // submitted (SE completed the POC from this modal's submit mode).
   function statusBadge(status) {
-    if (status === "scheduled") return { label: "Scheduled", bg: "#dcfce7", fg: "#15803d" };
+    if (status === "submitted") return { label: "Submitted", bg: "#dcfce7", fg: "#15803d" };
     if (status === "claimed") return { label: "Claimed", bg: "#dbeafe", fg: "#1d4ed8" };
     return { label: "Open", bg: "#f1f5f9", fg: "#475569" };
+  }
+
+  function fmtWhen(iso) {
+    if (!iso) return "";
+    try { return new Date(iso).toLocaleString(); } catch { return iso; }
   }
 
   // Builds a labelled field (label + control) using the shared gtme classes.
@@ -116,7 +131,11 @@
     }
   };
 
-  __cb.startRequestPoc = function startRequestPoc() {
+  // opts.forceRequest skips the existing-request probe so the "Re-request"
+  // header action can reopen the blank request form even when a request for
+  // this workbook already exists.
+  __cb.startRequestPoc = function startRequestPoc(opts) {
+    const forceRequest = !!(opts && opts.forceRequest);
     close();
     if (__cb.saveTabs) { try { __cb.saveTabs(); } catch {} }
 
@@ -604,5 +623,232 @@
     updateSubmitState();
     accountInput.focus();
     refreshRecent();
+
+    // ---- Submit mode -------------------------------------------------------
+    // Once a request exists for this workbook the modal flips into completion
+    // mode: the request folds into a collapsed summary, and the SE gets a
+    // comments + Loom form whose Submit posts the completion in the request's
+    // Slack thread and appends a "POC submitted" line to the original message.
+    // The header keeps a "Re-request" action that reopens the blank form.
+
+    function summaryRow(label, value) {
+      const row = document.createElement("div");
+      row.style.cssText = "display:flex;gap:10px;font-size:12.5px;line-height:1.5;";
+      const l = document.createElement("span");
+      l.style.cssText = "flex:0 0 110px;font-weight:600;color:#374151;";
+      l.textContent = label;
+      const v = document.createElement("span");
+      v.style.cssText = "flex:1;min-width:0;color:#1f2937;overflow-wrap:anywhere;";
+      if (value instanceof Node) v.appendChild(value); else v.textContent = value || "—";
+      row.appendChild(l);
+      row.appendChild(v);
+      return row;
+    }
+
+    function buildSubmitMode(reqRow) {
+      if (!modalEl) return;
+      modalEl.innerHTML = "";
+
+      let sComments = "";
+      let sLoom = "";
+      let sSubmitting = false;
+
+      // Header — title + status, with Re-request next to close.
+      const sHeader = document.createElement("div");
+      sHeader.className = "cb-export-modal-header";
+      const sTitleWrap = document.createElement("div");
+      sTitleWrap.className = "cb-export-modal-title-wrap";
+      const sTitle = document.createElement("h2");
+      sTitle.className = "cb-export-modal-title";
+      sTitle.textContent = "POC request";
+      const sSubtitle = document.createElement("div");
+      sSubtitle.className = "cb-export-modal-subtitle";
+      sSubtitle.textContent =
+        "A POC was already requested for this workbook. Submit the completed POC below.";
+      sTitleWrap.appendChild(sTitle);
+      sTitleWrap.appendChild(sSubtitle);
+      const reRequestBtn = document.createElement("button");
+      reRequestBtn.type = "button";
+      reRequestBtn.className = "cb-modal-btn cb-modal-btn-ghost";
+      reRequestBtn.style.cssText = "height:30px;padding:0 12px;font-size:12.5px;flex:0 0 auto;";
+      reRequestBtn.textContent = "Re-request";
+      reRequestBtn.title = "Send a new POC request for this workbook";
+      reRequestBtn.addEventListener("click", () => {
+        __cb.startRequestPoc({ forceRequest: true });
+      });
+      const sCloseBtn = document.createElement("button");
+      sCloseBtn.type = "button";
+      sCloseBtn.className = "cb-export-modal-close";
+      sCloseBtn.setAttribute("aria-label", "Close");
+      sCloseBtn.innerHTML =
+        '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
+      sCloseBtn.addEventListener("click", close);
+      sHeader.appendChild(sTitleWrap);
+      sHeader.appendChild(reRequestBtn);
+      sHeader.appendChild(sCloseBtn);
+
+      // Body
+      const sBody = document.createElement("div");
+      sBody.className = "cb-export-modal-body cb-gtme-body";
+
+      // Folded request summary.
+      const fold = document.createElement("details");
+      fold.style.cssText =
+        "border:1px solid #e5e7eb;border-radius:8px;background:#f9fafb;overflow:hidden;";
+      const foldSummary = document.createElement("summary");
+      foldSummary.style.cssText =
+        "cursor:pointer;padding:10px 12px;font-size:12px;font-weight:600;color:#374151;user-select:none;display:flex;align-items:center;gap:8px;";
+      const sb = statusBadge(reqRow.status);
+      const foldBadge = document.createElement("span");
+      foldBadge.textContent = sb.label;
+      foldBadge.style.cssText =
+        `font-size:11px;font-weight:600;padding:1px 7px;border-radius:999px;background:${sb.bg};color:${sb.fg};flex:0 0 auto;`;
+      const foldText = document.createElement("span");
+      foldText.style.cssText = "flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;";
+      foldText.textContent =
+        `POC request — ${reqRow.account_name || "—"}` +
+        (reqRow.needed_by ? ` · by ${reqRow.needed_by}` : "") +
+        " (tap for details)";
+      foldSummary.appendChild(foldBadge);
+      foldSummary.appendChild(foldText);
+      fold.appendChild(foldSummary);
+
+      const foldBody = document.createElement("div");
+      foldBody.style.cssText =
+        "display:flex;flex-direction:column;gap:8px;padding:12px;border-top:1px solid #e5e7eb;background:#ffffff;";
+      foldBody.appendChild(summaryRow("Requested by", reqRow.requester_name));
+      foldBody.appendChild(summaryRow("Requested at", fmtWhen(reqRow.created_at)));
+      foldBody.appendChild(summaryRow("Needed by", reqRow.needed_by));
+      if (reqRow.claimed_at) {
+        foldBody.appendChild(summaryRow(
+          "Claimed",
+          `${reqRow.claimed_by_name || "—"} · ${fmtWhen(reqRow.claimed_at)}`,
+        ));
+      }
+      if (reqRow.submitted_at) {
+        foldBody.appendChild(summaryRow(
+          "Submitted",
+          `${reqRow.submitted_by_name || "—"} · ${fmtWhen(reqRow.submitted_at)}`,
+        ));
+      }
+      if (reqRow.slack_permalink) {
+        const a = document.createElement("a");
+        a.href = reqRow.slack_permalink;
+        a.target = "_blank";
+        a.rel = "noopener noreferrer";
+        a.textContent = "Open the Slack thread";
+        a.style.cssText = "color:#4338ca;font-weight:600;text-decoration:none;";
+        foldBody.appendChild(summaryRow("Slack", a));
+      }
+      fold.appendChild(foldBody);
+      sBody.appendChild(fold);
+
+      if (reqRow.status === "submitted") {
+        const note = document.createElement("div");
+        note.style.cssText =
+          "font-size:12.5px;color:#15803d;background:#dcfce7;border-radius:8px;padding:8px 12px;";
+        note.textContent =
+          "This POC was already submitted — submitting again posts another update in the thread.";
+        sBody.appendChild(note);
+      }
+
+      // Completion fields.
+      const sCommentsInput = document.createElement("textarea");
+      sCommentsInput.className = "cb-gtme-input";
+      sCommentsInput.rows = 3;
+      sCommentsInput.style.cssText =
+        "width:100%;height:auto;min-height:76px;padding:8px 10px;resize:vertical;line-height:1.45;";
+      sCommentsInput.placeholder = "What was built, where to look, anything the requester should know…";
+      sCommentsInput.addEventListener("input", () => { sComments = sCommentsInput.value; });
+      sBody.appendChild(buildField("Completion notes", sCommentsInput, { grow: true }));
+
+      const sLoomInput = buildInput("", "https://www.loom.com/share/…");
+      sLoomInput.addEventListener("input", () => { sLoom = sLoomInput.value; });
+      sBody.appendChild(buildField("Loom (optional)", sLoomInput, { grow: true }));
+
+      const sErrorEl = document.createElement("div");
+      sErrorEl.className = "cb-gtme-error";
+      sErrorEl.style.display = "none";
+      sBody.appendChild(sErrorEl);
+
+      // Footer
+      const sFooter = document.createElement("div");
+      sFooter.className = "cb-modal-footer";
+      const sHint = document.createElement("div");
+      sHint.className = "cb-export-modal-footer-hint";
+      sHint.textContent = "Posts in the request's Slack thread and updates the original message.";
+      const sActions = document.createElement("div");
+      sActions.className = "cb-modal-footer-actions";
+      const sCancel = document.createElement("button");
+      sCancel.type = "button";
+      sCancel.className = "cb-modal-btn cb-modal-btn-ghost";
+      sCancel.textContent = "Cancel";
+      sCancel.addEventListener("click", close);
+      const sSubmit = document.createElement("button");
+      sSubmit.type = "button";
+      sSubmit.className = "cb-modal-btn cb-modal-btn-primary";
+      sSubmit.textContent = "Submit POC";
+      sSubmit.addEventListener("click", async () => {
+        if (sSubmitting) return;
+        sSubmitting = true;
+        sSubmit.disabled = true;
+        sSubmit.style.opacity = ".5";
+        sSubmit.textContent = "Submitting…";
+        sErrorEl.style.display = "none";
+        const resp = await sendMessage({
+          type: "cb:pocrequest:complete",
+          body: {
+            request_id: reqRow.id,
+            comments: sComments.trim(),
+            loom_url: sLoom.trim(),
+          },
+        });
+        if (resp && resp.ok && resp.data && resp.data.ok) {
+          sSubmit.textContent = "Submitted ✓";
+          setTimeout(() => { close(); }, 1200);
+        } else {
+          sSubmitting = false;
+          sSubmit.disabled = false;
+          sSubmit.style.opacity = "1";
+          sSubmit.textContent = "Submit POC";
+          const detail = resp?.data?.error || resp?.error || `HTTP ${resp?.status || "?"}`;
+          sErrorEl.textContent = `Could not submit: ${detail}`;
+          sErrorEl.style.display = "";
+        }
+      });
+      sActions.appendChild(sCancel);
+      sActions.appendChild(sSubmit);
+      sFooter.appendChild(sHint);
+      sFooter.appendChild(sActions);
+
+      modalEl.appendChild(sHeader);
+      modalEl.appendChild(sBody);
+      modalEl.appendChild(sFooter);
+      sCommentsInput.focus();
+    }
+
+    // Probe for an existing request for this workbook; a hit flips the modal
+    // into submit mode (unless this open was an explicit re-request).
+    if (!forceRequest && workbookId) {
+      (async () => {
+        const supa = window.__cbSupabase;
+        if (!supa) return;
+        try {
+          const rows = await supa.supabaseFetch("poc_requests", "GET", {
+            query: {
+              workbook_id: `eq.${workbookId}`,
+              select:
+                "id,account_name,requester_name,needed_by,status,created_at," +
+                "claimed_at,claimed_by_name,submitted_at,submitted_by_name,slack_permalink",
+              order: "created_at.desc",
+              limit: "1",
+            },
+          });
+          if (rows && rows.length && modalEl) buildSubmitMode(rows[0]);
+        } catch (err) {
+          console.warn("[Clay Scoping] existing POC request probe failed:", err);
+        }
+      })();
+    }
   };
 })();

@@ -349,6 +349,32 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     return true;
   }
 
+  // cb:pocrequest:complete — { request_id, comments?, loom_url? }. Marks a POC
+  // request submitted via the poc-request-complete Edge Function: posts the
+  // completion details in the request's Slack thread and appends a "POC
+  // submitted" status line to the original message (identity from the JWT).
+  if (msg.type === "cb:pocrequest:complete") {
+    (async () => {
+      try {
+        if (!msg.body || typeof msg.body !== "object") {
+          sendResponse({ ok: false, error: "missing completion body" });
+          return;
+        }
+        const res = await callProxy("poc-request-complete", {
+          method: "POST",
+          body: msg.body,
+        });
+        const text = await res.text();
+        let envelope = null;
+        try { envelope = text ? JSON.parse(text) : null; } catch {}
+        sendResponse({ ok: res.ok, status: res.status, data: envelope, rawText: text || undefined });
+      } catch (err) {
+        sendResponse({ ok: false, error: err?.message || String(err) });
+      }
+    })();
+    return true;
+  }
+
   // cb:poccaptain:get — resolves the SE Captain to tag for the current
   // requester (their SFDC manager -> app_settings.se_captain_map) so the
   // Request POC modal can render the captain chip. Identity is set server-side
