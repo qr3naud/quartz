@@ -62,8 +62,10 @@
   }
 
   function close() {
-    if (modalEl) { modalEl.remove(); modalEl = null; }
+    // modalEl lives inside backdropEl (the fixed flex-centering layer), so
+    // removing the backdrop removes both.
     if (backdropEl) { backdropEl.remove(); backdropEl = null; }
+    modalEl = null;
   }
 
   function fmtDate(iso) {
@@ -341,8 +343,11 @@
       }
     });
 
+    // The backdrop is the fixed flex-centering layer (see export.js's modal
+    // pattern) — the modal MUST be its child or it renders in normal page
+    // flow, invisible behind Clay's UI.
+    backdropEl.appendChild(modalEl);
     document.body.appendChild(backdropEl);
-    document.body.appendChild(modalEl);
     refreshList();
   };
 })();
