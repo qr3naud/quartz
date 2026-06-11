@@ -43,6 +43,10 @@
   function closePanel() {
     if (openPanel) { openPanel.remove(); openPanel = null; }
   }
+  // Shared with other modals (request-poc.js): close / probe the floating
+  // results panel from outside this module.
+  __cb.closeSfdcPickerPanel = closePanel;
+  __cb.sfdcPickerPanelOpen = () => !!openPanel;
 
   function close() {
     closePanel();
@@ -77,6 +81,8 @@
   // A name typeahead over active SFDC users. The results panel floats on <body>
   // (positioned with __cb.placePopover) so it never clips inside the scrolling
   // modal body. Calls onPick({ id, name, email, role }) on selection.
+  // Shared as __cb.buildSfdcUserPicker — also powers the Request POC modal's
+  // SE Captain picker. Only one results panel is open at a time across callers.
   function buildUserPicker({ placeholder, onPick }) {
     const wrap = document.createElement("div");
     wrap.className = "cb-capmap-picker";
@@ -168,6 +174,7 @@
 
     return { el: wrap, focus: () => input.focus() };
   }
+  __cb.buildSfdcUserPicker = buildUserPicker;
 
   // ---- Modal -------------------------------------------------------------
 

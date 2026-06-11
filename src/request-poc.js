@@ -44,6 +44,7 @@
   }
 
   function close() {
+    if (window.__cb.closeSfdcPickerPanel) window.__cb.closeSfdcPickerPanel();
     if (modalEl) { modalEl.remove(); modalEl = null; }
     if (backdropEl) { backdropEl.remove(); backdropEl = null; }
     document.removeEventListener("keydown", onKeydown);
@@ -51,7 +52,15 @@
   __cb.closeRequestPocModal = close;
 
   function onKeydown(evt) {
-    if (evt.key === "Escape") { evt.stopPropagation(); close(); }
+    if (evt.key !== "Escape") return;
+    evt.stopPropagation();
+    // The captain picker's results panel traps Escape first; only then does
+    // Escape close the modal.
+    if (window.__cb.sfdcPickerPanelOpen && window.__cb.sfdcPickerPanelOpen()) {
+      window.__cb.closeSfdcPickerPanel();
+      return;
+    }
+    close();
   }
 
   function money(n) {
@@ -131,13 +140,16 @@
     let neededBy = "";
     let submitting = false;
 
-    // SE Captain — auto-resolved from the requester's SFDC manager via the
-    // poc-captain edge function (see cb:poccaptain:get). The rep can remove the
-    // chip to skip tagging; we send that opt-out on submit (the server always
-    // re-resolves *who* from the JWT, so the client only toggles inclusion).
-    let seCaptain = null;        // { name, email } | null
-    let seCaptainLoading = true; // true until the resolve call settles
-    let seCaptainOptout = false; // true once the rep removes the chip
+    // SE Captains — a list of { name, email }. Seeded by auto-resolving the
+    // requester's SFDC manager via the poc-captain edge function
+    // (cb:poccaptain:get); the rep can remove chips, search-tag a captain when
+    // none resolved, or add more via the rounded "+" (SFDC user typeahead from
+    // captain-map.js's shared picker). The full list is sent on submit
+    // (se_captains); an empty list means "tag nobody".
+    let seCaptains = [];          // [{ name, email }]
+    let seCaptainLoading = true;  // true until the auto-resolve call settles
+    let seCaptainAutoFound = false; // auto-resolve produced a captain
+    let seCaptainAdding = false;  // the "+" inline search is open
 
     // Track whether the rep edited a prefillable field, so the async SFDC
     // hydrate below never clobbers something they typed.
@@ -220,14 +232,11 @@
     prefill.appendChild(prefillSummary);
 
     const prefillBody = document.createElement("div");
-    // max-height is sized to fit the three rows so the nested scroll never
-    // engages for the current content — a flex column scroll container clips
-    // its own padding-bottom at the scroll end, which left the last row
-    // (Quartz Link / SFDC) flush against the bottom. Generous bottom padding
-    // gives the section breathing room; the outer modal body still scrolls if
-    // the whole modal outgrows its height.
+    // No inner max-height/scroll: the expanded group always shows all rows.
+    // The outer modal body (.cb-export-modal-body, overflow:auto) scrolls when
+    // the whole modal outgrows 88vh, with the header/footer staying pinned.
     prefillBody.style.cssText =
-      "display:flex;flex-direction:column;gap:14px;padding:14px 12px 18px;max-height:320px;overflow-y:auto;border-top:1px solid #e5e7eb;background:#ffffff;";
+      "display:flex;flex-direction:column;gap:14px;padding:14px 12px 18px;border-top:1px solid #e5e7eb;background:#ffffff;";
 
     // Each row is two equal-weight columns (both fields grow from a 0 basis).
     const row1 = document.createElement("div");
@@ -251,10 +260,10 @@
     prefill.appendChild(prefillBody);
     body.appendChild(prefill);
 
-    // SE Captain — derived from the requester's manager in Salesforce. Shown as
-    // a removable chip (avatar + name). Auto-populates on open; the rep can ✕ it
-    // to skip tagging a captain. (Custom field wrapper, not buildField, so the
-    // chip's ✕ button isn't wrapped in a <label>.)
+    // SE Captain — auto-derived from the requester's manager in Salesforce,
+    // shown as removable chips. When none resolves the slot is a search bar;
+    // once populated a rounded "+" adds more via the same typeahead. (Custom
+    // field wrapper, not buildField, so the buttons aren't inside a <label>.)
     const captainSlot = document.createElement("div");
     captainSlot.className = "cb-poc-captain-slot";
     const captainField = document.createElement("div");
@@ -273,7 +282,72 @@
       return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
     }
 
+    function captainKey(c) {
+      return (c.email || c.name || "").trim().toLowerCase();
+    }
+
+    function addCaptain(rec) {
+      const captain = { name: rec.name, email: rec.email || null };
+      if (!captain.name) return;
+      const key = captainKey(captain);
+      if (!seCaptains.some((c) => captainKey(c) === key)) seCaptains.push(captain);
+      seCaptainAdding = false;
+      renderCaptainSlot();
+    }
+
+    // The shared SFDC user typeahead (captain-map.js). `inline` is the small
+    // picker that the "+" button swaps into; it collapses back to "+" when it
+    // loses focus without a pick.
+    function buildCaptainPicker({ inline } = {}) {
+      if (!__cb.buildSfdcUserPicker) return null;
+      const picker = __cb.buildSfdcUserPicker({
+        placeholder: "Search SE Captain\u2026",
+        onPick: addCaptain,
+      });
+      picker.el.classList.add(inline ? "cb-poc-captain-picker-inline" : "cb-poc-captain-picker");
+      if (inline) {
+        const input = picker.el.querySelector("input");
+        if (input) {
+          input.addEventListener("blur", () => {
+            // Delay so a result's mousedown pick can land first.
+            setTimeout(() => {
+              if (seCaptainAdding) { seCaptainAdding = false; renderCaptainSlot(); }
+            }, 150);
+          });
+        }
+      }
+      return picker;
+    }
+
+    function buildCaptainChip(captain, idx) {
+      // Avatar initials + name + remove. Avatars become real once captains are
+      // Quartz users; initials stand in until then.
+      const chip = document.createElement("span");
+      chip.className = "cb-poc-captain-chip";
+      const avatar = document.createElement("span");
+      avatar.className = "cb-poc-captain-avatar";
+      avatar.textContent = captainInitials(captain.name);
+      const nameEl = document.createElement("span");
+      nameEl.className = "cb-poc-captain-name";
+      nameEl.textContent = captain.name;
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "cb-poc-captain-remove";
+      remove.setAttribute("aria-label", "Remove SE Captain");
+      remove.innerHTML =
+        '<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
+      remove.addEventListener("click", () => {
+        seCaptains.splice(idx, 1);
+        renderCaptainSlot();
+      });
+      chip.appendChild(avatar);
+      chip.appendChild(nameEl);
+      chip.appendChild(remove);
+      return chip;
+    }
+
     function renderCaptainSlot() {
+      if (__cb.closeSfdcPickerPanel) __cb.closeSfdcPickerPanel();
       captainSlot.innerHTML = "";
       if (seCaptainLoading) {
         const hint = document.createElement("span");
@@ -282,47 +356,41 @@
         captainSlot.appendChild(hint);
         return;
       }
-      if (!seCaptain) {
-        const hint = document.createElement("span");
-        hint.className = "cb-poc-captain-empty";
-        hint.textContent = "No SE Captain mapped for your manager.";
-        captainSlot.appendChild(hint);
+      if (!seCaptains.length) {
+        // Empty: a full-width search bar to tag a captain directly.
+        if (!seCaptainAutoFound) {
+          const hint = document.createElement("span");
+          hint.className = "cb-poc-captain-empty";
+          hint.textContent = "No SE Captain mapped for your manager \u2014 search to tag one.";
+          captainSlot.appendChild(hint);
+        }
+        const picker = buildCaptainPicker({ inline: false });
+        if (picker) captainSlot.appendChild(picker.el);
         return;
       }
-      if (seCaptainOptout) {
-        const hint = document.createElement("span");
-        hint.className = "cb-poc-captain-empty";
-        hint.textContent = "Won\u2019t tag an SE Captain. ";
-        const undo = document.createElement("button");
-        undo.type = "button";
-        undo.className = "cb-poc-captain-undo";
-        undo.textContent = "Undo";
-        undo.addEventListener("click", () => { seCaptainOptout = false; renderCaptainSlot(); });
-        hint.appendChild(undo);
-        captainSlot.appendChild(hint);
-        return;
+      // Populated: wrapping chip row + a rounded "+" that swaps into an inline
+      // search (no permanent search bar under the chips).
+      const row = document.createElement("div");
+      row.className = "cb-poc-captain-row";
+      seCaptains.forEach((c, idx) => row.appendChild(buildCaptainChip(c, idx)));
+      if (seCaptainAdding) {
+        const picker = buildCaptainPicker({ inline: true });
+        if (picker) {
+          row.appendChild(picker.el);
+          setTimeout(() => picker.focus(), 0);
+        }
+      } else if (__cb.buildSfdcUserPicker) {
+        const add = document.createElement("button");
+        add.type = "button";
+        add.className = "cb-poc-captain-add";
+        add.setAttribute("aria-label", "Add another SE Captain");
+        add.title = "Add another SE Captain";
+        add.innerHTML =
+          '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>';
+        add.addEventListener("click", () => { seCaptainAdding = true; renderCaptainSlot(); });
+        row.appendChild(add);
       }
-      // The captain chip (avatar initials + name + remove). Avatars become real
-      // once captains are Quartz users; initials stand in until then.
-      const chip = document.createElement("span");
-      chip.className = "cb-poc-captain-chip";
-      const avatar = document.createElement("span");
-      avatar.className = "cb-poc-captain-avatar";
-      avatar.textContent = captainInitials(seCaptain.name);
-      const nameEl = document.createElement("span");
-      nameEl.className = "cb-poc-captain-name";
-      nameEl.textContent = seCaptain.name;
-      const remove = document.createElement("button");
-      remove.type = "button";
-      remove.className = "cb-poc-captain-remove";
-      remove.setAttribute("aria-label", "Remove SE Captain");
-      remove.innerHTML =
-        '<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
-      remove.addEventListener("click", () => { seCaptainOptout = true; renderCaptainSlot(); });
-      chip.appendChild(avatar);
-      chip.appendChild(nameEl);
-      chip.appendChild(remove);
-      captainSlot.appendChild(chip);
+      captainSlot.appendChild(row);
     }
     renderCaptainSlot();
 
@@ -330,9 +398,12 @@
     sendMessage({ type: "cb:poccaptain:get" }).then((resp) => {
       seCaptainLoading = false;
       const c = resp && resp.ok && resp.data && resp.data.ok ? resp.data.captain : null;
-      seCaptain = c && c.name ? { name: c.name, email: c.email || null } : null;
+      if (c && c.name) {
+        seCaptainAutoFound = true;
+        seCaptains = [{ name: c.name, email: c.email || null }];
+      }
       renderCaptainSlot();
-    }).catch(() => { seCaptainLoading = false; seCaptain = null; renderCaptainSlot(); });
+    }).catch(() => { seCaptainLoading = false; renderCaptainSlot(); });
 
     // Always-visible: the fields that need the rep's input.
     const dateInput = buildInput("", "", "date");
@@ -496,7 +567,10 @@
           comments: comments.trim(),
           loom_url: loom.trim(),
           needed_by: neededBy || null,
-          se_captain_optout: seCaptainOptout,
+          // The picked captains travel with the request; an empty list means
+          // "tag nobody" (se_captain_optout keeps older servers working).
+          se_captains: seCaptains.map((c) => ({ name: c.name, email: c.email || null })),
+          se_captain_optout: seCaptains.length === 0,
         },
       });
 
