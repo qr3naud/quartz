@@ -33,3 +33,5 @@ scripts/updater/quartz-key.pem
 # Python bytecode cache from running/compiling the updater host locally.
 __pycache__/
 *.pyc
+
+.env

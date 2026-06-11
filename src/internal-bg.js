@@ -394,6 +394,32 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     return true;
   }
 
+  // cb:share:call — { body: { action: publish|list|revoke, ... } }. Proxies
+  // the share dialog's calls to the share-publish Edge Function (create a
+  // public scope link / list links for a workbook / revoke a link). Identity
+  // is set server-side from the JWT.
+  if (msg.type === "cb:share:call") {
+    (async () => {
+      try {
+        if (!msg.body || typeof msg.body !== "object") {
+          sendResponse({ ok: false, error: "missing share body" });
+          return;
+        }
+        const res = await callProxy("share-publish", {
+          method: "POST",
+          body: msg.body,
+        });
+        const text = await res.text();
+        let data = null;
+        try { data = text ? JSON.parse(text) : null; } catch {}
+        sendResponse({ ok: res.ok, status: res.status, data, rawText: text || undefined });
+      } catch (err) {
+        sendResponse({ ok: false, error: err?.message || String(err) });
+      }
+    })();
+    return true;
+  }
+
   // cb:slack:channels — lists the Slack channels the bot is a member of, for
   // the Admin > Secret Configuration channel dropdown (slack-channels function).
   if (msg.type === "cb:slack:channels") {

@@ -24,6 +24,7 @@
     { id: "dealdesk", label: "Submit to deal desk",       enabled: true,  feature: "gtme_export", ownerOnly: true },
     { id: "dealops",  label: "Export to DealOps",         enabled: false, feature: "gtme_export" },
     { id: "table",    label: "Export as Table",           enabled: true,  ownerOnly: true },
+    { id: "share",    label: "Share scope link",          enabled: true,  feature: "share_links", ownerOnly: true },
     // "Import Inspector" (formerly "Export as JSON") moved to the three-dots
     // ("more") menu — see __cb.openMoreMenu in src/overlay.js.
   ];
@@ -87,6 +88,7 @@
           else if (opt.id === "gtme") __cb.openGtmeExportModal();
           else if (opt.id === "dealdesk" && __cb.openDealDeskModal) __cb.openDealDeskModal();
           else if (opt.id === "csv") __cb.exportCurrentTableCsv();
+          else if (opt.id === "share" && __cb.openShareDialog) __cb.openShareDialog();
         });
       }
       menuEl.appendChild(item);

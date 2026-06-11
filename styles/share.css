@@ -1,0 +1,146 @@
+/* Share dialog (src/share.js). Shell classes (backdrop, modal, header, close,
+   done button) come from styles/export.css; this file only sizes the share
+   variant and styles its form rows + link list. */
+
+.cb-share-modal {
+  width: 520px;
+  max-width: 92vw;
+  height: auto;
+  max-height: 86vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.cb-share-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 16px 20px 20px;
+  overflow-y: auto;
+}
+
+.cb-share-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.cb-share-field-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: #475569;
+}
+
+.cb-share-modules {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+}
+
+.cb-share-module {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: #1e293b;
+  cursor: pointer;
+  user-select: none;
+}
+
+.cb-share-credits {
+  margin-top: -4px;
+}
+
+.cb-share-generate-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.cb-share-hint {
+  font-size: 12px;
+  line-height: 1.45;
+  color: #64748b;
+}
+
+.cb-share-result {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.cb-share-url {
+  flex: 1;
+  font-size: 12px;
+}
+
+.cb-share-error {
+  font-size: 12px;
+  color: #dc2626;
+}
+
+.cb-share-list-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: #475569;
+  margin-top: 4px;
+  padding-top: 12px;
+  border-top: 1px solid #e2e8f0;
+}
+
+.cb-share-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13px;
+  color: #64748b;
+}
+
+.cb-share-list-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.cb-share-list-slug {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #2563eb;
+  text-decoration: none;
+}
+
+.cb-share-list-slug:hover {
+  text-decoration: underline;
+}
+
+.cb-share-list-meta {
+  font-size: 11px;
+  color: #94a3b8;
+  white-space: nowrap;
+}
+
+.cb-share-list-btn {
+  border: 1px solid #e2e8f0;
+  background: #ffffff;
+  border-radius: 6px;
+  font-size: 11px;
+  padding: 3px 8px;
+  cursor: pointer;
+  color: #475569;
+}
+
+.cb-share-list-btn:hover {
+  background: #f8fafc;
+}
+
+.cb-share-list-revoke {
+  color: #dc2626;
+  border-color: #fecaca;
+}
+
+.cb-share-list-revoke:hover {
+  background: #fef2f2;
+}
