@@ -22,6 +22,10 @@ supabase/
 # SFDC connection tester + credentials — internal-only, never pushed.
 scripts/sfdc/
 
+# Slack secrets setter — reads SLACK_BOT_TOKEN / SLACK_SIGNING_SECRET from env;
+# kept on disk for maintainer use, never pushed (see docs/AGENTS.md).
+scripts/set-quartz-slack-secrets.sh
+
 # Private RSA key that pins the extension ID via manifest "key". Only the
 # public half lives in manifest.json; this private half stays off GitHub.
 scripts/updater/quartz-key.pem
