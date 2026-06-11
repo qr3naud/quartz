@@ -164,7 +164,7 @@
     });
 
     modalEl = document.createElement("div");
-    modalEl.className = "cb-export-modal cb-gtme-modal";
+    modalEl.className = "cb-export-modal cb-gtme-modal cb-poc-modal";
 
     // ---- Header ----
     const header = document.createElement("div");

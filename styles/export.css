@@ -553,6 +553,17 @@
    removable person chip (avatar + name + ✕). The slot reserves a row height so
    the layout doesn't jump between the loading / empty / chip states. Avatars are
    initials for now; they become real photos once captains are Quartz users. */
+/* ---- Request POC modal (src/request-poc.js) ----
+   The body is a flex column; once the expanded prefill group pushes the modal
+   to its 88vh cap, default flex sizing kicks in — children with
+   .cb-gtme-field-grow (flex:1) balloon (Comments) while the rest shrink to
+   nothing. Force natural heights on the body's direct children so the body
+   just scrolls instead. Row-level grow (two-column .cb-gtme-fields) is
+   untouched: those fields aren't direct children of the body. */
+.cb-poc-modal .cb-gtme-body > * {
+  flex: 0 0 auto;
+}
+
 .cb-poc-captain-slot {
   display: flex;
   flex-direction: column;
