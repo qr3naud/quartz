@@ -1990,8 +1990,8 @@
     // cluster from the first render.
     allocateClusterId,
     applyClusterReflow,
-    // Live snapshot of the cards array. External read-only consumers (e.g. the
-    // export-as-table modal) need this to enumerate every card. Mutating the
+    // Live snapshot of the cards array. External read-only consumers need this
+    // to enumerate every card. Mutating the
     // returned array directly would corrupt internal state — go through addCard
     // / removeCard / card.data setters instead.
     getCards: () => cards.slice(),
@@ -2004,8 +2004,8 @@
       if (!tableId) return;
       importedTables[tableId] = { ...(importedTables[tableId] || {}), ...(meta || {}) };
     },
-    // Exposed so external editors (e.g. the export-as-table modal) can mark
-    // canvas-data edits — both for undo history and for kicking the
+    // Exposed so external editors can mark canvas-data edits — both for undo
+    // history and for kicking the
     // debounced save / collaborator refresh that onCanvasStateChange does.
     notifyChange,
     showBulkInput,

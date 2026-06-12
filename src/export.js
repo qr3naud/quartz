@@ -5,8 +5,6 @@
 
   let menuEl = null;
   let menuBackdrop = null;
-  let modalEl = null;
-  let modalBackdrop = null;
 
   // Export options the menu surfaces. Each row has a handler in
   // openExportMenu's click switch below; new options drop in as a single
@@ -20,10 +18,9 @@
   // at the top of openExportMenu.
   const EXPORT_OPTIONS = [
     { id: "csv",      label: "Export to CSV",             enabled: true },
+    { id: "package",  label: "Package CSVs",              enabled: true },
     { id: "gtme",     label: "Export to GTME Calculator", enabled: true,  feature: "gtme_export" },
     { id: "dealdesk", label: "Submit to deal desk",       enabled: true,  feature: "gtme_export", ownerOnly: true },
-    { id: "dealops",  label: "Export to DealOps",         enabled: false, feature: "gtme_export" },
-    { id: "table",    label: "Export as Table",           enabled: true,  ownerOnly: true },
     { id: "share",    label: "Share scope link",          enabled: true,  feature: "share_links", ownerOnly: true },
     // "Import Inspector" (formerly "Export as JSON") moved to the three-dots
     // ("more") menu — see __cb.openMoreMenu in src/overlay.js.
@@ -57,8 +54,8 @@
 
     // Filter options the JWT doesn't entitle this user to see. Internal
     // GTMEs get the feature-flagged rows; `ownerOnly` rows (Submit to deal
-    // desk, Export as Table) are further restricted to the maintainer via the
-    // signed `is_admin` claim. The handler switch below doesn't need its own
+    // desk) are further restricted to the maintainer via the signed `is_admin`
+    // claim. The handler switch below doesn't need its own
     // checks because gated branches are unreachable when the row isn't rendered.
     const isOwner = !!__cb.isAdmin;
     const visibleOptions = EXPORT_OPTIONS.filter(
@@ -84,10 +81,10 @@
         item.addEventListener("click", (evt) => {
           evt.stopPropagation();
           closeExportMenu();
-          if (opt.id === "table") __cb.openExportTableModal();
-          else if (opt.id === "gtme") __cb.openGtmeExportModal();
+          if (opt.id === "gtme") __cb.openGtmeExportModal();
           else if (opt.id === "dealdesk" && __cb.openDealDeskModal) __cb.openDealDeskModal();
           else if (opt.id === "csv") __cb.exportCurrentTableCsv();
+          else if (opt.id === "package") __cb.packageScopeCsvs();
           else if (opt.id === "share" && __cb.openShareDialog) __cb.openShareDialog();
         });
       }
@@ -131,8 +128,7 @@
   // screen — including merged-enrichment runs (the Enrichments cell is blank on
   // a run's follower rows, the canonical CSV "merge").
   //
-  // Available to every export user (no feature/owner gate) — unlike the
-  // owner-only "Export as Table" modal below.
+  // Available to every export user (no feature/owner gate).
   // ==========================================================================
 
   // Wrap a value for CSV: quote + double inner quotes when it contains a comma,
@@ -146,7 +142,10 @@
   // as downloadJson below). Revoke the object URL after the click so the Blob
   // doesn't leak until the page closes.
   function downloadTextFile(filename, text, mime) {
-    const blob = new Blob([text], { type: mime });
+    downloadBlob(filename, new Blob([text], { type: mime }));
+  }
+
+  function downloadBlob(filename, blob) {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
@@ -174,22 +173,12 @@
     return active ? active.name || "" : "";
   }
 
-  __cb.exportCurrentTableCsv = function exportCurrentTableCsv() {
-    // Flush the live canvas into the active tab so getExportData() reads current
-    // state (mirrors the GTME export flow).
-    if (__cb.saveTabs) __cb.saveTabs();
-
+  function buildScopingCsvPayload() {
     const data =
       __cb.tableView && __cb.tableView.getExportData
         ? __cb.tableView.getExportData()
         : null;
-
-    if (!data || !data.rows || data.rows.length === 0) {
-      __cb.showOverlayToast?.(
-        "Nothing to export \u2014 add data points to this tab first.",
-      );
-      return;
-    }
+    if (!data || !data.rows || data.rows.length === 0) return null;
 
     const columns = data.columns;
     const headerLine = columns.map(csvEscape).join(",");
@@ -197,447 +186,223 @@
       columns.map((col) => csvEscape(row[col])).join(","),
     );
     const csv = [headerLine, ...bodyLines].join("\n");
-
     const stamp = new Date().toISOString().replace(/[:.]/g, "-");
     const filename = `clay-scoping-${slugifyTabName(activeTabName())}-${data.viewMode}-${stamp}.csv`;
-    downloadTextFile(filename, csv, "text/csv;charset=utf-8");
+    return {
+      text: csv,
+      filename,
+      viewMode: data.viewMode,
+      rowCount: data.rows.length,
+    };
+  }
+
+  __cb.exportCurrentTableCsv = function exportCurrentTableCsv() {
+    // Flush the live canvas into the active tab so getExportData() reads current
+    // state (mirrors the GTME export flow).
+    if (__cb.saveTabs) __cb.saveTabs();
+
+    const payload = buildScopingCsvPayload();
+    if (!payload) {
+      __cb.showOverlayToast?.(
+        "Nothing to export \u2014 add data points to this tab first.",
+      );
+      return;
+    }
+
+    downloadTextFile(payload.filename, payload.text, "text/csv;charset=utf-8");
 
     __cb.showOverlayToast?.(
-      `CSV downloaded \u2014 ${data.viewMode} view, ${data.rows.length} ${
-        data.rows.length === 1 ? "row" : "rows"
+      `CSV downloaded \u2014 ${payload.viewMode} view, ${payload.rowCount} ${
+        payload.rowCount === 1 ? "row" : "rows"
       }.`,
     );
   };
 
-  // ---- Per-DP row computation (mirrors updateDpCosts in canvas/credits.js) ----
+  // ==========================================================================
+  // PACKAGE CSVs
+  //
+  // Bundles the scoping-summary CSV (same as Export to CSV) with raw Clay table
+  // CSVs for every imported underlying table. Clay table exports use the same
+  // async export-job API as the Clay UI's "Download CSV" button — no DOM
+  // automation. Available to every export user (no feature/owner gate).
+  // ==========================================================================
 
-  function isNonErType(type) {
-    return type === "dp" || type === "input" || type === "comment";
+  function sanitizeFilename(name) {
+    const base = String(name || "file")
+      .replace(/[\\/:*?"<>|]/g, "-")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 120);
+    return base || "file";
   }
 
-  function fillRatePct(fr) {
-    if (!fr || !fr.denominator) return 0;
-    return Math.round((fr.numerator / fr.denominator) * 100);
-  }
+  // Distinct imported Clay tables in the active scope: { tableId, viewId, name }.
+  function collectUnderlyingTables() {
+    const imported = __cb.model?.getImportedTables?.() || {};
+    const byId = new Map();
 
-  // Returns one row per DP card. Rows for unconnected DPs (DPs not in any
-  // snap-cluster, or in a cluster with no ER cards) carry credits=0,
-  // actions=0, ers=[]. Caller decides whether to filter those out.
-  function buildRows() {
-    const canvas = __cb.canvas;
-    if (!canvas) return [];
-
-    const allCards = canvas.getCards();
-    // Model-backed cluster membership; getClusters() returns
-    // `{id, cardIds}[]` and we only need cardIds for the cost reducer.
-    const clusters = canvas.getClusters().map((cl) => cl.cardIds);
-
-    // Map dpId -> { credits, actions, ers, enrichmentCount }. Built from
-    // clusters first; DPs not in the map fall through to the unconnected
-    // default at row time.
-    const dpInfoMap = new Map();
-
-    for (const cluster of clusters) {
-      const clusterCards = cluster
-        .map((id) => allCards.find((c) => c.id === id))
-        .filter(Boolean);
-      const erCards = clusterCards.filter((c) => !isNonErType(c.data.type));
-      const dpCards = clusterCards.filter((c) => c.data.type === "dp");
-      if (dpCards.length === 0) continue;
-
-      // Mirror the cost-attribution rule in canvas/credits.js: sum credits
-      // across the cluster's ERs (skipping private-key ones) then divide by
-      // the number of DPs sharing the cluster. Same idea for actions, except
-      // private-key doesn't suppress action counts (matches the existing
-      // updateGroupCredits rule).
-      let totalCredits = 0;
-      let totalActions = 0;
-      for (const er of erCards) {
-        if (!er.data.usePrivateKey && er.data.credits != null) {
-          totalCredits += er.data.credits;
-        }
-        if (er.data.actionExecutions != null) {
-          totalActions += er.data.actionExecutions;
-        }
-      }
-
-      const perDpCredits = totalCredits / dpCards.length;
-      const perDpActions = totalActions / dpCards.length;
-      const erList = erCards.map((er) => {
-        const isWaterfall = er.data.type === "waterfall";
-        const providerChain = isWaterfall
-          ? (er.data.providers || []).map((p) => p.displayName || "Provider").join(" → ")
-          : null;
-        return {
-          id: er.id,
-          name: er.data.displayName || er.data.text || (isWaterfall ? "Waterfall" : "Untitled enrichment"),
-          isWaterfall,
-          providerChain,
-        };
-      });
-
-      for (const dp of dpCards) {
-        dpInfoMap.set(dp.id, {
-          credits: perDpCredits,
-          actions: perDpActions,
-          ers: erList,
-          enrichmentCount: erCards.length,
-        });
-      }
-    }
-
-    const rows = [];
-    for (const card of allCards) {
-      if (card.data.type !== "dp") continue;
-      const info = dpInfoMap.get(card.id);
-      rows.push({
-        cardId: card.id,
-        name: card.data.text || card.data.displayName || "",
-        fillRatePct: fillRatePct(card.data.fillRate),
-        credits: info ? info.credits : 0,
-        actions: info ? info.actions : 0,
-        ers: info ? info.ers : [],
-        connected: !!info && info.enrichmentCount > 0,
+    const tops = (__cb.model?.getGroups?.() || []).filter(
+      (g) => (g.parentId ?? null) === null && g.tableId,
+    );
+    for (const g of tops) {
+      const meta = imported[g.tableId] || {};
+      byId.set(g.tableId, {
+        tableId: g.tableId,
+        viewId: g.viewId ?? null,
+        name: g.label || meta.name || `table-${g.tableId}`,
       });
     }
-    return rows;
-  }
 
-  function formatNumber(n) {
-    if (!Number.isFinite(n)) return "0";
-    return n % 1 === 0
-      ? n.toLocaleString()
-      : n.toLocaleString(undefined, { maximumFractionDigits: 1 });
-  }
-
-  // ---- Modal ----
-
-  function closeExportTableModal() {
-    if (modalEl) { modalEl.remove(); modalEl = null; }
-    if (modalBackdrop) { modalBackdrop.remove(); modalBackdrop = null; }
-    document.removeEventListener("keydown", onModalKeydown);
-  }
-
-  __cb.closeExportTableModal = closeExportTableModal;
-
-  function onModalKeydown(evt) {
-    if (evt.key === "Escape") {
-      // Don't bubble Escape into the canvas's escape-to-navigate handler when
-      // the user is just dismissing the modal.
-      evt.stopPropagation();
-      closeExportTableModal();
-    }
-  }
-
-  __cb.openExportTableModal = function openExportTableModal() {
-    closeExportTableModal();
-
-    // Default the filter on; persist on __cb so reopening within the same
-    // session keeps the user's choice without us having to wire localStorage.
-    if (typeof __cb._exportShowUnconnected !== "boolean") {
-      __cb._exportShowUnconnected = true;
+    for (const n of __cb.model?.getNodes?.() || []) {
+      const d = n?.data;
+      if (!d?.tableId) continue;
+      if (byId.has(d.tableId)) {
+        const existing = byId.get(d.tableId);
+        if (!existing.viewId && d.viewId) existing.viewId = d.viewId;
+        continue;
+      }
+      const meta = imported[d.tableId] || {};
+      byId.set(d.tableId, {
+        tableId: d.tableId,
+        viewId: d.viewId ?? null,
+        name: meta.name || d.tableName || `table-${d.tableId}`,
+      });
     }
 
-    modalBackdrop = document.createElement("div");
-    modalBackdrop.className = "cb-export-modal-backdrop";
-    modalBackdrop.addEventListener("mousedown", (evt) => {
-      // Only the bare backdrop (not the modal itself) dismisses on click.
-      if (evt.target === modalBackdrop) closeExportTableModal();
-    });
-
-    modalEl = document.createElement("div");
-    modalEl.className = "cb-export-modal";
-
-    // ---- Header ----
-
-    const header = document.createElement("div");
-    header.className = "cb-export-modal-header";
-
-    const titleWrap = document.createElement("div");
-    titleWrap.className = "cb-export-modal-title-wrap";
-    const title = document.createElement("h2");
-    title.className = "cb-export-modal-title";
-    title.textContent = "Export as table";
-    const subtitle = document.createElement("div");
-    subtitle.className = "cb-export-modal-subtitle";
-    subtitle.textContent = "Spreadsheet view of your data points and the enrichments serving them.";
-    titleWrap.appendChild(title);
-    titleWrap.appendChild(subtitle);
-
-    const headerActions = document.createElement("div");
-    headerActions.className = "cb-export-modal-header-actions";
-
-    // Filter toggle (controlled checkbox styled as a pill).
-    const filterLabel = document.createElement("label");
-    filterLabel.className = "cb-export-filter-toggle";
-    const filterInput = document.createElement("input");
-    filterInput.type = "checkbox";
-    filterInput.checked = !!__cb._exportShowUnconnected;
-    const filterText = document.createElement("span");
-    filterText.textContent = "Show unconnected DPs";
-    filterLabel.appendChild(filterInput);
-    filterLabel.appendChild(filterText);
-    filterInput.addEventListener("change", () => {
-      __cb._exportShowUnconnected = filterInput.checked;
-      renderTable();
-    });
-
-    // Download CSV button — visual only. Click is a no-op intentionally;
-    // wiring this up is the next milestone.
-    const downloadBtn = document.createElement("button");
-    downloadBtn.type = "button";
-    downloadBtn.className = "cb-export-download-btn";
-    downloadBtn.title = "Download CSV (coming soon)";
-    downloadBtn.innerHTML =
-      '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>' +
-      '<span>Download CSV</span>';
-
-    const closeBtn = document.createElement("button");
-    closeBtn.type = "button";
-    closeBtn.className = "cb-export-modal-close";
-    closeBtn.setAttribute("aria-label", "Close");
-    closeBtn.innerHTML =
-      '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
-    closeBtn.addEventListener("click", closeExportTableModal);
-
-    headerActions.appendChild(filterLabel);
-    headerActions.appendChild(downloadBtn);
-    headerActions.appendChild(closeBtn);
-
-    header.appendChild(titleWrap);
-    header.appendChild(headerActions);
-
-    // ---- Body (table container) ----
-
-    const body = document.createElement("div");
-    body.className = "cb-export-modal-body";
-
-    function renderTable() {
-      body.innerHTML = "";
-
-      const allRows = buildRows();
-      const showUnconnected = !!__cb._exportShowUnconnected;
-      const visibleRows = showUnconnected
-        ? allRows
-        : allRows.filter((r) => r.connected);
-
-      if (allRows.length === 0) {
-        const empty = document.createElement("div");
-        empty.className = "cb-export-empty";
-        empty.textContent = "No data points yet. Add a DP card to the canvas to see rows here.";
-        body.appendChild(empty);
-        return;
-      }
-
-      if (visibleRows.length === 0) {
-        const empty = document.createElement("div");
-        empty.className = "cb-export-empty";
-        empty.textContent = "No connected data points. Toggle \u201cShow unconnected DPs\u201d to see all rows.";
-        body.appendChild(empty);
-        return;
-      }
-
-      const table = document.createElement("table");
-      table.className = "cb-export-table";
-
-      const thead = document.createElement("thead");
-      const headRow = document.createElement("tr");
-      const headers = [
-        { label: "DP",            cls: "col-dp" },
-        { label: "Fill rate (%)", cls: "col-fill" },
-        { label: "Credits",       cls: "col-credits" },
-        { label: "Actions",       cls: "col-actions" },
-        { label: "ERs",           cls: "col-ers" },
-      ];
-      for (const h of headers) {
-        const th = document.createElement("th");
-        th.textContent = h.label;
-        th.className = h.cls;
-        headRow.appendChild(th);
-      }
-      thead.appendChild(headRow);
-      table.appendChild(thead);
-
-      const tbody = document.createElement("tbody");
-      for (const row of visibleRows) {
-        tbody.appendChild(buildRowEl(row));
-      }
-      table.appendChild(tbody);
-
-      body.appendChild(table);
+    for (const [tableId, meta] of Object.entries(imported)) {
+      if (byId.has(tableId)) continue;
+      byId.set(tableId, {
+        tableId,
+        viewId: null,
+        name: meta.name || `table-${tableId}`,
+      });
     }
 
-    // ---- Footer ----
+    return [...byId.values()];
+  }
 
-    const footer = document.createElement("div");
-    footer.className = "cb-export-modal-footer";
-    const footerHint = document.createElement("div");
-    footerHint.className = "cb-export-modal-footer-hint";
-    footerHint.textContent = "Edits to DP names and fill rates apply to the canvas immediately.";
-    const doneBtn = document.createElement("button");
-    doneBtn.type = "button";
-    doneBtn.className = "cb-export-modal-done";
-    doneBtn.textContent = "Done";
-    doneBtn.addEventListener("click", closeExportTableModal);
-    footer.appendChild(footerHint);
-    footer.appendChild(doneBtn);
+  async function resolveViewIds(entries, workbookId) {
+    if (!workbookId || !entries.some((e) => !e.viewId) || !__cb.fetchTableList) {
+      return entries;
+    }
+    try {
+      const list = await __cb.fetchTableList(workbookId);
+      const tables = list?.tables || list || [];
+      const byTableId = new Map(
+        (Array.isArray(tables) ? tables : []).map((t) => [t.id, t]),
+      );
+      for (const entry of entries) {
+        if (!entry.viewId) {
+          const t = byTableId.get(entry.tableId);
+          entry.viewId = t?.firstViewId ?? null;
+        }
+      }
+    } catch (err) {
+      console.warn("[Clay Scoping] resolveViewIds failed:", err);
+    }
+    return entries;
+  }
 
-    modalEl.appendChild(header);
-    modalEl.appendChild(body);
-    modalEl.appendChild(footer);
-
-    modalBackdrop.appendChild(modalEl);
-    document.body.appendChild(modalBackdrop);
-
-    document.addEventListener("keydown", onModalKeydown);
-
-    renderTable();
-  };
-
-  // ---- Row construction (with edit handlers) ----
-
-  function buildRowEl(row) {
-    const tr = document.createElement("tr");
-    tr.className = row.connected ? "" : "cb-export-row-unconnected";
-    tr.setAttribute("data-card-id", String(row.cardId));
-
-    // DP name — editable. Writing back updates card.data and the live
-    // canvas DOM so the side-by-side view stays in sync.
-    const dpCell = document.createElement("td");
-    dpCell.className = "col-dp";
-    const dpInput = document.createElement("input");
-    dpInput.type = "text";
-    dpInput.className = "cb-export-cell-input cb-export-cell-input-text";
-    dpInput.value = row.name;
-    dpInput.placeholder = "Type data point\u2026";
-    dpInput.addEventListener("keydown", (evt) => {
-      if (evt.key === "Enter") evt.target.blur();
-    });
-    dpInput.addEventListener("blur", () => {
-      commitDpName(row.cardId, dpInput.value);
-    });
-    dpCell.appendChild(dpInput);
-    tr.appendChild(dpCell);
-
-    // Fill rate (%) — editable single-percentage input. Mirrors the
-    // numerator-only edit path the in-card popover takes when committing,
-    // and flips fillRateCustom so the records-input live updater stops
-    // overwriting it.
-    const fillCell = document.createElement("td");
-    fillCell.className = "col-fill";
-    const fillInput = document.createElement("input");
-    fillInput.type = "number";
-    fillInput.min = "0";
-    fillInput.max = "100";
-    fillInput.step = "1";
-    fillInput.className = "cb-export-cell-input cb-export-cell-input-num";
-    fillInput.value = String(row.fillRatePct);
-    fillInput.addEventListener("keydown", (evt) => {
-      if (evt.key === "Enter") evt.target.blur();
-    });
-    fillInput.addEventListener("blur", () => {
-      commitFillRate(row.cardId, fillInput.value);
-    });
-    const fillSuffix = document.createElement("span");
-    fillSuffix.className = "cb-export-cell-suffix";
-    fillSuffix.textContent = "%";
-    fillCell.appendChild(fillInput);
-    fillCell.appendChild(fillSuffix);
-    tr.appendChild(fillCell);
-
-    // Credits — read-only.
-    const creditsCell = document.createElement("td");
-    creditsCell.className = "col-credits cb-export-cell-readonly";
-    creditsCell.textContent = formatNumber(row.credits);
-    tr.appendChild(creditsCell);
-
-    // Actions — read-only.
-    const actionsCell = document.createElement("td");
-    actionsCell.className = "col-actions cb-export-cell-readonly";
-    actionsCell.textContent = formatNumber(row.actions);
-    tr.appendChild(actionsCell);
-
-    // ERs — chip pills. Empty cluster shows an em-dash.
-    const ersCell = document.createElement("td");
-    ersCell.className = "col-ers";
-    if (row.ers.length === 0) {
-      const dash = document.createElement("span");
-      dash.className = "cb-export-empty-cell";
-      dash.textContent = "\u2014";
-      ersCell.appendChild(dash);
+  async function fetchClayTableCsv(entry) {
+    let job;
+    if (entry.viewId) {
+      job = await __cb.startTableViewExport(entry.tableId, entry.viewId);
     } else {
-      const chips = document.createElement("div");
-      chips.className = "cb-export-er-chips";
-      for (const er of row.ers) {
-        const chip = document.createElement("span");
-        chip.className = "cb-export-er-chip" + (er.isWaterfall ? " cb-export-er-chip-waterfall" : "");
-        chip.textContent = er.name;
-        // Surface the provider chain on hover for waterfall chips so users
-        // can verify the steps without leaving the modal. Standalone ERs
-        // get just the name as the tooltip (matches old behavior).
-        chip.title = er.isWaterfall && er.providerChain
-          ? `${er.name} — ${er.providerChain}`
-          : er.name;
-        chips.appendChild(chip);
+      job = await __cb.startTableExport(entry.tableId);
+    }
+    const exportId = job?.id;
+    if (!exportId) throw new Error("No export job id");
+
+    const finished = await __cb.waitForExportJob(exportId);
+    if (!finished.downloadUrl) throw new Error("No download URL");
+
+    const res = await fetch(finished.downloadUrl);
+    if (!res.ok) throw new Error(`Download failed (${res.status})`);
+    const blob = await res.blob();
+    const baseName = finished.fileName
+      ? String(finished.fileName).replace(/\.csv$/i, "")
+      : sanitizeFilename(entry.name);
+    return { blob, filename: `${sanitizeFilename(baseName)}.csv` };
+  }
+
+  __cb.packageScopeCsvs = async function packageScopeCsvs() {
+    if (typeof JSZip === "undefined") {
+      __cb.showOverlayToast?.("Package CSVs unavailable \u2014 JSZip not loaded.");
+      return;
+    }
+
+    if (__cb.saveTabs) __cb.saveTabs();
+
+    const scoping = buildScopingCsvPayload();
+    if (!scoping) {
+      __cb.showOverlayToast?.(
+        "Nothing to export \u2014 add data points to this tab first.",
+      );
+      return;
+    }
+
+    const ids = __cb.parseIdsFromUrl?.();
+    const workbookId = __cb.currentWorkbookId ?? ids?.workbookId;
+    const underlying = collectUnderlyingTables();
+    if (underlying.length && workbookId) {
+      await resolveViewIds(underlying, workbookId);
+    }
+
+    const total = 1 + underlying.length;
+    __cb.showOverlayToast?.(
+      underlying.length
+        ? `Packaging ${total} CSVs\u2026`
+        : "Packaging scoping CSV (no imported tables in this scope)\u2026",
+    );
+
+    const zip = new JSZip();
+    zip.file(scoping.filename, scoping.text);
+
+    let tableSuccess = 0;
+    let tableFailed = 0;
+
+    for (let i = 0; i < underlying.length; i++) {
+      const entry = underlying[i];
+      __cb.showOverlayToast?.(
+        `Exporting table ${i + 1}/${underlying.length}: ${entry.name}\u2026`,
+      );
+      try {
+        const { blob, filename } = await fetchClayTableCsv(entry);
+        zip.file(`tables/${filename}`, blob);
+        tableSuccess++;
+      } catch (err) {
+        console.warn(
+          "[Clay Scoping] Package CSVs table export failed:",
+          entry.tableId,
+          err,
+        );
+        tableFailed++;
       }
-      ersCell.appendChild(chips);
-    }
-    tr.appendChild(ersCell);
-
-    return tr;
-  }
-
-  function commitDpName(cardId, value) {
-    const canvas = __cb.canvas;
-    if (!canvas) return;
-    const card = canvas.getCardById(cardId);
-    if (!card) return;
-    const next = (value || "").trim();
-    const prev = card.data.text || card.data.displayName || "";
-    if (next === prev) return;
-
-    card.data.text = next;
-    card.data.displayName = next;
-
-    // Update the live canvas card's text node so the user sees the change
-    // immediately if they close the modal.
-    const textEl = card.el?.querySelector(".cb-dp-text");
-    if (textEl) {
-      textEl.textContent = next;
-      if (next) textEl.removeAttribute("data-placeholder");
-      else textEl.setAttribute("data-placeholder", "Type data point\u2026");
     }
 
-    __cb.model.update();
-    if (__cb.saveTabs) __cb.saveTabs();
-  }
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+    const zipName = `clay-scoping-package-${slugifyTabName(activeTabName())}-${stamp}.zip`;
 
-  function commitFillRate(cardId, rawValue) {
-    const canvas = __cb.canvas;
-    if (!canvas) return;
-    const card = canvas.getCardById(cardId);
-    if (!card) return;
+    try {
+      const zipBlob = await zip.generateAsync({ type: "blob" });
+      downloadBlob(zipName, zipBlob);
+    } catch (err) {
+      console.warn("[Clay Scoping] Package CSVs zip failed:", err);
+      __cb.showOverlayToast?.("Package failed \u2014 could not build zip file.");
+      return;
+    }
 
-    // Clamp to 0-100. Empty/non-numeric input falls back to 0 — matches the
-    // permissive behavior of the in-card popover.
-    const parsed = Number(rawValue);
-    const pct = Number.isFinite(parsed) ? Math.max(0, Math.min(100, parsed)) : 0;
-
-    const fr = card.data.fillRate || { numerator: 0, denominator: 100 };
-    const denominator = fr.denominator > 0 ? fr.denominator : 100;
-    const numerator = Math.round((pct / 100) * denominator);
-    card.data.fillRate = { numerator, denominator };
-    // Same flag the in-card popover sets — tells the records-input live
-    // updater "user has touched this, stop auto-rewriting it".
-    card.data.fillRateCustom = true;
-
-    // Refresh the canvas card's fill-rate label so the chip text matches.
-    const labelEl = card.el?.querySelector(".cb-dp-fill-label");
-    if (labelEl) labelEl.textContent = `${pct}%`;
-
-    __cb.model.update();
-    if (__cb.saveTabs) __cb.saveTabs();
-  }
+    const parts = ["scoping CSV"];
+    if (tableSuccess) {
+      parts.push(
+        `${tableSuccess} table CSV${tableSuccess === 1 ? "" : "s"}`,
+      );
+    }
+    if (tableFailed) {
+      parts.push(`${tableFailed} table export${tableFailed === 1 ? "" : "s"} failed`);
+    }
+    __cb.showOverlayToast?.(`Downloaded package \u2014 ${parts.join(", ")}.`);
+  };
 
   // ==========================================================================
   // EXPORT TO GTME CALCULATOR

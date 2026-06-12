@@ -11,9 +11,8 @@
   // confirms, undo, realtime, etc. propagate without manual reloads.
   //
   // Mutation hooks delegate back into the canvas API:
-  //   - DP name + fill-rate edits reuse the same writers the Export-as-Table
-  //     modal uses (commitDpName / commitFillRate, defined here so the table
-  //     view doesn't depend on src/export.js).
+  //   - DP name + fill-rate edits use commitDpName / commitFillRate (defined
+  //     in this module so the table view doesn't depend on src/export.js).
   //   - "+ Add data point" calls `__cb.canvas.addDataPointCard`.
   //   - "+ Add enrichment" sets `__cb.linkTargetCardId` then opens the
   //     enrichment picker; picker.js's existing placeCardsAdjacentTo flow
@@ -2976,10 +2975,8 @@
 
   // ---- Mutation handlers ----
   //
-  // Mirrors the writers in src/export.js — kept duplicated so the table view
-  // doesn't have to depend on the export modal's IIFE-private functions.
-  // Both code paths converge on __cb.model.update() (+ saveTabs()), the single
-  // write path (C3.1), so undo history and persistence behave identically.
+  // Converge on __cb.model.update() (+ saveTabs()), the single write path
+  // (C3.1), so undo history and persistence behave identically.
 
   function commitDpName(cardId, value) {
     const canvas = __cb.canvas;

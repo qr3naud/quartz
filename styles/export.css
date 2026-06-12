@@ -1,5 +1,5 @@
 /* ==========================================================================
-   EXPORT MENU + EXPORT-AS-TABLE MODAL
+   EXPORT MENU + SHARED MODAL SHELL
    Mirrors the look of cb-freq-picker / cb-toolbar-btn so the export entry
    point feels like a first-class part of the topbar.
    ========================================================================== */
@@ -123,52 +123,6 @@
   flex-shrink: 0;
 }
 
-.cb-export-filter-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 10px;
-  border: 1px solid #e5e7eb;
-  border-radius: 6px;
-  background: #f9fafb;
-  color: #374151;
-  font-size: 13px;
-  font-weight: 500;
-  cursor: pointer;
-  user-select: none;
-}
-
-.cb-export-filter-toggle input[type="checkbox"] {
-  accent-color: #6366f1;
-  cursor: pointer;
-}
-
-.cb-export-download-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  height: 32px;
-  padding: 0 12px;
-  border: 1px solid #6366f1;
-  border-radius: 6px;
-  background: #6366f1;
-  color: #ffffff;
-  font-family: inherit;
-  font-size: 13px;
-  font-weight: 500;
-  cursor: pointer;
-  transition: background 0.15s, border-color 0.15s;
-}
-
-.cb-export-download-btn:hover {
-  background: #4f46e5;
-  border-color: #4f46e5;
-}
-
-.cb-export-download-btn svg {
-  flex-shrink: 0;
-}
-
 .cb-export-modal-close {
   display: inline-flex;
   align-items: center;
@@ -202,153 +156,6 @@
   text-align: center;
   color: #6b7280;
   font-size: 14px;
-}
-
-.cb-export-table {
-  width: 100%;
-  border-collapse: separate;
-  border-spacing: 0;
-  font-size: 13px;
-  color: #1f2937;
-}
-
-.cb-export-table thead th {
-  position: sticky;
-  top: 0;
-  background: #f9fafb;
-  border-bottom: 1px solid #e5e7eb;
-  padding: 10px 14px;
-  text-align: left;
-  font-size: 12px;
-  font-weight: 600;
-  color: #6b7280;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  white-space: nowrap;
-  z-index: 1;
-}
-
-.cb-export-table tbody td {
-  padding: 8px 14px;
-  border-bottom: 1px solid #f1f5f9;
-  vertical-align: middle;
-}
-
-.cb-export-table tbody tr:last-child td {
-  border-bottom: none;
-}
-
-.cb-export-table tbody tr:hover {
-  background: #f9fafb;
-}
-
-/* Column sizing — DP and ERs grow, the numeric columns stay tight. */
-.cb-export-table .col-dp {
-  width: 28%;
-}
-
-.cb-export-table .col-fill {
-  width: 130px;
-  white-space: nowrap;
-}
-
-.cb-export-table .col-credits,
-.cb-export-table .col-actions {
-  width: 110px;
-  font-variant-numeric: tabular-nums;
-}
-
-.cb-export-table .col-ers {
-  width: auto;
-}
-
-/* Unconnected rows — slightly muted so they read as "no enrichments yet". */
-.cb-export-row-unconnected td {
-  color: #6b7280;
-}
-
-.cb-export-row-unconnected .cb-export-cell-input-text {
-  color: #374151;
-}
-
-/* ---- Editable cells ---- */
-
-.cb-export-cell-input {
-  width: 100%;
-  border: 1px solid transparent;
-  border-radius: 5px;
-  padding: 5px 8px;
-  background: transparent;
-  font-family: inherit;
-  font-size: 13px;
-  color: #1f2937;
-  transition: background 0.12s, border-color 0.12s;
-}
-
-.cb-export-cell-input:hover {
-  background: #f3f4f6;
-}
-
-.cb-export-cell-input:focus {
-  outline: none;
-  background: #ffffff;
-  border-color: #6366f1;
-  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.18);
-}
-
-.cb-export-cell-input-num {
-  width: 70px;
-  text-align: right;
-  font-variant-numeric: tabular-nums;
-}
-
-.cb-export-cell-suffix {
-  display: inline-block;
-  margin-left: 4px;
-  color: #6b7280;
-  font-size: 12px;
-}
-
-.cb-export-cell-readonly {
-  color: #1f2937;
-  font-weight: 500;
-}
-
-.cb-export-empty-cell {
-  color: #9ca3af;
-}
-
-/* ---- ER chips ---- */
-
-.cb-export-er-chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-}
-
-.cb-export-er-chip {
-  display: inline-flex;
-  align-items: center;
-  padding: 3px 8px;
-  background: #eef2ff;
-  color: #4338ca;
-  border: 1px solid #e0e7ff;
-  border-radius: 999px;
-  font-size: 12px;
-  font-weight: 500;
-  white-space: nowrap;
-  max-width: 240px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-/* Waterfall chips are visually distinct so the spreadsheet hints at the
-   composite nature of the enrichment; the full provider chain is surfaced
-   via the chip's title attribute (hover tooltip). */
-.cb-export-er-chip-waterfall {
-  background: #f0fdf4;
-  color: #047857;
-  border-color: #d1fae5;
 }
 
 /* ---- Footer ---- */
@@ -482,7 +289,7 @@
 }
 
 /* ==========================================================================
-   GTME EXPORT MODAL — narrower than the table modal because there's no grid.
+   GTME EXPORT MODAL — compact form layout (no wide data grid).
    Only opened from the menu row that's filtered out for non-internal users
    via the `gtme_export` feature flag (see src/export.js openExportMenu),
    so these rules match nothing for non-internal users.

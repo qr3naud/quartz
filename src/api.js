@@ -1038,4 +1038,83 @@
       return null;
     }
   };
+
+  // -------------------------------------------------------------------------
+  // Clay table CSV export jobs — same async API the Clay UI "Download CSV"
+  // button uses. Session cookies authenticate; no separate auth needed.
+  // -------------------------------------------------------------------------
+
+  async function parseClayApiError(res) {
+    let msg = `HTTP ${res.status} ${res.statusText}`;
+    try {
+      const body = await res.json();
+      if (body?.message) msg = body.message;
+    } catch {
+      /* ignore */
+    }
+    return msg;
+  }
+
+  __cb.startTableViewExport = async function (tableId, viewId, queryParams) {
+    if (!tableId || !viewId) throw new Error("tableId and viewId required");
+    const qs = queryParams ? `?${new URLSearchParams(queryParams)}` : "";
+    const res = await fetch(
+      `https://api.clay.com/v3/tables/${tableId}/views/${viewId}/export${qs}`,
+      {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: "{}",
+      },
+    );
+    if (!res.ok) throw new Error(await parseClayApiError(res));
+    return res.json();
+  };
+
+  __cb.startTableExport = async function (tableId, queryParams) {
+    if (!tableId) throw new Error("tableId required");
+    const qs = queryParams ? `?${new URLSearchParams(queryParams)}` : "";
+    const res = await fetch(
+      `https://api.clay.com/v3/tables/${tableId}/export${qs}`,
+      {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: "{}",
+      },
+    );
+    if (!res.ok) throw new Error(await parseClayApiError(res));
+    return res.json();
+  };
+
+  __cb.fetchExportJob = async function (exportJobId) {
+    const res = await fetch(
+      `https://api.clay.com/v3/exports/${exportJobId}`,
+      { credentials: "include" },
+    );
+    if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
+    return res.json();
+  };
+
+  // Poll until FINISHED (or throw on FAILED / timeout). Mirrors the Clay UI's
+  // 5s refresh interval in BaseExportRow.tsx.
+  __cb.waitForExportJob = async function waitForExportJob(exportJobId, opts) {
+    const pollIntervalMs = (opts && opts.pollIntervalMs) || 5000;
+    const timeoutMs = (opts && opts.timeoutMs) || 10 * 60 * 1000;
+    const onProgress = opts && opts.onProgress;
+    const start = Date.now();
+
+    while (true) {
+      const job = await __cb.fetchExportJob(exportJobId);
+      if (onProgress) onProgress(job);
+      if (job.status === "FINISHED") return job;
+      if (job.status === "FAILED") {
+        throw new Error("Clay export job failed");
+      }
+      if (Date.now() - start > timeoutMs) {
+        throw new Error("Clay export timed out");
+      }
+      await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+    }
+  };
 })();
