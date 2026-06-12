@@ -55,14 +55,19 @@
     el.style.backgroundImage = "";
     el.textContent = "";
     if (profilePicture) {
-      el.style.backgroundImage = `url("${profilePicture}")`;
-      // White fill behind the image so transparent logos don't show the
-      // indigo initial-fallback color through their cut-out areas.
-      el.style.backgroundColor = "#ffffff";
-      return;
+      // Preload so a broken/expired URL falls back to the initial instead of
+      // leaving a blank circle (background-image gives no error signal).
+      const img = new Image();
+      img.onload = () => {
+        el.textContent = "";
+        el.style.backgroundImage = `url("${profilePicture}")`;
+        // White fill behind the image so transparent logos don't show the
+        // indigo initial-fallback color through their cut-out areas.
+        el.style.backgroundColor = "#ffffff";
+      };
+      img.src = profilePicture;
     }
-    // Fallback: show first letter of name on the colored circle (revert any
-    // inline white fill so the white initial stays legible).
+    // Initial fallback renders immediately; the onload above replaces it.
     el.style.backgroundColor = "";
     el.textContent = (name || "?").trim().charAt(0);
   }
@@ -170,17 +175,21 @@
 
   /** Fire-and-forget: persist resolved workspace meta onto canvases rows that
    *  are still missing it. Heals history the first time the popup opens from
-   *  a session that can read every workspace (e.g. admin, not impersonating). */
+   *  a session that can read every workspace (e.g. admin, not impersonating).
+   *  Icon uses "" as a "checked, workspace has no icon" sentinel so rows
+   *  aren't re-fetched forever; null means not yet resolved. */
   function backfillWorkspaceMeta(workspaceId, meta) {
     if (!workspaceId || !meta?.name || meta.name === "Workspace" || !supa) return;
     supa.supabaseFetch("canvases", "PATCH", {
       query: {
         workspace_id: `eq.${workspaceId}`,
-        workspace_name: "is.null",
+        // icon-null also matches rows whose name was backfilled by v7.61.0
+        // (which had a field-name bug that always wrote a null icon).
+        workspace_icon_url: "is.null",
       },
       body: {
         workspace_name: meta.name,
-        workspace_icon_url: meta.iconUrl || null,
+        workspace_icon_url: meta.avatarUrl || "",
       },
     }).catch((err) => {
       console.warn("[Quartz Popup] workspace meta backfill failed:", err);
@@ -419,24 +428,31 @@
         const wsIds = [
           ...new Set((rows || []).map(r => r.canvases?.workspace_id).filter(Boolean)),
         ];
+        // Stored meta is complete when the name exists AND the icon has been
+        // resolved (non-null; "" = checked, workspace has no icon). A null
+        // icon means an older write never resolved it — re-fetch live.
         const wsMetaById = new Map();
+        const completeIds = new Set();
         for (const row of rows || []) {
           const wsId = row.canvases?.workspace_id;
           if (!wsId || wsMetaById.has(wsId)) continue;
           const name = row.canvases?.workspace_name;
           if (name) {
-            wsMetaById.set(wsId, {
-              name,
-              avatarUrl: row.canvases?.workspace_icon_url || null,
-            });
+            const iconUrl = row.canvases?.workspace_icon_url;
+            wsMetaById.set(wsId, { name, avatarUrl: iconUrl || null });
+            if (iconUrl !== null && iconUrl !== undefined) completeIds.add(wsId);
           }
         }
-        const missingIds = wsIds.filter((id) => !wsMetaById.has(id));
+        const missingIds = wsIds.filter((id) => !completeIds.has(id));
         if (missingIds.length > 0) {
           const metas = await Promise.all(missingIds.map((id) => fetchWorkspaceMeta(id)));
           missingIds.forEach((id, i) => {
             const meta = metas[i];
-            wsMetaById.set(id, meta);
+            // A failed live fetch ("Workspace" fallback) must not clobber a
+            // stored name that only lacked its icon.
+            if (meta.name !== "Workspace" || !wsMetaById.has(id)) {
+              wsMetaById.set(id, meta);
+            }
             backfillWorkspaceMeta(id, meta);
           });
         }

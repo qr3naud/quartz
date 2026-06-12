@@ -269,8 +269,12 @@
       updated_by: updatedBy,
     };
     if (workbookName) body.workbook_name = workbookName;
-    if (workspaceName) body.workspace_name = workspaceName;
-    if (workspaceIconUrl) body.workspace_icon_url = workspaceIconUrl;
+    if (workspaceName) {
+      body.workspace_name = workspaceName;
+      // "" = resolved, workspace has no icon (null would read as "never
+      // resolved" and trigger popup live-fetch fallbacks forever).
+      body.workspace_icon_url = workspaceIconUrl || "";
+    }
 
     try {
       await supa.supabaseFetch("canvases", "POST", {
