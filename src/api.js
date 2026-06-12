@@ -832,7 +832,23 @@
   // customOptions is spread over the base preset server-side
   // ({ ...MEDIUM_FIELD_CONFIG_OPTIONS, ...customOptions }), so no backend
   // change is needed. See apps/api/v3/clay-context/services/table-context.service.ts.
-  __cb.IMPORT_CONTEXT_SAMPLE_SIZE = 50;
+  //
+  // Why sampleSize 1 is enough (verified against table-context.service.ts):
+  //   - profiling must stay ON (includeDataProfiling gates the dataProfile
+  //     block that carries the status counts), but the sampled stats inside it
+  //     are only FALLBACKS for the import:
+  //       a) basic-column nullPercentage — superseded by
+  //          fetchFullProfileInBackground (sampleSize: 0 = all rows) minutes
+  //          later; the 1-row value is shown only until/unless that fails.
+  //       b) action-field valueCount/sampleSize — used only when the server's
+  //          run-status read came back pending (Redis cache miss). At 1 row
+  //          this fallback is binary (0% or 100%) instead of a rough %.
+  //   - everything the import actually keys on is sample-independent:
+  //     getRunStatusCounts (full-table SQL), creditCost (in-memory
+  //     getActionCost), dataProfile.totalRecords (full record count).
+  //   - sampling is deterministic first-N (getSampleIds slices, no shuffle),
+  //     so 1 profiles exactly the first row.
+  __cb.IMPORT_CONTEXT_SAMPLE_SIZE = 1;
   __cb.fetchTableContextForImport = async function (workspaceId, tableId) {
     try {
       const res = await fetch(
@@ -949,10 +965,13 @@
   __cb.ACTUAL_IMPORT_DAYS = 7;
   __cb.SESSION_DISCOVERY_DAYS = 365;
 
-  // Per-column actual spend over the last N days. Backed by Redshift via
-  // Kinesis ingestion (~minutes of lag). Note: realtime credit usage is only
-  // complete from REALTIME_CREDIT_USAGE_START_DATE = 2025-11-05 — for tables
-  // older than that, the totals will under-count. Returns an array of
+  // Per-column actual spend over the last N days. Backed by Redshift
+  // (credit_usage_mv_v4, fed via Kinesis, ~minutes of lag). `days` is a rolling
+  // window on approximate_arrival_timestamp ending now; the server default is 7
+  // and there is NO max (zod: int().positive() only) — fetchRunSpend already
+  // passes 210. The real floor is REALTIME_CREDIT_USAGE_START_DATE =
+  // 2025-11-05: data before that is incomplete (under-counts), regardless of
+  // how large `days` is. Returns an array of
   // { fieldId, creditsSpent, actionExecutionCreditsSpent?, cellCount? }.
   __cb.fetchColumnSpend = async function (workspaceId, tableId, days = 30) {
     try {
