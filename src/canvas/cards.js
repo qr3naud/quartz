@@ -657,8 +657,8 @@
           icon.textContent = (data.packageName || "C").charAt(0).toUpperCase();
         };
         icon.appendChild(img);
-      } else if (data.iconSvgHtml) {
-        icon.innerHTML = data.iconSvgHtml;
+      } else if (data.iconSvgHtml || (String(card.clusterId || "").startsWith("scope-ads-") && cbRef().ADS_ICON_SVG)) {
+        icon.innerHTML = data.iconSvgHtml || cbRef().ADS_ICON_SVG;
         icon.querySelector("svg")?.setAttribute("class", "cb-card-icon-svg");
       } else {
         const color = cbRef().stringToColor(data.packageName || "Clay");

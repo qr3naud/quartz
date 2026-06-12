@@ -2908,7 +2908,8 @@
       packageName: d.packageName || null,
       // Logo inputs (mirror the canvas card icon logic in cards.js).
       iconUrl: d.iconUrl || null,
-      iconSvgHtml: d.iconSvgHtml || null,
+      iconSvgHtml: d.iconSvgHtml
+        || (String(er.clusterId || "").startsWith("scope-ads-") ? (__cb.ADS_ICON_SVG || null) : null),
       model,
       // Numeric "Clay Credit Budget" (runBudget) when this AI column's per-row
       // cost was set from it at import — drives the conditional "Clay Budgeted"
@@ -3786,17 +3787,6 @@
       if (__cb.saveTabs) __cb.saveTabs();
     }
     if (__cb.tableView && __cb.tableView.refresh) __cb.tableView.refresh();
-  }
-
-  // "Scope Ads" / "Scope Audiences" intro shortcuts (maintainer-only via
-  // __cb.canUseScopeShortcuts). Scope Ads opens the usage-based scoping modal
-  // (src/scope-ads.js); Scope Audiences is not wired up yet.
-  function startScope(kind) {
-    if (kind === "ads" && typeof __cb.startScopeAds === "function") {
-      __cb.startScopeAds();
-      return;
-    }
-    console.log(`[Clay Scoping] Scope ${kind} clicked (not wired up yet).`);
   }
 
   function removeCardById(cardId) {
@@ -5893,10 +5883,10 @@
       if (__cb.sessionCutoff) wireActualSessionUI();
     }
 
-    // "Scope Ads" / "Scope Audiences" / "Add" lead the action row as scoping
-    // quick-starts. Hidden in pricing mode (the view is for pricing an
-    // already-built scope, not adding to it). Scope shortcuts are
-    // maintainer-only (see __cb.canUseScopeShortcuts in config.js).
+    // "Scope Ads" / "Add" lead the action row as scoping quick-starts. Hidden
+    // in pricing mode (the view is for pricing an already-built scope, not
+    // adding to it). Scope Ads is maintainer-only (see
+    // __cb.canUseScopeShortcuts in config.js).
     if (!__cb.pricingMode) {
       if (__cb.canUseScopeShortcuts?.()) {
         const scopeAdsBtn = document.createElement("button");
@@ -5904,16 +5894,8 @@
         scopeAdsBtn.className = "cb-table-view-add-er-btn";
         scopeAdsBtn.title = "Scope an Ads use case";
         scopeAdsBtn.innerHTML = targetSvg(12) + "<span>Scope Ads</span>";
-        scopeAdsBtn.addEventListener("click", () => startScope("ads"));
+        scopeAdsBtn.addEventListener("click", () => __cb.startScopeAds?.());
         introActions.appendChild(scopeAdsBtn);
-
-        const scopeAudiencesBtn = document.createElement("button");
-        scopeAudiencesBtn.type = "button";
-        scopeAudiencesBtn.className = "cb-table-view-add-er-btn";
-        scopeAudiencesBtn.title = "Scope an Audiences use case";
-        scopeAudiencesBtn.innerHTML = targetSvg(12) + "<span>Scope Audiences</span>";
-        scopeAudiencesBtn.addEventListener("click", () => startScope("audiences"));
-        introActions.appendChild(scopeAudiencesBtn);
       }
 
       // Single "Add" control — opens a dropdown with the two granular add

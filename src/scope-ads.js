@@ -3,8 +3,7 @@
  * src/config.js — wired from the table-view intro action row).
  *
  * A two-step modal that scopes an Ads usage-based sync:
- *   Step 1 — disclaimer: Ads pricing is now usage-based (Before/After table +
- *            the "no actions charged for exports/syncs" + Enterprise-only copy).
+ *   Step 1 — disclaimer: Ads pricing is now usage-based (Before/After table).
  *   Step 2 — audience builder: one or more audiences, each with a name, a record
  *            count, a refresh frequency, and an enhanced-matching tier
  *            (Premium / Standard / None).
@@ -57,7 +56,100 @@
   const LINKEDIN_SVG =
     '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 72 72" aria-hidden="true"><g fill="none" fill-rule="evenodd"><path d="M8,72 L64,72 C68.418278,72 72,68.418278 72,64 L72,8 C72,3.581722 68.418278,0 64,0 L8,0 C3.581722,0 0,3.581722 0,8 L0,64 C0,68.418278 3.581722,72 8,72 Z" fill="#007EBB"/><path d="M62,62 L51.32,62 L51.32,43.8 C51.32,38.81 49.42,36.02 45.47,36.02 C41.17,36.02 38.93,38.93 38.93,43.8 L38.93,62 L28.63,62 L28.63,27.33 L38.93,27.33 L38.93,32 C38.93,32 42.03,26.27 49.38,26.27 C56.74,26.27 62,30.76 62,40.05 L62,62 Z M16.35,22.79 C12.84,22.79 10,19.93 10,16.4 C10,12.86 12.84,10 16.35,10 C19.86,10 22.7,12.86 22.7,16.4 C22.7,19.93 19.86,22.79 16.35,22.79 Z M11.03,62 L21.77,62 L21.77,27.33 L11.03,27.33 L11.03,62 Z" fill="#FFF"/></g></svg>';
 
+  // Phosphor "Broadcast" glyph from Clay's Ads sidebar nav (app.clay.com/.../ads).
+  const ADS_ICON_SVG =
+    '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 256 256" aria-hidden="true">' +
+    '<path d="M168,128a40,40,0,1,1-40-40A40,40,0,0,1,168,128Zm40,0a79.74,79.74,0,0,0-20.37-53.33,8,8,0,1,0-11.92,10.67,64,64,0,0,1,0,85.33,8,8,0,0,0,11.92,10.67A79.79,79.79,0,0,0,208,128ZM80.29,85.34A8,8,0,1,0,68.37,74.67a79.94,79.94,0,0,0,0,106.67,8,8,0,0,0,11.92-10.67,63.95,63.95,0,0,1,0-85.33Zm158.28-4A119.48,119.48,0,0,0,213.71,44a8,8,0,1,0-11.42,11.2,103.9,103.9,0,0,1,0,145.56A8,8,0,1,0,213.71,212,120.12,120.12,0,0,0,238.57,81.29ZM32.17,168.48A103.9,103.9,0,0,1,53.71,55.22,8,8,0,1,0,42.29,44a119.87,119.87,0,0,0,0,168,8,8,0,1,0,11.42-11.2A103.61,103.61,0,0,1,32.17,168.48Z"/></svg>';
+  __cb.ADS_ICON_SVG = ADS_ICON_SVG;
+
+  const PLAYBOOK_URL =
+    "https://app.notion.com/p/clayrun/Clay-Ads-Product-Playbook-3097e66eb014801eb5c8e1995913784a?pvs=32";
+
+  const CHEVRON_DOWN_SVG =
+    '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>';
+
+  // Custom frequency dropdown (body-appended menu). One menu at a time.
+  let freqMenuEl = null;
+
+  function closeFreqMenu() {
+    if (freqMenuEl) {
+      freqMenuEl.remove();
+      freqMenuEl = null;
+    }
+    document.removeEventListener("mousedown", onFreqMenuDocClick, true);
+  }
+
+  function onFreqMenuDocClick(evt) {
+    if (freqMenuEl && !freqMenuEl.contains(evt.target)) closeFreqMenu();
+  }
+
+  function frequencyLabel(id) {
+    const opt = (__cb.FREQUENCY_OPTIONS || []).find((o) => o.id === id);
+    return opt ? opt.label : id;
+  }
+
+  function openFreqMenu(anchor, currentId, onPick) {
+    closeFreqMenu();
+    const menu = document.createElement("div");
+    menu.className = "cb-scope-ads-freq-menu";
+    menu.setAttribute("role", "listbox");
+    menu.addEventListener("mousedown", (evt) => evt.stopPropagation());
+    const opts = __cb.FREQUENCY_OPTIONS || [
+      { id: "annually", label: "Annually" }, { id: "monthly", label: "Monthly" },
+    ];
+    for (const o of opts) {
+      const opt = document.createElement("button");
+      opt.type = "button";
+      opt.className =
+        "cb-scope-ads-freq-menu-opt" +
+        (o.id === currentId ? " cb-scope-ads-freq-menu-opt-active" : "");
+      opt.setAttribute("role", "option");
+      opt.setAttribute("aria-selected", o.id === currentId ? "true" : "false");
+      opt.textContent = o.label;
+      opt.addEventListener("click", (evt) => {
+        evt.stopPropagation();
+        closeFreqMenu();
+        onPick(o.id);
+      });
+      menu.appendChild(opt);
+    }
+    document.body.appendChild(menu);
+    const r = anchor.getBoundingClientRect();
+    menu.style.position = "fixed";
+    menu.style.left = `${Math.round(r.left)}px`;
+    menu.style.top = `${Math.round(r.bottom + 4)}px`;
+    menu.style.minWidth = `${Math.round(r.width)}px`;
+    freqMenuEl = menu;
+    document.addEventListener("mousedown", onFreqMenuDocClick, true);
+  }
+
+  function buildFrequencyDropdown(currentId, onPick) {
+    const trigger = document.createElement("button");
+    trigger.type = "button";
+    trigger.className = "cb-scope-ads-freq-trigger";
+    trigger.setAttribute("aria-haspopup", "listbox");
+    const labelSpan = document.createElement("span");
+    labelSpan.className = "cb-scope-ads-freq-label";
+    labelSpan.textContent = frequencyLabel(currentId);
+    const chev = document.createElement("span");
+    chev.className = "cb-scope-ads-freq-chevron";
+    chev.innerHTML = CHEVRON_DOWN_SVG;
+    trigger.appendChild(labelSpan);
+    trigger.appendChild(chev);
+    trigger.addEventListener("mousedown", (evt) => evt.stopPropagation());
+    trigger.addEventListener("click", (evt) => {
+      evt.stopPropagation();
+      openFreqMenu(trigger, currentId, (nextId) => {
+        currentId = nextId;
+        labelSpan.textContent = frequencyLabel(nextId);
+        onPick(nextId);
+      });
+    });
+    return trigger;
+  }
+
   function close() {
+    closeFreqMenu();
     if (modalEl) { modalEl.remove(); modalEl = null; }
     if (backdropEl) { backdropEl.remove(); backdropEl = null; }
     document.removeEventListener("keydown", onKeydown);
@@ -108,7 +200,25 @@
 
   // ---- Step 1: disclaimer ------------------------------------------------
 
+  /** Label column = widest row header (Monetization); Before/After split the rest. */
+  function sizeCompareLabelColumn(table) {
+    const labelCol = table.querySelector(".cb-scope-ads-compare-col-label");
+    const rowHeaders = table.querySelectorAll("tbody th[scope='row']");
+    if (!labelCol || !rowHeaders.length) return;
+
+    const prevLayout = table.style.tableLayout;
+    table.style.tableLayout = "auto";
+    let maxW = 0;
+    rowHeaders.forEach((th) => {
+      maxW = Math.max(maxW, th.offsetWidth);
+    });
+    table.style.tableLayout = prevLayout;
+
+    if (maxW > 0) labelCol.style.width = `${maxW}px`;
+  }
+
   function renderDisclaimerStep() {
+    closeFreqMenu();
     modalEl.innerHTML = "";
 
     const header = document.createElement("div");
@@ -117,7 +227,7 @@
     titleWrap.className = "cb-export-modal-title-wrap";
     const title = document.createElement("h2");
     title.className = "cb-export-modal-title";
-    title.textContent = "Ads Pricing is now Usage-Based";
+    title.textContent = "Disclaimer: Ads pricing is now usage-based";
     const subtitle = document.createElement("div");
     subtitle.className = "cb-export-modal-subtitle";
     subtitle.textContent = "How Ad syncs and audiences are billed under the new model.";
@@ -127,9 +237,34 @@
     header.appendChild(makeCloseButton());
 
     const body = document.createElement("div");
-    body.className = "cb-export-modal-body cb-gtme-body";
+    body.className = "cb-export-modal-body cb-gtme-body cb-scope-ads-disclaimer-step";
 
-    // Before / After comparison table.
+    const tldr = document.createElement("div");
+    tldr.className = "cb-scope-ads-tldr";
+    const tldrLead = document.createElement("p");
+    tldrLead.className = "cb-scope-ads-tldr-lead";
+    tldrLead.innerHTML =
+      "<strong>TL;DR:</strong> Clay Ads lets you build always-on audiences straight from your CRM, " +
+      "and sync them to LinkedIn + Meta + Google, so your targeting stays up to date and you stop " +
+      "managing manual CSV uploads.";
+    const tldrRoi = document.createElement("p");
+    tldrRoi.className = "cb-scope-ads-tldr-roi";
+    tldrRoi.innerHTML =
+      "<strong>Higher Match Rates = lower cost per qualified lead (CPQL) = more ROI per ad dollar</strong>";
+    tldr.appendChild(tldrLead);
+    tldr.appendChild(tldrRoi);
+    body.appendChild(tldr);
+
+    const recent = document.createElement("details");
+    recent.className = "cb-scope-ads-recent";
+    const recentSummary = document.createElement("summary");
+    recentSummary.className = "cb-scope-ads-recent-summary";
+    recentSummary.textContent = "What's changed recently?";
+    recent.appendChild(recentSummary);
+
+    const recentBody = document.createElement("div");
+    recentBody.className = "cb-scope-ads-recent-body";
+
     const rows = [
       ["Ad Syncs", "Per-Sync add-on fee for Enterprise customers",
         "<strong>Unlimited</strong> for all Enterprise customers"],
@@ -141,42 +276,36 @@
     const table = document.createElement("table");
     table.className = "cb-scope-ads-compare";
     table.innerHTML =
-      '<thead><tr><th></th><th>Before</th><th>After</th></tr></thead><tbody>' +
+      '<colgroup><col class="cb-scope-ads-compare-col-label"><col><col></colgroup>' +
+      '<thead><tr><th scope="col" class="cb-scope-ads-compare-corner"></th>' +
+      '<th scope="col">Before</th><th scope="col">After</th></tr></thead><tbody>' +
       rows.map((r) =>
         `<tr><th scope="row">${r[0]}</th><td>${r[1]}</td><td>${r[2]}</td></tr>`,
       ).join("") +
-      '</tbody>';
-    body.appendChild(table);
-
-    const note = document.createElement("p");
-    note.className = "cb-scope-ads-note";
-    note.innerHTML =
-      "Customers are <strong>not charged actions for exports / syncing to Ad Platforms</strong> " +
-      "when they use premium or enhanced matching.";
-    body.appendChild(note);
-
-    const access = document.createElement("p");
-    access.className = "cb-scope-ads-note cb-scope-ads-note-muted";
-    access.innerHTML =
-      "Currently only <strong>Enterprise</strong> customers have access to this feature " +
-      "(Growth customers have one sync available).";
-    body.appendChild(access);
+      "</tbody>";
+    recentBody.appendChild(table);
+    recent.appendChild(recentBody);
+    recent.addEventListener("toggle", () => {
+      if (recent.open) requestAnimationFrame(() => sizeCompareLabelColumn(table));
+    });
+    body.appendChild(recent);
 
     const footer = document.createElement("div");
     footer.className = "cb-modal-footer";
     const footerActions = document.createElement("div");
     footerActions.className = "cb-modal-footer-actions";
-    const cancelBtn = document.createElement("button");
-    cancelBtn.type = "button";
-    cancelBtn.className = "cb-modal-btn cb-modal-btn-ghost";
-    cancelBtn.textContent = "Cancel";
-    cancelBtn.addEventListener("click", close);
+    const playbookBtn = document.createElement("a");
+    playbookBtn.className = "cb-modal-btn cb-modal-btn-ghost";
+    playbookBtn.href = PLAYBOOK_URL;
+    playbookBtn.target = "_blank";
+    playbookBtn.rel = "noopener noreferrer";
+    playbookBtn.textContent = "Product playbook";
     const continueBtn = document.createElement("button");
     continueBtn.type = "button";
     continueBtn.className = "cb-modal-btn cb-modal-btn-primary";
     continueBtn.textContent = "Continue";
     continueBtn.addEventListener("click", renderAudienceStep);
-    footerActions.appendChild(cancelBtn);
+    footerActions.appendChild(playbookBtn);
     footerActions.appendChild(continueBtn);
     footer.appendChild(footerActions);
 
@@ -190,6 +319,7 @@
   // Working state: a list of audiences. Each row is rebuilt from this model so
   // add/remove and tier selection stay in sync without per-node bookkeeping.
   function renderAudienceStep() {
+    closeFreqMenu();
     const audiences = [newAudience(1)];
 
     function newAudience(n) {
@@ -301,7 +431,7 @@
     top.className = "cb-scope-ads-audience-top";
 
     const nameField = document.createElement("label");
-    nameField.className = "cb-gtme-field cb-gtme-field-grow";
+    nameField.className = "cb-gtme-field cb-scope-ads-field-name";
     nameField.innerHTML = '<span class="cb-gtme-field-label">Audience name</span>';
     const nameInput = document.createElement("input");
     nameInput.type = "text";
@@ -313,9 +443,8 @@
     top.appendChild(nameField);
 
     const recField = document.createElement("label");
-    recField.className = "cb-gtme-field";
-    recField.innerHTML =
-      '<span class="cb-gtme-field-label">How large is this audience?</span>';
+    recField.className = "cb-gtme-field cb-scope-ads-field-size";
+    recField.innerHTML = '<span class="cb-gtme-field-label">Size</span>';
     const recInput = document.createElement("input");
     recInput.type = "number";
     recInput.min = "0";
@@ -330,26 +459,25 @@
     recField.appendChild(recInput);
     top.appendChild(recField);
 
-    const freqField = document.createElement("label");
-    freqField.className = "cb-gtme-field";
-    freqField.innerHTML = '<span class="cb-gtme-field-label">Frequency</span>';
-    const freqSelect = document.createElement("select");
-    freqSelect.className = "cb-gtme-input cb-scope-ads-freq";
-    const opts = (__cb.FREQUENCY_OPTIONS || [
-      { id: "annually", label: "Annually" }, { id: "monthly", label: "Monthly" },
-    ]);
-    for (const o of opts) {
-      const opt = document.createElement("option");
-      opt.value = o.id;
-      opt.textContent = o.label;
-      if (o.id === aud.frequencyId) opt.selected = true;
-      freqSelect.appendChild(opt);
-    }
-    freqSelect.addEventListener("change", () => { aud.frequencyId = freqSelect.value; });
-    freqField.appendChild(freqSelect);
+    const freqField = document.createElement("div");
+    freqField.className = "cb-gtme-field cb-scope-ads-field-freq";
+    const freqLabel = document.createElement("span");
+    freqLabel.className = "cb-gtme-field-label";
+    freqLabel.textContent = "Frequency";
+    freqField.appendChild(freqLabel);
+    const freqDropdown = buildFrequencyDropdown(aud.frequencyId, (nextId) => {
+      aud.frequencyId = nextId;
+    });
+    freqField.appendChild(freqDropdown);
     top.appendChild(freqField);
 
     if (audiences.length > 1) {
+      const removeWrap = document.createElement("div");
+      removeWrap.className = "cb-scope-ads-audience-remove-wrap";
+      const removeSpacer = document.createElement("span");
+      removeSpacer.className = "cb-gtme-field-label cb-scope-ads-remove-spacer";
+      removeSpacer.setAttribute("aria-hidden", "true");
+      removeSpacer.innerHTML = "&nbsp;";
       const removeBtn = document.createElement("button");
       removeBtn.type = "button";
       removeBtn.className = "cb-scope-ads-audience-remove";
@@ -360,7 +488,9 @@
         audiences.splice(idx, 1);
         rerender();
       });
-      top.appendChild(removeBtn);
+      removeWrap.appendChild(removeSpacer);
+      removeWrap.appendChild(removeBtn);
+      top.appendChild(removeWrap);
     }
 
     row.appendChild(top);
@@ -480,6 +610,7 @@
         {
           displayName: `${tier.label} matching`,
           packageName: "Clay",
+          iconSvgHtml: ADS_ICON_SVG,
           credits: tier.credits,
           actionExecutions: 1,
           creditText: `${tier.credits} / row`,
