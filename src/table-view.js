@@ -3789,8 +3789,13 @@
   }
 
   // "Scope Ads" / "Scope Audiences" intro shortcuts (maintainer-only via
-  // __cb.canUseScopeShortcuts). Behavior is not wired up yet — no-op placeholder.
+  // __cb.canUseScopeShortcuts). Scope Ads opens the usage-based scoping modal
+  // (src/scope-ads.js); Scope Audiences is not wired up yet.
   function startScope(kind) {
+    if (kind === "ads" && typeof __cb.startScopeAds === "function") {
+      __cb.startScopeAds();
+      return;
+    }
     console.log(`[Clay Scoping] Scope ${kind} clicked (not wired up yet).`);
   }
 

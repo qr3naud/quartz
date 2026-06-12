@@ -1,0 +1,244 @@
+/* "Scope Ads" two-step modal (src/scope-ads.js). Builds on the shared
+   cb-export-modal / cb-gtme-* shell from export.css; only the Ads-specific
+   pieces live here. Class prefix: cb-scope-ads-. */
+
+.cb-scope-ads-modal {
+  max-width: 720px;
+  height: auto;
+}
+
+/* ===== Step 1: Before / After comparison table ===== */
+.cb-scope-ads-compare {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  border: 1px solid var(--cb-border);
+  border-radius: var(--cb-radius-md);
+  overflow: hidden;
+  font-size: 13px;
+}
+.cb-scope-ads-compare thead th {
+  background: var(--cb-accent);
+  color: #fff;
+  font-weight: 600;
+  text-align: center;
+  padding: 10px 14px;
+}
+.cb-scope-ads-compare thead th:first-child {
+  background: var(--cb-surface);
+}
+.cb-scope-ads-compare tbody th {
+  color: var(--cb-accent-strong);
+  font-weight: 700;
+  text-align: left;
+  white-space: nowrap;
+  background: var(--cb-surface-subtle);
+}
+.cb-scope-ads-compare th,
+.cb-scope-ads-compare td {
+  padding: 10px 14px;
+  border-top: 1px solid var(--cb-border);
+  vertical-align: top;
+  color: var(--cb-text-label);
+  line-height: 1.4;
+}
+.cb-scope-ads-compare tbody tr:first-child th,
+.cb-scope-ads-compare tbody tr:first-child td {
+  border-top: 1px solid var(--cb-border);
+}
+.cb-scope-ads-compare td:last-child {
+  border-left: 1px solid var(--cb-border);
+}
+.cb-scope-ads-compare em {
+  color: var(--cb-text-muted);
+  font-style: italic;
+}
+
+.cb-scope-ads-note {
+  margin: 14px 0 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--cb-text-label);
+}
+.cb-scope-ads-note-muted {
+  margin-top: 8px;
+  color: var(--cb-text-muted);
+}
+
+/* ===== Step 2: audience repeater ===== */
+.cb-scope-ads-audiences {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.cb-scope-ads-audience {
+  border: 1px solid var(--cb-border);
+  border-radius: var(--cb-radius-lg);
+  padding: 14px;
+  background: var(--cb-surface-subtle);
+}
+.cb-scope-ads-audience-top {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+}
+.cb-scope-ads-freq {
+  min-width: 120px;
+}
+.cb-scope-ads-audience-remove {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--cb-input-height);
+  height: var(--cb-input-height);
+  border: 1px solid var(--cb-border);
+  border-radius: var(--cb-radius-sm);
+  background: var(--cb-surface);
+  color: var(--cb-text-muted);
+  cursor: pointer;
+}
+.cb-scope-ads-audience-remove:hover {
+  color: var(--cb-red-text);
+  border-color: var(--cb-border-strong);
+  background: var(--cb-red-surface);
+}
+
+/* Matching tier picker */
+.cb-scope-ads-match {
+  margin-top: 14px;
+}
+.cb-scope-ads-match-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--cb-text-primary);
+}
+.cb-scope-ads-match-desc {
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--cb-text-muted);
+  line-height: 1.4;
+}
+/* Tier cards mirror Clay's "Enhanced Matching" RadioPill stack: a left radio
+   circle + the whole card border/fill both signal selection. Colors match the
+   live Clay component (blue #0667D9 / #D7EBFE) for visual parity. */
+.cb-scope-ads-tiers {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.cb-scope-ads-tier {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+  padding: 14px 18px;
+  border: 1px solid transparent;
+  border-radius: var(--cb-radius-md);
+  background: #f7f8f9;
+  cursor: pointer;
+  transition: border-color 0.12s, background 0.12s;
+}
+.cb-scope-ads-tier:hover {
+  background: #f1f3f5;
+}
+.cb-scope-ads-tier-active,
+.cb-scope-ads-tier-active:hover {
+  border-color: #0667d9;
+  background: #d7ebfe;
+}
+.cb-scope-ads-tier-radio {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 1px solid #d6d9df;
+  background: #fff;
+  position: relative;
+}
+.cb-scope-ads-tier-active .cb-scope-ads-tier-radio {
+  border-color: #0667d9;
+  background: #0667d9;
+}
+.cb-scope-ads-tier-active .cb-scope-ads-tier-radio::after {
+  content: "";
+  position: absolute;
+  inset: 5px;
+  border-radius: 50%;
+  background: #fff;
+}
+.cb-scope-ads-tier-main {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.cb-scope-ads-tier-name {
+  font-size: 14px;
+  font-weight: 500;
+  color: #000;
+  line-height: 20px;
+}
+.cb-scope-ads-tier-blurb {
+  font-size: 12px;
+  color: var(--cb-pill-text);
+  line-height: 16px;
+}
+.cb-scope-ads-tier-match {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 3px;
+  font-size: 12px;
+}
+.cb-scope-ads-tier-match-key {
+  color: var(--cb-pill-text);
+}
+.cb-scope-ads-tier-match svg {
+  flex: none;
+}
+.cb-scope-ads-tier-match strong {
+  font-weight: 700;
+  color: #3c414d;
+}
+.cb-scope-ads-tier-cost {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: var(--cb-radius-pill);
+  border: 1px solid #d6d9df;
+  background: #fff;
+  color: #3c414d;
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.cb-scope-ads-tier-cost svg {
+  color: var(--cb-credit);
+}
+
+/* "Add audience" button */
+.cb-scope-ads-add-audience {
+  margin-top: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 12px;
+  border: 1px dashed var(--cb-border-strong);
+  border-radius: var(--cb-radius-sm);
+  background: var(--cb-surface);
+  color: var(--cb-text-label);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.cb-scope-ads-add-audience:hover {
+  border-color: var(--cb-accent);
+  color: var(--cb-accent-strong);
+  background: var(--cb-accent-surface);
+}
