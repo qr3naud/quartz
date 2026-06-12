@@ -137,7 +137,7 @@
     return supa.supabaseFetch("canvas_contributors", "GET", {
       query: {
         user_id: `eq.${userId}`,
-        select: "workbook_id,last_accessed_at,canvases!inner(workspace_id,workbook_name,updated_at)",
+        select: "workbook_id,last_accessed_at,canvases!inner(workspace_id,workbook_name,workspace_name,workspace_icon_url,updated_at)",
         order: "last_accessed_at.desc",
         limit: "50",
       },
@@ -166,6 +166,25 @@
     }
     workspaceMetaCache.set(workspaceId, meta);
     return meta;
+  }
+
+  /** Fire-and-forget: persist resolved workspace meta onto canvases rows that
+   *  are still missing it. Heals history the first time the popup opens from
+   *  a session that can read every workspace (e.g. admin, not impersonating). */
+  function backfillWorkspaceMeta(workspaceId, meta) {
+    if (!workspaceId || !meta?.name || meta.name === "Workspace" || !supa) return;
+    supa.supabaseFetch("canvases", "PATCH", {
+      query: {
+        workspace_id: `eq.${workspaceId}`,
+        workspace_name: "is.null",
+      },
+      body: {
+        workspace_name: meta.name,
+        workspace_icon_url: meta.iconUrl || null,
+      },
+    }).catch((err) => {
+      console.warn("[Quartz Popup] workspace meta backfill failed:", err);
+    });
   }
 
   function formatRelative(isoDate) {
@@ -393,15 +412,34 @@
 
       try {
         // All of the user's canvases across every workspace they belong to
-        // (RLS scopes the rows to those workspaces). Each row is labeled with
-        // its own workspace's name + avatar, fetched from Clay and cached.
+        // (RLS scopes the rows to those workspaces). Workspace name + avatar
+        // come from denormalized canvases columns; live Clay fetch is only a
+        // fallback for rows not yet backfilled.
         const rows = await fetchCanvases(user.id);
         const wsIds = [
           ...new Set((rows || []).map(r => r.canvases?.workspace_id).filter(Boolean)),
         ];
-        const metas = await Promise.all(wsIds.map(id => fetchWorkspaceMeta(id)));
         const wsMetaById = new Map();
-        wsIds.forEach((id, i) => wsMetaById.set(id, metas[i]));
+        for (const row of rows || []) {
+          const wsId = row.canvases?.workspace_id;
+          if (!wsId || wsMetaById.has(wsId)) continue;
+          const name = row.canvases?.workspace_name;
+          if (name) {
+            wsMetaById.set(wsId, {
+              name,
+              avatarUrl: row.canvases?.workspace_icon_url || null,
+            });
+          }
+        }
+        const missingIds = wsIds.filter((id) => !wsMetaById.has(id));
+        if (missingIds.length > 0) {
+          const metas = await Promise.all(missingIds.map((id) => fetchWorkspaceMeta(id)));
+          missingIds.forEach((id, i) => {
+            const meta = metas[i];
+            wsMetaById.set(id, meta);
+            backfillWorkspaceMeta(id, meta);
+          });
+        }
         renderList(rows, currentIds, wsMetaById);
       } catch (err) {
         console.error("[Clay Scoping Popup] fetchCanvases failed:", err);

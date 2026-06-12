@@ -250,6 +250,18 @@
         workbookName = null;
       }
     }
+    let workspaceName = null;
+    let workspaceIconUrl = null;
+    if (__cb.getWorkspaceMeta && workspaceId) {
+      try {
+        const wsMeta = await __cb.getWorkspaceMeta(workspaceId);
+        workspaceName = wsMeta?.name || null;
+        workspaceIconUrl = wsMeta?.iconUrl || null;
+      } catch {
+        workspaceName = null;
+        workspaceIconUrl = null;
+      }
+    }
     const body = {
       workbook_id: workbookId,
       workspace_id: workspaceId,
@@ -257,6 +269,8 @@
       updated_by: updatedBy,
     };
     if (workbookName) body.workbook_name = workbookName;
+    if (workspaceName) body.workspace_name = workspaceName;
+    if (workspaceIconUrl) body.workspace_icon_url = workspaceIconUrl;
 
     try {
       await supa.supabaseFetch("canvases", "POST", {

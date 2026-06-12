@@ -20,6 +20,7 @@
     modelpricing: (ws) => `cb-cache-modelpricing-${ws}`,
     plan: (ws) => `cb-cache-plan-${ws}`,
     subroutines: (ws) => `cb-cache-subroutines-${ws}`,
+    workspace: (ws) => `cb-cache-workspace-${ws}`,
   };
 
   function extVersion() {
@@ -442,6 +443,35 @@
       console.warn("[Clay Scoping] current plan pricing fetch failed:", err);
       __cb.currentPlanPricing = null;
     }
+  };
+
+  /** Returns a workspace's display name + icon URL from Clay. Cached in
+   *  localStorage (24h TTL) like other static datasets. Safe to call from
+   *  the content script while viewing that workspace — the session is always
+   *  a member there, including during impersonation. */
+  __cb.getWorkspaceMeta = async function (workspaceId) {
+    if (!workspaceId) return { name: null, iconUrl: null };
+    const cacheKey = CACHE_KEYS.workspace(workspaceId);
+    const cached = __cb.readStaticCache(cacheKey, workspaceId);
+    if (cached?.data) return cached.data;
+
+    let meta = { name: null, iconUrl: null };
+    try {
+      const res = await fetch(`https://api.clay.com/v3/workspaces/${workspaceId}`, {
+        credentials: "include",
+      });
+      if (res.ok) {
+        const data = await res.json();
+        meta = {
+          name: data?.name || null,
+          iconUrl: data?.icon?.url || null,
+        };
+        __cb.writeStaticCache(cacheKey, workspaceId, meta);
+      }
+    } catch (err) {
+      console.warn("[Clay Scoping] workspace meta fetch failed:", err);
+    }
+    return meta;
   };
 
   // Fetches the public action-tier catalog (every Launch/Growth tier
