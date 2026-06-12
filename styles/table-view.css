@@ -2386,6 +2386,8 @@
 
 .cb-session-pop-stamp-pill:hover {
   box-shadow: 0 0 0 3px var(--cb-amber-ring, rgba(245, 158, 11, 0.18));
+  /* Hide the cursor so it doesn't sit over the hover tooltip. */
+  cursor: none;
 }
 
 .cb-session-pop-row:hover {
