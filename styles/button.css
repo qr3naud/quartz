@@ -68,6 +68,8 @@
   background: var(--cb-amber-surface, #fffbeb);
   border-color: var(--cb-amber, #f59e0b);
   color: var(--cb-amber-text, #b45309);
+  /* Hide the cursor so it doesn't sit over the hover tooltip below. */
+  cursor: none;
 }
 
 .cb-btn-stamp-active {
