@@ -465,6 +465,10 @@
         // the previous blob); an empty object is a real all-deleted state.
         const stamps = __cb.stamps?.serialize?.();
         state.stampsByTable = stamps ?? activeTab.state?.stampsByTable ?? null;
+        // Demo-spotlight highlights (src/highlights.js): same null-vs-empty
+        // semantics as stamps.
+        const hl = __cb.highlights?.serialize?.();
+        state.highlightsByTable = hl ?? activeTab.state?.highlightsByTable ?? null;
         activeTab.state = state;
       }
     }
@@ -698,6 +702,7 @@
     // Stamps live inside tab state — re-read so a stamp added by a
     // collaborator (or another device) shows up without a reload.
     __cb.stamps?.rehydrate?.();
+    __cb.highlights?.rehydrate?.();
 
     // Tab bar may need a redraw if name/hidden changed.
     try { renderTabBar(); } catch {}
@@ -1306,6 +1311,7 @@
     // Stamps are workbook-scoped but stored per tab — re-merge from the store
     // so the toolbar button / session dividers reflect this tab's blob too.
     __cb.stamps?.rehydrate?.();
+    __cb.highlights?.rehydrate?.();
 
     const recordsInput = document.getElementById("cb-records-input");
     if (recordsInput) {

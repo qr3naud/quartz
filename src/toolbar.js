@@ -23,6 +23,10 @@
   const PLAY_SVG =
     '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><path d="M240,128a15.74,15.74,0,0,1-7.6,13.51L88.32,229.65a16,16,0,0,1-16.2.3A15.86,15.86,0,0,1,64,216.13V39.87a15.86,15.86,0,0,1,8.12-13.82,16,16,0,0,1,16.2.3L232.4,114.49A15.74,15.74,0,0,1,240,128Z"/></svg>';
 
+  // Phosphor FloppyDisk (regular weight) — demo-spotlight highlights button.
+  const FLOPPY_SVG =
+    '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><path d="M219.31,72,184,36.69A15.86,15.86,0,0,0,172.69,32H48A16,16,0,0,0,32,48V208a16,16,0,0,0,16,16H208a16,16,0,0,0,16-16V83.31A15.86,15.86,0,0,0,219.31,72ZM168,208H88V152h80Zm40,0H184V152a16,16,0,0,0-16-16H88a16,16,0,0,0-16,16v56H48V48H172.69L208,83.31ZM160,72a8,8,0,0,1-8,8H96a8,8,0,0,1,0-16h56A8,8,0,0,1,160,72Z"/></svg>';
+
   function currentTableId() {
     try {
       const parts = window.location.pathname.split("/");
@@ -179,6 +183,154 @@
     return btn;
   }
 
+  // ---- Demo-spotlight highlights button -------------------------------------
+  // Icon-only Phosphor FloppyDisk button next to the stamp button, shown only
+  // on /tables/:id pages. Lists the table's saved highlights (src/highlights.js)
+  // with delete, plus "Start demo" which enters spotlight replay
+  // (src/spotlight.js).
+
+  const hlBtnRefreshers = new Set();
+  function refreshHlButtons() {
+    for (const fn of hlBtnRefreshers) {
+      try { fn(); } catch {}
+    }
+  }
+  if (__cb.highlights?.subscribe) __cb.highlights.subscribe(refreshHlButtons);
+
+  let hlPopEl = null;
+  function closeHlPop() {
+    if (hlPopEl) { hlPopEl.remove(); hlPopEl = null; }
+    document.removeEventListener("mousedown", onHlPopOutside, true);
+  }
+  function onHlPopOutside(e) {
+    if (hlPopEl && !hlPopEl.contains(e.target)) closeHlPop();
+  }
+
+  function openHlPop(anchorEl, tid) {
+    closeHlPop();
+    const items = __cb.highlights?.get?.(tid) || [];
+    const pop = document.createElement("div");
+    pop.className = "cb-hl-pop";
+    pop.addEventListener("mousedown", (e) => e.stopPropagation());
+
+    if (!items.length) {
+      const empty = document.createElement("div");
+      empty.className = "cb-hl-pop-empty";
+      empty.textContent =
+        'No saved highlights yet \u2014 right-click a cell and pick "Save in Quartz".';
+      pop.appendChild(empty);
+    } else {
+      items.forEach((h, i) => {
+        const row = document.createElement("div");
+        row.className = "cb-hl-pop-row";
+        const num = document.createElement("span");
+        num.className = "cb-hl-pop-num";
+        num.textContent = String(i + 1);
+        const kind = document.createElement("span");
+        kind.className = `cb-hl-pop-kind cb-hl-pop-kind-${h.kind}`;
+        kind.textContent = h.kind === "config" ? "Config" : "Results";
+        const label = document.createElement("span");
+        label.className = "cb-hl-pop-label";
+        const name = h.fieldName || "Column";
+        label.textContent = h.note ? `${name} \u00b7 ${h.note}` : name;
+        label.title = label.textContent;
+        const del = document.createElement("button");
+        del.type = "button";
+        del.className = "cb-hl-pop-del";
+        del.textContent = "\u00d7";
+        del.setAttribute("aria-label", "Delete highlight");
+        del.addEventListener("click", (e) => {
+          e.stopPropagation();
+          const p = __cb.highlights?.remove?.(tid, h.id);
+          // Re-render in place so the list reflects the deletion immediately.
+          Promise.resolve(p).then(() => {
+            if (hlPopEl && anchorEl.isConnected) openHlPop(anchorEl, tid);
+          });
+        });
+        row.appendChild(num);
+        row.appendChild(kind);
+        row.appendChild(label);
+        row.appendChild(del);
+        pop.appendChild(row);
+      });
+
+      const start = document.createElement("button");
+      start.type = "button";
+      start.className = "cb-hl-pop-start";
+      start.textContent = `Start demo (${items.length})`;
+      start.addEventListener("click", (e) => {
+        e.stopPropagation();
+        closeHlPop();
+        __cb.spotlight?.start?.(tid);
+      });
+      pop.appendChild(start);
+    }
+
+    document.body.appendChild(pop);
+    hlPopEl = pop;
+    __cb.placePopover?.(pop, anchorEl, { align: "right", gap: 6 });
+    pop.style.zIndex = "10000000";
+    document.addEventListener("mousedown", onHlPopOutside, true);
+  }
+
+  function buildHighlightButton() {
+    const btn = document.createElement("button");
+    btn.className = "cb-btn cb-btn-hl";
+    btn.type = "button";
+    btn.innerHTML = FLOPPY_SVG;
+
+    let tip = null;
+    const hideTip = () => { if (tip) { tip.remove(); tip = null; } };
+    btn.addEventListener("mouseenter", () => {
+      hideTip();
+      const tid = currentTableId();
+      if (!tid) return;
+      const n = (__cb.highlights?.get?.(tid) || []).length;
+      tip = document.createElement("div");
+      tip.className = "cb-stamp-tip";
+      tip.textContent = n
+        ? `${n} saved highlight${n === 1 ? "" : "s"} \u2014 click to manage`
+        : "Demo highlights \u2014 right-click a cell to save one";
+      document.body.appendChild(tip);
+      const r = btn.getBoundingClientRect();
+      const w = tip.offsetWidth;
+      let left = r.left + r.width / 2 - w / 2;
+      left = Math.max(8, Math.min(left, window.innerWidth - w - 8));
+      tip.style.left = `${Math.round(left)}px`;
+      tip.style.top = `${Math.round(r.bottom + 6)}px`;
+    });
+    btn.addEventListener("mouseleave", hideTip);
+    btn.addEventListener("mousedown", hideTip);
+
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const tid = currentTableId();
+      if (!tid) return;
+      if (hlPopEl) closeHlPop();
+      else openHlPop(btn, tid);
+    });
+
+    // Same self-cleanup dance as the stamp button (see comment there).
+    let wasConnected = false;
+    function refresh() {
+      if (btn.isConnected) {
+        wasConnected = true;
+      } else if (wasConnected) {
+        hlBtnRefreshers.delete(refresh);
+        return;
+      }
+      const tid = currentTableId();
+      btn.style.display = tid ? "" : "none";
+      const has = tid && (__cb.highlights?.get?.(tid) || []).length > 0;
+      btn.classList.toggle("cb-btn-hl-active", !!has);
+    }
+    hlBtnRefreshers.add(refresh);
+    refresh();
+    __cb.highlights?.ensureHydrated?.()?.then?.(refresh);
+
+    return btn;
+  }
+
   function buildButton() {
     const wrapper = document.createElement("div");
     wrapper.className = "cb-btn-wrapper";
@@ -241,6 +393,7 @@
 
     wrapper.appendChild(btn);
     wrapper.appendChild(buildStampButton());
+    wrapper.appendChild(buildHighlightButton());
     return wrapper;
   }
 
@@ -419,9 +572,11 @@
     removeFloatIfOffWorkbook();
 
     // Table switches within a workbook keep the injected toolbar button —
-    // re-sync the stamp button's visibility/amber state for the new table.
+    // re-sync the stamp/highlight buttons' visibility/state for the new table.
     closeStampPop();
     refreshStampButtons();
+    closeHlPop();
+    refreshHlButtons();
 
     const newWorkbookId = __cb.parseIdsFromUrl()?.workbookId ?? null;
     if (__cb.overlayEl && newWorkbookId !== __cb.currentWorkbookId) {

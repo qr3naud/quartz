@@ -1,0 +1,452 @@
+/* Demo spotlight (src/spotlight.js + the floppy-disk launcher in toolbar.js).
+   Save highlights from Clay cells, replay them as a dimmed walkthrough.
+
+   Z-index notes: Clay's sticky table header carries z-index 999999999, so the
+   replay layers must sit ABOVE that (2000000000+) to dim it. Save-flow UI
+   (menu/flyout/modal) uses the 1000000000 tier to clear Clay's menu portals. */
+
+/* ---- Toolbar button (icon-only FloppyDisk, sits right of the stamp btn) ---- */
+
+.cb-btn-hl {
+  width: 32px;
+  padding: 0;
+  margin-left: 6px;
+  justify-content: center;
+  color: #6b7280;
+}
+
+.cb-btn-hl svg {
+  display: block;
+}
+
+.cb-btn-hl:hover {
+  background: var(--cb-accent-surface, #eef2ff);
+  border-color: var(--cb-accent, #6366f1);
+  color: var(--cb-accent-strong, #4338ca);
+  /* Hide the cursor so it doesn't sit over the hover tooltip (same trick as
+     the stamp button). */
+  cursor: none;
+}
+
+.cb-btn-hl-active {
+  background: var(--cb-accent-surface, #eef2ff);
+  border-color: var(--cb-accent, #6366f1);
+  color: var(--cb-accent-strong, #4338ca);
+  box-shadow: 0 0 0 3px var(--cb-accent-ring, rgba(99, 102, 241, 0.15));
+}
+
+/* ---- Highlight-management popover (list + delete + start) ---- */
+
+.cb-hl-pop {
+  position: fixed;
+  z-index: 10000000;
+  min-width: 280px;
+  max-width: 380px;
+  background: #fff;
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.14);
+  padding: 4px;
+  font-size: 13px;
+  color: var(--cb-text-label, #374151);
+}
+
+.cb-hl-pop-empty {
+  padding: 10px 12px;
+  color: var(--cb-text-muted, #6b7280);
+  line-height: 1.45;
+  max-width: 280px;
+}
+
+.cb-hl-pop-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 6px;
+}
+
+.cb-hl-pop-row:hover {
+  background: var(--cb-surface-subtle, #f9fafb);
+}
+
+.cb-hl-pop-num {
+  flex: none;
+  width: 16px;
+  text-align: right;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--cb-text-faint, #9ca3af);
+}
+
+.cb-hl-pop-kind {
+  flex: none;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  padding: 2px 6px;
+  border-radius: var(--cb-radius-pill, 999px);
+}
+
+.cb-hl-pop-kind-results {
+  background: var(--cb-accent-surface, #eef2ff);
+  color: var(--cb-accent-strong, #4338ca);
+}
+
+.cb-hl-pop-kind-config {
+  background: var(--cb-amber-surface, #fffbeb);
+  color: var(--cb-amber-text, #b45309);
+}
+
+.cb-hl-pop-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cb-hl-pop-del {
+  flex: none;
+  border: none;
+  background: none;
+  font-size: 14px;
+  line-height: 1;
+  padding: 2px 6px;
+  border-radius: 4px;
+  color: var(--cb-text-faint, #9ca3af);
+  cursor: pointer;
+}
+
+.cb-hl-pop-del:hover {
+  background: var(--cb-red-surface, #fef2f2);
+  color: var(--cb-red-text, #b91c1c);
+}
+
+.cb-hl-pop-start {
+  display: block;
+  width: 100%;
+  margin-top: 4px;
+  border: none;
+  border-radius: 6px;
+  padding: 8px 10px;
+  background: var(--cb-accent, #6366f1);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.cb-hl-pop-start:hover {
+  background: var(--cb-accent-strong, #4338ca);
+}
+
+/* ---- "Save in Quartz" context-menu item ---- */
+
+/* Standalone fallback menu (when Clay's own context menu never appears). */
+.cb-hl-menu {
+  position: fixed;
+  z-index: 1000000000;
+  background: #fff;
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  border-radius: 8px;
+  box-shadow: var(--cb-shadow-menu, 0 12px 32px rgba(0, 0, 0, 0.18));
+  padding: 4px;
+  min-width: 190px;
+}
+
+/* The item itself — when injected into Clay's menu it also carries the
+   native sibling's classes, so force the layout bits we depend on. */
+.cb-hl-menu-item {
+  display: flex !important;
+  align-items: center !important;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  font-size: 13px;
+  color: var(--cb-text-label, #374151);
+  cursor: pointer;
+  user-select: none;
+}
+
+.cb-hl-menu-item:hover {
+  background: var(--cb-surface-muted, #f3f4f6);
+}
+
+/* Injected into Clay's menu: separate from the native items above it. */
+.cb-hl-menu-item:not(.cb-hl-menu-item-own) {
+  margin-top: 4px;
+  border-top: 1px solid var(--cb-border-faint, #eef0f3);
+  border-radius: 0 0 6px 6px;
+}
+
+.cb-hl-menu-item-icon {
+  display: inline-flex;
+  flex: none;
+  color: var(--cb-accent, #6366f1);
+}
+
+.cb-hl-menu-item-label {
+  flex: 1;
+  white-space: nowrap;
+}
+
+.cb-hl-menu-item-chev {
+  flex: none;
+  color: var(--cb-text-faint, #9ca3af);
+  font-size: 14px;
+  line-height: 1;
+}
+
+/* ---- Results / Config flyout ---- */
+
+.cb-hl-flyout {
+  position: fixed;
+  z-index: 1000000001;
+  background: #fff;
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  border-radius: 8px;
+  box-shadow: var(--cb-shadow-menu, 0 12px 32px rgba(0, 0, 0, 0.18));
+  padding: 4px;
+  width: 250px;
+}
+
+.cb-hl-flyout-opt {
+  padding: 7px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.cb-hl-flyout-opt:hover {
+  background: var(--cb-accent-surface, #eef2ff);
+}
+
+.cb-hl-flyout-opt-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--cb-text-primary, #111827);
+}
+
+.cb-hl-flyout-opt-sub {
+  margin-top: 1px;
+  font-size: 11.5px;
+  line-height: 1.35;
+  color: var(--cb-text-muted, #6b7280);
+}
+
+/* ---- Note modal ---- */
+
+.cb-hl-note-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1000000002;
+  background: rgba(15, 23, 42, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.cb-hl-note-modal {
+  width: 420px;
+  max-width: calc(100vw - 32px);
+  background: #fff;
+  border-radius: 12px;
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.25);
+  padding: 16px;
+}
+
+.cb-hl-note-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--cb-text-primary, #111827);
+}
+
+.cb-hl-note-sub {
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--cb-text-muted, #6b7280);
+}
+
+.cb-hl-note-text {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  margin-top: 12px;
+  min-height: 92px;
+  resize: vertical;
+  border: 1px solid var(--cb-border-strong, #d1d5db);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--cb-text-primary, #111827);
+}
+
+.cb-hl-note-text:focus {
+  outline: none;
+  border-color: var(--cb-accent, #6366f1);
+  box-shadow: 0 0 0 3px var(--cb-accent-ring, rgba(99, 102, 241, 0.15));
+}
+
+.cb-hl-note-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.cb-hl-note-cancel {
+  border: 1px solid var(--cb-border, #e5e7eb);
+  background: #fff;
+  color: var(--cb-text-label, #374151);
+  border-radius: 6px;
+  padding: 7px 12px;
+  font-size: 13px;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.cb-hl-note-cancel:hover {
+  background: var(--cb-surface-subtle, #f9fafb);
+}
+
+.cb-hl-note-save {
+  border: none;
+  background: var(--cb-accent, #6366f1);
+  color: #fff;
+  border-radius: 6px;
+  padding: 7px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.cb-hl-note-save:hover {
+  background: var(--cb-accent-strong, #4338ca);
+}
+
+.cb-hl-note-save:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+/* ---- Replay: spotlight hole, note card, counter ---- */
+
+/* Transparent box over the target; the huge box-shadow paints the dim around
+   it. pointer-events:none keeps the whole page interactive (the shadow does
+   not capture events), so presenters can still scroll the highlighted panel. */
+.cb-spot-hole {
+  position: fixed;
+  z-index: 2000000000;
+  pointer-events: none;
+  border-radius: 8px;
+  box-shadow:
+    0 0 0 2px rgba(255, 255, 255, 0.9),
+    0 0 0 200vmax rgba(15, 23, 42, 0.58);
+}
+
+.cb-spot-hole.cb-spot-anim {
+  transition:
+    left 0.3s cubic-bezier(0.3, 0.9, 0.3, 1),
+    top 0.3s cubic-bezier(0.3, 0.9, 0.3, 1),
+    width 0.3s cubic-bezier(0.3, 0.9, 0.3, 1),
+    height 0.3s cubic-bezier(0.3, 0.9, 0.3, 1);
+}
+
+.cb-spot-hole-waiting {
+  animation: cb-spot-pulse 1s ease-in-out infinite;
+}
+
+@keyframes cb-spot-pulse {
+  0%, 100% { box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.9), 0 0 0 200vmax rgba(15, 23, 42, 0.58); }
+  50% { box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.4), 0 0 0 200vmax rgba(15, 23, 42, 0.66); }
+}
+
+.cb-spot-note {
+  position: fixed;
+  z-index: 2000000001;
+  pointer-events: none;
+  max-width: 380px;
+  background: #fff;
+  border-radius: 10px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.3);
+  padding: 10px 14px;
+}
+
+.cb-spot-note.cb-spot-anim {
+  transition:
+    left 0.3s cubic-bezier(0.3, 0.9, 0.3, 1),
+    top 0.3s cubic-bezier(0.3, 0.9, 0.3, 1);
+}
+
+.cb-spot-note-field {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--cb-accent-strong, #4338ca);
+}
+
+.cb-spot-note-text {
+  margin-top: 4px;
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: var(--cb-text-primary, #111827);
+  white-space: pre-wrap;
+}
+
+.cb-spot-counter {
+  position: fixed;
+  z-index: 2000000002;
+  left: 50%;
+  bottom: 22px;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--cb-tooltip-bg, #111827);
+  color: #fff;
+  border-radius: var(--cb-radius-pill, 999px);
+  padding: 8px 14px;
+  font-size: 13px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+}
+
+.cb-spot-counter-num {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  min-width: 44px;
+  text-align: center;
+}
+
+.cb-spot-counter-btn {
+  border: none;
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+  border-radius: 6px;
+  width: 26px;
+  height: 26px;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.cb-spot-counter-btn:hover {
+  background: rgba(255, 255, 255, 0.24);
+}
+
+.cb-spot-counter-hint {
+  font-size: 11.5px;
+  color: rgba(255, 255, 255, 0.65);
+}
+
+.cb-spot-counter-close {
+  margin-left: 2px;
+}
