@@ -31,6 +31,11 @@
 //                                    old UI; the popover may stop using
 //                                    it now that there's no per-rep key).
 //
+//   7. cb:export:fetchUrl          — fetch a signed S3 export download URL
+//                                    from the service worker. Content-script
+//                                    fetch() hits CORS on the export bucket;
+//                                    the Clay UI uses <a download> instead.
+//
 // All routes use the same JWT bearer auth (no shared `x-cb-proxy-key`
 // secret in the bundle anymore). The Phase-1 lockdown means anything we
 // proxy is gated by Clay workspace membership at the Edge Function layer.
@@ -460,6 +465,41 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         } else {
           sendResponse({ ok: res.ok, status: res.status, data: envelope, rawText: text || undefined });
         }
+      } catch (err) {
+        sendResponse({ ok: false, error: err?.message || String(err) });
+      }
+    })();
+    return true;
+  }
+
+  // cb:export:fetchUrl — { url }. Fetches a Clay export-job signed S3 URL
+  // from the SW (host_permissions on the export bucket). Returns base64 body
+  // because MV3 message payloads can't carry ArrayBuffers directly.
+  if (msg.type === "cb:export:fetchUrl") {
+    (async () => {
+      try {
+        const url = msg.url;
+        if (!url || typeof url !== "string") {
+          sendResponse({ ok: false, error: "missing url" });
+          return;
+        }
+        const res = await fetch(url);
+        if (!res.ok) {
+          sendResponse({ ok: false, status: res.status, error: `HTTP ${res.status}` });
+          return;
+        }
+        const buf = await res.arrayBuffer();
+        const bytes = new Uint8Array(buf);
+        const chunk = 0x8000;
+        let binary = "";
+        for (let i = 0; i < bytes.length; i += chunk) {
+          binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+        }
+        sendResponse({
+          ok: true,
+          base64: btoa(binary),
+          mime: res.headers.get("content-type") || "application/octet-stream",
+        });
       } catch (err) {
         sendResponse({ ok: false, error: err?.message || String(err) });
       }

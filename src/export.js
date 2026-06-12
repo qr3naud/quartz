@@ -303,6 +303,45 @@
     return entries;
   }
 
+  function sendBgMessage(payload) {
+    return new Promise((resolve) => {
+      try {
+        chrome.runtime.sendMessage(payload, (resp) => {
+          if (chrome.runtime.lastError) {
+            resolve({ ok: false, error: chrome.runtime.lastError.message });
+            return;
+          }
+          resolve(resp || { ok: false, error: "no response" });
+        });
+      } catch (err) {
+        resolve({ ok: false, error: err?.message || String(err) });
+      }
+    });
+  }
+
+  function base64ToBlob(base64, mime) {
+    const binary = atob(base64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    return new Blob([bytes], { type: mime || "application/octet-stream" });
+  }
+
+  // Clay's export job returns a signed S3 URL. Content-script fetch() fails
+  // CORS on the export bucket; the Clay UI uses <a download> instead. Route
+  // through the service worker (host_permissions on *.s3.us-east-1.amazonaws.com).
+  async function fetchExportDownloadBlob(url) {
+    if (typeof chrome !== "undefined" && chrome.runtime?.sendMessage) {
+      const resp = await sendBgMessage({ type: "cb:export:fetchUrl", url });
+      if (resp?.ok && resp.base64) {
+        return base64ToBlob(resp.base64, resp.mime);
+      }
+      throw new Error(resp?.error || `Download failed (${resp?.status ?? "unknown"})`);
+    }
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`Download failed (${res.status})`);
+    return res.blob();
+  }
+
   async function fetchClayTableCsv(entry) {
     let job;
     if (entry.viewId) {
@@ -316,9 +355,7 @@
     const finished = await __cb.waitForExportJob(exportId);
     if (!finished.downloadUrl) throw new Error("No download URL");
 
-    const res = await fetch(finished.downloadUrl);
-    if (!res.ok) throw new Error(`Download failed (${res.status})`);
-    const blob = await res.blob();
+    const blob = await fetchExportDownloadBlob(finished.downloadUrl);
     const baseName = finished.fileName
       ? String(finished.fileName).replace(/\.csv$/i, "")
       : sanitizeFilename(entry.name);
