@@ -8319,6 +8319,7 @@
     "Actions / row",
     "Credits / row",
     "Enrichments",
+    "Comments",
   ];
 
   // Coverage descriptor (from coverageFillFor) -> the same text the Coverage
@@ -8360,6 +8361,30 @@
       .join("; ");
   }
 
+  // Row-level note (DP / orphan primary card) plus per-ER chip notes, merged
+  // into one Comments cell. Multiple contributions are newline-separated; ER
+  // notes are prefixed with the enrichment name when more than one note is
+  // present (or when a row note precedes them).
+  function exportCommentsText(row) {
+    const parts = [];
+    const isOrphan = row.kind === "orphan-er";
+
+    if (!isOrphan) {
+      const rowNote = (getCardForRowId(row.cardId)?.data?.note || "").trim();
+      if (rowNote) parts.push(rowNote);
+    }
+
+    const erNotes = (row.ers || [])
+      .map((er) => ({ name: er.name, text: (er.note || "").trim() }))
+      .filter((n) => n.text);
+    const labelErNotes = erNotes.length > 1 || parts.length > 0;
+    for (const { name, text } of erNotes) {
+      parts.push(labelErNotes ? `${name}: ${text}` : text);
+    }
+
+    return parts.join("\n");
+  }
+
   // One flat record per visible row, keyed by EXPORT_COLUMNS. `useCase` is the
   // section label. A `mergeMode === "skip"` row (a follower in a merge run)
   // blanks its Enrichments cell — the canonical CSV "merge".
@@ -8374,6 +8399,7 @@
       "Actions / row": formatNumber(row.actions),
       "Credits / row": row.creditsUnknown ? "?" : formatNumber(row.credits),
       Enrichments: enrich,
+      Comments: exportCommentsText(row),
     };
   }
 
