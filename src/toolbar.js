@@ -15,6 +15,170 @@
       : "Scoping";
   }
 
+  // ---- "Stamp the time" button --------------------------------------------
+  // Icon-only Phosphor Play button next to the Quartz launcher, shown only on
+  // /tables/:id pages. A stamp is a per-table timestamp stored in tab state
+  // (src/stamps.js); the first stamp anchors the default Actual-spend window.
+
+  const PLAY_SVG =
+    '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><path d="M240,128a15.74,15.74,0,0,1-7.6,13.51L88.32,229.65a16,16,0,0,1-16.2.3A15.86,15.86,0,0,1,64,216.13V39.87a15.86,15.86,0,0,1,8.12-13.82,16,16,0,0,1,16.2.3L232.4,114.49A15.74,15.74,0,0,1,240,128Z"/></svg>';
+
+  function currentTableId() {
+    try {
+      const parts = window.location.pathname.split("/");
+      const tIdx = parts.indexOf("tables");
+      return tIdx !== -1 ? parts[tIdx + 1] || null : null;
+    } catch {
+      return null;
+    }
+  }
+
+  function fmtStamp(iso) {
+    try {
+      return new Date(iso).toLocaleString(undefined, {
+        month: "short",
+        day: "numeric",
+        hour: "numeric",
+        minute: "2-digit",
+      });
+    } catch {
+      return iso;
+    }
+  }
+
+  // Every live launcher (toolbar + float) registers a refresh callback so the
+  // navObserver / stamp-store subscription can re-sync them on URL or data
+  // changes.
+  const stampBtnRefreshers = new Set();
+  function refreshStampButtons() {
+    for (const fn of stampBtnRefreshers) {
+      try { fn(); } catch {}
+    }
+  }
+  if (__cb.stamps?.subscribe) __cb.stamps.subscribe(refreshStampButtons);
+
+  let stampPopEl = null;
+  function closeStampPop() {
+    if (stampPopEl) { stampPopEl.remove(); stampPopEl = null; }
+    document.removeEventListener("mousedown", onStampPopOutside, true);
+  }
+  function onStampPopOutside(e) {
+    if (stampPopEl && !stampPopEl.contains(e.target)) closeStampPop();
+  }
+
+  function openStampPop(anchorEl, tid) {
+    closeStampPop();
+    const stamps = __cb.stamps?.get?.(tid) || [];
+    const pop = document.createElement("div");
+    pop.className = "cb-stamp-pop";
+    pop.addEventListener("mousedown", (e) => e.stopPropagation());
+
+    stamps.forEach((iso, i) => {
+      const row = document.createElement("div");
+      row.className = "cb-stamp-pop-row";
+      const label = document.createElement("span");
+      label.className = "cb-stamp-pop-label";
+      label.textContent = `${i === 0 ? "Stamp" : "Marker"} \u00b7 ${fmtStamp(iso)}`;
+      label.title = new Date(iso).toLocaleString();
+      const del = document.createElement("button");
+      del.type = "button";
+      del.className = "cb-stamp-pop-del";
+      del.textContent = "\u00d7";
+      del.setAttribute("aria-label", "Delete stamp");
+      del.addEventListener("click", (e) => {
+        e.stopPropagation();
+        __cb.stamps?.remove?.(tid, iso);
+        closeStampPop();
+      });
+      row.appendChild(label);
+      row.appendChild(del);
+      pop.appendChild(row);
+    });
+
+    if (stamps.length === 1) {
+      const add = document.createElement("button");
+      add.type = "button";
+      add.className = "cb-stamp-pop-add";
+      add.textContent = "Add second stamp";
+      add.addEventListener("click", (e) => {
+        e.stopPropagation();
+        __cb.stamps?.add?.(tid);
+        closeStampPop();
+      });
+      pop.appendChild(add);
+    }
+
+    document.body.appendChild(pop);
+    stampPopEl = pop;
+    __cb.placePopover?.(pop, anchorEl, { align: "right", gap: 6 });
+    pop.style.zIndex = "10000000";
+    document.addEventListener("mousedown", onStampPopOutside, true);
+  }
+
+  function buildStampButton() {
+    const btn = document.createElement("button");
+    btn.className = "cb-btn cb-btn-stamp";
+    btn.type = "button";
+    btn.innerHTML = PLAY_SVG;
+
+    // Custom hover tooltip (no native title — matches the extension's other
+    // pills; the native one is unreliable inside Clay's toolbar too).
+    let tip = null;
+    const hideTip = () => { if (tip) { tip.remove(); tip = null; } };
+    btn.addEventListener("mouseenter", () => {
+      hideTip();
+      const tid = currentTableId();
+      if (!tid) return;
+      const stamps = __cb.stamps?.get?.(tid) || [];
+      tip = document.createElement("div");
+      tip.className = "cb-stamp-tip";
+      tip.textContent = stamps.length
+        ? `Stamp: ${fmtStamp(stamps[0])}`
+        : "No stamp \u2014 click to stamp now";
+      document.body.appendChild(tip);
+      const r = btn.getBoundingClientRect();
+      const w = tip.offsetWidth;
+      let left = r.left + r.width / 2 - w / 2;
+      left = Math.max(8, Math.min(left, window.innerWidth - w - 8));
+      tip.style.left = `${Math.round(left)}px`;
+      tip.style.top = `${Math.round(r.bottom + 6)}px`;
+    });
+    btn.addEventListener("mouseleave", hideTip);
+    btn.addEventListener("mousedown", hideTip);
+
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const tid = currentTableId();
+      if (!tid) return;
+      const stamps = __cb.stamps?.get?.(tid) || [];
+      if (!stamps.length) __cb.stamps?.add?.(tid);
+      else openStampPop(btn, tid);
+    });
+
+    // Self-cleanup only after the button has actually been in the DOM —
+    // refresh() first runs before buildButton() mounts the wrapper, and
+    // deregistering on that early call would orphan the button forever.
+    let wasConnected = false;
+    function refresh() {
+      if (btn.isConnected) {
+        wasConnected = true;
+      } else if (wasConnected) {
+        stampBtnRefreshers.delete(refresh);
+        return;
+      }
+      const tid = currentTableId();
+      btn.style.display = tid ? "" : "none";
+      const has = tid && (__cb.stamps?.get?.(tid) || []).length > 0;
+      btn.classList.toggle("cb-btn-stamp-active", !!has);
+    }
+    stampBtnRefreshers.add(refresh);
+    refresh();
+    // Stamps hydrate async from tab state (Supabase) — re-sync once loaded.
+    __cb.stamps?.ensureHydrated?.()?.then?.(refresh);
+
+    return btn;
+  }
+
   function buildButton() {
     const wrapper = document.createElement("div");
     wrapper.className = "cb-btn-wrapper";
@@ -76,6 +240,7 @@
     });
 
     wrapper.appendChild(btn);
+    wrapper.appendChild(buildStampButton());
     return wrapper;
   }
 
@@ -252,6 +417,11 @@
     // id) should clear any float we previously injected; otherwise it
     // lingers on pages where no canvas exists.
     removeFloatIfOffWorkbook();
+
+    // Table switches within a workbook keep the injected toolbar button —
+    // re-sync the stamp button's visibility/amber state for the new table.
+    closeStampPop();
+    refreshStampButtons();
 
     const newWorkbookId = __cb.parseIdsFromUrl()?.workbookId ?? null;
     if (__cb.overlayEl && newWorkbookId !== __cb.currentWorkbookId) {

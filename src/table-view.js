@@ -1370,6 +1370,11 @@
         refreshActualRunsBadge();
         if (sessionPopoverEl) renderSessionPopoverRows();
       });
+      // Stamp add/remove re-renders an open popover too (divider placement
+      // and pre-stamp dimming are stamp-derived).
+      window.__cb.stamps?.subscribe?.(() => {
+        if (sessionPopoverEl) renderSessionPopoverRows();
+      });
     }
     // Defer to after this render: the toggle (and its badge) is appended to
     // hostEl at the end of render, so fill the badge once it's in the DOM —
@@ -1836,6 +1841,68 @@
     return row;
   }
 
+  // Amber "Stamp" divider: a 1px rule with a centered pill, inserted between
+  // session rows wherever a stamp timestamp (src/stamps.js) falls. Hovering
+  // the pill shows the exact stamp time; clicking it resets the table's
+  // selection to everything at/after the first stamp.
+  function buildStampDivider(tid, iso) {
+    const d = document.createElement("div");
+    d.className = "cb-session-pop-stamp";
+    const pill = document.createElement("button");
+    pill.type = "button";
+    pill.className = "cb-session-pop-stamp-pill";
+    pill.textContent = "Stamp";
+    let exact = iso;
+    try {
+      exact = new Date(iso).toLocaleString(undefined, {
+        month: "short",
+        day: "numeric",
+        year: "numeric",
+        hour: "numeric",
+        minute: "2-digit",
+        second: "2-digit",
+      });
+    } catch {}
+    attachInfoTip(pill, [`Stamped ${exact}`, "Click to reset selection to the stamp"]);
+    pill.addEventListener("mousedown", (e) => e.stopPropagation());
+    pill.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      window.__cb.sessionCutoff?.resetToStamp?.(tid);
+    });
+    d.appendChild(pill);
+    return d;
+  }
+
+  // Emit a table's session rows (newest-first) into `list`, weaving in stamp
+  // dividers and dimming rows that ended entirely before the FIRST stamp.
+  // Shared by the single-table flat list and the multi-table columns.
+  function appendSessionRows(list, cut, tableState, tid) {
+    const stamps = (window.__cb.stamps?.get?.(tid) || [])
+      .map((iso) => ({ iso, sec: Date.parse(iso) / 1000 }))
+      .filter((s) => Number.isFinite(s.sec))
+      .sort((a, b) => b.sec - a.sec); // newest-first, matching row order
+    const firstStampSec = stamps.length ? stamps[stamps.length - 1].sec : null;
+    let si = 0;
+    for (const s of tableState.sessions.slice().reverse()) {
+      // Any stamp newer than this session's end sits ABOVE the row.
+      while (si < stamps.length && stamps[si].sec > s.lastTs) {
+        list.appendChild(buildStampDivider(tid, stamps[si].iso));
+        si++;
+      }
+      const row = buildSessionRow(cut, tableState, tid, s);
+      if (firstStampSec != null && s.lastTs < firstStampSec) {
+        row.classList.add("cb-session-pop-row-prestamp");
+      }
+      list.appendChild(row);
+    }
+    // Stamp older than every session → divider below the whole history.
+    while (si < stamps.length) {
+      list.appendChild(buildStampDivider(tid, stamps[si].iso));
+      si++;
+    }
+  }
+
   // Skeleton rows shown while a table's runs are still loading, so the columns
   // (and their table names) appear immediately instead of one blanket spinner.
   function buildSessionSkeleton(count) {
@@ -1881,9 +1948,7 @@
       m.textContent = "No runs.";
       list.appendChild(m);
     } else {
-      for (const s of tableState.sessions.slice().reverse()) {
-        list.appendChild(buildSessionRow(cut, tableState, tid, s));
-      }
+      appendSessionRows(list, cut, tableState, tid);
     }
     col.appendChild(list);
     return col;
@@ -1940,9 +2005,7 @@
         m.textContent = "No realtime runs found.";
         body.appendChild(m);
       } else {
-        for (const s of t.sessions.slice().reverse()) {
-          body.appendChild(buildSessionRow(cut, t, tid, s));
-        }
+        appendSessionRows(body, cut, t, tid);
       }
       return;
     }

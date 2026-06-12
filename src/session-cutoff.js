@@ -75,6 +75,15 @@
     return cb.currentWorkspaceId || cb.parseIdsFromUrl?.()?.workspaceId || null;
   }
 
+  // First (earliest) "stamp the time" marker for a table, unix seconds, or
+  // null. The stamp forces a base-bucket boundary and anchors the default
+  // selection (see src/stamps.js). Only the FIRST stamp affects bucketing;
+  // a second stamp is a visual-only divider in the picker.
+  function firstStampSec(tid) {
+    const s = cb.stamps?.getFirstSec?.(tid);
+    return Number.isFinite(s) ? s : null;
+  }
+
   function nowMs() {
     return typeof performance !== "undefined" && performance.now
       ? performance.now()
@@ -108,7 +117,21 @@
   // Reuses cost-model's bucketer, then namespaces ids with the table id (+ a
   // "base" marker) so they're globally unique and stable across reloads.
   function bucketBase(tid, runs) {
-    const sessions = cb.cost.bucketRunsIntoSessions(runs || [], BASE_GAP_MS);
+    const all = Array.isArray(runs) ? runs : [];
+    // A stamp must be an exact bucket boundary so the default selection can
+    // start precisely at it. Pre-partition the runs at the first stamp and
+    // bucket each side separately — a 6h-adjacent pair straddling the stamp
+    // would otherwise fuse into one bucket the stamp falls inside of.
+    const sSec = firstStampSec(tid);
+    let sessions;
+    if (sSec != null) {
+      sessions = [
+        ...cb.cost.bucketRunsIntoSessions(all.filter((r) => r.timestamp < sSec), BASE_GAP_MS),
+        ...cb.cost.bucketRunsIntoSessions(all.filter((r) => r.timestamp >= sSec), BASE_GAP_MS),
+      ];
+    } else {
+      sessions = cb.cost.bucketRunsIntoSessions(all, BASE_GAP_MS);
+    }
     return sessions.map((s) => ({
       id: `${tid}::base_${s.startTs}_${s.lastTs}`,
       startTs: s.startTs,
@@ -127,10 +150,15 @@
   // the base-level selection set: all / some (indeterminate) / none.
   function mergeBase(tid, base, gapMs, selectedBaseIds) {
     const gapSec = Math.max(MIN_GAP_MS, gapMs || BASE_GAP_MS) / 1000;
+    // Never merge a displayed session across the first stamp — the picker's
+    // amber divider needs to sit BETWEEN sessions, and "reset to stamp" needs
+    // the boundary visible at any gap setting.
+    const sSec = firstStampSec(tid);
     const groups = [];
     let cur = null;
     for (const b of base) {
-      if (!cur || b.startTs - cur.lastTs > gapSec) {
+      const crossesStamp = sSec != null && cur && cur.lastTs < sSec && b.startTs >= sSec;
+      if (!cur || b.startTs - cur.lastTs > gapSec || crossesStamp) {
         cur = {
           childIds: [],
           startTs: b.startTs,
@@ -192,11 +220,19 @@
     }
   }
 
-  // Default = base buckets within the last ACTUAL_IMPORT_DAYS; else the single
+  // Default = base buckets at/after the table's first stamp when one exists;
+  // else base buckets within the last ACTUAL_IMPORT_DAYS; else the single
   // most-recent base bucket (base is oldest→newest). The fallback is what makes
   // the most-recent session drive the stamp when nothing ran in the window.
-  function defaultSelectionBase(base) {
+  function defaultSelectionBase(base, tid) {
     if (!base.length) return new Set();
+    const sSec = firstStampSec(tid);
+    if (sSec != null) {
+      const since = base.filter((b) => b.startTs >= sSec);
+      // Nothing ran since the stamp → fall through to the regular default
+      // (the picker still shows the divider above an older selection).
+      if (since.length) return new Set(since.map((b) => b.id));
+    }
     const cutoffSec = Date.now() / 1000 - importDays() * 86400;
     const recent = base.filter((b) => b.lastTs >= cutoffSec);
     if (recent.length) return new Set(recent.map((b) => b.id));
@@ -231,12 +267,23 @@
     if (!state || !state.byTable[tid]) return;
     const t = state.byTable[tid];
     try {
-      const saved = force ? null : findSavedBase(tid);
+      let saved = force ? null : findSavedBase(tid);
+      // A blob bucketed BEFORE the stamp existed may have a bucket spanning
+      // it — the stamp wouldn't be a selectable boundary. Refetch fresh so
+      // bucketBase can split exactly at the stamp.
+      const sSec = firstStampSec(tid);
+      if (
+        saved &&
+        sSec != null &&
+        saved.base.some((b) => b.startTs < sSec && b.lastTs >= sSec)
+      ) {
+        saved = null;
+      }
       if (saved && saved.base.length) {
         t.base = saved.base;
         t.lastFetchedAt = saved.lastFetchedAt;
         t.reused = true; // stale-ish (came from a prior fetch) → amber pill
-        t.selectedBaseIds = defaultSelectionBase(t.base); // fresh choice for this tab
+        t.selectedBaseIds = defaultSelectionBase(t.base, tid); // fresh choice for this tab
         t.error = false;
         t.loadedSeq = ++loadSeq; // completion order → first back, first column
       } else {
@@ -247,7 +294,7 @@
         t.base = bucketBase(tid, Array.isArray(runs) ? runs : []);
         t.lastFetchedAt = Date.now();
         t.reused = false;
-        t.selectedBaseIds = defaultSelectionBase(t.base);
+        t.selectedBaseIds = defaultSelectionBase(t.base, tid);
         t.error = false;
         t.loadedSeq = ++loadSeq;
       }
@@ -561,7 +608,7 @@
             sessions: [],
             selectedBaseIds: sel.length
               ? new Set(sel)
-              : defaultSelectionBase(ct.base),
+              : defaultSelectionBase(ct.base, tid),
             loading: false,
             error: false,
             // Persisted amber "cached" state survives the reload (cleared only
@@ -674,6 +721,18 @@
 
     toggle(tid, displayedId) {
       toggleDisplayed(tid, displayedId);
+      recomputeDisplayed(tid);
+      notify();
+      applySelection();
+    },
+
+    // "Reset selection to stamp": re-apply the stamp-anchored default for one
+    // table (everything at/after the first stamp). Wired to the picker's
+    // amber Stamp pill so the marker has an active role, not just decoration.
+    resetToStamp(tid) {
+      const t = state?.byTable?.[tid];
+      if (!t || !t.base || !t.base.length) return;
+      t.selectedBaseIds = defaultSelectionBase(t.base, tid);
       recomputeDisplayed(tid);
       notify();
       applySelection();

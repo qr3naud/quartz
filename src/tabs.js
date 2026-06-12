@@ -300,6 +300,10 @@
     if (!workbookId) return;
     await pushTabToSupabase(workbookId, workspaceId, tab, idx);
   }
+  // Exposed for stamps.js: persisting a stamp from the Clay table page (no
+  // canvas open) needs a direct row push — debouncedSave/saveTabs only
+  // re-serializes when the canvas exists.
+  __cb.saveTabRow = saveTabRow;
 
   // DELETE a canvas_tabs row. Trigger fires tabState/tabInvalidate with
   // operation=DELETE so peers can drop the tab from their local tabStore too.
@@ -456,6 +460,11 @@
         // it on an unrelated save.
         const sc = __cb.sessionCutoff?.serialize?.();
         state.sessionCutoff = sc || activeTab.state?.sessionCutoff || null;
+        // Per-table stamp markers (src/stamps.js) ride along the same way.
+        // serialize() is null only before hydration ("don't know yet" — keep
+        // the previous blob); an empty object is a real all-deleted state.
+        const stamps = __cb.stamps?.serialize?.();
+        state.stampsByTable = stamps ?? activeTab.state?.stampsByTable ?? null;
         activeTab.state = state;
       }
     }
@@ -685,6 +694,10 @@
         tabId: row.tab_id,
       });
     }
+
+    // Stamps live inside tab state — re-read so a stamp added by a
+    // collaborator (or another device) shows up without a reload.
+    __cb.stamps?.rehydrate?.();
 
     // Tab bar may need a redraw if name/hidden changed.
     try { renderTabBar(); } catch {}
@@ -1289,6 +1302,10 @@
     // restored above, so stamping has targets. Any imported table missing from
     // the blob is filled (reuse/fetch) inside restore.
     __cb.sessionCutoff?.restore?.(tab?.state?.sessionCutoff);
+
+    // Stamps are workbook-scoped but stored per tab — re-merge from the store
+    // so the toolbar button / session dividers reflect this tab's blob too.
+    __cb.stamps?.rehydrate?.();
 
     const recordsInput = document.getElementById("cb-records-input");
     if (recordsInput) {

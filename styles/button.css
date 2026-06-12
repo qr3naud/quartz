@@ -50,6 +50,111 @@
   color: #374151;
 }
 
+/* ---- "Stamp the time" button (icon-only, sits right of the launcher) ---- */
+
+.cb-btn-stamp {
+  width: 32px;
+  padding: 0;
+  margin-left: 6px;
+  justify-content: center;
+  color: #6b7280;
+}
+
+.cb-btn-stamp svg {
+  display: block;
+}
+
+.cb-btn-stamp:hover {
+  background: var(--cb-amber-surface, #fffbeb);
+  border-color: var(--cb-amber, #f59e0b);
+  color: var(--cb-amber-text, #b45309);
+}
+
+.cb-btn-stamp-active {
+  background: var(--cb-amber-surface, #fffbeb);
+  border-color: var(--cb-amber, #f59e0b);
+  color: var(--cb-amber-text, #b45309);
+  box-shadow: 0 0 0 3px var(--cb-amber-ring, rgba(245, 158, 11, 0.18));
+}
+
+/* Custom hover tooltip (body-mounted, fixed). */
+.cb-stamp-tip {
+  position: fixed;
+  z-index: 10000001;
+  background: var(--cb-tooltip-bg, #111827);
+  color: #fff;
+  font-size: 12px;
+  line-height: 1.3;
+  padding: 5px 8px;
+  border-radius: 6px;
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+/* Stamp-management popover (list of stamps + delete / add actions). */
+.cb-stamp-pop {
+  position: fixed;
+  z-index: 10000000;
+  min-width: 200px;
+  background: #fff;
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.14);
+  padding: 4px;
+  font-size: 13px;
+  color: #374151;
+}
+
+.cb-stamp-pop-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 6px 8px;
+  border-radius: 6px;
+}
+
+.cb-stamp-pop-row:hover {
+  background: #f9fafb;
+}
+
+.cb-stamp-pop-label {
+  white-space: nowrap;
+}
+
+.cb-stamp-pop-del {
+  border: none;
+  background: none;
+  color: #9ca3af;
+  font-size: 15px;
+  line-height: 1;
+  padding: 2px 5px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.cb-stamp-pop-del:hover {
+  background: #fee2e2;
+  color: #b91c1c;
+}
+
+.cb-stamp-pop-add {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: none;
+  font: inherit;
+  color: var(--cb-amber-text, #b45309);
+  padding: 6px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.cb-stamp-pop-add:hover {
+  background: var(--cb-amber-surface, #fffbeb);
+}
+
 .cb-float {
   /* Fixed to the viewport so it stays put when the Clay flow canvas pans/zooms
      underneath. Anchored top-right, below Clay's workbook header. */

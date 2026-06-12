@@ -2346,6 +2346,48 @@
   cursor: pointer;
 }
 
+/* Rows that ended entirely before the first stamp: de-emphasized history
+   (still clickable) so the "counted from here" region reads at a glance. */
+.cb-session-pop-row-prestamp {
+  opacity: 0.55;
+}
+
+.cb-session-pop-row-prestamp:hover {
+  opacity: 1;
+}
+
+/* Amber stamp divider: edge-to-edge 1px rule with a centered "Stamp" pill
+   sitting on the line. Negative margins match the row padding so the rule
+   spans the full list width. */
+.cb-session-pop-stamp {
+  position: relative;
+  height: 1px;
+  background: var(--cb-amber, #f59e0b);
+  margin: 8px 0;
+  overflow: visible;
+}
+
+.cb-session-pop-stamp-pill {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  border: 1px solid var(--cb-amber, #f59e0b);
+  background: var(--cb-amber-surface, #fffbeb);
+  color: var(--cb-amber-text, #b45309);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: 0.02em;
+  padding: 3px 8px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.cb-session-pop-stamp-pill:hover {
+  box-shadow: 0 0 0 3px var(--cb-amber-ring, rgba(245, 158, 11, 0.18));
+}
+
 .cb-session-pop-row:hover {
   background: #f9fafb;
 }
