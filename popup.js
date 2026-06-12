@@ -149,22 +149,23 @@
     });
   }
 
-  // Workspace name + avatar lookups (Clay API), cached for the popup session.
+  // Workspace name + icon lookups (Clay API), cached for the popup session.
+  // Shape matches __cb.getWorkspaceMeta: { name, iconUrl }.
   const workspaceMetaCache = new Map();
 
-  /** Fetches a workspace's display name + avatar from Clay. Best-effort:
-   *  on any failure returns a generic name with no avatar. */
+  /** Fetches a workspace's display name + icon from Clay. Best-effort:
+   *  on any failure returns a generic name with no icon. */
   async function fetchWorkspaceMeta(workspaceId) {
-    if (!workspaceId) return { name: "Workspace", avatarUrl: null };
+    if (!workspaceId) return { name: "Workspace", iconUrl: null };
     if (workspaceMetaCache.has(workspaceId)) return workspaceMetaCache.get(workspaceId);
-    let meta = { name: "Workspace", avatarUrl: null };
+    let meta = { name: "Workspace", iconUrl: null };
     try {
       const res = await fetch(`https://api.clay.com/v3/workspaces/${workspaceId}`, {
         credentials: "include",
       });
       if (res.ok) {
         const data = await res.json();
-        meta = { name: data?.name || "Workspace", avatarUrl: data?.icon?.url || null };
+        meta = { name: data?.name || "Workspace", iconUrl: data?.icon?.url || null };
       }
     } catch (err) {
       console.warn("[Quartz Popup] workspace meta fetch failed:", err);
@@ -189,7 +190,7 @@
       },
       body: {
         workspace_name: meta.name,
-        workspace_icon_url: meta.avatarUrl || "",
+        workspace_icon_url: meta.iconUrl || "",
       },
     }).catch((err) => {
       console.warn("[Quartz Popup] workspace meta backfill failed:", err);
@@ -244,11 +245,11 @@
       li.className = "cb-popup-item";
 
       const workspaceId = row.canvases?.workspace_id;
-      const ws = (workspaceId && wsMetaById.get(workspaceId)) || { name: "Workspace", avatarUrl: null };
+      const ws = (workspaceId && wsMetaById.get(workspaceId)) || { name: "Workspace", iconUrl: null };
 
       const avatar = document.createElement("div");
       avatar.className = "cb-popup-avatar";
-      renderAvatar(avatar, ws.avatarUrl, ws.name);
+      renderAvatar(avatar, ws.iconUrl, ws.name);
 
       const body = document.createElement("div");
       body.className = "cb-popup-item-body";
@@ -439,7 +440,7 @@
           const name = row.canvases?.workspace_name;
           if (name) {
             const iconUrl = row.canvases?.workspace_icon_url;
-            wsMetaById.set(wsId, { name, avatarUrl: iconUrl || null });
+            wsMetaById.set(wsId, { name, iconUrl: iconUrl || null });
             if (iconUrl !== null && iconUrl !== undefined) completeIds.add(wsId);
           }
         }
