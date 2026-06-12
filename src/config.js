@@ -212,6 +212,13 @@
       return !!window.__cb.isAdmin;
     },
 
+    // "Scope Ads" / "Scope Audiences" intro shortcuts in the table view
+    // action row (src/table-view.js). Maintainer-only while the flows are
+    // being iterated on — same signed `is_admin` gate as canvas/pricing.
+    canUseScopeShortcuts() {
+      return !!window.__cb.isAdmin;
+    },
+
     // "projected" (default — catalog credits × records) vs "actual" (real
     // spend pulled from Clay's realtime credit usage warehouse, attached to
     // ER cards via data.stats.spend at import time). Toggled by the

@@ -3791,9 +3791,8 @@
     if (__cb.tableView && __cb.tableView.refresh) __cb.tableView.refresh();
   }
 
-  // "Scope Ads" / "Scope Audiences" intro shortcuts. Behavior is not wired up
-  // yet — this is a no-op placeholder so the buttons render without side
-  // effects until we decide what each should do.
+  // "Scope Ads" / "Scope Audiences" intro shortcuts (maintainer-only via
+  // __cb.canUseScopeShortcuts). Behavior is not wired up yet — no-op placeholder.
   function startScope(kind) {
     console.log(`[Clay Scoping] Scope ${kind} clicked (not wired up yet).`);
   }
@@ -5894,23 +5893,26 @@
 
     // "Scope Ads" / "Scope Audiences" / "Add" lead the action row as scoping
     // quick-starts. Hidden in pricing mode (the view is for pricing an
-    // already-built scope, not adding to it).
+    // already-built scope, not adding to it). Scope shortcuts are
+    // maintainer-only (see __cb.canUseScopeShortcuts in config.js).
     if (!__cb.pricingMode) {
-      const scopeAdsBtn = document.createElement("button");
-      scopeAdsBtn.type = "button";
-      scopeAdsBtn.className = "cb-table-view-add-er-btn";
-      scopeAdsBtn.title = "Scope an Ads use case";
-      scopeAdsBtn.innerHTML = targetSvg(12) + "<span>Scope Ads</span>";
-      scopeAdsBtn.addEventListener("click", () => startScope("ads"));
-      introActions.appendChild(scopeAdsBtn);
+      if (__cb.canUseScopeShortcuts?.()) {
+        const scopeAdsBtn = document.createElement("button");
+        scopeAdsBtn.type = "button";
+        scopeAdsBtn.className = "cb-table-view-add-er-btn";
+        scopeAdsBtn.title = "Scope an Ads use case";
+        scopeAdsBtn.innerHTML = targetSvg(12) + "<span>Scope Ads</span>";
+        scopeAdsBtn.addEventListener("click", () => startScope("ads"));
+        introActions.appendChild(scopeAdsBtn);
 
-      const scopeAudiencesBtn = document.createElement("button");
-      scopeAudiencesBtn.type = "button";
-      scopeAudiencesBtn.className = "cb-table-view-add-er-btn";
-      scopeAudiencesBtn.title = "Scope an Audiences use case";
-      scopeAudiencesBtn.innerHTML = targetSvg(12) + "<span>Scope Audiences</span>";
-      scopeAudiencesBtn.addEventListener("click", () => startScope("audiences"));
-      introActions.appendChild(scopeAudiencesBtn);
+        const scopeAudiencesBtn = document.createElement("button");
+        scopeAudiencesBtn.type = "button";
+        scopeAudiencesBtn.className = "cb-table-view-add-er-btn";
+        scopeAudiencesBtn.title = "Scope an Audiences use case";
+        scopeAudiencesBtn.innerHTML = targetSvg(12) + "<span>Scope Audiences</span>";
+        scopeAudiencesBtn.addEventListener("click", () => startScope("audiences"));
+        introActions.appendChild(scopeAudiencesBtn);
+      }
 
       // Single "Add" control — opens a dropdown with the two granular add
       // actions (data point / enrichment) so the header stays compact now that
