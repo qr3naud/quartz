@@ -36,3 +36,8 @@ __pycache__/
 
 # Local secrets (ANTHROPIC_API_KEY, etc.) — per-machine, never pushed.
 .env
+
+# Playwright MCP output (screenshots, traces). Pinned here via --output-dir in
+# ~/.cursor/mcp.json so shots land in the repo instead of an ephemeral temp dir;
+# per-machine scratch, never tracked. Safe to `rm -rf .playwright-mcp/*`.
+.playwright-mcp/

@@ -111,6 +111,7 @@
 
     async add(tableId, highlight) {
       if (!tableId || !highlight?.fieldId) return null;
+      if (!cb.canUseSpotlight?.()) return null;
       await ensureHydrated();
       const h = {
         id: `hl-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
@@ -129,6 +130,7 @@
     },
 
     async remove(tableId, id) {
+      if (!cb.canUseSpotlight?.()) return;
       await ensureHydrated();
       const cur = map[tableId] || [];
       const next = cur.filter((h) => h.id !== id);

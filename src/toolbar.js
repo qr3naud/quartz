@@ -183,11 +183,9 @@
     return btn;
   }
 
-  // ---- Demo-spotlight highlights button -------------------------------------
+  // ---- Demo-spotlight highlights button (maintainer-only) -------------------
   // Icon-only Phosphor FloppyDisk button next to the stamp button, shown only
-  // on /tables/:id pages. Lists the table's saved highlights (src/highlights.js)
-  // with delete, plus "Start demo" which enters spotlight replay
-  // (src/spotlight.js).
+  // on /tables/:id pages when __cb.canUseSpotlight() (signed is_admin claim).
 
   const hlBtnRefreshers = new Set();
   function refreshHlButtons() {
@@ -196,6 +194,11 @@
     }
   }
   if (__cb.highlights?.subscribe) __cb.highlights.subscribe(refreshHlButtons);
+  // Cold load: isAdmin is false until the first JWT mint resolves — re-sync
+  // the button once auth lands (same pattern as the Quartz/Scoping label).
+  if (__cb.onSupabaseJwtChange) {
+    __cb.onSupabaseJwtChange(() => refreshHlButtons());
+  }
 
   let hlPopEl = null;
   function closeHlPop() {
@@ -304,6 +307,7 @@
 
     btn.addEventListener("click", (e) => {
       e.stopPropagation();
+      if (!__cb.canUseSpotlight?.()) return;
       const tid = currentTableId();
       if (!tid) return;
       if (hlPopEl) closeHlPop();
@@ -320,7 +324,7 @@
         return;
       }
       const tid = currentTableId();
-      btn.style.display = tid ? "" : "none";
+      btn.style.display = tid && __cb.canUseSpotlight?.() ? "" : "none";
       const has = tid && (__cb.highlights?.get?.(tid) || []).length > 0;
       btn.classList.toggle("cb-btn-hl-active", !!has);
     }

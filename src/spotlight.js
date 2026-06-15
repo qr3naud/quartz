@@ -3,9 +3,8 @@
 
   // ---------------------------------------------------------------------------
   // Demo spotlight — save highlights from Clay table cells, then replay them
-  // as a guided walkthrough: everything but the target (cell / right panel /
-  // column settings) is dimmed, an optional note floats next to it, and a
-  // bottom counter shows "X / N" with arrow-key navigation.
+  // as a guided walkthrough. Maintainer-only (__cb.canUseSpotlight in
+  // config.js — same signed `is_admin` gate as Scope Ads / pricing view).
   //
   // SAVE: a capture-phase contextmenu listener notes the right-clicked cell
   // (cells carry stable `data-cell-id="{fieldId}.{recordId}"` — see
@@ -95,6 +94,7 @@
   }
 
   function onContextMenu(e) {
+    if (!__cb.canUseSpotlight?.()) return;
     // While replaying, right-click is reserved (avoid Clay menus over the dim).
     if (replay.active) {
       e.preventDefault();
@@ -708,6 +708,7 @@
   }
 
   async function start(tableId) {
+    if (!__cb.canUseSpotlight?.()) return;
     if (replay.active) stop();
     const tid = tableId || currentTableId();
     if (!tid || tid !== currentTableId()) return;

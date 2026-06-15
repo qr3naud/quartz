@@ -219,6 +219,13 @@
       return !!window.__cb.isAdmin;
     },
 
+    // Demo spotlight: right-click "Save in Quartz" on Clay grid cells +
+    // floppy-disk toolbar button + dimmed walkthrough replay
+    // (src/spotlight.js). Maintainer-only while the flow is being iterated.
+    canUseSpotlight() {
+      return !!window.__cb.isAdmin;
+    },
+
     // "projected" (default — catalog credits × records) vs "actual" (real
     // spend pulled from Clay's realtime credit usage warehouse, attached to
     // ER cards via data.stats.spend at import time). Toggled by the
