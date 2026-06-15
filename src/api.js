@@ -632,6 +632,48 @@
     return res.json();
   };
 
+  // Workbook detail (name, parentFolderId, ...). We only need parentFolderId
+  // here: folder membership is a direct pointer on the workbook row
+  // (clay_admin.workflows.parent_folder_id), null = workspace root. The import
+  // flow reads it to discover the folder a workbook lives in so it can offer
+  // tables from every workbook in that folder. Same endpoint workbook-info.js
+  // uses for the name, but that helper only caches the name string.
+  __cb.fetchWorkbookDetail = async function (workspaceId, workbookId) {
+    const res = await fetch(
+      `https://api.clay.com/v3/${workspaceId}/workbooks/${workbookId}`,
+      { credentials: "include" }
+    );
+    if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
+    return res.json();
+  };
+
+  // Lists the workbooks that live directly inside `folderId` (or at the
+  // workspace root when folderId is null). Mirrors Clay's own file browser
+  // (useWorkspaceResources -> POST /v3/workspaces/:ws/resources_v2/). The
+  // server filters to WORKBOOK resources and returns a flat array of
+  // SerializedWorkbook objects (each carries id, name, parentFolderId,
+  // resourceType). Direct children only (no recursion into subfolders) — the
+  // resources_v2 default scope. Returns [] on a shape we don't recognize.
+  __cb.fetchFolderWorkbooks = async function (workspaceId, folderId) {
+    const parentResource = folderId ? { id: folderId, type: "FOLDER" } : null;
+    const res = await fetch(
+      `https://api.clay.com/v3/workspaces/${workspaceId}/resources_v2/`,
+      {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          parentResource,
+          filters: { resourceTypes: ["WORKBOOK"] },
+        }),
+      }
+    );
+    if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
+    const data = await res.json();
+    const resources = Array.isArray(data?.resources) ? data.resources : [];
+    return resources.filter((r) => r && r.resourceType === "WORKBOOK" && r.id);
+  };
+
   // -------------------------------------------------------------------------
   // Stats endpoints.
   //

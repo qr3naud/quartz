@@ -219,6 +219,57 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* Per-workbook section header — only shown when the import spans more than one
+   workbook (folder-scoped import). Sticky so the workbook label stays visible
+   while scrolling its tables. */
+.cb-table-picker-group-header {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px 4px;
+  margin-top: 4px;
+  background: #ffffff;
+}
+
+.cb-table-picker-group-header:first-child {
+  margin-top: 0;
+}
+
+.cb-table-picker-group-name {
+  font-size: 11px;
+  font-weight: 600;
+  color: #374151;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cb-table-picker-group-current {
+  flex-shrink: 0;
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: #4f46e5;
+  background: #eef2ff;
+  border: 1px solid #c7d2fe;
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+
+.cb-table-picker-group-count {
+  margin-left: auto;
+  flex-shrink: 0;
+  font-size: 11px;
+  color: #9ca3af;
+  font-variant-numeric: tabular-nums;
+}
+
 /* Per-table view selector — a custom dropdown (not the native <select>) so the
    trigger is a consistent fixed width and the menu can show each view's column
    count. The menu is appended to <body> with position:fixed so the picker

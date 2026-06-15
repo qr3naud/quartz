@@ -2821,7 +2821,78 @@
     }
   }
 
-  function showMultiTablePicker(tables, anchorEl, onImport) {
+  // Resolves the tables to offer in the import picker. Discovers the folder
+  // the current workbook lives in, lists the sibling workbooks in that folder,
+  // and fetches every workbook's tables in parallel — stamping each table with
+  // its workbook name (`_cbWorkbookName`) so the picker can group rows under
+  // per-workbook headers. Degrades gracefully: at workspace root, or if any
+  // folder-discovery call fails, it falls back to the current workbook only.
+  async function fetchFolderScopedTables(workspaceId, workbookId) {
+    // The current workbook's own tables are the baseline — fetch them first so
+    // a folder-discovery failure still yields a working picker.
+    const currentTables = await __cb.fetchTableList(workbookId);
+
+    let folderId = null;
+    let currentName = null;
+    try {
+      const detail = await __cb.fetchWorkbookDetail(workspaceId, workbookId);
+      folderId = detail?.parentFolderId || null;
+      currentName = detail?.name || null;
+    } catch (err) {
+      console.warn("[Clay Scoping] Workbook detail fetch failed; current workbook only:", err);
+    }
+
+    stampWorkbookName(currentTables, currentName);
+
+    // Root-level workbook (no folder) → no sibling scope.
+    if (!folderId) return currentTables;
+
+    let siblings = [];
+    try {
+      siblings = await __cb.fetchFolderWorkbooks(workspaceId, folderId);
+    } catch (err) {
+      console.warn("[Clay Scoping] Folder workbook list failed; current workbook only:", err);
+      return currentTables;
+    }
+
+    // Dedupe by id and drop the current workbook (already fetched). resources_v2
+    // may or may not include the current workbook depending on visibility.
+    const otherWorkbooks = [];
+    const seen = new Set([workbookId]);
+    for (const wb of siblings) {
+      if (!wb?.id || seen.has(wb.id)) continue;
+      seen.add(wb.id);
+      otherWorkbooks.push({ id: wb.id, name: wb.name || null });
+    }
+
+    if (otherWorkbooks.length === 0) return currentTables;
+
+    // Fetch the sibling workbooks' tables in parallel; a single workbook's
+    // failure (e.g. permissions) just drops that workbook from the picker.
+    const siblingTableLists = await Promise.all(
+      otherWorkbooks.map(async (wb) => {
+        try {
+          const list = await __cb.fetchTableList(wb.id);
+          stampWorkbookName(list, wb.name);
+          return Array.isArray(list) ? list : [];
+        } catch (err) {
+          console.warn(`[Clay Scoping] Tables fetch failed for workbook ${wb.id}:`, err);
+          return [];
+        }
+      }),
+    );
+
+    return currentTables.concat(...siblingTableLists);
+  }
+
+  function stampWorkbookName(tables, name) {
+    if (!Array.isArray(tables)) return;
+    for (const t of tables) {
+      if (t) t._cbWorkbookName = name;
+    }
+  }
+
+  function showMultiTablePicker(tables, anchorEl, onImport, opts) {
     closeTablePicker();
 
     tablePickerBackdrop = document.createElement("div");
@@ -2840,9 +2911,37 @@
     list.className = "cb-table-picker-list";
     tablePickerEl.appendChild(list);
 
-    const sorted = [...tables].sort((a, b) =>
-      (a.name || "").localeCompare(b.name || "", undefined, { sensitivity: "base" })
-    );
+    // Group tables by source workbook. A single workbook (the common case)
+    // renders a flat list exactly as before; across a folder we render a
+    // section header per workbook with the current workbook first. Each table
+    // was stamped with `_cbWorkbookName` by the import flow.
+    const currentWorkbookId = opts?.currentWorkbookId || null;
+    const byWorkbook = new Map();
+    for (const table of tables) {
+      const wbId = table.workbookId || "__cb_no_workbook__";
+      let group = byWorkbook.get(wbId);
+      if (!group) {
+        group = { id: wbId, name: table._cbWorkbookName || null, tables: [] };
+        byWorkbook.set(wbId, group);
+      }
+      group.tables.push(table);
+    }
+    const groups = Array.from(byWorkbook.values());
+    groups.sort((a, b) => {
+      if (a.id === currentWorkbookId) return -1;
+      if (b.id === currentWorkbookId) return 1;
+      return (a.name || "").localeCompare(b.name || "", undefined, { sensitivity: "base" });
+    });
+    for (const g of groups) {
+      g.tables.sort((a, b) =>
+        (a.name || "").localeCompare(b.name || "", undefined, { sensitivity: "base" }),
+      );
+    }
+    const showGroupHeaders = groups.length > 1;
+    const totalTables = tables.length;
+    // Flat render order, filled as rows are built — drives the import order
+    // (deterministic color cycle) in the footer handler.
+    const displayOrder = [];
 
     const selected = new Set();
     // Per-table chosen view: a view id, or null = "Full table" (no view filter).
@@ -2904,7 +3003,9 @@
       importBtn.textContent = n > 0 ? `Import ${n}` : "Import";
     }
 
-    for (const table of sorted) {
+    function renderTableRow(table) {
+      displayOrder.push(table);
+
       const row = document.createElement("label");
       row.className = "cb-table-picker-checkrow";
 
@@ -2961,9 +3062,9 @@
       row.appendChild(viewDd);
       list.appendChild(row);
 
-      // Single-table workbooks: pre-check the only table so the user just
+      // Single-table case: pre-check the only table so the user just
       // confirms the view + clicks Import.
-      if (sorted.length === 1) {
+      if (totalTables === 1) {
         cb.checked = true;
         selected.add(table);
         row.classList.add("cb-table-picker-checkrow-checked");
@@ -2971,13 +3072,42 @@
 
       refreshRowCount(table, defaultViewId, meta, cols);
     }
+
+    for (const group of groups) {
+      if (showGroupHeaders) {
+        const header = document.createElement("div");
+        header.className = "cb-table-picker-group-header";
+
+        const nameEl = document.createElement("span");
+        nameEl.className = "cb-table-picker-group-name";
+        nameEl.textContent = group.name || "Workbook";
+        header.appendChild(nameEl);
+
+        if (group.id === currentWorkbookId) {
+          const badge = document.createElement("span");
+          badge.className = "cb-table-picker-group-current";
+          badge.textContent = "current";
+          header.appendChild(badge);
+        }
+
+        const countEl = document.createElement("span");
+        countEl.className = "cb-table-picker-group-count";
+        const n = group.tables.length;
+        countEl.textContent = `${n} ${n === 1 ? "table" : "tables"}`;
+        header.appendChild(countEl);
+
+        list.appendChild(header);
+      }
+
+      for (const table of group.tables) renderTableRow(table);
+    }
     updateFooter();
 
     importBtn.addEventListener("click", () => {
       if (selected.size === 0) return;
-      // Preserve the sorted display order for a predictable color cycle. Each
+      // Preserve the rendered display order for a predictable color cycle. Each
       // chosen table carries its selected view (id, or null = Full table).
-      const chosen = sorted
+      const chosen = displayOrder
         .filter((t) => selected.has(t))
         .map((t) => ({ table: t, viewId: viewByTable.get(t) }));
       closeTablePicker();
@@ -3034,7 +3164,15 @@
         await __cb.fetchWaterfallExecCosts();
       }
 
-      const tables = await __cb.fetchTableList(ids.workbookId);
+      // Folder-scoped import: offer tables from every workbook in the same
+      // folder, not just the current one. Folder membership is a direct
+      // parentFolderId on the workbook (null = workspace root). At root we
+      // keep the current-workbook-only behavior — a root "folder" would be
+      // every top-level workbook, far too broad. Each table is stamped with
+      // its workbook name so the picker can group rows under per-workbook
+      // headers. Any failure in folder discovery degrades to the original
+      // single-workbook fetch.
+      const tables = await fetchFolderScopedTables(ids.workspaceId, ids.workbookId);
 
       if (!tables || tables.length === 0) {
         closeTablePicker();
@@ -3059,9 +3197,14 @@
 
       // Always show the picker — even for a single-table workbook — so the
       // user can choose which view (or Full table) to import.
-      showMultiTablePicker(tables, anchorEl, (chosen) => {
-        importSelected(chosen);
-      });
+      showMultiTablePicker(
+        tables,
+        anchorEl,
+        (chosen) => {
+          importSelected(chosen);
+        },
+        { currentWorkbookId: ids.workbookId },
+      );
     } catch (err) {
       console.error("[Clay Scoping] Failed to fetch tables:", err);
       closeTablePicker();
