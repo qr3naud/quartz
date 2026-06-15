@@ -107,6 +107,7 @@
       add.addEventListener("click", (e) => {
         e.stopPropagation();
         __cb.stamps?.add?.(tid);
+        __cb.fireStampConfetti?.(anchorEl);
         closeStampPop();
       });
       pop.appendChild(add);
@@ -155,8 +156,10 @@
       const tid = currentTableId();
       if (!tid) return;
       const stamps = __cb.stamps?.get?.(tid) || [];
-      if (!stamps.length) __cb.stamps?.add?.(tid);
-      else openStampPop(btn, tid);
+      if (!stamps.length) {
+        __cb.stamps?.add?.(tid);
+        __cb.fireStampConfetti?.(btn);
+      } else openStampPop(btn, tid);
     });
 
     // Self-cleanup only after the button has actually been in the DOM —
