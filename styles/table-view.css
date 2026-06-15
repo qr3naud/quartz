@@ -801,6 +801,14 @@
   border-color: #fed7aa;
 }
 
+/* Signals are event-driven sources — a distinct cyan keeps the recurring
+   monitoring cost visually separate from one-shot source ingests. */
+.cb-table-view-er-menu-kind-signal {
+  background: #ecfeff;
+  color: #0e7490;
+  border-color: #cffafe;
+}
+
 .cb-table-view-er-menu-kind-ai {
   background: #eff6ff;
   color: #1d4ed8;

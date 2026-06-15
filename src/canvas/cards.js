@@ -216,7 +216,15 @@
           if (card.data._originalCredits != null) {
             card.data.credits = card.data._originalCredits;
             const t = card.data.isAi ? window.__cb.aiTilde(card.data.selectedModel) : "~";
-            card.data.creditText = `${t}${card.data._originalCredits} / row`;
+            // Signals bill per run / per result, not per row — keep their unit.
+            const unit = card.data.isSignal
+              ? (card.data.signalChargeUnit === "result"
+                  ? "result"
+                  : card.data.signalChargeUnit === "record"
+                    ? "record"
+                    : "run")
+              : "row";
+            card.data.creditText = `${t}${card.data._originalCredits} / ${unit}`;
           }
           renderCreditMode();
         } else {

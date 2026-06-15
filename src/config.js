@@ -61,12 +61,18 @@
   // enrichment runs 12 times per year, so 1-year credit cost = credits * 12.
   // Order is coarsest → finest (annually at the top, weekly at the bottom) so
   // the picker reads like a "how often" slider.
+  // `hidden: true` options are NOT offered in the picker by default — they only
+  // appear when they're the currently-selected value (e.g. a signal whose
+  // schedule seeded `daily` / `bi-weekly`). This keeps the everyday picker short
+  // for normal enrichments while still letting signal cadences round-trip.
   const FREQUENCY_OPTIONS = [
-    { id: "annually",    label: "Annually",    multiplier: 1  },
-    { id: "bi-annually", label: "Bi-annually", multiplier: 2  },
-    { id: "quarterly",   label: "Quarterly",   multiplier: 4  },
-    { id: "monthly",     label: "Monthly",     multiplier: 12 },
-    { id: "weekly",      label: "Weekly",      multiplier: 52 },
+    { id: "annually",    label: "Annually",    multiplier: 1   },
+    { id: "bi-annually", label: "Bi-annually", multiplier: 2   },
+    { id: "quarterly",   label: "Quarterly",   multiplier: 4   },
+    { id: "monthly",     label: "Monthly",     multiplier: 12  },
+    { id: "bi-weekly",   label: "Bi-weekly",   multiplier: 26, hidden: true },
+    { id: "weekly",      label: "Weekly",      multiplier: 52  },
+    { id: "daily",       label: "Daily",       multiplier: 365, hidden: true },
   ];
   const DEFAULT_FREQUENCY_ID = "annually";
 
@@ -564,6 +570,9 @@
       menu.addEventListener("mousedown", (evt) => evt.stopPropagation());
 
       for (const opt of FREQUENCY_OPTIONS) {
+        // Hidden cadences (daily / bi-weekly) only surface when they're the
+        // active selection — otherwise they're omitted from the everyday list.
+        if (opt.hidden && opt.id !== currentId) continue;
         const item = document.createElement("button");
         item.type = "button";
         item.className = "cb-freq-picker-option" + (opt.id === currentId ? " cb-freq-picker-option-active" : "");

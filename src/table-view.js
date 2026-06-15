@@ -2910,11 +2910,13 @@
       ? "Waterfall"
       : isFunction
         ? "Function"
-        : isSource
-          ? "Source"
-          : isAi
-            ? "AI"
-            : "Action";
+        : d.isSignal
+          ? "Signal"
+          : isSource
+            ? "Source"
+            : isAi
+              ? "AI"
+              : "Action";
 
     // Scoped Records for this ER's use case (matches the per-use-case header in
     // multi-import; falls back to the global Records otherwise) + whether it's
@@ -3014,6 +3016,15 @@
       // Subroutine ("Run function") cards reference a "main function" table.
       // Gates the function-only "Open function" footer action.
       referencedTableId: d.referencedTableId || null,
+      // Native signal source: recurring per-run / per-result monitoring cost.
+      // Drives the "/ run" labels, the "Monitored records" details row, and the
+      // "Open monitored table" footer action.
+      isSignal: !!d.isSignal,
+      signalChargeUnit: d.signalChargeUnit || null,
+      signalType: d.signalType || null,
+      monitoredTableId: d.monitoredTableId || null,
+      monitoredViewId: d.monitoredViewId || null,
+      monitoredRecordCount: d.monitoredRecordCount ?? null,
       // Multi-ER lineage context (only set when this chip belongs to a DP row):
       // the per-(DP,ER) run-share, whether it's the primary (#1), and the host
       // DP card so the % pill can read/write the share on the right edge.
@@ -7074,8 +7085,11 @@
     const calculating = !!c.creditsUnknown;
     // Annualize the per-row figures when the ER runs more than once a year
     // (frequency override); the pill then gets an amber outline to flag it.
+    // Signals are the exception: their unit IS the run/result, so "Cost per
+    // run" stays the true per-run figure (frequency is applied only on the
+    // Total row) — otherwise "per run" would read as the annualized cost.
     const freqMult = er.multiplier ?? 1;
-    const overridden = freqMult !== 1;
+    const overridden = freqMult !== 1 && !er.isSignal;
     const mult = overridden ? freqMult : 1;
     const actions = (Number(c.actions) || 0) * mult;
 
@@ -7135,7 +7149,15 @@
     const mult = er.multiplier ?? 1;
     const freqOverridden = mult !== 1;
     let credits, actions;
-    if (which === "actual") {
+    if (er.isSignal) {
+      // Signals bill a fixed amount per monitoring run/result — the annual
+      // total is per-run × frequency, with NO × records (unlike enrichments).
+      // We don't surface a measured "actual" for signals, so that view has no
+      // total.
+      if (which === "actual") return null;
+      credits = (er.usePrivateKey ? 0 : Number(er.cost?.credits) || 0) * mult;
+      actions = (Number(er.cost?.actions) || 0) * mult;
+    } else if (which === "actual") {
       if (!er.spendTotal) return null;
       // Scale measured spend to the scoped Records: spend × (records / total) ×
       // frequency — matches the use-case header. Falls back to raw × frequency
@@ -7311,13 +7333,33 @@
     const which = window.__cb?.viewMode === "actual" ? "actual" : "projected";
     const modeLabel = which === "actual" ? " (actual)" : " (proj.)";
 
-    costSection.appendChild(erMenuRow("Cost per row" + modeLabel, buildErMenuCostNode(er)));
+    // Signals bill per run / per result, not per row — label the per-unit cost
+    // accordingly so the recurring monitoring cost isn't misread as per-record.
+    const perUnitLabel = er.isSignal
+      ? er.signalChargeUnit === "result"
+        ? "Cost per result"
+        : er.signalChargeUnit === "record"
+          ? "Cost per record"
+          : "Cost per run"
+      : "Cost per row";
+    costSection.appendChild(erMenuRow(perUnitLabel + modeLabel, buildErMenuCostNode(er)));
 
     const totalNode = buildErMenuTotalNode(er, which);
     if (totalNode) costSection.appendChild(erMenuRow("Total" + modeLabel, totalNode));
 
     // Frequency on its own row, beneath the two pills it drives.
     costSection.appendChild(erMenuRow("Frequency", buildErMenuFrequencyNode(er)));
+
+    // Signals monitor another table; surface how many records that table holds
+    // (the per-run cost is driven by this count, resolved server-side). Purely
+    // informational — it is NOT the Records denominator used for enrichments.
+    if (er.isSignal) {
+      const monitored =
+        er.monitoredRecordCount != null
+          ? `${formatNumber(er.monitoredRecordCount)} record${er.monitoredRecordCount === 1 ? "" : "s"}`
+          : "\u2014";
+      costSection.appendChild(erMenuRow("Monitored records", monitored));
+    }
 
     if (er.isAi && er.model) {
       costSection.appendChild(erMenuRow("Model", buildErMenuModelNode(er)));
@@ -7380,6 +7422,23 @@
         }
       });
       footer.appendChild(openFnBtn);
+    }
+
+    // Signals monitor another table; jump to it (same workspace-level table
+    // route as "Open function").
+    if (er.isSignal && er.monitoredTableId) {
+      const openMonBtn = document.createElement("button");
+      openMonBtn.type = "button";
+      openMonBtn.className = "cb-table-view-er-menu-open";
+      openMonBtn.innerHTML = externalLinkSvg(13) + "<span>Open monitored table</span>";
+      openMonBtn.addEventListener("click", (evt) => {
+        evt.stopPropagation();
+        closeErChipMenu();
+        if (typeof __cb.openMonitoredTable === "function") {
+          __cb.openMonitoredTable(er);
+        }
+      });
+      footer.appendChild(openMonBtn);
     }
 
     // Waterfalls get "View providers" — opens the same provider-chain popover

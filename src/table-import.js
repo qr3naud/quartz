@@ -223,6 +223,9 @@
   // one of:
   //   { kind: "action", actionKey, actionPackageId, inputs, iconType,
   //     sourceId, sourceType, numSourceRecords }   — billable, gets full pricing
+  //   { kind: "signal", signalType, triggerDefinitionId, iconType, sourceId,
+  //     sourceType, numSourceRecords }   — native Clay signal; recurring per-run
+  //     / per-result monitoring cost (enriched + priced in importTableToCanvas)
   //   { kind: "free", sourceType, sourceId, numSourceRecords } — lineage only
   //   null   — unresolved; caller keeps the legacy display-name fallback
   // `sourceById` is the Map<sourceId, sourceRecord> from fetchSourcesByIds.
@@ -293,6 +296,24 @@
           actionKey: ass.actionKey,
           actionPackageId: ass.actionPackageId,
           inputs: ass.inputs || {},
+          iconType: sts.iconType || null,
+          sourceId,
+          sourceType: sType,
+          numSourceRecords,
+        };
+      }
+      // Native Clay signals (JobPost, JobChange, NewHire, Promotion, News,
+      // LinkedinPostMentions, …) carry NO action identity on the source —
+      // only `{ signalType, triggerDefinitionId }`. Their pricing is a
+      // recurring monitoring cost (per run / per result), resolved from the
+      // trigger definition + the server's estimated-signal-cost endpoint
+      // (enriched in importTableToCanvas). Unlike v3-action sources this is
+      // NOT a per-output-row cost, so it gets `kind: "signal"`.
+      if (sts.triggerDefinitionId) {
+        return {
+          kind: "signal",
+          signalType: sts.signalType ?? null,
+          triggerDefinitionId: sts.triggerDefinitionId,
           iconType: sts.iconType || null,
           sourceId,
           sourceType: sType,
@@ -400,6 +421,103 @@
     return { cost: base, isPrivateKey: false, unlimited: false, planCorrect: true };
   }
   __cb.buildSourceFieldCost = buildSourceFieldCost;
+
+  // Synthetic stats.cost for a native signal source (kind: "signal"). Unlike
+  // v3-action sources this is a RECURRING monitoring cost, not a per-output-row
+  // credit: `cost` is the per-run (or per-result) data credit and
+  // `actionExecutions` the per-run action-execution count, both straight from
+  // the server's estimated-signal-cost block. `isSignalCost` flags the cost
+  // model + table view to annualize by frequency only (no × records). Returns
+  // null for exempt / unpriced signals (nothing billable to show).
+  function buildSignalSourceFieldCost(meta) {
+    if (!meta || meta.kind !== "signal") return null;
+    const sc = meta.signalCost;
+    if (!sc) return null;
+    const cost = Number.isFinite(Number(sc.cost)) ? Number(sc.cost) : 0;
+    const actions = Number.isFinite(Number(sc.actionExecutionCost))
+      ? Number(sc.actionExecutionCost)
+      : 0;
+    if (cost <= 0 && actions <= 0) return null;
+    return {
+      cost,
+      actionExecutions: actions,
+      isPrivateKey: false,
+      unlimited: false,
+      planCorrect: true,
+      isSignalCost: true,
+      chargeUnit: sc.chargeUnit || "run",
+    };
+  }
+  __cb.buildSignalSourceFieldCost = buildSignalSourceFieldCost;
+
+  // Maps a trigger definition's schedule period to the closest Quartz frequency
+  // option id (FREQUENCY_OPTIONS in config.js). Sub-daily cadences collapse to
+  // `daily` (the finest we model); anything unrecognized falls back to the
+  // global default. Used to seed a signal ER's frequency at import.
+  function schedulePeriodToFrequencyId(periodUnit) {
+    switch (periodUnit) {
+      case "daily":
+        return "daily";
+      case "weekly":
+        return "weekly";
+      case "biweekly":
+        return "bi-weekly";
+      case "monthly":
+        return "monthly";
+      case "quarterly":
+        return "quarterly";
+      case "hourly":
+      case "fifteen-minutes":
+      case "minute":
+        return "daily";
+      default:
+        return __cb.DEFAULT_FREQUENCY_ID || "annually";
+    }
+  }
+
+  // Overlays signal-specific fields onto a card built by buildErCardData. The
+  // base build resolves the backing action's per-ROW catalog cost (wrong for a
+  // signal), so we overwrite credits/actions with the per-run/per-result figures
+  // and stamp the monitoring metadata + seeded cadence. Mutates and returns
+  // cardData.
+  function applySignalCardData(cardData, meta) {
+    const sc = meta.signalCost || null;
+    const chargeUnit = sc?.chargeUnit || "run";
+    const cost = sc && Number.isFinite(Number(sc.cost)) ? Number(sc.cost) : 0;
+    const actions =
+      sc && Number.isFinite(Number(sc.actionExecutionCost))
+        ? Number(sc.actionExecutionCost)
+        : 0;
+    const unitLabel = chargeUnit === "result" ? "result" : chargeUnit === "record" ? "record" : "run";
+
+    cardData.isSource = true;
+    cardData.isSignal = true;
+    cardData.isAi = false;
+    cardData.signalType = meta.signalType || null;
+    cardData.signalChargeUnit = chargeUnit;
+    cardData.credits = cost;
+    cardData.actionExecutions = actions;
+    cardData.usePrivateKey = false;
+    cardData.requiresApiKey = false;
+    cardData.selectedModel = null;
+    cardData.modelOptions = null;
+    cardData.clayBudget = null;
+    cardData.creditText = `~${cost} / ${unitLabel}`;
+    cardData.triggerDefinitionId = meta.triggerDefinitionId || null;
+    cardData.monitoredTableId = meta.monitoredTableId || null;
+    cardData.monitoredViewId = meta.monitoredViewId || null;
+    cardData.monitoredRecordCount = meta.monitoredRecordCount ?? null;
+
+    // A signal's cadence is intrinsic to the signal (its trigger schedule), not
+    // the table's use-case frequency. Mark it as a per-ER override
+    // (frequencyCustom: true) so syncUseCaseFrequency() doesn't clobber the
+    // seeded schedule with the table default — the same flag the frequency
+    // picker sets when a user overrides a single ER.
+    cardData.frequency = schedulePeriodToFrequencyId(meta.schedulePeriodUnit);
+    cardData.frequencyCustom = true;
+    return cardData;
+  }
+  __cb.applySignalCardData = applySignalCardData;
 
   // Strips surrounding quotes + whitespace, the same way the server's
   // findModelOption does in libs/shared/src/ai/models.ts line 1280. Bindings
@@ -1012,18 +1130,30 @@
     const sourceMeta =
       field.type === "source" ? currentSourceMetaByFieldId.get(field.id) : null;
     const resolvedAction = sourceMeta?.kind === "action" ? sourceMeta : null;
+    const resolvedSignal = sourceMeta?.kind === "signal" ? sourceMeta : null;
+    // A native signal exposes its backing action key (e.g.
+    // find-lists-of-jobs-with-mixrank-source) on the trigger definition — use it
+    // for the catalog icon, but the per-row catalog cost it resolves is
+    // overwritten by applySignalCardData with the per-run signal cost below.
     const cardData = buildErCardData({
       field,
-      actionKey: resolvedAction ? resolvedAction.actionKey : ts.actionKey,
+      actionKey: resolvedAction
+        ? resolvedAction.actionKey
+        : resolvedSignal
+          ? (resolvedSignal.actionKey ?? ts.actionKey)
+          : ts.actionKey,
       packageId: resolvedAction
         ? resolvedAction.actionPackageId
-        : (ts.actionPackageId ?? "clay"),
+        : resolvedSignal
+          ? (resolvedSignal.actionPackageId ?? ts.actionPackageId ?? "clay")
+          : (ts.actionPackageId ?? "clay"),
       displayName: field.name,
       stats: statsByFieldId?.get(field.id) ?? null,
       fieldId: field.id,
       tableId,
       viewId,
     });
+    if (resolvedSignal) applySignalCardData(cardData, resolvedSignal);
     // ER cards (standalone + basic-group) carry the same source-table tags as
     // DP/input cards so the table view can bucket every card by tableId.
     cardData.tableName = currentImportTags.tableName;
@@ -1362,7 +1492,13 @@
     // marks the source billable below and drives the ER card's per-row cost.
     for (const f of table?.fields ?? []) {
       if (f.type !== "source") continue;
-      const cost = buildSourceFieldCost(sourceMetaByFieldId.get(f.id));
+      const meta = sourceMetaByFieldId.get(f.id);
+      // Signals carry a recurring per-run/per-result cost; v3-action sources a
+      // per-row catalog cost. Both land in statsByFieldId as a synthetic cost
+      // block (the signal one flagged isSignalCost).
+      const cost = meta?.kind === "signal"
+        ? buildSignalSourceFieldCost(meta)
+        : buildSourceFieldCost(meta);
       if (!cost) continue;
       const existing = statsByFieldId.get(f.id) || { fetchedAt: Date.now(), source: "source-meta" };
       existing.cost = cost;
@@ -1386,6 +1522,9 @@
       if (__cb.isAiAction?.(ts.actionKey, f.name, ts.actionPackageId)) return true;
       const sc = statsByFieldId.get(f.id)?.cost;
       if (sc && !sc.unlimited && !sc.isPrivateKey && Number(sc.cost) > 0) return true;
+      // Signal sources can bill purely in action executions (cost 0), so treat
+      // a positive per-run action-execution count as billable too.
+      if (sc?.isSignalCost && Number(sc.actionExecutions) > 0) return true;
       const info = __cb.actionByIdLookup?.[`${ts.actionPackageId}-${ts.actionKey}`];
       if (info) {
         if ((planAwareBaseCredits(info) || 0) > 0) return true;
@@ -1983,6 +2122,46 @@
       const meta = resolveSourceFieldActionMeta(f, sourceById);
       if (meta) sourceMetaByFieldId.set(f.id, meta);
     }
+
+    // Native signal sources (kind: "signal") need a second round-trip: the
+    // trigger definition (monitored table/view + backing action + schedule) and
+    // the server-estimated signal cost (per-run / per-result + action
+    // executions). Batch-fetch once, then fold the resolved bits back onto each
+    // signal meta so buildSignalSourceFieldCost + buildErCardData read them
+    // synchronously. Fail-soft: a miss leaves the signal as a free source chip.
+    const signalTriggerDefIds = [...sourceMetaByFieldId.values()]
+      .filter((m) => m.kind === "signal" && m.triggerDefinitionId)
+      .map((m) => m.triggerDefinitionId);
+    if (signalTriggerDefIds.length > 0 && typeof __cb.fetchTriggerDefinitionsByIds === "function") {
+      const tdMap = await __cb
+        .fetchTriggerDefinitionsByIds(workspaceId, signalTriggerDefIds)
+        .catch(() => new Map());
+      for (const meta of sourceMetaByFieldId.values()) {
+        if (meta.kind !== "signal") continue;
+        const entry = tdMap.get(meta.triggerDefinitionId);
+        if (!entry) continue;
+        const settings = entry.definition?.signal?.settings ?? {};
+        meta.signalCost = entry.signalCost ?? null;
+        meta.signalType = entry.definition?.signal?.type ?? meta.signalType;
+        meta.monitoredTableId = settings.tableId ?? null;
+        meta.monitoredViewId = settings.viewId ?? null;
+        meta.actionKey = settings.actionKey ?? null;
+        meta.actionPackageId = settings.actionPackageId ?? null;
+        meta.schedulePeriodUnit = entry.definition?.schedule?.periodUnit ?? null;
+        // Monitored row count (informational; NOT the Records denominator). The
+        // estimated-signal-cost endpoint already bakes this into `cost` for
+        // per-run signals, so this is purely for the details view.
+        if (meta.monitoredTableId && meta.monitoredViewId && typeof __cb.fetchViewCount === "function") {
+          try {
+            const c = await __cb.fetchViewCount(meta.monitoredTableId, meta.monitoredViewId);
+            meta.monitoredRecordCount = c?.tableTotalRecordsCount ?? c?.viewTotalRecordsCount ?? null;
+          } catch (err) {
+            console.warn("[Clay Scoping] signal monitored count fetch failed", err);
+          }
+        }
+      }
+    }
+
     currentSourceMetaByFieldId = sourceMetaByFieldId;
 
     // Three-state convention for `overrideViewId`:

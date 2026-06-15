@@ -670,6 +670,78 @@
     return map;
   };
 
+  // Trigger definition for a native Clay signal source. A `trigger-source`
+  // field's source record carries only `{ signalType, triggerDefinitionId }`
+  // (no action identity) — the backing action, monitored table/view, and
+  // schedule live on the trigger definition fetched here. Response shape
+  // (verified): { triggerDefinition: { id, schedule, signal: { type, settings:
+  // { tableId, viewId, actionKey, actionPackageId, ... } }, ... } }. Returns
+  // the unwrapped triggerDefinition object, or null on any error (fail-soft so
+  // the import still produces a structural source chip).
+  __cb.fetchTriggerDefinition = async function (workspaceId, triggerDefinitionId) {
+    if (!workspaceId || !triggerDefinitionId) return null;
+    try {
+      const res = await fetch(
+        `https://api.clay.com/v3/workspaces/${workspaceId}/trigger-definitions/${triggerDefinitionId}`,
+        { credentials: "include" }
+      );
+      if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
+      const body = await res.json();
+      return body?.triggerDefinition ?? body ?? null;
+    } catch (err) {
+      console.warn("[Clay Scoping] fetchTriggerDefinition failed:", triggerDefinitionId, err);
+      return null;
+    }
+  };
+
+  // Server-authoritative estimated cost for a signal. Returns the `signalCost`
+  // block: { cost, chargeUnit: "run"|"result"|"record"|"dynamic",
+  // actionExecutionCost }. The server resolves the monitored record count from
+  // the signal definition itself, so the `numberOfRecords` query param is
+  // effectively ignored (verified: identical cost for 0/1/467). Returns null on
+  // error or for signal types the server can't price.
+  __cb.fetchEstimatedSignalCost = async function (workspaceId, triggerDefinitionId) {
+    if (!workspaceId || !triggerDefinitionId) return null;
+    try {
+      const res = await fetch(
+        `https://api.clay.com/v3/workspaces/${workspaceId}/trigger-definitions/${triggerDefinitionId}/estimated-signal-cost`,
+        { credentials: "include" }
+      );
+      if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
+      const body = await res.json();
+      return body?.signalCost ?? null;
+    } catch (err) {
+      console.warn("[Clay Scoping] fetchEstimatedSignalCost failed:", triggerDefinitionId, err);
+      return null;
+    }
+  };
+
+  // Batch-resolves a list of trigger definition ids into a
+  // Map<triggerDefinitionId, { definition, signalCost }>, deduped and fetched in
+  // parallel. Each entry pairs the definition (monitored table/action/schedule)
+  // with its server-estimated signal cost. Missing / failed ids are absent from
+  // the map (both fetchers swallow their errors).
+  __cb.fetchTriggerDefinitionsByIds = async function (workspaceId, triggerDefinitionIds) {
+    const map = new Map();
+    const unique = [...new Set((triggerDefinitionIds || []).filter(Boolean))];
+    if (unique.length === 0 || !workspaceId) return map;
+    const results = await Promise.all(
+      unique.map(async (id) => {
+        const [definition, signalCost] = await Promise.all([
+          __cb.fetchTriggerDefinition(workspaceId, id),
+          __cb.fetchEstimatedSignalCost(workspaceId, id),
+        ]);
+        return { id, definition, signalCost };
+      })
+    );
+    for (const r of results) {
+      if (r.definition || r.signalCost) {
+        map.set(r.id, { definition: r.definition, signalCost: r.signalCost });
+      }
+    }
+    return map;
+  };
+
   // Single-table schema by table id. NOTE: `GET /v3/workbooks/:wb/tables/:id`
   // 404s — the canonical single-table path is `GET /v3/tables/:id` (returns
   // the table object, sometimes wrapped as `{ table }`). Used defensively when

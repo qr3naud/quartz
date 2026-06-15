@@ -3389,6 +3389,21 @@
     window.location.assign(url);
   };
 
+  // "Open monitored table" — jumps to the table a signal source monitors (the
+  // signal's input table, resolved from the trigger definition at import). Same
+  // workspace-level table route as openReferencedTable, which Clay resolves to
+  // the correct workbook + default view.
+  __cb.openMonitoredTable = function (er) {
+    const monId = er?.monitoredTableId;
+    if (!monId) return;
+    const ids = __cb.parseIdsFromUrl();
+    const workspaceId = ids?.workspaceId ?? __cb.currentWorkspaceId;
+    if (!workspaceId) return;
+    const url = `/workspaces/${workspaceId}/tables/${monId}`;
+    __cb.closeCanvas();
+    window.location.assign(url);
+  };
+
   function handleEscape(e) {
     if (e.key !== "Escape") return;
     if (__cb.setCanvasMode) {

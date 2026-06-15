@@ -88,6 +88,27 @@
     return { credits, actions, creditsUnknown };
   }
 
+  // Native signal source: its credits/actions are a RECURRING per-run (or
+  // per-result) monitoring cost, not a per-output-row cost. Stamped at import
+  // (table-import.js applySignalCardData / buildSignalSourceFieldCost).
+  function isSignalCard(card) {
+    const d = (card && card.data) || {};
+    return !!(d.isSignal || d.signalChargeUnit);
+  }
+  cb.isSignalCard = isSignalCard;
+
+  // Annual VOLUME multiplier for a card: how many "units" its per-unit cost
+  // applies to in a year, before frequency. Normal enrichments scale by the
+  // rows that run (projected billable fraction × records). Signals bill a fixed
+  // amount per monitoring run regardless of the output table's row count, so
+  // their volume is 1 — frequency is the only multiplier on top of the per-run
+  // figure. Centralizes the "no × records for signals" rule for every total.
+  function annualVolume(card, records, billable) {
+    if (isSignalCard(card)) return 1;
+    return (Number(billable) || 0) * (Number(records) || 0);
+  }
+  cb.annualVolume = annualVolume;
+
   // Per-ER coverage ratio: coverageRows / total-rows (defaults to 1, capped at
   // 1). The numerator (rows that run) can never exceed the denominator (records),
   // so a coverageRows override above records still costs at most the full table.
@@ -518,9 +539,12 @@
       const billable = projected
         ? billableFraction(c, recs)
         : actualCoverageRatio(c);
+      // Signals bill per run (volume 1); everything else scales by billable ×
+      // records. annualVolume centralizes that branch.
+      const volume = annualVolume(c, recs, billable);
       const b = buckets.get(key) || { credits: 0, actions: 0 };
-      b.credits += pr.credits * mult * billable * recs;
-      b.actions += pr.actions * mult * billable * recs;
+      b.credits += pr.credits * mult * volume;
+      b.actions += pr.actions * mult * volume;
       buckets.set(key, b);
     }
     const meta = new Map(listUseCases().map((u) => [u.key, u]));
@@ -641,8 +665,10 @@
       const billable = projected
         ? billableFraction(c, recs)
         : actualCoverageRatio(c);
-      credits += pr.credits * mult * billable * recs;
-      actions += pr.actions * mult * billable * recs;
+      // Signals bill per run (volume 1); see annualVolume.
+      const volume = annualVolume(c, recs, billable);
+      credits += pr.credits * mult * volume;
+      actions += pr.actions * mult * volume;
     }
     return {
       creditsPerYear: Math.max(0, Math.round(credits)),
@@ -674,6 +700,12 @@
       // quote (same as computeUseCaseTotals). With no tables, "other" IS the
       // scope, so keep it.
       if (key === OTHER_USE_CASE && hasImported) continue;
+      // Signals bill per run, not per record. This multi-year calculator is
+      // records-driven (perRow × records per year), which can't represent a
+      // fixed per-run monitoring cost, so signal sources are excluded here for
+      // now (they're still counted in the projected/actual summary totals via
+      // annualVolume). TODO: model recurring signal cost in the contract view.
+      if (isSignalCard(c)) continue;
       // Mode-aware: Projected uses catalog credits; Actual uses measured per-row
       // spend (spend/ran) and skips cards with no spend yet.
       const pr = perRowCost(
