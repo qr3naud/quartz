@@ -5,6 +5,7 @@
 
   let tablePickerEl = null;
   let tablePickerBackdrop = null;
+  let tablePickerRepositionCleanup = null;
   let importStatusEl = null;
 
   // ---------------------------------------------------------------------------
@@ -2517,8 +2518,37 @@
 
   function closeTablePicker() {
     closeOpenViewMenu();
+    teardownTablePickerReposition();
     if (tablePickerEl) { tablePickerEl.remove(); tablePickerEl = null; }
     if (tablePickerBackdrop) { tablePickerBackdrop.remove(); tablePickerBackdrop = null; }
+  }
+
+  function positionImportPicker(anchorEl) {
+    if (anchorEl && tablePickerEl) {
+      __cb.placePopover(tablePickerEl, anchorEl, { gap: 4, align: "right" });
+    }
+  }
+
+  function teardownTablePickerReposition() {
+    if (tablePickerRepositionCleanup) {
+      tablePickerRepositionCleanup();
+      tablePickerRepositionCleanup = null;
+    }
+  }
+
+  function setupTablePickerReposition(anchorEl) {
+    teardownTablePickerReposition();
+    const reposition = () => positionImportPicker(anchorEl);
+    window.addEventListener("resize", reposition);
+    let ro = null;
+    if (typeof ResizeObserver !== "undefined" && tablePickerEl) {
+      ro = new ResizeObserver(reposition);
+      ro.observe(tablePickerEl);
+    }
+    tablePickerRepositionCleanup = () => {
+      window.removeEventListener("resize", reposition);
+      if (ro) ro.disconnect();
+    };
   }
 
   function getNonPreconfiguredViews(table) {
@@ -2752,7 +2782,7 @@
     if (anchorEl) {
       // Clamp to the viewport so a wide picker (or a narrow window) never
       // pushes the panel off-screen — shared helper, same as the model picker.
-      __cb.placePopover(tablePickerEl, anchorEl, { gap: 4 });
+      positionImportPicker(anchorEl);
     }
   }
 
@@ -2775,7 +2805,7 @@
     document.body.appendChild(tablePickerEl);
 
     if (anchorEl) {
-      __cb.placePopover(tablePickerEl, anchorEl, { gap: 4 });
+      positionImportPicker(anchorEl);
     }
   }
 
@@ -2796,7 +2826,7 @@
 
   function columnsLabel(table) {
     const n = Array.isArray(table?.fields) ? table.fields.length : 0;
-    return `${n} ${n === 1 ? "column" : "columns"}`;
+    return `${n} col${n === 1 ? "" : "s"}`;
   }
 
   // Multi-select import modal. Lists every workbook table with a checkbox,
@@ -3003,7 +3033,7 @@
       importBtn.textContent = n > 0 ? `Import ${n}` : "Import";
     }
 
-    function renderTableRow(table) {
+    function renderTableRow(table, parentEl) {
       displayOrder.push(table);
 
       const row = document.createElement("label");
@@ -3060,7 +3090,7 @@
       row.appendChild(cb);
       row.appendChild(main);
       row.appendChild(viewDd);
-      list.appendChild(row);
+      parentEl.appendChild(row);
 
       // Single-table case: pre-check the only table so the user just
       // confirms the view + clicks Import.
@@ -3075,8 +3105,22 @@
 
     for (const group of groups) {
       if (showGroupHeaders) {
-        const header = document.createElement("div");
-        header.className = "cb-table-picker-group-header";
+        const groupWrap = document.createElement("div");
+        groupWrap.className = "cb-table-picker-group";
+
+        const expanded = group.id === currentWorkbookId;
+
+        const header = document.createElement("button");
+        header.type = "button";
+        header.className =
+          "cb-table-picker-group-header" +
+          (expanded ? "" : " cb-table-picker-group-header-collapsed");
+        header.setAttribute("aria-expanded", expanded ? "true" : "false");
+
+        const chevron = document.createElement("span");
+        chevron.className = "cb-table-picker-group-chevron";
+        chevron.innerHTML = VIEW_DD_CHEVRON;
+        header.appendChild(chevron);
 
         const nameEl = document.createElement("span");
         nameEl.className = "cb-table-picker-group-name";
@@ -3096,10 +3140,25 @@
         countEl.textContent = `${n} ${n === 1 ? "table" : "tables"}`;
         header.appendChild(countEl);
 
-        list.appendChild(header);
-      }
+        const body = document.createElement("div");
+        body.className = "cb-table-picker-group-body";
+        if (!expanded) body.hidden = true;
 
-      for (const table of group.tables) renderTableRow(table);
+        header.addEventListener("click", () => {
+          const willExpand = body.hidden;
+          body.hidden = !willExpand;
+          header.classList.toggle("cb-table-picker-group-header-collapsed", !willExpand);
+          header.setAttribute("aria-expanded", willExpand ? "true" : "false");
+        });
+
+        groupWrap.appendChild(header);
+        groupWrap.appendChild(body);
+        list.appendChild(groupWrap);
+
+        for (const table of group.tables) renderTableRow(table, body);
+      } else {
+        for (const table of group.tables) renderTableRow(table, list);
+      }
     }
     updateFooter();
 
@@ -3121,12 +3180,10 @@
     document.body.appendChild(tablePickerBackdrop);
     document.body.appendChild(tablePickerEl);
 
-    // Clamp to the viewport (matches the single + loading pickers) so a narrow
-    // window doesn't push the popover off the right edge. placePopover also
-    // flips above the anchor when there isn't room below.
-    if (anchorEl) {
-      __cb.placePopover(tablePickerEl, anchorEl, { gap: 4 });
-    }
+    // Right-align to the Import button; ResizeObserver keeps position when the
+    // panel grows (expand/collapse, long names, async row counts).
+    positionImportPicker(anchorEl);
+    if (anchorEl) setupTablePickerReposition(anchorEl);
   }
 
   // Shared picker namespace. Any caller that wants to prompt the user for a

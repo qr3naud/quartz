@@ -49,12 +49,14 @@
 }
 
 .cb-table-picker-title {
-  padding: 8px 10px 4px;
+  margin: 0 -4px 4px;
+  padding: 8px 14px 10px;
   font-size: 11px;
   font-weight: 600;
   color: #6b7280;
   text-transform: uppercase;
   letter-spacing: 0.5px;
+  border-bottom: 1px solid #e5e7eb;
 }
 
 .cb-table-picker-item {
@@ -145,15 +147,27 @@
    ========================================================================== */
 
 .cb-table-picker-multi {
-  /* Wider than the single-select dropdown so the "N columns - M rows" meta
-     line fits on one line, and taller so several tables are visible without
-     scrolling. The internal list scrolls; the footer stays pinned. */
+  /* Grows to fit the widest row (name + "N cols · M rows" + view dropdown).
+     The internal list scrolls; the footer stays pinned. */
   min-width: 320px;
-  max-width: 380px;
+  width: max-content;
+  max-width: calc(100vw - 16px);
   max-height: 420px;
   display: flex;
   flex-direction: column;
-  overflow: hidden;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.cb-table-picker-multi .cb-table-picker-list,
+.cb-table-picker-multi .cb-table-picker-checkrow,
+.cb-table-picker-multi .cb-table-picker-group {
+  width: max-content;
+  min-width: 100%;
+}
+
+.cb-table-picker-multi .cb-view-dd {
+  margin-left: auto;
 }
 
 .cb-table-picker-list {
@@ -204,6 +218,15 @@
   gap: 2px;
 }
 
+.cb-table-picker-multi .cb-table-picker-checkrow-main {
+  flex: 0 0 auto;
+}
+
+.cb-table-picker-multi .cb-table-picker-checkrow-name {
+  overflow: visible;
+  text-overflow: clip;
+}
+
 .cb-table-picker-checkrow-name {
   font-size: 13px;
   font-weight: 500;
@@ -217,25 +240,57 @@
   font-size: 11px;
   color: #6b7280;
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
-/* Per-workbook section header — only shown when the import spans more than one
-   workbook (folder-scoped import). Sticky so the workbook label stays visible
-   while scrolling its tables. */
+/* Per-workbook collapsible section — only shown when the import spans more
+   than one workbook (folder-scoped import). The current workbook starts
+   expanded; siblings start collapsed. Header is sticky while scrolling. */
+.cb-table-picker-group {
+  display: flex;
+  flex-direction: column;
+}
+
 .cb-table-picker-group-header {
   position: sticky;
   top: 0;
   z-index: 1;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
+  width: 100%;
   padding: 8px 10px 4px;
   margin-top: 4px;
+  border: none;
   background: #ffffff;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.1s;
 }
 
-.cb-table-picker-group-header:first-child {
+.cb-table-picker-group-header:hover {
+  background: #f9fafb;
+}
+
+.cb-table-picker-group:first-child .cb-table-picker-group-header {
   margin-top: 0;
+}
+
+.cb-table-picker-group-chevron {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  color: #9ca3af;
+  transition: transform 0.15s;
+}
+
+.cb-table-picker-group-header-collapsed .cb-table-picker-group-chevron {
+  transform: rotate(-90deg);
+}
+
+.cb-table-picker-group-body[hidden] {
+  display: none;
 }
 
 .cb-table-picker-group-name {
@@ -381,9 +436,12 @@
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 8px;
-  padding: 8px 6px 4px;
-  border-top: 1px solid #f1f5f9;
+  gap: 12px;
+  margin: 4px -4px -4px;
+  padding: 12px 14px;
+  background: #f9fafb;
+  border-top: 1px solid #e5e7eb;
+  border-radius: 0 0 7px 7px;
   flex-shrink: 0;
 }
 
