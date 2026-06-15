@@ -632,6 +632,65 @@
     return res.json();
   };
 
+  // Single source record. A `type: "source"` field stores only `sourceIds` in
+  // its typeSettings — the real billing identity (actionKey / actionPackageId /
+  // inputs for a v3-action source) lives on the source record fetched here.
+  // Response shape (verified): { id, workspaceId, name, type, typeSettings,
+  // state, sourceSubscriptions, ... } where `type` is one of SourceType
+  // ('v3-action', 'csv', 'webhook', 'trigger-source', 'audience-source',
+  // 'big-source', 'prospector-source', 'manual', ...). Fail-soft: returns null
+  // on any HTTP/network error so the import still produces structural cards.
+  __cb.fetchSource = async function (sourceId) {
+    if (!sourceId) return null;
+    try {
+      const res = await fetch(
+        `https://api.clay.com/v3/sources/${sourceId}`,
+        { credentials: "include" }
+      );
+      if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
+      return await res.json();
+    } catch (err) {
+      console.warn("[Clay Scoping] fetchSource failed:", sourceId, err);
+      return null;
+    }
+  };
+
+  // Batch-resolves a list of source ids into a Map<sourceId, sourceRecord>,
+  // deduping and fetching in parallel. Missing / failed ids are simply absent
+  // from the map (fetchSource swallows their errors), so callers can treat a
+  // miss the same as an unresolved source.
+  __cb.fetchSourcesByIds = async function (sourceIds) {
+    const map = new Map();
+    const unique = [...new Set((sourceIds || []).filter(Boolean))];
+    if (unique.length === 0) return map;
+    const records = await Promise.all(unique.map((id) => __cb.fetchSource(id)));
+    for (let i = 0; i < unique.length; i++) {
+      if (records[i]) map.set(unique[i], records[i]);
+    }
+    return map;
+  };
+
+  // Single-table schema by table id. NOTE: `GET /v3/workbooks/:wb/tables/:id`
+  // 404s — the canonical single-table path is `GET /v3/tables/:id` (returns
+  // the table object, sometimes wrapped as `{ table }`). Used defensively when
+  // a `fetchTableList` row is missing `extractedField` / `typeSettings`. Returns
+  // the unwrapped table object, or null on error.
+  __cb.fetchTable = async function (tableId) {
+    if (!tableId) return null;
+    try {
+      const res = await fetch(
+        `https://api.clay.com/v3/tables/${tableId}`,
+        { credentials: "include" }
+      );
+      if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
+      const body = await res.json();
+      return body?.table ?? body ?? null;
+    } catch (err) {
+      console.warn("[Clay Scoping] fetchTable failed:", tableId, err);
+      return null;
+    }
+  };
+
   // Workbook detail (name, parentFolderId, ...). We only need parentFolderId
   // here: folder membership is a direct pointer on the workbook row
   // (clay_admin.workflows.parent_folder_id), null = workspace root. The import

@@ -178,6 +178,229 @@
   }
   __cb.extractSubroutineTableId = extractSubroutineTableId;
 
+  // ---------------------------------------------------------------------------
+  // Source-field action resolution.
+  //
+  // A `type: "source"` field stores only `{ sourceIds, canCreateRecords }` in
+  // its typeSettings — NOT the actionKey / actionPackageId that the rest of the
+  // import (catalog lookup, cost) needs. The billing identity lives on the
+  // linked source record (GET /v3/sources/:id). resolveSourceFieldActionMeta
+  // mirrors Clay's canonical resolution order from
+  // apps/api/v3/tables/domain/fields/field-types/source-field.ts
+  // (getActionPackageIdAndActionKey): taggedSourceType → createdFromTemplate →
+  // sourceIds[0] → branch on source.type.
+  // ---------------------------------------------------------------------------
+
+  // The 5 known field-level template source keys → action package id (mirrors
+  // TEMPLATE_SOURCE_KEY_TO_PACKAGE_ID in
+  // apps/api/v3/tables/domain/fields/field-types.ts). A field created from one
+  // of these templates carries `createdFromTemplate: <key>` instead of a
+  // sourceId, so we reconstruct the action identity from this map.
+  const TEMPLATE_SOURCE_KEY_TO_PACKAGE_ID = {
+    "google-review-source-v2": "3282a1c7-6bb0-497e-a34b-32268e104e55",
+    "hubspot-get-contacts-v2": "a2584689-b965-4a25-847d-17b7abcddca3",
+    "search-google-source": "3282a1c7-6bb0-497e-a34b-32268e104e55",
+    "find-stargazers": "47b53465-3762-4509-90d1-1208e3acdcc5",
+    "find-contributors": "47b53465-3762-4509-90d1-1208e3acdcc5",
+  };
+
+  // Source-record types that carry no billable action identity in v1: they
+  // import as a lineage-only "SOURCE" chip at 0 credits. csv / webhook / manual
+  // are genuinely free; prospector / audience / big-source have separate
+  // pricing models that are Phase 2 (see docs/architecture/table-import.md).
+  const FREE_SOURCE_TYPES = new Set([
+    "csv",
+    "csv-import",
+    "webhook",
+    "webhook-subscription",
+    "manual",
+    "prospector-source",
+    "audience-source",
+    "big-source",
+  ]);
+
+  // Resolves a `type: "source"` field to its enrichment action identity. Returns
+  // one of:
+  //   { kind: "action", actionKey, actionPackageId, inputs, iconType,
+  //     sourceId, sourceType, numSourceRecords }   — billable, gets full pricing
+  //   { kind: "free", sourceType, sourceId, numSourceRecords } — lineage only
+  //   null   — unresolved; caller keeps the legacy display-name fallback
+  // `sourceById` is the Map<sourceId, sourceRecord> from fetchSourcesByIds.
+  function resolveSourceFieldActionMeta(field, sourceById) {
+    if (!field || field.type !== "source") return null;
+    const ts = field.typeSettings || {};
+
+    // Priority 1: action identity stamped directly on the field.
+    const tagged = ts.taggedSourceType;
+    if (tagged?.type === "v3-action" && tagged.actionKey && tagged.actionPackageId) {
+      return {
+        kind: "action",
+        actionKey: tagged.actionKey,
+        actionPackageId: tagged.actionPackageId,
+        inputs: {},
+        iconType: null,
+        sourceId: ts.sourceIds?.[0] ?? null,
+        sourceType: "v3-action",
+        numSourceRecords: null,
+      };
+    }
+
+    // Priority 2: template source — reconstruct package from the known map.
+    if (ts.createdFromTemplate) {
+      const pkg = TEMPLATE_SOURCE_KEY_TO_PACKAGE_ID[ts.createdFromTemplate];
+      if (pkg) {
+        return {
+          kind: "action",
+          actionKey: ts.createdFromTemplate,
+          actionPackageId: pkg,
+          inputs: {},
+          iconType: null,
+          sourceId: ts.sourceIds?.[0] ?? null,
+          sourceType: "v3-action",
+          numSourceRecords: null,
+        };
+      }
+    }
+
+    // Priority 3: resolve through the linked source record.
+    const sourceId = Array.isArray(ts.sourceIds) ? ts.sourceIds[0] : null;
+    const src = sourceId && sourceById ? sourceById.get(sourceId) : null;
+    if (!src) return null;
+
+    const sType = src.type;
+    const sts = src.typeSettings || {};
+    const numSourceRecords = src.state?.numSourceRecords ?? null;
+
+    if (sType === "v3-action" && sts.actionKey && sts.actionPackageId) {
+      return {
+        kind: "action",
+        actionKey: sts.actionKey,
+        actionPackageId: sts.actionPackageId,
+        inputs: sts.inputs || {},
+        iconType: sts.iconType || null,
+        sourceId,
+        sourceType: sType,
+        numSourceRecords,
+      };
+    }
+
+    // Custom signals wrap an action under `actionSourceSettings`.
+    if (sType === "trigger-source") {
+      const ass = sts.actionSourceSettings;
+      if (ass?.actionKey && ass.actionPackageId) {
+        return {
+          kind: "action",
+          actionKey: ass.actionKey,
+          actionPackageId: ass.actionPackageId,
+          inputs: ass.inputs || {},
+          iconType: sts.iconType || null,
+          sourceId,
+          sourceType: sType,
+          numSourceRecords,
+        };
+      }
+    }
+
+    if (FREE_SOURCE_TYPES.has(sType)) {
+      return { kind: "free", sourceType: sType, sourceId, numSourceRecords };
+    }
+
+    return null;
+  }
+  __cb.resolveSourceFieldActionMeta = resolveSourceFieldActionMeta;
+
+  // Per-result v3-action source action keys (from clay-base ActionDefinitions):
+  // these bill `base × limit` results per row rather than a flat per-row credit.
+  // Keyed by actionKey (unique enough across packages for these source actions).
+  const PER_RESULT_SOURCE_ACTION_KEYS = new Set([
+    "ocean-io-find-lookalike-companies-source-grouped",
+    "ocean-io-find-lookalike-companies-source",
+    "ocean-io-find-lookalike-companies-v2",
+    "openmart-find-local-businesses-source-grouped",
+    "openmart-find-local-businesses-brands-source-grouped",
+    "lusha-find-company-lookalikes-source",
+    "lusha-find-people-lookalikes-source",
+  ]);
+
+  // CPJ lookalike source actions get per-result pricing derived from the seed
+  // type (table/audience vs list), not the flat catalog base.
+  const CPJ_LOOKALIKE_ACTION_RE = /find-(company|people)-lookalikes/;
+
+  // Ports isLookalikeFromTableOrAudience from
+  // libs/shared/src/credits/lookalikes-credit-cost.ts: table-/audience-seeded
+  // lookalikes bill more per result than list / domain / URL seeds.
+  function isLookalikeFromTableOrAudience(inputs) {
+    const m = inputs?.start_from_method;
+    // StartFromPeopleEnum.ClayTableOfCompanies = 'query'; CompanyAudienceSegment.
+    if (m === "query" || m === "CompanyAudienceSegment") return true;
+    if (typeof inputs?.company_table_id === "string" && inputs.company_table_id) return true;
+    if (
+      typeof inputs?.company_audience_segment_id === "string" &&
+      inputs.company_audience_segment_id
+    ) {
+      return true;
+    }
+    return false;
+  }
+
+  // Per-result basic credit cost for CPJ lookalikes — mirrors
+  // LOOKALIKES_COST_PER_RESULT + lookalikesCostPerRowFromSourceType.
+  function cpjLookalikesCostPerResult(inputs) {
+    const modern = importPlanIsModern();
+    if (isLookalikeFromTableOrAudience(inputs)) return modern ? 2 : 3;
+    return modern ? 1 : 1.5;
+  }
+
+  // Reads a positive integer `limit` from a source's inputs (string or number).
+  function parseSourceLimit(inputs) {
+    const raw = inputs?.limit;
+    const n = typeof raw === "string" ? parseInt(raw, 10) : Number(raw);
+    return Number.isFinite(n) && n > 0 ? n : null;
+  }
+
+  // Builds a synthetic stats.cost block for a billable v3-action source field.
+  // /context never attaches creditCost to source-type fields, so we reconstruct
+  // the ActionCostMetadata shape resolveEffectiveCredits expects. The
+  // `planCorrect` flag tells buildErCardData NOT to substitute the catalog base
+  // on modern plans (we've already resolved the plan-aware per-result cost
+  // here). Returns null for free / unresolved sources (no cost → not billable).
+  function buildSourceFieldCost(meta) {
+    if (!meta || meta.kind !== "action" || !meta.actionKey) return null;
+    const info = __cb.actionByIdLookup?.[`${meta.actionPackageId}-${meta.actionKey}`];
+    const limit = parseSourceLimit(meta.inputs);
+
+    // CPJ lookalikes: per-result cost driven by seed type, × the row limit.
+    if (CPJ_LOOKALIKE_ACTION_RE.test(meta.actionKey)) {
+      return {
+        cost: cpjLookalikesCostPerResult(meta.inputs),
+        costBy: limit ? "result" : undefined,
+        maxResultsPerRow: limit ?? undefined,
+        isPrivateKey: false,
+        unlimited: false,
+        planCorrect: true,
+      };
+    }
+
+    const base = planAwareBaseCredits(info);
+    if (base == null) return null;
+
+    // Known per-result source actions multiply the catalog base by the limit.
+    if (PER_RESULT_SOURCE_ACTION_KEYS.has(meta.actionKey) && limit) {
+      return {
+        cost: base,
+        costBy: "result",
+        maxResultsPerRow: limit,
+        isPrivateKey: false,
+        unlimited: false,
+        planCorrect: true,
+      };
+    }
+
+    // Flat per-row source action (catalog base credit only).
+    return { cost: base, isPrivateKey: false, unlimited: false, planCorrect: true };
+  }
+  __cb.buildSourceFieldCost = buildSourceFieldCost;
+
   // Strips surrounding quotes + whitespace, the same way the server's
   // findModelOption does in libs/shared/src/ai/models.ts line 1280. Bindings
   // sometimes arrive as `"\"gpt-5.4\""` (quoted JSON literal) instead of
@@ -669,8 +892,14 @@
         // /context's legacy-priced cost while keeping its resolution flags
         // (costBy / maxResultsPerRow). On legacy plans, /context's cost is
         // already correct (and richer — it includes per-action toggle/override
-        // deltas), so we pass no override.
-        const baseOverride = importPlanIsModern() ? planAwareBaseCredits(info) : null;
+        // deltas), so we pass no override. Synthetic source costs set
+        // `planCorrect` (buildSourceFieldCost already resolved the plan-aware
+        // per-result value — e.g. CPJ lookalikes seed pricing), so we keep
+        // their `cost` as-is rather than clobbering it with the catalog base.
+        const baseOverride =
+          importPlanIsModern() && !stats.cost.planCorrect
+            ? planAwareBaseCredits(info)
+            : null;
         const resolved = resolveEffectiveCredits(stats.cost, credits, baseOverride);
         if (resolved != null) credits = resolved;
       }
@@ -775,10 +1004,20 @@
 
   function mapFieldToCardData(field, statsByFieldId, tableId, viewId) {
     const ts = field.typeSettings ?? {};
+    // Source fields store their actionKey / packageId on the linked source
+    // record, not the field — pull the identity resolved up-front in
+    // importTableToCanvas (currentSourceMetaByFieldId) instead of ts.actionKey
+    // (which is undefined for sources and would fall back to a snake_case
+    // display-name key that misses the catalog).
+    const sourceMeta =
+      field.type === "source" ? currentSourceMetaByFieldId.get(field.id) : null;
+    const resolvedAction = sourceMeta?.kind === "action" ? sourceMeta : null;
     const cardData = buildErCardData({
       field,
-      actionKey: ts.actionKey,
-      packageId: ts.actionPackageId ?? "clay",
+      actionKey: resolvedAction ? resolvedAction.actionKey : ts.actionKey,
+      packageId: resolvedAction
+        ? resolvedAction.actionPackageId
+        : (ts.actionPackageId ?? "clay"),
       displayName: field.name,
       stats: statsByFieldId?.get(field.id) ?? null,
       fieldId: field.id,
@@ -864,6 +1103,13 @@
   // importTableToCanvas runs awaited-sequentially per table, so there's no
   // interleaving concern across a multi-table import.
   let currentImportTags = { tableName: null, importColor: null };
+
+  // Resolved source-field action metadata for the current import, keyed by the
+  // source field id. Populated at the top of importTableToCanvas (after the
+  // fetchSourcesByIds round-trip) so mapFieldToCardData / buildErCardData can
+  // read a source field's real actionKey + packageId + inputs without
+  // re-resolving. Same single-import-at-a-time invariant as currentImportTags.
+  let currentSourceMetaByFieldId = new Map();
 
   // `sourceEnrichmentKeys` may be a single key (string) or a curated array
   // (primary first + any rescued astray ancestors — see the astray-rescue pass
@@ -999,16 +1245,44 @@
   // prefer `tableRunInfo.tableRowCount` (the canonical whole-table count)
   // and fall back to any field's `dataProfile.totalRecords` because every
   // field in the response carries the same totalRecords.
+  //
+  // Source-only tables are the exception: /context returns no fieldConfigs and
+  // no tableRunInfo, so both of the above are null. Two async fallbacks cover
+  // that case — the view count endpoint, then the max `numSourceRecords` across
+  // the table's resolved v3-action sources (catches a view count that lags the
+  // source run). Async because of the network fallback; callers await it.
   // ---------------------------------------------------------------------------
-  function prefillRecordsCount(context) {
+  async function prefillRecordsCount(context, { tableId, viewId, sourceMetaByFieldId } = {}) {
     const fromRunInfo = context?.tableRunInfo?.tableRowCount;
     const firstProfile = context?.fieldConfigurationsData?.fieldConfigs?.find(
       (fc) => fc?.dataProfile?.totalRecords != null,
     );
     const fromProfile = firstProfile?.dataProfile?.totalRecords;
-    const total = typeof fromRunInfo === "number" && fromRunInfo > 0
+    let total = typeof fromRunInfo === "number" && fromRunInfo > 0
       ? fromRunInfo
       : (typeof fromProfile === "number" && fromProfile > 0 ? fromProfile : null);
+
+    // Fallback 1 (source-only tables): the view count endpoint.
+    if (total == null && tableId && viewId && typeof __cb.fetchViewCount === "function") {
+      try {
+        const count = await __cb.fetchViewCount(tableId, viewId);
+        const n = count?.tableTotalRecordsCount;
+        if (typeof n === "number" && n > 0) total = n;
+      } catch (err) {
+        console.warn("[Clay Scoping] prefillRecordsCount: fetchViewCount failed", err);
+      }
+    }
+
+    // Fallback 2: largest numSourceRecords across resolved v3-action sources.
+    if (total == null && sourceMetaByFieldId?.size) {
+      let max = 0;
+      for (const meta of sourceMetaByFieldId.values()) {
+        const n = meta?.numSourceRecords;
+        if (typeof n === "number" && n > max) max = n;
+      }
+      if (max > 0) total = max;
+    }
+
     if (total == null) return null;
     const input = document.getElementById("cb-records-input");
     if (!input) return total;
@@ -1048,7 +1322,7 @@
   // ---------------------------------------------------------------------------
   const IMPORT_DECISION_INTERNAL = Symbol("cb.importDecisionInternal");
 
-  function buildImportDecisionSet({ table, viewId, context, spend, ignoreViewVisibility = false }) {
+  function buildImportDecisionSet({ table, viewId, context, spend, ignoreViewVisibility = false, sourceMetaByFieldId = new Map() }) {
     const fieldGroupMap = table?.fieldGroupMap ?? {};
     const fieldById = {};
     for (const f of table?.fields ?? []) fieldById[f.id] = f;
@@ -1079,6 +1353,21 @@
       context,
       spend,
     });
+
+    // Synthesize cost for billable v3-action source fields. /context never
+    // returns a creditCost for source-type fields, so without this they'd read
+    // as free (credits 0). buildSourceFieldCost resolves the catalog base +
+    // per-result limit (or CPJ lookalikes seed pricing) into the same
+    // ActionCostMetadata shape the rest of the cost path consumes — which both
+    // marks the source billable below and drives the ER card's per-row cost.
+    for (const f of table?.fields ?? []) {
+      if (f.type !== "source") continue;
+      const cost = buildSourceFieldCost(sourceMetaByFieldId.get(f.id));
+      if (!cost) continue;
+      const existing = statsByFieldId.get(f.id) || { fetchedAt: Date.now(), source: "source-meta" };
+      existing.cost = cost;
+      statsByFieldId.set(f.id, existing);
+    }
 
     // A column counts as a billable enrichment if it has any cost: a positive
     // /context credit cost (not zeroed by private-key / unlimited), a positive
@@ -1674,6 +1963,28 @@
     const fieldById = {};
     for (const f of table.fields ?? []) fieldById[f.id] = f;
 
+    // Resolve `type: "source"` fields to their real action identity. The field
+    // itself only carries `sourceIds`; the actionKey / packageId / inputs live
+    // on the linked source record (GET /v3/sources/:id). Batch-fetch them once
+    // up front so buildImportDecisionSet (billability + synthetic cost) and the
+    // ER card builders can read the resolved metadata synchronously. Fail-soft:
+    // fetchSourcesByIds swallows per-source errors, and an unresolved source
+    // simply keeps the legacy display-name fallback.
+    const sourceFields = (table.fields ?? []).filter((f) => f.type === "source");
+    const sourceIdsToFetch = sourceFields.flatMap(
+      (f) => f.typeSettings?.sourceIds ?? []
+    );
+    const sourceById =
+      sourceIdsToFetch.length > 0 && typeof __cb.fetchSourcesByIds === "function"
+        ? await __cb.fetchSourcesByIds(sourceIdsToFetch).catch(() => new Map())
+        : new Map();
+    const sourceMetaByFieldId = new Map();
+    for (const f of sourceFields) {
+      const meta = resolveSourceFieldActionMeta(f, sourceById);
+      if (meta) sourceMetaByFieldId.set(f.id, meta);
+    }
+    currentSourceMetaByFieldId = sourceMetaByFieldId;
+
     // Three-state convention for `overrideViewId`:
     //   - undefined    → fall back to table.firstViewId (default view)
     //   - <view.id>    → use that specific view's visibility map
@@ -1702,7 +2013,11 @@
       closeImportStatus();
     }
 
-    const tableRecordCount = prefillRecordsCount(context);
+    const tableRecordCount = await prefillRecordsCount(context, {
+      tableId,
+      viewId,
+      sourceMetaByFieldId,
+    });
 
     // Record per-table metadata (source row count + import time + name +
     // color) in the canvas state so the table-view per-table header can show
@@ -1728,6 +2043,7 @@
       context,
       spend,
       ignoreViewVisibility: isFullTable,
+      sourceMetaByFieldId,
     });
     const internal = decisionSet[IMPORT_DECISION_INTERNAL];
     const visibleFieldIds = internal.visibleFieldIds;
