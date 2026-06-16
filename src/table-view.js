@@ -945,12 +945,13 @@
     // coverage or cost.
     const excluded = sumFillExclusions(dpCard);
     const adjustedNonNull = Math.max(0, nonNull - excluded);
-    // Fill divides by rows ATTEMPTED (not coverage.ran, which is now
-    // success-only) so the fill % is unchanged by the success-only coverage
-    // numerator.
+    // Fill divides by coverage.ran (enrichment successes only). Credit failures
+    // and missing-input skips stay out of the denominator — they never got a
+    // fair chance to return data. `attempted` (success + ran-but-failed errors)
+    // is kept on the stats block for other metrics but not used here.
     const cov = erCard?.data?.stats?.coverage;
-    const attempted = Number(cov?.attempted ?? cov?.ran) || 0;
-    const denom = attempted > 0 ? attempted : tot;
+    const ran = Number(cov?.ran) || 0;
+    const denom = ran > 0 ? ran : tot;
     // `nonNull` / `denom` are surfaced so the table's Fill cell can show the
     // underlying ratio on hover (a bare "1%" is opaque; "~10 / 789" is not).
     return {
@@ -1228,11 +1229,20 @@
     return td;
   }
 
+  // Center column wrapper for Fill cells — keeps the % value centered in a
+  // fixed 3-column grid while optional spotcheck / adjust icons occupy the sides.
+  function createFillCenterEl() {
+    const el = document.createElement("span");
+    el.className = "cb-fill-center";
+    return el;
+  }
+
   // Renders a Fill rate <td> from a fill descriptor (see coverageFillFor).
   function buildFillCell(fill, cardId) {
     const td = document.createElement("td");
     if (fill && fill.mode === "projected") {
       td.className = "col-fill";
+      const center = createFillCenterEl();
       const input = document.createElement("input");
       input.type = "number";
       input.min = "0";
@@ -1247,14 +1257,17 @@
       const suffix = document.createElement("span");
       suffix.className = "cb-table-view-cell-suffix";
       suffix.textContent = "%";
-      td.appendChild(input);
-      td.appendChild(suffix);
+      center.appendChild(input);
+      center.appendChild(suffix);
+      td.appendChild(center);
     } else if (fill && fill.loading) {
       td.className = "col-fill cb-table-view-cell-muted";
+      const center = createFillCenterEl();
       const sp = document.createElement("span");
       sp.className = "cb-table-view-fill-spinner";
       sp.title = "Loading actual fill rate\u2026";
-      td.appendChild(sp);
+      center.appendChild(sp);
+      td.appendChild(center);
     } else if (fill && fill.pct != null) {
       td.className = "col-fill";
       // Match the Projected input's box metrics + grey "%" so the value sits in
@@ -1265,21 +1278,48 @@
       const suffix = document.createElement("span");
       suffix.className = "cb-table-view-cell-suffix";
       suffix.textContent = "%";
-      td.appendChild(numSpan);
-      td.appendChild(suffix);
+      const center = createFillCenterEl();
+      center.appendChild(numSpan);
+      center.appendChild(suffix);
+      // "Spotcheck" affordance: when a DP column isn't fully filled, reveal a
+      // small target button (on row hover) that jumps to + highlights the first
+      // missing cell in the grid. Gated to imported DPs (need fieldId/tableId)
+      // and to <100% fill (nothing to find at 100%). Left of the fill %.
+      const cardForFill = __cb.canvas?.getCardById?.(cardId);
+      if (
+        cardForFill?.data?.fieldId &&
+        cardForFill?.data?.tableId &&
+        Number(fill.pct) < 100
+      ) {
+        const spot = document.createElement("button");
+        spot.type = "button";
+        spot.className = "cb-fill-spotcheck";
+        spot.setAttribute("aria-label", "Find first missing cell in the table");
+        spot.innerHTML = targetSvg(16);
+        attachInfoTip(
+          spot,
+          ["Spotcheck missing data", "Jump to the first empty cell in this column"],
+          { delayMs: 120 },
+        );
+        spot.addEventListener("mousedown", (e) => e.stopPropagation());
+        spot.addEventListener("click", (e) => {
+          e.stopPropagation();
+          spotcheckMissing(cardForFill, spot);
+        });
+        td.appendChild(spot);
+      }
+      td.appendChild(center);
       // Hover tooltip: expose the underlying ratio so a low fill % is legible
       // (e.g. "1%" reads as "~10 / 789"). Numerator = non-empty cells in this
-      // column (from its nullPercentage); denominator = rows the data point's
-      // widest linked enrichment ran on — the same number the Coverage cell
-      // divides against. Naming the enrichment makes it obvious WHY the
-      // denominator can dwarf the rows that actually produced this column.
+      // column (from its nullPercentage); denominator = coverage.ran on the
+      // widest linked enrichment (successes only — credit failures excluded).
       if (fill.denom != null && fill.nonNull != null) {
         const numTxt = Number(fill.nonNull).toLocaleString();
         const denomTxt = Number(fill.denom).toLocaleString();
         const ratioLine = `~${numTxt} / ${denomTxt} filled`;
         const whyLine = fill.denomLabel
-          ? `non-empty cells \u00F7 rows \u201C${fill.denomLabel}\u201D ran on`
-          : `non-empty cells \u00F7 rows the enrichment ran on`;
+          ? `non-empty cells \u00F7 rows \u201C${fill.denomLabel}\u201D succeeded on`
+          : `non-empty cells \u00F7 rows the enrichment succeeded on`;
         // When the rep has excluded sentinel values, spell out the adjustment so
         // the lower % is self-explanatory on hover.
         const tipLines = [ratioLine, whyLine];
@@ -1325,37 +1365,11 @@
         });
         td.appendChild(adj);
       }
-      // "Spotcheck" affordance: when a DP column isn't fully filled, reveal a
-      // small target button (on row hover) that jumps to + highlights the first
-      // missing cell in the grid. Gated to imported DPs (need fieldId/tableId)
-      // and to <100% fill (nothing to find at 100%).
-      const cardForFill = __cb.canvas?.getCardById?.(cardId);
-      if (
-        cardForFill?.data?.fieldId &&
-        cardForFill?.data?.tableId &&
-        Number(fill.pct) < 100
-      ) {
-        const spot = document.createElement("button");
-        spot.type = "button";
-        spot.className = "cb-fill-spotcheck";
-        spot.setAttribute("aria-label", "Find first missing cell in the table");
-        spot.innerHTML = targetSvg(16);
-        // Same custom tip as the Fill cell (no native `title` — it'd double up).
-        attachInfoTip(
-          spot,
-          ["Spotcheck missing data", "Jump to the first empty cell in this column"],
-          { delayMs: 120 },
-        );
-        spot.addEventListener("mousedown", (e) => e.stopPropagation());
-        spot.addEventListener("click", (e) => {
-          e.stopPropagation();
-          spotcheckMissing(cardForFill, spot);
-        });
-        td.appendChild(spot);
-      }
     } else {
       td.className = "col-fill cb-table-view-cell-muted";
-      td.textContent = "\u2014";
+      const center = createFillCenterEl();
+      center.textContent = "\u2014";
+      td.appendChild(center);
     }
     return td;
   }
@@ -2526,7 +2540,7 @@
         // Widest by run-status rows (what ran), not billed cellCount, so the
         // coverage + fill the row divides against ignore re-run inflation.
         const cov = actualMode
-          ? erRunRows(e)
+          ? erFillDenomRows(e)
           : Number(e.data.coverageRows ?? Infinity);
         if (cov > widest) { widest = cov; erCard = e; }
       }
@@ -3494,15 +3508,19 @@
   }
 
   // Rows an enrichment RAN on, from run-status (coverage.attempted) — NOT billed
-  // cellCount. This is the snapshot of what actually executed, so re-runs don't
-  // inflate it (billing/cellCount inflates by execution count). It's the basis
-  // for the Actual run-rate / success-rate display and the widest-ER pick a data
-  // point's coverage + fill divide against. Billed cellCount stays the cost-split
-  // basis (erRanCount in buildRows). Falls back to coverage.ran (success) for
-  // legacy stats blocks that predate `attempted`.
+  // cellCount. Snapshot of what actually executed (success + ran-but-failed
+  // errors), so re-runs don't inflate it. Basis for the Actual run-rate /
+  // success-rate chip display. Falls back to coverage.ran for legacy stats.
   function erRunRows(er) {
     const cov = er?.data?.stats?.coverage;
     return Number(cov?.attempted ?? cov?.ran) || 0;
+  }
+
+  // Rows an enrichment succeeded on (coverage.ran) — fill denominator and the
+  // widest-ER pick for Actual fill. Excludes credit failures and missing input.
+  function erFillDenomRows(er) {
+    const cov = er?.data?.stats?.coverage;
+    return Number(cov?.ran ?? cov?.attempted) || 0;
   }
 
   // Rows that returned a value (success minus ran-but-empty), for the
@@ -3519,8 +3537,8 @@
     return erRunRows(er);
   }
 
-  // The widest linked enrichment for a data point (max actual run count). The
-  // table's Actual fill cell divides by THIS ER's attempted rows, so the copy
+  // The widest linked enrichment for a data point (max coverage.ran). The
+  // table's Actual fill cell divides by THIS ER's succeeded rows, so the copy
   // routine resolves the same ER to reproduce the displayed %.
   function widestActualErForDp(dpCard) {
     const ers = erCardsForDp(dpCard);
@@ -3528,7 +3546,7 @@
     let best = null;
     let widest = -1;
     for (const e of ers) {
-      const n = erActualRanCount(e);
+      const n = erFillDenomRows(e);
       if (n > widest) { widest = n; best = e; }
     }
     return best || ers[0];

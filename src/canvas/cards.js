@@ -59,8 +59,8 @@
   }
 
   // Same shape, different field names. Coverage tracks how many records the
-  // ER attempted vs the total in the view; fill rate tracks how many of those
-  // attempts returned data. Both render as a single percentage on the card.
+  // ER succeeded on vs the total in the view; fill rate tracks how many of
+  // those successes returned data in the output column.
   function coveragePercentText(coverage) {
     if (!coverage || !coverage.total) return "\u2014";
     const pct = (coverage.ran / coverage.total) * 100;

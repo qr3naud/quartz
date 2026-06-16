@@ -71,12 +71,11 @@
     const out = { source, fetchedAt };
     if (coverageAttempted > 0 && coverageTotal > 0) {
       // Coverage numerator = success only (matches deriveActionStatsFromDataProfile);
-      // `attempted` is carried for the fill-rate denominator so fill % is
-      // "of the records the waterfall attempted, how many got a result."
+      // `attempted` is carried for diagnostics; fill % divides by `ran` (successes).
       // succeeded = rows that returned a value across the chain (fillSuccess);
       // mirrors deriveActionStatsFromDataProfile's no-data-peeled success.
       out.coverage = { ran: coverageRan, total: coverageTotal, attempted: coverageAttempted, succeeded: fillSuccess };
-      out.fillRate = { success: fillSuccess, ran: coverageAttempted };
+      out.fillRate = { success: fillSuccess, ran: coverageRan };
     }
     if (spendCredits > 0 || spendActions > 0 || spendCells > 0) {
       out.spend = {
@@ -648,8 +647,8 @@
   //     read as "this enrichment ran on X of N rows" — a real fraction. (Using
   //     total − condNotMet made it ~N/N whenever the table was fully run, which
   //     told the user nothing.)
-  // Fill rate keeps the tighter `ran` denominator ("of what ran, how much
-  // filled").
+  // Fill rate keeps the `ran` denominator ("of successes, how much filled").
+  // Credit failures stay in `attempted` but out of fill.
   //
   // Returns a stat block matching the rest of buildStatsByFieldId's output
   // shape, or null when there's no usable data on this field.
@@ -695,8 +694,7 @@
     const adjustedError = Math.max(0, error - inputMissing);
     // `attempted` = rows that ran at all (success + error + in-progress). The
     // coverage NUMERATOR counts SUCCESS only (errored / in-progress rows aren't
-    // "covered"); `attempted` is kept as the fill-rate denominator so fill % is
-    // unaffected by the success-only coverage numerator.
+    // "covered"); fill % divides by `ran` (successes), not `attempted`.
     const attempted = adjustedSuccess + adjustedError + inProgress;
     // Rows that returned an actual value (ran minus the ran-but-empty ones).
     const succeeded = Math.max(0, adjustedSuccess - noData);
@@ -704,7 +702,9 @@
     if (attempted <= 0 || total <= 0) return null;
     return {
       coverage: { ran: adjustedSuccess, total, attempted, succeeded },
-      fillRate: { success: adjustedSuccess, ran: attempted },
+      // Fill = rows with data ÷ successes (ran). Credit failures stay in
+      // `attempted` but out of the fill denominator — no fair chance to fill.
+      fillRate: { success: succeeded, ran: adjustedSuccess },
       condNotMet: condNotMet + inputMissing,
     };
   }
