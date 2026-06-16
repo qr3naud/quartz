@@ -3389,7 +3389,7 @@
     window.location.assign(url);
   };
 
-  // "Open monitored table" — jumps to the table a signal source monitors (the
+  // "Monitored table" — jumps to the table a signal source monitors (the
   // signal's input table, resolved from the trigger definition at import). Same
   // workspace-level table route as openReferencedTable, which Clay resolves to
   // the correct workbook + default view.

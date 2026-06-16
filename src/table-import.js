@@ -507,6 +507,22 @@
     cardData.monitoredTableId = meta.monitoredTableId || null;
     cardData.monitoredViewId = meta.monitoredViewId || null;
     cardData.monitoredRecordCount = meta.monitoredRecordCount ?? null;
+    // Results pulled per run for per-result signals. Native signals with
+    // forwardRecords (News, JobPost, …) bypass source_records tracking, so
+    // numSourceRecords stays 0 even when the output table has rows — fall back
+    // to the imported table's record count.
+    if (chargeUnit === "result") {
+      const fromSource = Number(meta.numSourceRecords);
+      const fromTable = Number(currentTableRecordCount);
+      cardData.signalResultCount =
+        Number.isFinite(fromSource) && fromSource > 0
+          ? fromSource
+          : Number.isFinite(fromTable) && fromTable > 0
+            ? fromTable
+            : null;
+    } else {
+      cardData.signalResultCount = null;
+    }
 
     // A signal's cadence is intrinsic to the signal (its trigger schedule), not
     // the table's use-case frequency. Mark it as a per-ER override
@@ -1240,6 +1256,11 @@
   // read a source field's real actionKey + packageId + inputs without
   // re-resolving. Same single-import-at-a-time invariant as currentImportTags.
   let currentSourceMetaByFieldId = new Map();
+
+  // Output table row count for the import in flight — used to seed per-result
+  // signal result counts when the source has forwardRecords (numSourceRecords
+  // stays 0 because rows land directly on the table).
+  let currentTableRecordCount = null;
 
   // `sourceEnrichmentKeys` may be a single key (string) or a curated array
   // (primary first + any rescued astray ancestors — see the astray-rescue pass
@@ -2197,6 +2218,7 @@
       viewId,
       sourceMetaByFieldId,
     });
+    currentTableRecordCount = tableRecordCount ?? null;
 
     // Record per-table metadata (source row count + import time + name +
     // color) in the canvas state so the table-view per-table header can show

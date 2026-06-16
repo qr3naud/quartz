@@ -97,14 +97,39 @@
   }
   cb.isSignalCard = isSignalCard;
 
+  // Per-run unit count for a signal before frequency. Per-run signals return a
+  // server-total cost (already × monitored records), so volume is 1. Per-result
+  // signals return a per-event rate — multiply by results pulled. Clay stores
+  // that in source.state.numSourceRecords UNLESS forwardRecords is true (native
+  // scheduler signals), in which case numSourceRecords stays 0 and the count is
+  // the output table's row count (stamped as signalResultCount at import).
+  function signalRunVolume(card) {
+    const d = (card && card.data) || {};
+    if (!isSignalCard(card)) return 1;
+    const unit = d.signalChargeUnit || "run";
+    // Per-result signals with forwardRecords: numSourceRecords is always 0 on
+    // the API (rows land on the output table, not source_records). Fall back
+    // to the output table row count at import time.
+    if (unit === "result") {
+      const n = Number(d.signalResultCount);
+      if (Number.isFinite(n) && n > 0) return n;
+      return 1;
+    }
+    if (unit === "record") {
+      const n = Number(d.monitoredRecordCount);
+      return Number.isFinite(n) && n > 0 ? n : 1;
+    }
+    return 1;
+  }
+  cb.signalRunVolume = signalRunVolume;
+
   // Annual VOLUME multiplier for a card: how many "units" its per-unit cost
   // applies to in a year, before frequency. Normal enrichments scale by the
-  // rows that run (projected billable fraction × records). Signals bill a fixed
-  // amount per monitoring run regardless of the output table's row count, so
-  // their volume is 1 — frequency is the only multiplier on top of the per-run
-  // figure. Centralizes the "no × records for signals" rule for every total.
+  // rows that run (projected billable fraction × records). Signals bill per
+  // monitoring run (volume = signalRunVolume) — NOT × the output table's
+  // Records denominator. Centralizes the "no × records for signals" rule.
   function annualVolume(card, records, billable) {
-    if (isSignalCard(card)) return 1;
+    if (isSignalCard(card)) return signalRunVolume(card);
     return (Number(billable) || 0) * (Number(records) || 0);
   }
   cb.annualVolume = annualVolume;
@@ -539,8 +564,7 @@
       const billable = projected
         ? billableFraction(c, recs)
         : actualCoverageRatio(c);
-      // Signals bill per run (volume 1); everything else scales by billable ×
-      // records. annualVolume centralizes that branch.
+      // Signals: per-run total or per-result × results pulled (annualVolume).
       const volume = annualVolume(c, recs, billable);
       const b = buckets.get(key) || { credits: 0, actions: 0 };
       b.credits += pr.credits * mult * volume;
@@ -665,7 +689,7 @@
       const billable = projected
         ? billableFraction(c, recs)
         : actualCoverageRatio(c);
-      // Signals bill per run (volume 1); see annualVolume.
+      // Signals: per-run total or per-result × results pulled; see annualVolume.
       const volume = annualVolume(c, recs, billable);
       credits += pr.credits * mult * volume;
       actions += pr.actions * mult * volume;

@@ -3017,11 +3017,13 @@
       // Gates the function-only "Open function" footer action.
       referencedTableId: d.referencedTableId || null,
       // Native signal source: recurring per-run / per-result monitoring cost.
-      // Drives the "/ run" labels, the "Monitored records" details row, and the
-      // "Open monitored table" footer action.
+      // Drives the "/ run" labels, the monitored/results details rows, and the
+      // "Monitored table" footer action.
       isSignal: !!d.isSignal,
       signalChargeUnit: d.signalChargeUnit || null,
       signalType: d.signalType || null,
+      signalResultCount: d.signalResultCount ?? null,
+      signalRunVolume: cb?.cost?.signalRunVolume ? cb.cost.signalRunVolume(er) : 1,
       monitoredTableId: d.monitoredTableId || null,
       monitoredViewId: d.monitoredViewId || null,
       monitoredRecordCount: d.monitoredRecordCount ?? null,
@@ -7150,13 +7152,13 @@
     const freqOverridden = mult !== 1;
     let credits, actions;
     if (er.isSignal) {
-      // Signals bill a fixed amount per monitoring run/result — the annual
-      // total is per-run × frequency, with NO × records (unlike enrichments).
-      // We don't surface a measured "actual" for signals, so that view has no
-      // total.
+      // Per-run signals: server cost is already the full run total (× monitored
+      // records). Per-result signals: unit cost × results pulled per run, then
+      // × frequency. Neither scales by the output table Records denominator.
       if (which === "actual") return null;
-      credits = (er.usePrivateKey ? 0 : Number(er.cost?.credits) || 0) * mult;
-      actions = (Number(er.cost?.actions) || 0) * mult;
+      const runVol = er.signalRunVolume ?? 1;
+      credits = (er.usePrivateKey ? 0 : Number(er.cost?.credits) || 0) * runVol * mult;
+      actions = (Number(er.cost?.actions) || 0) * runVol * mult;
     } else if (which === "actual") {
       if (!er.spendTotal) return null;
       // Scale measured spend to the scoped Records: spend × (records / total) ×
@@ -7350,10 +7352,15 @@
     // Frequency on its own row, beneath the two pills it drives.
     costSection.appendChild(erMenuRow("Frequency", buildErMenuFrequencyNode(er)));
 
-    // Signals monitor another table; surface how many records that table holds
-    // (the per-run cost is driven by this count, resolved server-side). Purely
-    // informational — it is NOT the Records denominator used for enrichments.
-    if (er.isSignal) {
+    // Per-run signals: monitored input-table size (server bakes this into the
+    // per-run cost). Per-result signals: results pulled into the output table.
+    if (er.isSignal && er.signalChargeUnit === "result") {
+      const pulled =
+        er.signalResultCount != null
+          ? `${formatNumber(er.signalResultCount)} result${er.signalResultCount === 1 ? "" : "s"}`
+          : "\u2014";
+      costSection.appendChild(erMenuRow("Results pulled", pulled));
+    } else if (er.isSignal) {
       const monitored =
         er.monitoredRecordCount != null
           ? `${formatNumber(er.monitoredRecordCount)} record${er.monitoredRecordCount === 1 ? "" : "s"}`
@@ -7430,7 +7437,7 @@
       const openMonBtn = document.createElement("button");
       openMonBtn.type = "button";
       openMonBtn.className = "cb-table-view-er-menu-open";
-      openMonBtn.innerHTML = externalLinkSvg(13) + "<span>Open monitored table</span>";
+      openMonBtn.innerHTML = externalLinkSvg(13) + "<span>Monitored table</span>";
       openMonBtn.addEventListener("click", (evt) => {
         evt.stopPropagation();
         closeErChipMenu();
