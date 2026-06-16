@@ -3290,20 +3290,31 @@
     pop.className = "cb-fill-excl-popover";
     pop.addEventListener("mousedown", (evt) => evt.stopPropagation());
 
+    const header = document.createElement("div");
+    header.className = "cb-fill-excl-header";
     const title = document.createElement("div");
     title.className = "cb-fill-excl-title";
-    title.textContent = "Exclude values from fill";
-    pop.appendChild(title);
-
+    title.textContent = "Adjust fill rate";
     const sub = document.createElement("div");
     sub.className = "cb-fill-excl-sub";
-    sub.textContent = "Mark stored sentinel values (false, blank, 0…) as not a real fill.";
-    pop.appendChild(sub);
+    sub.textContent =
+      "Exclude placeholder values that Clay stored but aren\u2019t real output \u2014 blank cells, false, 0, and similar.";
+    header.appendChild(title);
+    header.appendChild(sub);
+    pop.appendChild(header);
+
+    const body = document.createElement("div");
+    body.className = "cb-fill-excl-body";
+
+    const previewLabel = document.createElement("div");
+    previewLabel.className = "cb-fill-excl-section-label";
+    previewLabel.textContent = "Fill rate after exclusions";
+    body.appendChild(previewLabel);
 
     // Live preview of the adjusted %.
     const preview = document.createElement("div");
     preview.className = "cb-fill-excl-preview";
-    pop.appendChild(preview);
+    body.appendChild(preview);
 
     const renderPreview = () => {
       let excluded = 0;
@@ -3325,6 +3336,10 @@
     // commonValues checkboxes.
     const commonKeys = new Set(commonValues.map((cv) => String(cv?.value)));
     if (commonValues.length) {
+      const sectionLabel = document.createElement("div");
+      sectionLabel.className = "cb-fill-excl-section-label";
+      sectionLabel.textContent = "Common values in this column";
+      body.appendChild(sectionLabel);
       const list = document.createElement("div");
       list.className = "cb-fill-excl-list";
       for (const cv of commonValues) {
@@ -3353,19 +3368,20 @@
         row.appendChild(meta);
         list.appendChild(row);
       }
-      pop.appendChild(list);
+      body.appendChild(list);
     } else {
       const empty = document.createElement("div");
-      empty.className = "cb-fill-excl-sub";
-      empty.textContent = "No frequent values detected — add one below.";
-      pop.appendChild(empty);
+      empty.className = "cb-fill-excl-empty";
+      empty.textContent =
+        "No frequent values in the import sample \u2014 look up a specific value below.";
+      body.appendChild(empty);
     }
 
     // Container for find-sourced custom rows (existing + newly counted), kept
     // above the add controls so the list grows in place without re-rendering.
     const customList = document.createElement("div");
     customList.className = "cb-fill-excl-list";
-    pop.appendChild(customList);
+    body.appendChild(customList);
 
     // Append (or refresh) one find-sourced custom row with an unchecking box.
     const addCustomRow = (e) => {
@@ -3399,6 +3415,18 @@
     }
 
     // Custom-value / empty exclusion via the on-demand /find count.
+    const lookupSection = document.createElement("div");
+    lookupSection.className = "cb-fill-excl-section";
+    const lookupTitle = document.createElement("div");
+    lookupTitle.className = "cb-fill-excl-section-label";
+    lookupTitle.textContent = "Look up other values";
+    const lookupDesc = document.createElement("div");
+    lookupDesc.className = "cb-fill-excl-section-desc";
+    lookupDesc.textContent =
+      "Count rows that match a stored value in the full table, or exclude every blank cell at once.";
+    lookupSection.appendChild(lookupTitle);
+    lookupSection.appendChild(lookupDesc);
+
     const addWrap = document.createElement("div");
     addWrap.className = "cb-fill-excl-add";
     const addInput = document.createElement("input");
@@ -3416,11 +3444,12 @@
     addWrap.appendChild(addInput);
     addWrap.appendChild(addBtn);
     addWrap.appendChild(emptyBtn);
-    pop.appendChild(addWrap);
+    lookupSection.appendChild(addWrap);
 
     const status = document.createElement("div");
     status.className = "cb-fill-excl-status";
-    pop.appendChild(status);
+    lookupSection.appendChild(status);
+    body.appendChild(lookupSection);
 
     const runFind = async (operator, value, label) => {
       addBtn.disabled = true;
@@ -3464,12 +3493,19 @@
     });
     emptyBtn.addEventListener("click", () => runFind("EMPTY", undefined, "blank"));
 
-    // Footer: Apply / Clear.
+    pop.appendChild(body);
+
+    // Footer: shared modal scheme (tinted bar + divider).
     const footer = document.createElement("div");
-    footer.className = "cb-fill-excl-footer";
+    footer.className = "cb-modal-footer cb-fill-excl-footer";
+    const footerHint = document.createElement("div");
+    footerHint.className = "cb-export-modal-footer-hint cb-fill-excl-footer-hint";
+    footerHint.textContent = "Display only \u2014 doesn\u2019t change coverage or cost.";
+    const footerActions = document.createElement("div");
+    footerActions.className = "cb-modal-footer-actions";
     const clearBtn = document.createElement("button");
     clearBtn.type = "button";
-    clearBtn.className = "cb-fill-excl-clear";
+    clearBtn.className = "cb-modal-btn cb-modal-btn-ghost";
     clearBtn.textContent = "Clear";
     clearBtn.addEventListener("click", () => {
       working.clear();
@@ -3478,14 +3514,16 @@
     });
     const applyBtn = document.createElement("button");
     applyBtn.type = "button";
-    applyBtn.className = "cb-fill-excl-apply";
+    applyBtn.className = "cb-modal-btn cb-modal-btn-primary";
     applyBtn.textContent = "Apply";
     applyBtn.addEventListener("click", () => {
       commitFillExclusions(cardId, Array.from(working.values()));
       closeFillExclusionPopover();
     });
-    footer.appendChild(clearBtn);
-    footer.appendChild(applyBtn);
+    footerActions.appendChild(clearBtn);
+    footerActions.appendChild(applyBtn);
+    footer.appendChild(footerHint);
+    footer.appendChild(footerActions);
     pop.appendChild(footer);
 
     renderPreview();
