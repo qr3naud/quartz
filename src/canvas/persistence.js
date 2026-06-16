@@ -156,6 +156,7 @@
             tableOrder: cs.tableOrder,
             fillRate: cs.data.fillRate,
             fillRateCustom: cs.data.fillRateCustom,
+            fillExclusions: cs.data.fillExclusions,
             stats: cs.data.stats,
             groupCluster: cs.data.groupCluster,
             fieldId: cs.data.fieldId,

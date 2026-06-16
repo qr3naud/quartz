@@ -930,6 +930,49 @@
     return first?.id ?? null;
   };
 
+  // Read-only exact row count for a single field value — the on-demand fallback
+  // for the Actual-mode fill editor when a sentinel value is too rare to appear
+  // in the server-gated `commonValues` (top-5 / >3 occurrences / >5%). There's
+  // no count endpoint, so we POST the smallest possible /find filter (one FIELD
+  // clause scoped to just the excluded value, so the match set stays small) and
+  // count `results.length`. No view filter is ANDed — fill is whole-table,
+  // matching the full-profile import context.
+  //
+  // `operator` is "EQUAL" for a concrete value or "EMPTY" for null-or-blank
+  // cells (the value is omitted for EMPTY). `totalRecords` sizes the limit so
+  // we fetch every match in one call; we cap it to keep payloads sane (each
+  // /find result is a full record). When the match set hits the cap the count
+  // is flagged `approximate` so the UI can show "≥ N".
+  __cb.fetchFieldValueCount = async function (
+    tableId,
+    fieldId,
+    { operator = "EQUAL", value, totalRecords } = {}
+  ) {
+    if (!tableId || !fieldId) return { count: 0, approximate: false };
+    const CAP = 5000;
+    const limit = Math.min(CAP, Math.max(1, Number(totalRecords) || CAP));
+
+    const filterConfig =
+      operator === "EMPTY"
+        ? { type: "OPERATOR", operator: "EMPTY" }
+        : { type: "OPERATOR", operator, value };
+    const filter = { type: "FIELD", fieldId, filterConfig };
+
+    const res = await fetch(
+      `https://api.clay.com/v3/tables/${tableId}/find?limit=${limit}`,
+      {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ filter }),
+      }
+    );
+    if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
+    const data = await res.json();
+    const count = Array.isArray(data?.results) ? data.results.length : 0;
+    return { count, approximate: count >= limit };
+  };
+
   // The bulk runstatus endpoint returns the literal string "_pending" while
   // its Redis cache is cold and the backend is still computing per-field
   // counts. Poll a few times so cards can populate, then give up so the

@@ -1099,6 +1099,13 @@
         tableName: opts?.tableName ?? null,
         importColor: opts?.importColor ?? null,
         stats,
+        // Adjusted-fill exclusions (Actual mode): rows whose stored value is a
+        // sentinel ("not a real fill" — e.g. false, "", 0). Each entry carries
+        // its whole-table row count so adjusted fill recomputes on reload
+        // without re-fetching the distribution. Only persisted when present.
+        ...(Array.isArray(opts?.fillExclusions) && opts.fillExclusions.length
+          ? { fillExclusions: opts.fillExclusions.slice() }
+          : {}),
         groupCluster: opts?.groupCluster ?? null,
         // Free-text row note (table view). Stored on the row's primary card so
         // it round-trips through persistence; rendered as a comment badge left

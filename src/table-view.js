@@ -102,6 +102,11 @@
   let notePopoverBackdrop = null;
   let notePreviewEl = null;
 
+  // Adjusted-fill editor (Actual mode): body-level popover to mark stored
+  // sentinel values as "not a real fill" per data point. Single instance.
+  let fillExclPopoverEl = null;
+  let fillExclPopoverBackdrop = null;
+
   // Run-share popover (the % badge on a multi-ER DP chip). Body-level so it
   // escapes the table's overflow clipping.
   let erShareMenuEl = null;
@@ -933,6 +938,13 @@
     const tot = Number(dpCard.data.stats?.totalRecords) || 0;
     if (np == null || tot <= 0) return { pct: null };
     const nonNull = ((100 - Number(np)) / 100) * tot;
+    // Adjusted fill: a rep can mark stored sentinel values (false, "", 0, …) as
+    // "not a real fill" per data point (Actual mode only). Each exclusion
+    // carries its whole-table row count, so we subtract the total from nonNull
+    // before dividing. Fill is display/quality only — this never touches
+    // coverage or cost.
+    const excluded = sumFillExclusions(dpCard);
+    const adjustedNonNull = Math.max(0, nonNull - excluded);
     // Fill divides by rows ATTEMPTED (not coverage.ran, which is now
     // success-only) so the fill % is unchanged by the success-only coverage
     // numerator.
@@ -942,10 +954,24 @@
     // `nonNull` / `denom` are surfaced so the table's Fill cell can show the
     // underlying ratio on hover (a bare "1%" is opaque; "~10 / 789" is not).
     return {
-      pct: Math.min(100, Math.max(0, Math.round((nonNull / denom) * 100))),
-      nonNull: Math.round(nonNull),
+      pct: Math.min(100, Math.max(0, Math.round((adjustedNonNull / denom) * 100))),
+      nonNull: Math.round(adjustedNonNull),
       denom,
+      excluded: Math.round(excluded),
     };
+  }
+
+  // Sum the whole-table row counts of a DP card's fill exclusions. Defensive
+  // against legacy/garbage entries (count must be a finite non-negative number).
+  function sumFillExclusions(dpCard) {
+    const list = dpCard?.data?.fillExclusions;
+    if (!Array.isArray(list) || !list.length) return 0;
+    let total = 0;
+    for (const ex of list) {
+      const c = Number(ex?.count);
+      if (Number.isFinite(c) && c > 0) total += c;
+    }
+    return total;
   }
 
   // Actual coverage for a native signal source: X = output table rows produced
@@ -1013,6 +1039,12 @@
               nonNull: af.nonNull,
               denom: af.denom,
               denomLabel: erCard?.data?.displayName || erCard?.data?.text || null,
+              // Exclusion summary for the Fill cell tooltip + editor: total rows
+              // removed and the list of {value, count, source} entries.
+              excluded: af.excluded || 0,
+              exclusions: Array.isArray(dpCard.data.fillExclusions)
+                ? dpCard.data.fillExclusions
+                : [],
             };
       } else {
         fill = { mode: "projected", pct: fillRatePct(dpCard.data.fillRate) };
@@ -1248,11 +1280,50 @@
         const whyLine = fill.denomLabel
           ? `non-empty cells \u00F7 rows \u201C${fill.denomLabel}\u201D ran on`
           : `non-empty cells \u00F7 rows the enrichment ran on`;
-        // Custom two-line tip (body-appended, ~120ms) instead of the native
+        // When the rep has excluded sentinel values, spell out the adjustment so
+        // the lower % is self-explanatory on hover.
+        const tipLines = [ratioLine, whyLine];
+        if (Number(fill.excluded) > 0 && Array.isArray(fill.exclusions) && fill.exclusions.length) {
+          const names = fill.exclusions
+            .map((e) => fillExclValueLabel(e.value))
+            .join(", ");
+          tipLines.push(`excludes ${Number(fill.excluded).toLocaleString()} rows: ${names}`);
+        }
+        // Custom multi-line tip (body-appended, ~120ms) instead of the native
         // `title`: the browser tooltip is slow (~1s) and unreliable inside the
         // overlay. aria-label keeps the ratio available to screen readers.
-        attachInfoTip(td, [ratioLine, whyLine], { delayMs: 120 });
-        td.setAttribute("aria-label", `${ratioLine} \u2014 ${whyLine}`);
+        attachInfoTip(td, tipLines, { delayMs: 120 });
+        td.setAttribute("aria-label", `${tipLines.join(" \u2014 ")}`);
+      }
+      // Actual-mode "adjust fill" affordance: exclude stored sentinel values
+      // from the fill rate. Gated to imported DPs whose full-table distribution
+      // has loaded (stats present). Highlighted when exclusions are active.
+      const cardForAdjust = __cb.canvas?.getCardById?.(cardId);
+      if (
+        fill.mode === "actual" &&
+        cardForAdjust?.data?.fieldId &&
+        cardForAdjust?.data?.tableId &&
+        cardForAdjust?.data?.stats?.nullPercentage != null
+      ) {
+        const adj = document.createElement("button");
+        adj.type = "button";
+        const active = Number(fill.excluded) > 0;
+        adj.className = "cb-fill-adjust" + (active ? " cb-fill-adjust-active" : "");
+        adj.setAttribute("aria-label", "Exclude values from fill rate");
+        adj.innerHTML = adjustSvg(15);
+        attachInfoTip(
+          adj,
+          active
+            ? ["Adjust fill", "Sentinel values are excluded — click to edit"]
+            : ["Adjust fill", "Exclude sentinel values (false, blank, 0…)"],
+          { delayMs: 120 },
+        );
+        adj.addEventListener("mousedown", (e) => e.stopPropagation());
+        adj.addEventListener("click", (e) => {
+          e.stopPropagation();
+          openFillExclusionPopover(cardId, td, fill);
+        });
+        td.appendChild(adj);
       }
       // "Spotcheck" affordance: when a DP column isn't fully filled, reveal a
       // small target button (on row hover) that jumps to + highlights the first
@@ -3135,6 +3206,291 @@
 
     __cb.model.update();
     if (__cb.saveTabs) __cb.saveTabs();
+  }
+
+  // ---------------------------------------------------------------------------
+  // Adjusted-fill editor (Actual mode)
+  //
+  // Lets a rep exclude stored sentinel values (false, "", 0, …) from a data
+  // point's fill rate. Frequent values come instantly from the import's
+  // `commonValues` distribution (server-gated to top-5 / >3 occ / >5%); rare
+  // values are counted on demand via the read-only /find helper. Exclusions
+  // persist on the card (data.fillExclusions) and flow into the export. Fill is
+  // display/quality only — this never touches coverage or cost.
+  // ---------------------------------------------------------------------------
+
+  // Human label for a stored value: "" → "(blank)", everything else verbatim.
+  function fillExclValueLabel(value) {
+    if (value == null || value === "") return "(blank)";
+    return String(value);
+  }
+
+  function closeFillExclusionPopover() {
+    if (fillExclPopoverEl) { fillExclPopoverEl.remove(); fillExclPopoverEl = null; }
+    if (fillExclPopoverBackdrop) { fillExclPopoverBackdrop.remove(); fillExclPopoverBackdrop = null; }
+  }
+
+  // Persist a new exclusion set on the card and re-render so the Fill cell,
+  // totals, and export all pick it up.
+  function commitFillExclusions(cardId, list) {
+    const card = __cb.canvas?.getCardById?.(cardId);
+    if (!card) return;
+    const clean = (Array.isArray(list) ? list : []).filter(
+      (e) => e && Number.isFinite(Number(e.count)) && Number(e.count) > 0
+    );
+    if (clean.length) card.data.fillExclusions = clean;
+    else delete card.data.fillExclusions;
+    // model.update() already re-renders the table view (mirrors commitFillRate),
+    // so the Fill cell, tooltip, persistence, and export all pick this up.
+    __cb.model.update();
+    if (__cb.saveTabs) __cb.saveTabs();
+  }
+
+  function openFillExclusionPopover(cardId, anchorEl, fill) {
+    closeFillExclusionPopover();
+    closeContextMenu();
+    const card = __cb.canvas?.getCardById?.(cardId);
+    if (!card) return;
+    const stats = card.data.stats || {};
+    const valueCount = Number(stats.valueCount) || Number(stats.totalRecords) || 0;
+    const commonValues = Array.isArray(stats.commonValues) ? stats.commonValues : [];
+    // Base (unadjusted) non-null cells + denominator come straight off the Fill
+    // cell descriptor so the editor's preview matches the cell exactly.
+    const baseNonNull = (Number(fill?.nonNull) || 0) + (Number(fill?.excluded) || 0);
+    const denom = Number(fill?.denom) || Number(stats.totalRecords) || 0;
+
+    // Working copy of the exclusions, keyed by value string for dedupe.
+    const working = new Map();
+    for (const e of card.data.fillExclusions || []) {
+      if (e && e.value != null) working.set(String(e.value), { ...e });
+    }
+
+    fillExclPopoverBackdrop = document.createElement("div");
+    fillExclPopoverBackdrop.className = "cb-table-view-note-backdrop";
+    fillExclPopoverBackdrop.addEventListener("mousedown", (evt) => {
+      evt.stopPropagation();
+      closeFillExclusionPopover();
+    });
+
+    const pop = document.createElement("div");
+    pop.className = "cb-fill-excl-popover";
+    pop.addEventListener("mousedown", (evt) => evt.stopPropagation());
+
+    const title = document.createElement("div");
+    title.className = "cb-fill-excl-title";
+    title.textContent = "Exclude values from fill";
+    pop.appendChild(title);
+
+    const sub = document.createElement("div");
+    sub.className = "cb-fill-excl-sub";
+    sub.textContent = "Mark stored sentinel values (false, blank, 0…) as not a real fill.";
+    pop.appendChild(sub);
+
+    // Live preview of the adjusted %.
+    const preview = document.createElement("div");
+    preview.className = "cb-fill-excl-preview";
+    pop.appendChild(preview);
+
+    const renderPreview = () => {
+      let excluded = 0;
+      for (const e of working.values()) excluded += Number(e.count) || 0;
+      const adjusted = Math.max(0, baseNonNull - excluded);
+      const pct = denom > 0 ? Math.min(100, Math.max(0, Math.round((adjusted / denom) * 100))) : 0;
+      preview.innerHTML = "";
+      const pctEl = document.createElement("span");
+      pctEl.className = "cb-fill-excl-pct";
+      pctEl.textContent = `${pct}%`;
+      const ratio = document.createElement("span");
+      ratio.className = "cb-fill-excl-ratio";
+      ratio.textContent = ` · ~${Math.round(adjusted).toLocaleString()} / ${Math.round(denom).toLocaleString()}` +
+        (excluded > 0 ? ` (−${Math.round(excluded).toLocaleString()})` : "");
+      preview.appendChild(pctEl);
+      preview.appendChild(ratio);
+    };
+
+    // commonValues checkboxes.
+    const commonKeys = new Set(commonValues.map((cv) => String(cv?.value)));
+    if (commonValues.length) {
+      const list = document.createElement("div");
+      list.className = "cb-fill-excl-list";
+      for (const cv of commonValues) {
+        const v = cv?.value;
+        const pctOfTable = Number(cv?.percentage) || 0;
+        const count = Math.round((pctOfTable / 100) * valueCount);
+        const key = String(v);
+        const row = document.createElement("label");
+        row.className = "cb-fill-excl-row";
+        const cbx = document.createElement("input");
+        cbx.type = "checkbox";
+        cbx.checked = working.has(key);
+        cbx.addEventListener("change", () => {
+          if (cbx.checked) working.set(key, { value: v, count, source: "common" });
+          else working.delete(key);
+          renderPreview();
+        });
+        const lbl = document.createElement("span");
+        lbl.className = "cb-fill-excl-row-label";
+        lbl.textContent = fillExclValueLabel(v);
+        const meta = document.createElement("span");
+        meta.className = "cb-fill-excl-row-meta";
+        meta.textContent = `${pctOfTable}% · ${count.toLocaleString()}`;
+        row.appendChild(cbx);
+        row.appendChild(lbl);
+        row.appendChild(meta);
+        list.appendChild(row);
+      }
+      pop.appendChild(list);
+    } else {
+      const empty = document.createElement("div");
+      empty.className = "cb-fill-excl-sub";
+      empty.textContent = "No frequent values detected — add one below.";
+      pop.appendChild(empty);
+    }
+
+    // Container for find-sourced custom rows (existing + newly counted), kept
+    // above the add controls so the list grows in place without re-rendering.
+    const customList = document.createElement("div");
+    customList.className = "cb-fill-excl-list";
+    pop.appendChild(customList);
+
+    // Append (or refresh) one find-sourced custom row with an unchecking box.
+    const addCustomRow = (e) => {
+      const key = String(e.value);
+      const row = document.createElement("label");
+      row.className = "cb-fill-excl-row";
+      const cbx = document.createElement("input");
+      cbx.type = "checkbox";
+      cbx.checked = true;
+      cbx.addEventListener("change", () => {
+        if (!cbx.checked) { working.delete(key); renderPreview(); }
+        else { working.set(key, e); renderPreview(); }
+      });
+      const lbl = document.createElement("span");
+      lbl.className = "cb-fill-excl-row-label";
+      lbl.textContent = fillExclValueLabel(e.value);
+      const meta = document.createElement("span");
+      meta.className = "cb-fill-excl-row-meta";
+      meta.textContent = `${Number(e.count).toLocaleString()}`;
+      row.appendChild(cbx);
+      row.appendChild(lbl);
+      row.appendChild(meta);
+      customList.appendChild(row);
+    };
+
+    // Render any already-excluded find-sourced values not covered by a
+    // commonValues checkbox above.
+    for (const e of Array.from(working.values())) {
+      if (e.source === "common" || commonKeys.has(String(e.value))) continue;
+      addCustomRow(e);
+    }
+
+    // Custom-value / empty exclusion via the on-demand /find count.
+    const addWrap = document.createElement("div");
+    addWrap.className = "cb-fill-excl-add";
+    const addInput = document.createElement("input");
+    addInput.type = "text";
+    addInput.className = "cb-fill-excl-input";
+    addInput.placeholder = "Exclude another value…";
+    const addBtn = document.createElement("button");
+    addBtn.type = "button";
+    addBtn.className = "cb-fill-excl-add-btn";
+    addBtn.textContent = "Add";
+    const emptyBtn = document.createElement("button");
+    emptyBtn.type = "button";
+    emptyBtn.className = "cb-fill-excl-add-btn";
+    emptyBtn.textContent = "Blank cells";
+    addWrap.appendChild(addInput);
+    addWrap.appendChild(addBtn);
+    addWrap.appendChild(emptyBtn);
+    pop.appendChild(addWrap);
+
+    const status = document.createElement("div");
+    status.className = "cb-fill-excl-status";
+    pop.appendChild(status);
+
+    const runFind = async (operator, value, label) => {
+      addBtn.disabled = true;
+      emptyBtn.disabled = true;
+      status.textContent = "Counting…";
+      try {
+        const { count, approximate } = await __cb.fetchFieldValueCount(
+          card.data.tableId,
+          card.data.fieldId,
+          { operator, value, totalRecords: Number(stats.totalRecords) || 0 }
+        );
+        if (!count) {
+          status.textContent = `No rows match "${label}".`;
+          return;
+        }
+        const key = String(value ?? "");
+        const entry = { value: value ?? "", count, source: "find" };
+        const existed = working.has(key);
+        working.set(key, entry);
+        status.textContent =
+          `Excluding ${count.toLocaleString()}${approximate ? "+" : ""} rows (${label}).`;
+        // Append the new row in place (unless it's already shown above) so the
+        // working set survives until Apply without a full re-render.
+        if (!existed && !commonKeys.has(key)) addCustomRow(entry);
+        addInput.value = "";
+        renderPreview();
+      } catch (_e) {
+        status.textContent = "Couldn't count — try again.";
+      } finally {
+        addBtn.disabled = false;
+        emptyBtn.disabled = false;
+      }
+    };
+    addBtn.addEventListener("click", () => {
+      const v = addInput.value.trim();
+      if (!v) return;
+      runFind("EQUAL", v, v);
+    });
+    addInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") { e.preventDefault(); addBtn.click(); }
+    });
+    emptyBtn.addEventListener("click", () => runFind("EMPTY", undefined, "blank"));
+
+    // Footer: Apply / Clear.
+    const footer = document.createElement("div");
+    footer.className = "cb-fill-excl-footer";
+    const clearBtn = document.createElement("button");
+    clearBtn.type = "button";
+    clearBtn.className = "cb-fill-excl-clear";
+    clearBtn.textContent = "Clear";
+    clearBtn.addEventListener("click", () => {
+      working.clear();
+      commitFillExclusions(cardId, []);
+      closeFillExclusionPopover();
+    });
+    const applyBtn = document.createElement("button");
+    applyBtn.type = "button";
+    applyBtn.className = "cb-fill-excl-apply";
+    applyBtn.textContent = "Apply";
+    applyBtn.addEventListener("click", () => {
+      commitFillExclusions(cardId, Array.from(working.values()));
+      closeFillExclusionPopover();
+    });
+    footer.appendChild(clearBtn);
+    footer.appendChild(applyBtn);
+    pop.appendChild(footer);
+
+    renderPreview();
+
+    document.body.appendChild(fillExclPopoverBackdrop);
+    document.body.appendChild(pop);
+    fillExclPopoverEl = pop;
+
+    pop.style.position = "fixed";
+    pop.style.zIndex = "9999999";
+    const aRect = (anchorEl || hostEl).getBoundingClientRect();
+    const pRect = pop.getBoundingClientRect();
+    let left = Math.min(aRect.left, window.innerWidth - pRect.width - 8);
+    let top = aRect.bottom + 6;
+    if (top + pRect.height > window.innerHeight - 8) {
+      top = Math.max(8, aRect.top - 6 - pRect.height);
+    }
+    pop.style.left = `${Math.max(8, left)}px`;
+    pop.style.top = `${top}px`;
   }
 
   // Rows an enrichment RAN on, from run-status (coverage.attempted) — NOT billed
@@ -8279,6 +8635,19 @@
     );
   }
 
+  // Sliders icon for the Actual-mode "adjust fill" (exclude values) affordance.
+  function adjustSvg(size) {
+    const s = String(size);
+    return (
+      `<svg xmlns="http://www.w3.org/2000/svg" width="${s}" height="${s}" viewBox="0 0 24 24" ` +
+      'fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" ' +
+      'stroke-linejoin="round" aria-hidden="true">' +
+      '<line x1="4" y1="6" x2="20" y2="6"/><circle cx="9" cy="6" r="2"/>' +
+      '<line x1="4" y1="14" x2="20" y2="14"/><circle cx="15" cy="14" r="2"/>' +
+      '</svg>'
+    );
+  }
+
   function chevronDownSvg(size) {
     const s = String(size);
     return (
@@ -8536,6 +8905,15 @@
     const labelErNotes = erNotes.length > 1 || parts.length > 0;
     for (const { name, text } of erNotes) {
       parts.push(labelErNotes ? `${name}: ${text}` : text);
+    }
+
+    // Adjusted-fill note: when the rep excluded sentinel values, spell out which
+    // ones (and how many rows) so the lower Fill % is self-explanatory in the
+    // exported snapshot. Actual mode only — projected fill carries no exclusions.
+    const fill = row.coverageFill && row.coverageFill.fill;
+    if (fill && Number(fill.excluded) > 0 && Array.isArray(fill.exclusions) && fill.exclusions.length) {
+      const names = fill.exclusions.map((e) => fillExclValueLabel(e.value)).join(", ");
+      parts.push(`Fill excludes ${Number(fill.excluded).toLocaleString()} rows (${names})`);
     }
 
     return parts.join("\n");

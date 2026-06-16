@@ -788,6 +788,12 @@
       if (field.type !== "action" && dp && dp.nullPercentage != null) {
         stats.nullPercentage = Number(dp.nullPercentage) || 0;
         stats.totalRecords = Number(dp.totalRecords) || 0;
+        // Carry the value distribution for the Actual-mode fill editor. At
+        // import sampleSize this is usually thin (commonValues gated, valueCount
+        // == sampleSize); the background full-profile fetch re-stamps the exact
+        // whole-table values. Harmless to seed here.
+        if (Array.isArray(dp.commonValues)) stats.commonValues = dp.commonValues;
+        if (dp.valueCount != null) stats.valueCount = Number(dp.valueCount) || 0;
         if (!stats.source) stats.source = "dataProfile";
         hasData = true;
       } else if (!stats.fillRate && dp) {
@@ -2989,6 +2995,14 @@
             nullByFieldId.set(fc.id, {
               nullPercentage: Number(prof.nullPercentage) || 0,
               totalRecords: Number(prof.totalRecords) || 0,
+              // Whole-table value distribution (sampleSize 0) — used by the
+              // Actual-mode fill editor to exclude sentinel values. commonValues
+              // is server-gated to top-5 / >3 occurrences / >5%, so rare values
+              // need the on-demand /find count helper instead.
+              commonValues: Array.isArray(prof.commonValues)
+                ? prof.commonValues
+                : null,
+              valueCount: Number(prof.valueCount) || 0,
             });
           }
         }
@@ -3010,6 +3024,8 @@
           ...(d.stats || {}),
           nullPercentage: np.nullPercentage,
           totalRecords: np.totalRecords,
+          ...(np.commonValues ? { commonValues: np.commonValues } : {}),
+          ...(np.valueCount ? { valueCount: np.valueCount } : {}),
         };
         stamped = true;
       }
