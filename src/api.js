@@ -1161,18 +1161,21 @@
     }
   };
 
-  // Default Actual spend window stamped on import (also the session picker's
-  // pre-selection cutoff — same value so the displayed number maps to the
-  // pre-selected sessions). SESSION_DISCOVERY_DAYS is the wider window used to
-  // LIST sessions, so older runs stay selectable.
+  // Default-selection fallback before a table's probe lands. Per-table
+  // actualImportDays (session-cutoff) is set to whichever SESSION_PROBE_DAYS
+  // window first returns runs (7, 30, or 90); if all are empty, 180 is tried.
   __cb.ACTUAL_IMPORT_DAYS = 7;
-  __cb.SESSION_DISCOVERY_DAYS = 365;
+  // Exponential run/recent probe order; session-cutoff stops at the first hit.
+  __cb.SESSION_PROBE_DAYS = [7, 30, 90];
+  // Background widen after a probe hit (7/30 → 90; 90 → 180). If 90 fails, 180.
+  __cb.SESSION_WIDE_DAYS = 90;
+  __cb.SESSION_FALLBACK_DAYS = 180;
 
   // Per-column actual spend over the last N days. Backed by Redshift
   // (credit_usage_mv_v4, fed via Kinesis, ~minutes of lag). `days` is a rolling
   // window on approximate_arrival_timestamp ending now; the server default is 7
-  // and there is NO max (zod: int().positive() only) — fetchRunSpend already
-  // passes 210. The real floor is REALTIME_CREDIT_USAGE_START_DATE =
+  // and there is NO max (zod: int().positive() only). The real floor is
+  // REALTIME_CREDIT_USAGE_START_DATE =
   // 2025-11-05: data before that is incomplete (under-counts), regardless of
   // how large `days` is. Returns an array of
   // { fieldId, creditsSpent, actionExecutionCreditsSpent?, cellCount? }.

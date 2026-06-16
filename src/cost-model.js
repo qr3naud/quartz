@@ -32,6 +32,10 @@
   // columns, which understates true per-row cost. See ARCHITECTURE.md.
   function actualRowDenominator(card) {
     const d = (card && card.data) || {};
+    // Signal spend is a per-run total, not per-output-row — never divide it by
+    // the table's Records. perRowCost handles signals directly, but guard here
+    // so any other caller can't re-divide signal spend.
+    if (isSignalCard(card)) return 1;
     const ran = Number(d.stats?.coverage?.ran) || 0;
     if (ran > 0) return ran;
     const recs = cb.getRecordsCount ? Number(cb.getRecordsCount()) || 0 : 0;
@@ -66,6 +70,32 @@
       return { credits: 0, actions: 0, creditsUnknown: false, frozen: true };
     }
     const sp = d.stats && d.stats.spend;
+
+    // Signal sources bill per monitoring run (or per result), NOT per output
+    // row. Measured spend is already the full run total (e.g. 2 cr / 10 act for
+    // one run across 10 monitored records). Dividing it by the output table's
+    // Records (464) would zero the display — so handle signals before the
+    // generic per-row divide.
+    if (viewMode === "actual" && sp && isSignalCard(card)) {
+      const unit = d.signalChargeUnit || "run";
+      if (unit === "result") {
+        // Per-result spend is per-event; divide by results pulled, never by the
+        // full output-table Records denominator.
+        const denom =
+          signalRunVolume(card) || Number(sp.cellCount) || 1;
+        return {
+          credits: (Number(sp.credits) || 0) / denom,
+          actions: (Number(sp.actionExecutions) || 0) / denom,
+          creditsUnknown: false,
+        };
+      }
+      // Per-run / per-record: spend IS the full run total — return as-is.
+      return {
+        credits: Number(sp.credits) || 0,
+        actions: Number(sp.actionExecutions) || 0,
+        creditsUnknown: false,
+      };
+    }
 
     if (viewMode === "actual" && sp) {
       const denom = actualRowDenominator(card);

@@ -948,6 +948,20 @@
     };
   }
 
+  // Actual coverage for a native signal source: X = output table rows produced
+  // (the monitoring run's results), Y = monitored table size. NOT the generic
+  // "ran / attempted" coverage — a signal doesn't "run on" the output rows, it
+  // produces them by watching `monitored` records. Returns null for non-signals
+  // (or when either side is unknown) so the caller falls back to generic stats.
+  function signalActualCoveragePair(erCard) {
+    const d = (erCard && erCard.data) || {};
+    if (!d.isSignal) return null;
+    const outputRows = erDefaultRecords(erCard) || Number(d.signalResultCount) || 0;
+    const monitored = Number(d.monitoredRecordCount) || 0;
+    if (outputRows <= 0 || monitored <= 0) return null;
+    return { ran: outputRows, total: monitored };
+  }
+
   function coverageFillFor(erCard, dpCard) {
     const cb = window.__cb;
     const actual = cb?.viewMode === "actual";
@@ -955,10 +969,17 @@
 
     let coverage;
     if (actual) {
-      const cov = erCard?.data?.stats?.coverage;
-      coverage = cov && Number(cov.total) > 0
-        ? { mode: "actual", ran: Number(cov.ran) || 0, total: Number(cov.total) || 0 }
-        : { mode: "actual", ran: null, total: null };
+      // Signal sources report output-rows / monitored-records, not the generic
+      // run-status coverage — handle them before the stats.coverage fallback.
+      const sig = signalActualCoveragePair(erCard);
+      if (sig) {
+        coverage = { mode: "actual", signal: true, ran: sig.ran, total: sig.total };
+      } else {
+        const cov = erCard?.data?.stats?.coverage;
+        coverage = cov && Number(cov.total) > 0
+          ? { mode: "actual", ran: Number(cov.ran) || 0, total: Number(cov.total) || 0 }
+          : { mode: "actual", ran: null, total: null };
+      }
     } else {
       const rows = erCard ? (erCard.data.coverageRows ?? totalRows) : totalRows;
       // Per-ER "attempted total" (the division denominator). Defaults to (and
@@ -1164,7 +1185,9 @@
       wrap.appendChild(mkRo(coverage.ran));
       wrap.appendChild(sep);
       wrap.appendChild(mkRo(coverage.total));
-      td.title = `${Math.round(((coverage.ran || 0) / coverage.total) * 100)}% of rows succeeded`;
+      td.title = coverage.signal
+        ? `${Number(coverage.ran).toLocaleString()} output row${coverage.ran === 1 ? "" : "s"} from ${Number(coverage.total).toLocaleString()} monitored record${coverage.total === 1 ? "" : "s"}`
+        : `${Math.round(((coverage.ran || 0) / coverage.total) * 100)}% of rows succeeded`;
       td.appendChild(wrap);
     } else {
       td.className = "col-coverage cb-table-view-cell-muted";
@@ -2937,8 +2960,14 @@
         : null;
     const recordsOverridden =
       recordsBaseline != null && recordsBaseline > 0 && scopedRecords !== recordsBaseline;
-    const actualCov =
-      d.stats?.coverage && Number(d.stats.coverage.total) > 0
+    // Signal sources report output-rows / monitored-records as their Actual
+    // coverage (a signal produces output rows by watching monitored records — it
+    // doesn't "run on" them). When present this drives the chip's run-rate badge
+    // and the Total(actual) scaling in place of the generic stats.coverage.
+    const sigCov = signalActualCoveragePair(er);
+    const actualCov = sigCov
+      ? { ran: sigCov.ran, total: sigCov.total }
+      : d.stats?.coverage && Number(d.stats.coverage.total) > 0
         ? { ran: Number(d.stats.coverage.ran) || 0, total: Number(d.stats.coverage.total) || 0 }
         : null;
 
@@ -2946,11 +2975,13 @@
     //   runRate     = rows it ran on ÷ total        (how much of the table)
     //   successRate = rows that returned a value ÷ rows it ran  (hit rate)
     const _cov = d.stats?.coverage;
-    const runRows = erRunRows(er);
+    const runRows = sigCov ? sigCov.ran : erRunRows(er);
     const succeededRows = erSucceededRows(er);
-    const totalRows = _cov ? Number(_cov.total) || 0 : 0;
+    const totalRows = sigCov ? sigCov.total : (_cov ? Number(_cov.total) || 0 : 0);
     const runRate = totalRows > 0 ? runRows / totalRows : null;
-    const successRate = runRows > 0 ? succeededRows / runRows : null;
+    // Signals have no per-row success notion (output IS the result), so leave
+    // success rate measured-only for non-signals.
+    const successRate = sigCov ? null : (runRows > 0 ? succeededRows / runRows : null);
 
     // Projected run rate = rows this ER is SET to run on ÷ its attempted total
     // (the editable coverage that drives projected/catalog cost). Mirrors
@@ -7155,10 +7186,19 @@
       // Per-run signals: server cost is already the full run total (× monitored
       // records). Per-result signals: unit cost × results pulled per run, then
       // × frequency. Neither scales by the output table Records denominator.
-      if (which === "actual") return null;
-      const runVol = er.signalRunVolume ?? 1;
-      credits = (er.usePrivateKey ? 0 : Number(er.cost?.credits) || 0) * runVol * mult;
-      actions = (Number(er.cost?.actions) || 0) * runVol * mult;
+      if (which === "actual") {
+        // Measured spend (spendTotal) is the full run total for the signal —
+        // for per-run/per-record it's the raw spend, for per-result it equals
+        // per-unit × results pulled. Annualize by frequency; never scale by the
+        // output table's Records.
+        if (!er.spendTotal) return null;
+        credits = (Number(er.spendTotal.credits) || 0) * mult;
+        actions = (Number(er.spendTotal.actions) || 0) * mult;
+      } else {
+        const runVol = er.signalRunVolume ?? 1;
+        credits = (er.usePrivateKey ? 0 : Number(er.cost?.credits) || 0) * runVol * mult;
+        actions = (Number(er.cost?.actions) || 0) * runVol * mult;
+      }
     } else if (which === "actual") {
       if (!er.spendTotal) return null;
       // Scale measured spend to the scoped Records: spend × (records / total) ×

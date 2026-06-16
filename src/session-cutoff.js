@@ -23,9 +23,12 @@
   //    changes the counted total; it only regroups the display. A merged session
   //    is checked when all its base children are selected, indeterminate when
   //    some, unchecked when none.
-  //  - Per table, the default selection is the base buckets within the last
-  //    ACTUAL_IMPORT_DAYS (7); if none ran recently, the single most-recent base
-  //    bucket (the fallback drives the stamp — there is no "Expired" state).
+  //  - Per table, the default selection is the base buckets within the probe
+  //    window that first returned runs (7, 30, or 90 days — stored as
+  //    actualImportDays); if none ran in that window, the single most-recent
+  //    base bucket (the fallback drives the stamp — there is no "Expired").
+  //    After the probe lands, a wider window is fetched in the background
+  //    (7/30 → 90; 90 → 180; if 90 fails → 180).
   //
   // Cross-tab safety: fetches are keyed to a monotonic load token; switching
   // tabs / refreshing supersedes an in-flight load so it can't clobber the tab
@@ -47,6 +50,7 @@
   //     base: [{ id, startTs, lastTs, runs, credits, actionExec, cells, perField }],
   //     sessions: [displayed merge of base — see recomputeDisplayed],
   //     selectedBaseIds: Set<baseId>,
+  //     actualImportDays: 7|30|90|180 (probe window that first hit),
   //     loading, error, reused, lastFetchedAt
   //   } }
   // }
@@ -64,11 +68,85 @@
     }
   }
 
-  function importDays() {
+  function probeDaysList() {
+    const raw = cb.SESSION_PROBE_DAYS;
+    if (Array.isArray(raw) && raw.length) {
+      return raw.map((d) => Number(d)).filter((d) => d > 0);
+    }
+    return [7, 30, 90];
+  }
+  function wideDays() {
+    return Number(cb.SESSION_WIDE_DAYS) || 90;
+  }
+  function fallbackDays() {
+    return Number(cb.SESSION_FALLBACK_DAYS) || 180;
+  }
+  function importDaysForTable(tid) {
+    const t = state?.byTable?.[tid];
+    if (t?.actualImportDays > 0) return t.actualImportDays;
     return Number(cb.ACTUAL_IMPORT_DAYS) || 7;
   }
-  function discoveryDays() {
-    return Number(cb.SESSION_DISCOVERY_DAYS) || 365;
+  // Wider /run/recent window to fetch in the background after a probe hit.
+  function backgroundWideDays(hitDays) {
+    if (!hitDays || hitDays <= 0) return null;
+    const wide = wideDays();
+    const fall = fallbackDays();
+    if (hitDays <= 30) return wide > hitDays ? wide : null;
+    if (hitDays <= wide) return fall > hitDays ? fall : null;
+    return null;
+  }
+  // 7 → 30 → 90 until runs appear; if all empty, one 180-day attempt.
+  async function probeRunSpend(ws, tid, token) {
+    for (const days of probeDaysList()) {
+      const runs = await withTimeout(cb.fetchRunSpend(ws, tid, days));
+      if (token !== loadToken) return { hitDays: null, runs: [] };
+      const arr = Array.isArray(runs) ? runs : [];
+      if (arr.length) return { hitDays: days, runs: arr };
+    }
+    const fall = fallbackDays();
+    const runs = await withTimeout(cb.fetchRunSpend(ws, tid, fall));
+    if (token !== loadToken) return { hitDays: null, runs: [] };
+    const arr = Array.isArray(runs) ? runs : [];
+    return { hitDays: arr.length ? fall : null, runs: arr };
+  }
+  // Replace base buckets with a wider run/recent window; preserve selection.
+  async function loadWideBackground(ws, tid, hitDays, token) {
+    let target = backgroundWideDays(hitDays);
+    if (!target) return;
+    const t = state?.byTable?.[tid];
+    if (!t) return;
+
+    let runs = null;
+    try {
+      runs = await withTimeout(cb.fetchRunSpend(ws, tid, target));
+    } catch {
+      if (target === wideDays()) {
+        target = fallbackDays();
+        try {
+          runs = await withTimeout(cb.fetchRunSpend(ws, tid, target));
+        } catch {
+          return;
+        }
+      } else {
+        return;
+      }
+    }
+    if (token !== loadToken) return;
+    const arr = Array.isArray(runs) ? runs : [];
+    if (!arr.length) return;
+
+    const prevSel = new Set(t.selectedBaseIds);
+    t.base = bucketBase(tid, arr);
+    t.lastFetchedAt = Date.now();
+    const valid = new Set(t.base.map((b) => b.id));
+    const kept = [...prevSel].filter((id) => valid.has(id));
+    t.selectedBaseIds = kept.length
+      ? new Set(kept)
+      : defaultSelectionBase(t.base, tid);
+    recomputeDisplayed(tid);
+    notify();
+    applySelection({ silent: true, noPersist: true });
+    persist();
   }
 
   function workspaceId() {
@@ -221,9 +299,9 @@
   }
 
   // Default = base buckets at/after the table's first stamp when one exists;
-  // else base buckets within the last ACTUAL_IMPORT_DAYS; else the single
-  // most-recent base bucket (base is oldest→newest). The fallback is what makes
-  // the most-recent session drive the stamp when nothing ran in the window.
+  // else base buckets within the table's probe window (actualImportDays); else the
+  // single most-recent base bucket (base is oldest→newest). The fallback is what
+  // makes the most-recent session drive the stamp when nothing ran in the window.
   function defaultSelectionBase(base, tid) {
     if (!base.length) return new Set();
     const sSec = firstStampSec(tid);
@@ -233,7 +311,7 @@
       // (the picker still shows the divider above an older selection).
       if (since.length) return new Set(since.map((b) => b.id));
     }
-    const cutoffSec = Date.now() / 1000 - importDays() * 86400;
+    const cutoffSec = Date.now() / 1000 - importDaysForTable(tid) * 86400;
     const recent = base.filter((b) => b.lastTs >= cutoffSec);
     if (recent.length) return new Set(recent.map((b) => b.id));
     return new Set([base[base.length - 1].id]);
@@ -251,21 +329,24 @@
     for (const tab of cb.tabStore?.tabs || []) {
       const ct = tab?.state?.sessionCutoff?.byTable?.[tid];
       if (ct?.base?.length) {
-        return { base: ct.base, lastFetchedAt: ct.lastFetchedAt || null };
+        return {
+          base: ct.base,
+          lastFetchedAt: ct.lastFetchedAt || null,
+          actualImportDays: ct.actualImportDays || null,
+        };
       }
     }
     return null;
   }
 
   // Load one table's base data. Order: reuse a saved blob from any tab (no
-  // fetch, amber) → fetch run/recent (fresh). `force` (manual refresh) skips
-  // reuse so it always hits the network. Applies its result (stamp + notify) in
-  // the finally, as soon as it lands — progressive reveal. The token guards
-  // against a context change (tab switch / refresh) landing on the wrong tab.
-  // tableLoads (managed by ensureLoaded) dedupes, so loadOne never double-runs.
+  // fetch, amber) → exponential probe 7→30→90 (then 180 if empty) → background
+  // widen (7/30→90, 90→180). `force` skips reuse. Progressive reveal on probe
+  // hit; wider window merges in without blocking the spinner.
   async function loadOne(tid, token, force) {
     if (!state || !state.byTable[tid]) return;
     const t = state.byTable[tid];
+    let probeHitDays = null;
     try {
       let saved = force ? null : findSavedBase(tid);
       // A blob bucketed BEFORE the stamp existed may have a bucket spanning
@@ -282,6 +363,7 @@
       if (saved && saved.base.length) {
         t.base = saved.base;
         t.lastFetchedAt = saved.lastFetchedAt;
+        t.actualImportDays = saved.actualImportDays || 7;
         t.reused = true; // stale-ish (came from a prior fetch) → amber pill
         t.selectedBaseIds = defaultSelectionBase(t.base, tid); // fresh choice for this tab
         t.error = false;
@@ -289,9 +371,11 @@
       } else {
         const ws = workspaceId();
         if (!ws) throw new Error("no workspace");
-        const runs = await withTimeout(cb.fetchRunSpend(ws, tid, discoveryDays()));
+        const { hitDays, runs } = await probeRunSpend(ws, tid, token);
         if (token !== loadToken) return; // superseded (tab switch / refresh)
-        t.base = bucketBase(tid, Array.isArray(runs) ? runs : []);
+        probeHitDays = hitDays;
+        t.actualImportDays = hitDays || 7;
+        t.base = bucketBase(tid, runs);
         t.lastFetchedAt = Date.now();
         t.reused = false;
         t.selectedBaseIds = defaultSelectionBase(t.base, tid);
@@ -310,6 +394,12 @@
         recomputeDisplayed(tid);
         notify();
         applySelection({ silent: true, noPersist: true });
+        if (probeHitDays && !t.reused) {
+          const ws = workspaceId();
+          if (ws) {
+            loadWideBackground(ws, tid, probeHitDays, token).catch(() => {});
+          }
+        }
       }
     }
   }
@@ -367,6 +457,7 @@
         base: null,
         sessions: [],
         selectedBaseIds: new Set(),
+        actualImportDays: 7,
         loading: true,
         error: false,
         reused: false,
@@ -606,9 +697,8 @@
           state.byTable[tid] = {
             base: ct.base,
             sessions: [],
-            selectedBaseIds: sel.length
-              ? new Set(sel)
-              : defaultSelectionBase(ct.base, tid),
+            actualImportDays: ct.actualImportDays || 7,
+            selectedBaseIds: new Set(),
             loading: false,
             error: false,
             // Persisted amber "cached" state survives the reload (cleared only
@@ -617,6 +707,9 @@
             lastFetchedAt: ct.lastFetchedAt || null,
             loadedSeq: ++loadSeq, // keep saved order on reopen
           };
+          state.byTable[tid].selectedBaseIds = sel.length
+            ? new Set(sel)
+            : defaultSelectionBase(ct.base, tid);
         } else {
           // On the canvas but not in the saved blob (e.g. imported in another
           // session) — mark for ensureLoaded to fill.
@@ -624,6 +717,7 @@
             base: null,
             sessions: [],
             selectedBaseIds: new Set(),
+            actualImportDays: 7,
             loading: true,
             error: false,
             reused: false,
@@ -650,6 +744,7 @@
         byTable[tid] = {
           base: t.base,
           selectedBaseIds: [...t.selectedBaseIds],
+          actualImportDays: t.actualImportDays || 7,
           lastFetchedAt: t.lastFetchedAt || null,
           reused: !!t.reused, // persist the amber "cached" state across reloads
         };
@@ -658,8 +753,7 @@
       return { byTable, gapMs: state.gapMs, fetchMs: state.fetchMs ?? null };
     },
 
-    // Manual refresh from the footer pill: refetch run/recent for all current
-    // tables (force), re-running the timer + progressive reveal.
+    // Manual refresh from the footer pill: re-probe all current tables (force).
     refresh() {
       loadToken++;
       tableLoads.clear();
