@@ -77,9 +77,8 @@
     return hydrating;
   }
 
-  // Mirror onto every loaded tab's state (so the merge-on-hydrate can't
-  // resurrect deleted highlights), then persist via the canvas save path or a
-  // direct row push when the overlay is closed.
+  // Mirror onto every loaded tab's state, then persist all tab rows (see
+  // tabs.js persistSharedTabBlobs — merge-on-hydrate reads every tab).
   async function persist() {
     await ensureHydrated();
     const store = cb.tabStore;
@@ -88,11 +87,8 @@
       tab.state = tab.state || {};
       tab.state.highlightsByTable = { ...map };
     }
-    const active = store.tabs.find((t) => t.id === store.activeId) || store.tabs[0];
-    if (cb.canvas && cb.debouncedSave) {
-      cb.debouncedSave();
-    } else if (cb.saveTabRow) {
-      cb.saveTabRow(active.id);
+    if (cb.persistSharedTabBlobs) {
+      await cb.persistSharedTabBlobs();
     }
   }
 

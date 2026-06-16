@@ -305,6 +305,29 @@
   // re-serializes when the canvas exists.
   __cb.saveTabRow = saveTabRow;
 
+  // Stamps + demo-spotlight highlights are mirrored onto every tab in memory
+  // before save, but hydrate merges every tab's blob on load. After a delete,
+  // push ALL tab rows and refresh the localStorage cache — otherwise stale
+  // canvas_tabs rows (or a stale cache when the canvas is closed) resurrect
+  // removed stamps/highlights on refresh.
+  __cb.persistSharedTabBlobs = async function () {
+    const workbookId = __cb.currentWorkbookId || __cb.parseIdsFromUrl()?.workbookId;
+    const workspaceId = __cb.currentWorkspaceId || __cb.parseIdsFromUrl()?.workspaceId;
+    if (!workbookId || !__cb.tabStore?.tabs?.length) return;
+
+    const key = `cb-tabs-${workbookId}`;
+    try {
+      localStorage.setItem(key, JSON.stringify(__cb.tabStore));
+    } catch (e) {
+      console.warn("[Clay Scoping] persistSharedTabBlobs localStorage failed:", e);
+    }
+
+    const tabs = __cb.tabStore.tabs;
+    await Promise.all(
+      tabs.map((tab, i) => pushTabToSupabase(workbookId, workspaceId, tab, i)),
+    );
+  };
+
   // DELETE a canvas_tabs row. Trigger fires tabState/tabInvalidate with
   // operation=DELETE so peers can drop the tab from their local tabStore too.
   async function deleteTabRow(tabId) {

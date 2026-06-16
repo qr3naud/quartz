@@ -77,10 +77,8 @@
     return hydrating;
   }
 
-  // Mirror the map onto every loaded tab's state, then persist. With the
-  // canvas open, debouncedSave -> saveTabs re-serializes the active tab (and
-  // reads the map back via serialize() below); without it, push the active
-  // tab's row directly so the stamp still reaches Supabase.
+  // Mirror the map onto every loaded tab's state, then persist all tab rows
+  // (see tabs.js persistSharedTabBlobs — merge-on-hydrate reads every tab).
   async function persist() {
     await ensureHydrated();
     const store = cb.tabStore;
@@ -89,11 +87,8 @@
       tab.state = tab.state || {};
       tab.state.stampsByTable = { ...map };
     }
-    const active = store.tabs.find((t) => t.id === store.activeId) || store.tabs[0];
-    if (cb.canvas && cb.debouncedSave) {
-      cb.debouncedSave();
-    } else if (cb.saveTabRow) {
-      cb.saveTabRow(active.id);
+    if (cb.persistSharedTabBlobs) {
+      await cb.persistSharedTabBlobs();
     }
   }
 
