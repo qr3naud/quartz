@@ -1346,18 +1346,14 @@
   }
 }
 
-/* Fill cell: fixed 22px side columns keep the % centered whether or not the
-   spotcheck / adjust icons are present on that row. */
+/* Fill cell: keep td as a table cell (not grid/flex) so vertical-align: middle
+   centers the % when ER chips wrap and stretch the row. Side icons are
+   absolutely positioned so they don't steal layout width from the value. */
 .cb-table-view-table td.col-fill {
   position: relative;
-  display: grid;
-  grid-template-columns: 22px 1fr 22px;
-  align-items: center;
 }
 
 .cb-fill-center {
-  grid-column: 2;
-  justify-self: center;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1365,8 +1361,10 @@
 
 /* "Spotcheck missing data" — left of the fill %; revealed on row hover. */
 .cb-fill-spotcheck {
-  grid-column: 1;
-  justify-self: center;
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1396,8 +1394,10 @@
 
 /* Adjusted-fill (exclude values) affordance — right of the fill %. */
 .cb-fill-adjust {
-  grid-column: 3;
-  justify-self: center;
+  position: absolute;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
   display: inline-flex;
   align-items: center;
   justify-content: center;
