@@ -159,7 +159,8 @@
   }
 
   // Filename-safe slug from the active tab name: lowercase, non-alphanumeric ->
-  // hyphen, collapse repeats, trim. Falls back to "scoping".
+  // hyphen, collapse repeats, trim. Falls back to "scoping". Used by package
+  // zip naming; scoping CSV/XLSX use resolveScopingExportFilename instead.
   function slugifyTabName(s) {
     const base = String(s || "")
       .toLowerCase()
@@ -175,7 +176,45 @@
     return active ? active.name || "" : "";
   }
 
-  function buildScopingCsvPayload() {
+  // Strip characters illegal in download filenames; collapse whitespace.
+  function sanitizeFilenamePart(s) {
+    return String(s || "")
+      .replace(/[\\/:*?"<>|]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  function exportDateYmd() {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  }
+
+  // Customer-facing scoping export name:
+  //   YYYY-MM-DD Quartz - Workbook Name - Tab Name.xlsx
+  // Workbook name comes from __cb.getWorkbookName (memoized API fetch); when
+  // unavailable we omit it: YYYY-MM-DD Quartz - Tab Name.xlsx
+  async function resolveScopingExportFilename(tabName, extension) {
+    const ext = String(extension || "xlsx").replace(/^\./, "");
+    const tab = sanitizeFilenamePart(tabName) || "Scoping";
+    const ids = typeof __cb.parseIdsFromUrl === "function" ? __cb.parseIdsFromUrl() : null;
+    const workbookId = __cb.currentWorkbookId ?? ids?.workbookId;
+    const workspaceId = ids?.workspaceId;
+    let workbookName = "";
+    if (__cb.getWorkbookName && workspaceId && workbookId) {
+      try {
+        workbookName = sanitizeFilenamePart(await __cb.getWorkbookName(workspaceId, workbookId));
+      } catch {
+        workbookName = "";
+      }
+    }
+    const date = exportDateYmd();
+    const parts = workbookName
+      ? [`${date} Quartz`, workbookName, tab]
+      : [`${date} Quartz`, tab];
+    return `${parts.join(" - ")}.${ext}`;
+  }
+
+  async function buildScopingCsvPayload() {
     const data =
       __cb.tableView && __cb.tableView.getExportData
         ? __cb.tableView.getExportData()
@@ -188,8 +227,7 @@
       columns.map((col) => csvEscape(row[col])).join(","),
     );
     const csv = [headerLine, ...bodyLines].join("\n");
-    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-    const filename = `clay-scoping-${slugifyTabName(activeTabName())}-${data.viewMode}-${stamp}.csv`;
+    const filename = await resolveScopingExportFilename(activeTabName(), "csv");
     return {
       text: csv,
       filename,
@@ -198,12 +236,12 @@
     };
   }
 
-  __cb.exportCurrentTableCsv = function exportCurrentTableCsv() {
+  __cb.exportCurrentTableCsv = async function exportCurrentTableCsv() {
     // Flush the live canvas into the active tab so getExportData() reads current
     // state (mirrors the GTME export flow).
     if (__cb.saveTabs) __cb.saveTabs();
 
-    const payload = buildScopingCsvPayload();
+    const payload = await buildScopingCsvPayload();
     if (!payload) {
       __cb.showOverlayToast?.(
         "Nothing to export \u2014 add data points to this tab first.",
@@ -265,8 +303,7 @@
       return;
     }
 
-    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-    const filename = `clay-scoping-${slugifyTabName(tabName)}-${data.viewMode}-${stamp}.xlsx`;
+    const filename = await resolveScopingExportFilename(tabName, "xlsx");
     downloadBlob(filename, blob);
 
     __cb.showOverlayToast?.(
@@ -428,7 +465,7 @@
 
     if (__cb.saveTabs) __cb.saveTabs();
 
-    const scoping = buildScopingCsvPayload();
+    const scoping = await buildScopingCsvPayload();
     if (!scoping) {
       __cb.showOverlayToast?.(
         "Nothing to export \u2014 add data points to this tab first.",
