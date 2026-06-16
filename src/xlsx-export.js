@@ -10,25 +10,22 @@
   // (vendor/exceljs.min.js -> window.ExcelJS). Consumes the section-grouped
   // model from __cb.tableView.getXlsxExportData() and renders one worksheet
   // per active tab with:
-  //   - a merged use-case title row per section
-  //   - column headers (Volume = coverage numerator; DP split credits/actions;
-  //     full ER credits/actions merged across merge runs; enrichments folded
-  //     with methodology; comments)
-  //   - a per-section Total row (DP columns summed per row; ER columns deduped
-  //     to one value per merge block)
+  //   - one merged use-case title row per top-level use case
+  //   - a single column-header row under that title
+  //   - optional darker inner-group divider rows (nested groups only)
+  //   - data rows with DP split credits/actions and merged ER credits/actions
+  //   - one Total row at the bottom of each use case (no per-group totals)
   //
   // Colors approximate the reference scoping doc (blue header, yellow metrics,
-  // grey labels, grey total). The flat CSV export (src/export.js) is unchanged.
+  // grey labels, darker group dividers, grey total). CSV export unchanged.
   // ==========================================================================
 
-  // ARGB fills (ExcelJS wants the leading FF alpha byte).
-  const FILL_TITLE = "FFCFE2F3"; // light blue — title + header rows
+  const FILL_TITLE = "FFCFE2F3"; // light blue — use-case title + column headers
   const FILL_METRIC = "FFFFF2CC"; // pale yellow — numeric/metric columns
   const FILL_LABEL = "FFEFEFEF"; // light grey — text/label columns
-  const FILL_TOTAL = "FFD9D9D9"; // medium grey — total row
+  const FILL_GROUP = "FFBFBFBF"; // darker grey — inner-group divider row
+  const FILL_TOTAL = "FFD9D9D9"; // medium grey — use-case total row
 
-  // Column spec, left-to-right. `kind` drives the data-cell fill; `merge` marks
-  // the three columns that collapse across an enrichment merge run.
   const COLS = [
     { key: "dataPoint", label: "Data point", width: 34, kind: "label" },
     { key: "volume", label: "Volume", width: 12, kind: "metric" },
@@ -50,9 +47,6 @@
   const THIN = { style: "thin", color: { argb: "FFBFBFBF" } };
   const BORDER_ALL = { top: THIN, left: THIN, bottom: THIN, right: THIN };
 
-  // Write a value into a cell as a real number when we have one, otherwise as
-  // text (e.g. "?" for unresolved subroutine cost, "" for blanks). Keeps Excel
-  // sums/formatting working on the cost columns.
   function setNumberOrText(cell, num, text) {
     if (num != null && Number.isFinite(num)) {
       cell.value = num;
@@ -68,65 +62,49 @@
     cell.alignment = { vertical: "top", wrapText: kind === "label" };
   }
 
-  // Render one section (title + header + rows + total) starting at the worksheet's
-  // current bottom. Returns nothing; mutates the worksheet.
-  function renderSection(ws, section, fallbackTitle) {
-    // --- Title row (merged across all columns) ---
-    const titleRow = ws.addRow(new Array(COL_COUNT).fill(""));
-    titleRow.getCell(1).value = section.title || fallbackTitle || "Scope";
-    ws.mergeCells(titleRow.number, 1, titleRow.number, COL_COUNT);
-    const titleCell = titleRow.getCell(1);
-    titleCell.font = { bold: true, size: 12 };
-    titleCell.alignment = { vertical: "middle", horizontal: "left" };
+  // Darker merged row labelling an inner group inside a use case.
+  function renderGroupDivider(ws, label) {
+    const row = ws.addRow(new Array(COL_COUNT).fill(""));
+    row.getCell(1).value = label;
+    ws.mergeCells(row.number, 1, row.number, COL_COUNT);
+    row.getCell(1).font = { bold: true };
+    row.getCell(1).alignment = { vertical: "middle", horizontal: "left" };
     for (let c = 1; c <= COL_COUNT; c++) {
-      const cell = titleRow.getCell(c);
-      cell.fill = solid(FILL_TITLE);
+      const cell = row.getCell(c);
+      cell.fill = solid(FILL_GROUP);
       cell.border = BORDER_ALL;
     }
-    titleRow.height = 20;
+    row.height = 18;
+    return row.number;
+  }
 
-    // --- Header row ---
-    const headerRow = ws.addRow(new Array(COL_COUNT).fill(""));
-    for (let c = 1; c <= COL_COUNT; c++) {
-      const cell = headerRow.getCell(c);
-      cell.value = COLS[c - 1].label;
-      cell.font = { bold: true };
-      cell.fill = solid(FILL_TITLE);
-      cell.border = BORDER_ALL;
-      cell.alignment = { vertical: "middle", wrapText: true };
+  function renderDataRow(ws, rec) {
+    const row = ws.addRow(new Array(COL_COUNT).fill(""));
+    row.getCell(1).value = rec.dataPoint || "";
+    setNumberOrText(row.getCell(2), rec.volumeNum, rec.volume);
+    setNumberOrText(row.getCell(3), rec.fillNum, rec.fillRate);
+    setNumberOrText(row.getCell(4), rec.dpCreditsNum, rec.dpCredits);
+    setNumberOrText(row.getCell(5), rec.dpActionsNum, rec.dpActions);
+    if (rec.mergeMode !== "skip") {
+      row.getCell(6).value = rec.enrichments || "";
+      setNumberOrText(row.getCell(7), rec.erCreditsNum, rec.erCredits);
+      setNumberOrText(row.getCell(8), rec.erActionsNum, rec.erActions);
     }
+    row.getCell(9).value = rec.comments || "";
+    for (let c = 1; c <= COL_COUNT; c++) {
+      styleDataCell(row.getCell(c), COLS[c - 1].kind);
+    }
+    return row.number;
+  }
 
-    // --- Data rows ---
-    const firstDataRowNum = headerRow.number + 1;
-    section.rows.forEach((rec) => {
-      const row = ws.addRow(new Array(COL_COUNT).fill(""));
-      // Per-column values.
-      row.getCell(1).value = rec.dataPoint || "";
-      setNumberOrText(row.getCell(2), rec.volumeNum, rec.volume);
-      setNumberOrText(row.getCell(3), rec.fillNum, rec.fillRate);
-      setNumberOrText(row.getCell(4), rec.dpCreditsNum, rec.dpCredits);
-      setNumberOrText(row.getCell(5), rec.dpActionsNum, rec.dpActions);
-      // Merge columns: only "first"/"single" hosts carry content; "skip"
-      // followers stay blank and get covered by the vertical merge below.
-      if (rec.mergeMode !== "skip") {
-        row.getCell(6).value = rec.enrichments || "";
-        setNumberOrText(row.getCell(7), rec.erCreditsNum, rec.erCredits);
-        setNumberOrText(row.getCell(8), rec.erActionsNum, rec.erActions);
-      }
-      row.getCell(9).value = rec.comments || "";
-
-      for (let c = 1; c <= COL_COUNT; c++) {
-        styleDataCell(row.getCell(c), COLS[c - 1].kind);
-      }
-    });
-
-    // --- Vertical merges for enrichment runs (Enrichments + ER cost cells) ---
+  // Vertical merges for enrichment runs within one block of rows.
+  function applyBlockMerges(ws, records, firstRowNum) {
     let idx = 0;
-    while (idx < section.rows.length) {
-      const rec = section.rows[idx];
+    while (idx < records.length) {
+      const rec = records[idx];
       const span = rec.mergeSpan || 1;
       if (rec.mergeMode === "first" && span > 1) {
-        const top = firstDataRowNum + idx;
+        const top = firstRowNum + idx;
         const bottom = top + span - 1;
         for (const col of COLS) {
           if (!col.merge) continue;
@@ -142,8 +120,51 @@
         idx += 1;
       }
     }
+  }
 
-    // --- Total row ---
+  // One use-case section: title + headers + blocks (group dividers + data) + total.
+  function renderSection(ws, section, fallbackTitle) {
+    const blocks = section.blocks && section.blocks.length > 0
+      ? section.blocks
+      : section.rows
+        ? [{ groupLabel: "", rows: section.rows }]
+        : [];
+
+    // --- Use-case title row ---
+    const titleRow = ws.addRow(new Array(COL_COUNT).fill(""));
+    titleRow.getCell(1).value = section.title || fallbackTitle || "Scope";
+    ws.mergeCells(titleRow.number, 1, titleRow.number, COL_COUNT);
+    titleRow.getCell(1).font = { bold: true, size: 12 };
+    titleRow.getCell(1).alignment = { vertical: "middle", horizontal: "left" };
+    for (let c = 1; c <= COL_COUNT; c++) {
+      const cell = titleRow.getCell(c);
+      cell.fill = solid(FILL_TITLE);
+      cell.border = BORDER_ALL;
+    }
+    titleRow.height = 20;
+
+    // --- Column header row (once per use case) ---
+    const headerRow = ws.addRow(new Array(COL_COUNT).fill(""));
+    for (let c = 1; c <= COL_COUNT; c++) {
+      const cell = headerRow.getCell(c);
+      cell.value = COLS[c - 1].label;
+      cell.font = { bold: true };
+      cell.fill = solid(FILL_TITLE);
+      cell.border = BORDER_ALL;
+      cell.alignment = { vertical: "middle", wrapText: true };
+    }
+
+    // --- Blocks: optional group divider, then data rows ---
+    for (const block of blocks) {
+      const records = block.rows || [];
+      if (records.length === 0) continue;
+      if (block.groupLabel) renderGroupDivider(ws, block.groupLabel);
+      const firstDataRowNum = ws.lastRow.number + 1;
+      for (const rec of records) renderDataRow(ws, rec);
+      applyBlockMerges(ws, records, firstDataRowNum);
+    }
+
+    // --- Use-case total row (once, at the bottom) ---
     const t = section.totals || {};
     const totalRow = ws.addRow(new Array(COL_COUNT).fill(""));
     totalRow.getCell(1).value = "Total";
@@ -158,11 +179,9 @@
       cell.border = BORDER_ALL;
     }
 
-    // --- Spacer row before the next section ---
     ws.addRow([]);
   }
 
-  // Build the styled workbook from the structured export model. Returns a Blob.
   __cb.buildScopingXlsxBlob = async function buildScopingXlsxBlob(data, tabName) {
     if (typeof window.ExcelJS === "undefined") {
       throw new Error("ExcelJS not loaded");
@@ -171,7 +190,6 @@
     wb.creator = "Quartz";
     wb.created = new Date();
 
-    // Worksheet name: sanitized tab name, Excel's 31-char limit, no []:*?/\.
     const safeName =
       String(tabName || "Scope")
         .replace(/[\[\]:*?/\\]/g, " ")
@@ -187,8 +205,7 @@
 
     const sections = (data && data.sections) || [];
     if (sections.length === 0) {
-      // Nothing scoped — still emit a header so the file isn't empty/confusing.
-      renderSection(ws, { title: tabName || "Scope", rows: [], totals: {} }, tabName);
+      renderSection(ws, { title: tabName || "Scope", blocks: [], totals: {} }, tabName);
     } else {
       for (const section of sections) renderSection(ws, section, tabName);
     }

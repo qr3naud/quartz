@@ -241,7 +241,12 @@
         ? __cb.tableView.getXlsxExportData()
         : null;
     const sectionRowCount = data
-      ? (data.sections || []).reduce((n, s) => n + (s.rows ? s.rows.length : 0), 0)
+      ? (data.sections || []).reduce(
+          (n, s) =>
+            n +
+            (s.blocks || []).reduce((bn, b) => bn + (b.rows ? b.rows.length : 0), 0),
+          0,
+        )
       : 0;
     if (!data || sectionRowCount === 0) {
       __cb.showOverlayToast?.(

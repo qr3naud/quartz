@@ -8629,9 +8629,9 @@
   // ---- Structured (XLSX) export ----
   //
   // The CSV export above is a flat row matrix. The XLSX export (src/xlsx-export.js)
-  // wants the same rows grouped into use-case SECTIONS so each one can render a
-  // merged title row, its own column headers, and a per-section Total row. Same
-  // row model and merge-run annotation as the CSV — only the shape differs.
+  // wants use-case SECTIONS: one title + header per top-level use case, optional
+  // darker inner-group divider rows for nested groups, and a single Total at the
+  // bottom of each use case (no per-group totals).
 
   // Volume = the coverage NUMERATOR only (no "/ total"): rows the DP is attempted
   // on (projected) or rows that ran (actual). Mirrors exportCoverageText's source
@@ -8704,52 +8704,71 @@
     };
   }
 
-  // Build one section: annotate merge runs (DP rows only, like render()), map to
-  // records, and roll up totals. DP totals sum every row; ER totals sum only the
-  // merge-run hosts ("first"/"single" carry erCreditsNum; "skip" rows are null),
-  // so a shared enrichment counts once.
-  function makeXlsxSection(rows, title) {
+  // Build records + totals for a set of raw rows (merge annotation runs per block).
+  function xlsxRecordsFromRows(rows) {
     annotateMergeRuns(rows.filter((r) => r.kind === "dp"));
-    const records = rows.map(xlsxRowRecord);
-    let dpCredits = 0;
-    let dpActions = 0;
-    let erCredits = 0;
-    let erActions = 0;
-    let dpCreditsUnknown = false;
-    let erCreditsUnknown = false;
-    for (const r of records) {
-      if (r.dpCreditsNum == null) dpCreditsUnknown = true;
-      else dpCredits += r.dpCreditsNum;
-      dpActions += r.dpActionsNum || 0;
-      if (r.erCreditsNum != null) erCredits += r.erCreditsNum;
-      else if (r.erCredits === "?") erCreditsUnknown = true;
-      if (r.erActionsNum != null) erActions += r.erActionsNum;
-    }
-    return {
-      title: title || "",
-      rows: records,
-      totals: { dpCredits, dpActions, erCredits, erActions, dpCreditsUnknown, erCreditsUnknown },
-    };
+    return rows.map(xlsxRowRecord);
   }
 
-  // Section-grouped export for the XLSX writer. Walk order mirrors
-  // buildExportData() exactly (imported-table groups -> canvas use cases with
-  // nested children -> "Other"). Empty sections are dropped.
+  function accumulateTotals(totals, records) {
+    for (const r of records) {
+      if (r.dpCreditsNum == null) totals.dpCreditsUnknown = true;
+      else totals.dpCredits += r.dpCreditsNum;
+      totals.dpActions += r.dpActionsNum || 0;
+      if (r.erCreditsNum != null) totals.erCredits += r.erCreditsNum;
+      else if (r.erCredits === "?") totals.erCreditsUnknown = true;
+      if (r.erActionsNum != null) totals.erActions += r.erActionsNum;
+    }
+  }
+
+  // One use-case section: a single title + header + optional inner-group divider
+  // rows, then one Total at the bottom (no per-group totals). `blocks` preserves
+  // render order — top-level rows first (no divider), then each nested group
+  // with its own darker label row.
+  function makeXlsxUseCase(title, blocks) {
+    const normalized = (blocks || []).filter((b) => b.rows && b.rows.length > 0);
+    const outBlocks = [];
+    const totals = {
+      dpCredits: 0,
+      dpActions: 0,
+      erCredits: 0,
+      erActions: 0,
+      dpCreditsUnknown: false,
+      erCreditsUnknown: false,
+    };
+    for (const block of normalized) {
+      const records = xlsxRecordsFromRows(block.rows);
+      accumulateTotals(totals, records);
+      outBlocks.push({
+        groupLabel: block.groupLabel || "",
+        rows: records,
+      });
+    }
+    return { title: title || "", blocks: outBlocks, totals };
+  }
+
+  // Section-grouped export for the XLSX writer. One section per top-level use
+  // case; nested canvas groups become darker divider rows inside that section.
   function buildXlsxExportData() {
     const { orphanErRows, groupSections, dpRows, tableGroups } = buildRows();
     const sections = [];
-    const pushSection = (rows, title) => {
-      if (!rows || rows.length === 0) return;
-      sections.push(makeXlsxSection(rows, title));
+    const pushUseCase = (title, blocks) => {
+      const section = makeXlsxUseCase(title, blocks);
+      if (section.blocks.length === 0) return;
+      sections.push(section);
     };
 
     for (const tg of tableGroups || []) {
-      const tableName = tg.tableName || "";
+      const blocks = [];
       for (const sub of tg.sections || []) {
-        const label = sub.groupName ? `${tableName} / ${sub.groupName}` : tableName;
-        pushSection(sub.rows, label);
+        if (sub.rows && sub.rows.length > 0) {
+          blocks.push({ groupLabel: sub.groupName || "", rows: sub.rows });
+        }
       }
-      pushSection(tg.rows, tableName);
+      if (tg.rows && tg.rows.length > 0) {
+        blocks.push({ groupLabel: "", rows: tg.rows });
+      }
+      pushUseCase(tg.tableName || "", blocks);
     }
 
     const topLevel = (groupSections || []).filter((s) => !s.parentId);
@@ -8766,19 +8785,25 @@
       );
     }
     for (const section of topLevel) {
-      pushSection(section.rows, section.groupName || "");
-      for (const child of childrenByParent.get(section.groupId) || []) {
-        const label = section.groupName
-          ? `${section.groupName} / ${child.groupName || ""}`
-          : child.groupName || "";
-        pushSection(child.rows, label);
+      const blocks = [];
+      if (section.rows && section.rows.length > 0) {
+        blocks.push({ groupLabel: "", rows: section.rows });
       }
+      for (const child of childrenByParent.get(section.groupId) || []) {
+        if (child.rows && child.rows.length > 0) {
+          blocks.push({ groupLabel: child.groupName || "", rows: child.rows });
+        }
+      }
+      pushUseCase(section.groupName || "", blocks);
     }
 
     const hasSectionsAbove =
       (groupSections || []).length > 0 || (tableGroups || []).length > 0;
     const otherLabel = hasSectionsAbove || orphanErRows.length > 0 ? "Other" : "";
-    pushSection([...dpRows, ...orphanErRows], otherLabel);
+    const otherRows = [...dpRows, ...orphanErRows];
+    if (otherRows.length > 0) {
+      pushUseCase(otherLabel, [{ groupLabel: "", rows: otherRows }]);
+    }
 
     return {
       viewMode: window.__cb && window.__cb.viewMode === "actual" ? "actual" : "projected",
