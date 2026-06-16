@@ -8626,6 +8626,166 @@
     };
   }
 
+  // ---- Structured (XLSX) export ----
+  //
+  // The CSV export above is a flat row matrix. The XLSX export (src/xlsx-export.js)
+  // wants the same rows grouped into use-case SECTIONS so each one can render a
+  // merged title row, its own column headers, and a per-section Total row. Same
+  // row model and merge-run annotation as the CSV — only the shape differs.
+
+  // Volume = the coverage NUMERATOR only (no "/ total"): rows the DP is attempted
+  // on (projected) or rows that ran (actual). Mirrors exportCoverageText's source
+  // fields but drops the denominator per the XLSX layout.
+  function exportVolumeText(coverage) {
+    const n = exportVolumeNumber(coverage);
+    return n == null ? "" : n.toLocaleString();
+  }
+
+  // Raw Volume numerator (or null) — lets the XLSX writer emit a real number.
+  function exportVolumeNumber(coverage) {
+    if (!coverage) return null;
+    if (coverage.mode === "projected") {
+      const rows = Number(coverage.rows) || 0;
+      return rows || null;
+    }
+    if (coverage.mode === "actual" && coverage.total) {
+      return Number(coverage.ran) || 0;
+    }
+    return null;
+  }
+
+  // Full per-row cost of a row's ENTIRE enrichment set (each chip carries its own
+  // view-mode-aware .cost from buildErChipData). Unlike the DP credit/action
+  // columns — which split an ER's cost across the DPs it feeds — these ER columns
+  // show the undivided enrichment cost, merged across a merge run.
+  function exportErCostTotals(ers) {
+    let credits = 0;
+    let actions = 0;
+    let creditsUnknown = false;
+    for (const er of ers || []) {
+      const c = er.cost || {};
+      credits += Number(c.credits) || 0;
+      actions += Number(c.actions) || 0;
+      if (c.creditsUnknown) creditsUnknown = true;
+    }
+    return { credits, actions, creditsUnknown };
+  }
+
+  // One structured record per visible row. DP columns hold the split/averaged
+  // per-row cost (always present); ER columns hold the full enrichment-set cost
+  // and are omitted on merge-run followers (mergeMode "skip") so the writer can
+  // rowspan-merge them. *Num fields carry raw numbers for the Total row math.
+  function xlsxRowRecord(row) {
+    const isOrphan = row.kind === "orphan-er";
+    const isSkip = row.mergeMode === "skip";
+    const erTotals = isSkip ? null : exportErCostTotals(row.ers);
+    return {
+      kind: row.kind,
+      dataPoint: isOrphan ? "" : row.name || "",
+      volume: exportVolumeText(row.coverageFill && row.coverageFill.coverage),
+      volumeNum: exportVolumeNumber(row.coverageFill && row.coverageFill.coverage),
+      fillRate: exportFillText(row.coverageFill && row.coverageFill.fill),
+      fillNum:
+        row.coverageFill && row.coverageFill.fill && row.coverageFill.fill.pct != null
+          ? Number(row.coverageFill.fill.pct)
+          : null,
+      dpCredits: row.creditsUnknown ? "?" : formatNumber(row.credits),
+      dpActions: formatNumber(row.actions),
+      dpCreditsNum: row.creditsUnknown ? null : Number(row.credits) || 0,
+      dpActionsNum: Number(row.actions) || 0,
+      enrichments: isSkip ? "" : exportEnrichmentsText(row.ers),
+      erCredits: erTotals ? (erTotals.creditsUnknown ? "?" : formatNumber(erTotals.credits)) : "",
+      erActions: erTotals ? formatNumber(erTotals.actions) : "",
+      erCreditsNum: erTotals && !erTotals.creditsUnknown ? erTotals.credits : null,
+      erActionsNum: erTotals ? erTotals.actions : null,
+      comments: exportCommentsText(row),
+      mergeMode: row.mergeMode || "single",
+      mergeSpan: row.mergeSpan || 1,
+    };
+  }
+
+  // Build one section: annotate merge runs (DP rows only, like render()), map to
+  // records, and roll up totals. DP totals sum every row; ER totals sum only the
+  // merge-run hosts ("first"/"single" carry erCreditsNum; "skip" rows are null),
+  // so a shared enrichment counts once.
+  function makeXlsxSection(rows, title) {
+    annotateMergeRuns(rows.filter((r) => r.kind === "dp"));
+    const records = rows.map(xlsxRowRecord);
+    let dpCredits = 0;
+    let dpActions = 0;
+    let erCredits = 0;
+    let erActions = 0;
+    let dpCreditsUnknown = false;
+    let erCreditsUnknown = false;
+    for (const r of records) {
+      if (r.dpCreditsNum == null) dpCreditsUnknown = true;
+      else dpCredits += r.dpCreditsNum;
+      dpActions += r.dpActionsNum || 0;
+      if (r.erCreditsNum != null) erCredits += r.erCreditsNum;
+      else if (r.erCredits === "?") erCreditsUnknown = true;
+      if (r.erActionsNum != null) erActions += r.erActionsNum;
+    }
+    return {
+      title: title || "",
+      rows: records,
+      totals: { dpCredits, dpActions, erCredits, erActions, dpCreditsUnknown, erCreditsUnknown },
+    };
+  }
+
+  // Section-grouped export for the XLSX writer. Walk order mirrors
+  // buildExportData() exactly (imported-table groups -> canvas use cases with
+  // nested children -> "Other"). Empty sections are dropped.
+  function buildXlsxExportData() {
+    const { orphanErRows, groupSections, dpRows, tableGroups } = buildRows();
+    const sections = [];
+    const pushSection = (rows, title) => {
+      if (!rows || rows.length === 0) return;
+      sections.push(makeXlsxSection(rows, title));
+    };
+
+    for (const tg of tableGroups || []) {
+      const tableName = tg.tableName || "";
+      for (const sub of tg.sections || []) {
+        const label = sub.groupName ? `${tableName} / ${sub.groupName}` : tableName;
+        pushSection(sub.rows, label);
+      }
+      pushSection(tg.rows, tableName);
+    }
+
+    const topLevel = (groupSections || []).filter((s) => !s.parentId);
+    const childrenByParent = new Map();
+    for (const s of groupSections || []) {
+      if (s.parentId == null) continue;
+      const key = `g-${s.parentId}`;
+      if (!childrenByParent.has(key)) childrenByParent.set(key, []);
+      childrenByParent.get(key).push(s);
+    }
+    for (const list of childrenByParent.values()) {
+      list.sort((a, b) =>
+        compareByTableOrderThenY(a.minTableOrder, a.minY, b.minTableOrder, b.minY),
+      );
+    }
+    for (const section of topLevel) {
+      pushSection(section.rows, section.groupName || "");
+      for (const child of childrenByParent.get(section.groupId) || []) {
+        const label = section.groupName
+          ? `${section.groupName} / ${child.groupName || ""}`
+          : child.groupName || "";
+        pushSection(child.rows, label);
+      }
+    }
+
+    const hasSectionsAbove =
+      (groupSections || []).length > 0 || (tableGroups || []).length > 0;
+    const otherLabel = hasSectionsAbove || orphanErRows.length > 0 ? "Other" : "";
+    pushSection([...dpRows, ...orphanErRows], otherLabel);
+
+    return {
+      viewMode: window.__cb && window.__cb.viewMode === "actual" ? "actual" : "projected",
+      sections,
+    };
+  }
+
   // ---- Public API ----
 
   __cb.tableView = {
@@ -8733,6 +8893,10 @@
     // even when the table isn't mounted, since buildRows() reads the model.
     getExportData() {
       return buildExportData();
+    },
+    // Section-grouped variant for the styled XLSX export (src/xlsx-export.js).
+    getXlsxExportData() {
+      return buildXlsxExportData();
     },
   };
 })();

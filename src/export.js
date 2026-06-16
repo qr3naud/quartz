@@ -18,6 +18,7 @@
   // at the top of openExportMenu.
   const EXPORT_OPTIONS = [
     { id: "csv",      label: "Export to CSV",             enabled: true },
+    { id: "xlsx",     label: "Export to Excel",           enabled: true },
     { id: "package",  label: "Package CSVs",              enabled: true },
     { id: "gtme",     label: "Export to GTME Calculator", enabled: true,  feature: "gtme_export" },
     { id: "dealdesk", label: "Submit to deal desk",       enabled: true,  feature: "gtme_export", ownerOnly: true },
@@ -84,6 +85,7 @@
           if (opt.id === "gtme") __cb.openGtmeExportModal();
           else if (opt.id === "dealdesk" && __cb.openDealDeskModal) __cb.openDealDeskModal();
           else if (opt.id === "csv") __cb.exportCurrentTableCsv();
+          else if (opt.id === "xlsx") __cb.exportCurrentTableXlsx();
           else if (opt.id === "package") __cb.packageScopeCsvs();
           else if (opt.id === "share" && __cb.openShareDialog) __cb.openShareDialog();
         });
@@ -214,6 +216,57 @@
     __cb.showOverlayToast?.(
       `CSV downloaded \u2014 ${payload.viewMode} view, ${payload.rowCount} ${
         payload.rowCount === 1 ? "row" : "rows"
+      }.`,
+    );
+  };
+
+  // ==========================================================================
+  // EXPORT TO EXCEL (.xlsx)
+  //
+  // Styled, section-grouped workbook for the active tab. Reuses the table's
+  // section model (__cb.tableView.getXlsxExportData()) and hands it to the
+  // ExcelJS writer in src/xlsx-export.js. Available to every export user.
+  // ==========================================================================
+
+  __cb.exportCurrentTableXlsx = async function exportCurrentTableXlsx() {
+    if (__cb.saveTabs) __cb.saveTabs();
+
+    if (typeof __cb.buildScopingXlsxBlob !== "function") {
+      __cb.showOverlayToast?.("Excel export unavailable \u2014 ExcelJS not loaded.");
+      return;
+    }
+
+    const data =
+      __cb.tableView && __cb.tableView.getXlsxExportData
+        ? __cb.tableView.getXlsxExportData()
+        : null;
+    const sectionRowCount = data
+      ? (data.sections || []).reduce((n, s) => n + (s.rows ? s.rows.length : 0), 0)
+      : 0;
+    if (!data || sectionRowCount === 0) {
+      __cb.showOverlayToast?.(
+        "Nothing to export \u2014 add data points to this tab first.",
+      );
+      return;
+    }
+
+    const tabName = activeTabName();
+    let blob;
+    try {
+      blob = await __cb.buildScopingXlsxBlob(data, tabName);
+    } catch (err) {
+      console.warn("[Clay Scoping] Excel export failed:", err);
+      __cb.showOverlayToast?.("Excel export failed \u2014 see console for details.");
+      return;
+    }
+
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+    const filename = `clay-scoping-${slugifyTabName(tabName)}-${data.viewMode}-${stamp}.xlsx`;
+    downloadBlob(filename, blob);
+
+    __cb.showOverlayToast?.(
+      `Excel downloaded \u2014 ${data.viewMode} view, ${sectionRowCount} ${
+        sectionRowCount === 1 ? "row" : "rows"
       }.`,
     );
   };
