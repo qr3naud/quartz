@@ -1450,7 +1450,7 @@
 .cb-fill-excl-body {
   flex: 1;
   overflow-y: auto;
-  padding: 12px 16px;
+  padding: 12px 16px 0;
 }
 
 .cb-fill-excl-title {
@@ -1607,26 +1607,17 @@
   color: #6b7280;
   font-size: 11.5px;
   line-height: 1.35;
-  min-height: 16px;
-  margin-top: 8px;
+  margin-top: 6px;
 }
 
-/* Popover footer: classic modal bar, slightly tighter padding at this width. */
+/* Popover footer: classic modal bar, flush against body content. */
 .cb-fill-excl-footer {
-  flex-direction: column;
-  align-items: stretch;
-  gap: 10px;
-  padding: 12px 16px;
+  padding: 10px 16px;
   border-radius: 0 0 10px 10px;
 }
 
-.cb-fill-excl-footer-hint {
-  line-height: 1.35;
-}
-
 .cb-fill-excl-footer .cb-modal-footer-actions {
-  margin-left: 0;
-  justify-content: flex-end;
+  margin-left: auto;
 }
 
 /* ---- ER chips ---- */

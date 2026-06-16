@@ -3298,7 +3298,7 @@
     const sub = document.createElement("div");
     sub.className = "cb-fill-excl-sub";
     sub.textContent =
-      "Exclude placeholder values that Clay stored but aren\u2019t real output \u2014 blank cells, false, 0, and similar.";
+      "Exclude placeholder values that aren\u2019t real output \u2014 blank cells, false, 0, and similar.";
     header.appendChild(title);
     header.appendChild(sub);
     pop.appendChild(header);
@@ -3498,9 +3498,6 @@
     // Footer: shared modal scheme (tinted bar + divider).
     const footer = document.createElement("div");
     footer.className = "cb-modal-footer cb-fill-excl-footer";
-    const footerHint = document.createElement("div");
-    footerHint.className = "cb-export-modal-footer-hint cb-fill-excl-footer-hint";
-    footerHint.textContent = "Display only \u2014 doesn\u2019t change coverage or cost.";
     const footerActions = document.createElement("div");
     footerActions.className = "cb-modal-footer-actions";
     const clearBtn = document.createElement("button");
@@ -3522,7 +3519,6 @@
     });
     footerActions.appendChild(clearBtn);
     footerActions.appendChild(applyBtn);
-    footer.appendChild(footerHint);
     footer.appendChild(footerActions);
     pop.appendChild(footer);
 
