@@ -25,6 +25,9 @@
   const FILL_LABEL = "FFEFEFEF"; // light grey — text/label columns
   const FILL_GROUP = "FFBFBFBF"; // darker grey — inner-group divider row
   const FILL_TOTAL = "FFD9D9D9"; // medium grey — use-case total row
+  const FILL_TABLE_HEADER = "FFD9EAD3"; // light green — Clay table column headers
+  const TABLE_ROW_HEIGHT = 15;
+  const TABLE_HEADER_HEIGHT = 18;
 
   const COLS = [
     { key: "dataPoint", label: "Data point", width: 34, kind: "label" },
@@ -182,19 +185,83 @@
     ws.addRow([]);
   }
 
-  __cb.buildScopingXlsxBlob = async function buildScopingXlsxBlob(data, tabName) {
-    if (typeof window.ExcelJS === "undefined") {
-      throw new Error("ExcelJS not loaded");
-    }
-    const wb = new window.ExcelJS.Workbook();
-    wb.creator = "Quartz";
-    wb.created = new Date();
-
-    const safeName =
-      String(tabName || "Scope")
+  // Excel sheet names: max 31 chars, no []:*?/\; dedupe within one workbook.
+  function sanitizeSheetName(name, usedNames) {
+    let base =
+      String(name || "Sheet")
         .replace(/[\[\]:*?/\\]/g, " ")
+        .replace(/\s+/g, " ")
         .trim()
-        .slice(0, 31) || "Scope";
+        .slice(0, 31) || "Sheet";
+    if (!usedNames || !usedNames.has(base)) {
+      usedNames?.add(base);
+      return base;
+    }
+    for (let n = 2; n < 100; n++) {
+      const suffix = ` (${n})`;
+      const candidate = base.slice(0, 31 - suffix.length) + suffix;
+      if (!usedNames.has(candidate)) {
+        usedNames.add(candidate);
+        return candidate;
+      }
+    }
+    const fallback = `Sheet ${usedNames.size + 1}`.slice(0, 31);
+    usedNames.add(fallback);
+    return fallback;
+  }
+
+  // RFC4180-ish CSV parser for Clay table export blobs (quoted fields, escapes).
+  function parseCsvText(text) {
+    const rows = [];
+    let row = [];
+    let field = "";
+    let inQuotes = false;
+    const s = String(text || "").replace(/^\uFEFF/, "");
+
+    for (let i = 0; i < s.length; i++) {
+      const ch = s[i];
+      if (inQuotes) {
+        if (ch === '"') {
+          if (s[i + 1] === '"') {
+            field += '"';
+            i++;
+          } else {
+            inQuotes = false;
+          }
+        } else {
+          field += ch;
+        }
+        continue;
+      }
+      if (ch === '"') {
+        inQuotes = true;
+      } else if (ch === ",") {
+        row.push(field);
+        field = "";
+      } else if (ch === "\r") {
+        if (s[i + 1] === "\n") i++;
+        row.push(field);
+        rows.push(row);
+        row = [];
+        field = "";
+      } else if (ch === "\n") {
+        row.push(field);
+        rows.push(row);
+        row = [];
+        field = "";
+      } else {
+        field += ch;
+      }
+    }
+    if (field.length > 0 || row.length > 0) {
+      row.push(field);
+      rows.push(row);
+    }
+    return rows;
+  }
+
+  function addScopingSheet(wb, data, tabName, usedNames) {
+    const safeName = sanitizeSheetName(tabName || "Scope", usedNames);
     const ws = wb.addWorksheet(safeName, {
       views: [{ state: "frozen", ySplit: 0 }],
     });
@@ -209,10 +276,84 @@
     } else {
       for (const section of sections) renderSection(ws, section, tabName);
     }
+    return ws;
+  }
 
+  function addPlainCsvSheet(wb, sheetName, csvText, usedNames) {
+    const safeName = sanitizeSheetName(sheetName, usedNames);
+    const ws = wb.addWorksheet(safeName);
+    const rows = parseCsvText(csvText);
+    if (rows.length === 0) return ws;
+
+    ws.addRows(rows);
+    const colCount = rows.reduce((max, r) => Math.max(max, r.length), 0);
+
+    const header = ws.getRow(1);
+    header.height = TABLE_HEADER_HEIGHT;
+    for (let c = 1; c <= colCount; c++) {
+      const cell = header.getCell(c);
+      const label = String(cell.value ?? "");
+      cell.font = { bold: true };
+      cell.fill = solid(FILL_TABLE_HEADER);
+      cell.alignment = { vertical: "middle", horizontal: "left", wrapText: false };
+      ws.getColumn(c).width = Math.min(48, Math.max(10, label.length + 2));
+    }
+
+    for (let r = 2; r <= rows.length; r++) {
+      const row = ws.getRow(r);
+      row.height = TABLE_ROW_HEIGHT;
+      for (let c = 1; c <= colCount; c++) {
+        row.getCell(c).alignment = {
+          vertical: "middle",
+          horizontal: "left",
+          wrapText: false,
+        };
+      }
+    }
+
+    ws.views = [{ state: "frozen", ySplit: 1 }];
+    return ws;
+  }
+
+  async function workbookToBlob(wb) {
     const buffer = await wb.xlsx.writeBuffer();
     return new Blob([buffer], {
       type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     });
+  }
+
+  __cb.buildScopingXlsxBlob = async function buildScopingXlsxBlob(data, tabName) {
+    if (typeof window.ExcelJS === "undefined") {
+      throw new Error("ExcelJS not loaded");
+    }
+    const wb = new window.ExcelJS.Workbook();
+    wb.creator = "Quartz";
+    wb.created = new Date();
+    addScopingSheet(wb, data, tabName, new Set());
+    return workbookToBlob(wb);
+  };
+
+  // Multi-tab package: styled scoping sheet + plain Clay table CSV sheets.
+  __cb.buildPackageXlsxBlob = async function buildPackageXlsxBlob({
+    scopingData,
+    tabName,
+    tables,
+  }) {
+    if (typeof window.ExcelJS === "undefined") {
+      throw new Error("ExcelJS not loaded");
+    }
+    const wb = new window.ExcelJS.Workbook();
+    wb.creator = "Quartz";
+    wb.created = new Date();
+
+    const usedNames = new Set();
+    addScopingSheet(wb, scopingData, tabName, usedNames);
+
+    for (const table of tables || []) {
+      if (!table?.csvText) continue;
+      addPlainCsvSheet(wb, table.name || "Table", table.csvText, usedNames);
+    }
+
+    return workbookToBlob(wb);
   };
 })();

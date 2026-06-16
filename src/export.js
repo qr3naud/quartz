@@ -19,7 +19,8 @@
   const EXPORT_OPTIONS = [
     { id: "csv",      label: "Export to CSV",             enabled: true },
     { id: "xlsx",     label: "Export to Excel",           enabled: true },
-    { id: "package",  label: "Package CSVs",              enabled: true },
+    { id: "package",       label: "Package CSVs",              enabled: true },
+    { id: "package-xlsx",  label: "Package Excel",             enabled: true },
     { id: "gtme",     label: "Export to GTME Calculator", enabled: true,  feature: "gtme_export" },
     { id: "dealdesk", label: "Submit to deal desk",       enabled: true,  feature: "gtme_export", ownerOnly: true },
     { id: "share",    label: "Share scope link",          enabled: true,  feature: "share_links", ownerOnly: true },
@@ -87,6 +88,7 @@
           else if (opt.id === "csv") __cb.exportCurrentTableCsv();
           else if (opt.id === "xlsx") __cb.exportCurrentTableXlsx();
           else if (opt.id === "package") __cb.packageScopeCsvs();
+          else if (opt.id === "package-xlsx") __cb.packageScopeXlsx();
           else if (opt.id === "share" && __cb.openShareDialog) __cb.openShareDialog();
         });
       }
@@ -193,9 +195,10 @@
   //   YYYY-MM-DD Quartz - Workbook Name - Tab Name.xlsx
   // Workbook name comes from __cb.getWorkbookName (memoized API fetch); when
   // unavailable we omit it: YYYY-MM-DD Quartz - Tab Name.xlsx
-  async function resolveScopingExportFilename(tabName, extension) {
+  async function resolveScopingExportFilename(tabName, extension, nameSuffix) {
     const ext = String(extension || "xlsx").replace(/^\./, "");
-    const tab = sanitizeFilenamePart(tabName) || "Scoping";
+    const suffix = nameSuffix ? ` ${String(nameSuffix).trim()}` : "";
+    const tab = (sanitizeFilenamePart(tabName) || "Scoping") + suffix;
     const ids = typeof __cb.parseIdsFromUrl === "function" ? __cb.parseIdsFromUrl() : null;
     const workbookId = __cb.currentWorkbookId ?? ids?.workbookId;
     const workspaceId = ids?.workspaceId;
@@ -212,6 +215,23 @@
       ? [`${date} Quartz`, workbookName, tab]
       : [`${date} Quartz`, tab];
     return `${parts.join(" - ")}.${ext}`;
+  }
+
+  // Package Excel download: Clay <> [Workspace Name] Quartz Scoping Sheet.xlsx
+  async function resolvePackageExportFilename() {
+    const ids = typeof __cb.parseIdsFromUrl === "function" ? __cb.parseIdsFromUrl() : null;
+    const workspaceId = ids?.workspaceId;
+    let workspaceName = "";
+    if (__cb.getWorkspaceMeta && workspaceId) {
+      try {
+        const meta = await __cb.getWorkspaceMeta(workspaceId);
+        workspaceName = sanitizeFilenamePart(meta?.name);
+      } catch {
+        workspaceName = "";
+      }
+    }
+    const namePart = workspaceName ? `${workspaceName} ` : "";
+    return `Clay <> ${namePart}Quartz Scoping Sheet.xlsx`;
   }
 
   async function buildScopingCsvPayload() {
@@ -534,6 +554,108 @@
       parts.push(`${tableFailed} table export${tableFailed === 1 ? "" : "s"} failed`);
     }
     __cb.showOverlayToast?.(`Downloaded package \u2014 ${parts.join(", ")}.`);
+  };
+
+  // ==========================================================================
+  // PACKAGE EXCEL (.xlsx)
+  //
+  // One workbook: styled scoping tab (same as Export to Excel) plus one plain
+  // sheet per imported Clay table (CSV → rows). Sibling to Package CSVs while
+  // testing; may replace the zip flow after approval.
+  // ==========================================================================
+
+  __cb.packageScopeXlsx = async function packageScopeXlsx() {
+    if (typeof __cb.buildPackageXlsxBlob !== "function") {
+      __cb.showOverlayToast?.("Package Excel unavailable \u2014 ExcelJS not loaded.");
+      return;
+    }
+
+    if (__cb.saveTabs) __cb.saveTabs();
+
+    const scopingData =
+      __cb.tableView && __cb.tableView.getXlsxExportData
+        ? __cb.tableView.getXlsxExportData()
+        : null;
+    const sectionRowCount = scopingData
+      ? (scopingData.sections || []).reduce(
+          (n, s) =>
+            n +
+            (s.blocks || []).reduce((bn, b) => bn + (b.rows ? b.rows.length : 0), 0),
+          0,
+        )
+      : 0;
+    if (!scopingData || sectionRowCount === 0) {
+      __cb.showOverlayToast?.(
+        "Nothing to export \u2014 add data points to this tab first.",
+      );
+      return;
+    }
+
+    const tabName = activeTabName();
+    const ids = __cb.parseIdsFromUrl?.();
+    const workbookId = __cb.currentWorkbookId ?? ids?.workbookId;
+    const underlying = collectUnderlyingTables();
+    if (underlying.length && workbookId) {
+      await resolveViewIds(underlying, workbookId);
+    }
+
+    const totalSheets = 1 + underlying.length;
+    __cb.showOverlayToast?.(
+      underlying.length
+        ? `Building Excel package (${totalSheets} sheets)\u2026`
+        : "Building Excel package (scoping sheet only)\u2026",
+    );
+
+    const tableSheets = [];
+    let tableSuccess = 0;
+    let tableFailed = 0;
+
+    for (let i = 0; i < underlying.length; i++) {
+      const entry = underlying[i];
+      __cb.showOverlayToast?.(
+        `Exporting table ${i + 1}/${underlying.length}: ${entry.name}\u2026`,
+      );
+      try {
+        const { blob } = await fetchClayTableCsv(entry);
+        const csvText = await blob.text();
+        tableSheets.push({ name: entry.name, csvText });
+        tableSuccess++;
+      } catch (err) {
+        console.warn(
+          "[Clay Scoping] Package Excel table export failed:",
+          entry.tableId,
+          err,
+        );
+        tableFailed++;
+      }
+    }
+
+    let packageBlob;
+    try {
+      packageBlob = await __cb.buildPackageXlsxBlob({
+        scopingData,
+        tabName,
+        tables: tableSheets,
+      });
+    } catch (err) {
+      console.warn("[Clay Scoping] Package Excel build failed:", err);
+      __cb.showOverlayToast?.("Package Excel failed \u2014 see console for details.");
+      return;
+    }
+
+    const filename = await resolvePackageExportFilename();
+    downloadBlob(filename, packageBlob);
+
+    const parts = ["scoping sheet"];
+    if (tableSuccess) {
+      parts.push(
+        `${tableSuccess} table sheet${tableSuccess === 1 ? "" : "s"}`,
+      );
+    }
+    if (tableFailed) {
+      parts.push(`${tableFailed} table export${tableFailed === 1 ? "" : "s"} failed`);
+    }
+    __cb.showOverlayToast?.(`Downloaded Excel package \u2014 ${parts.join(", ")}.`);
   };
 
   // ==========================================================================
