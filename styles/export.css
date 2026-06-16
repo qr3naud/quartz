@@ -56,6 +56,12 @@
   opacity: 0.65;
 }
 
+/* Divider between primary menu rows and maintainer flyouts (export + more menus). */
+.cb-export-menu-divider {
+  margin: 4px 8px;
+  border-top: 1px solid #f3f4f6;
+}
+
 /* ==========================================================================
    MODAL — full-viewport backdrop with a centered card
    ========================================================================== */

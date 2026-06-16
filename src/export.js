@@ -5,44 +5,171 @@
 
   let menuEl = null;
   let menuBackdrop = null;
+  // Left-flyout submenus (Admin, Archived) — torn down in closeExportMenu.
+  let exportSubmenuEls = [];
 
-  // Export options the menu surfaces. Each row has a handler in
-  // openExportMenu's click switch below; new options drop in as a single
-  // line here plus a branch there.
-  //
-  // `feature` (optional): name of the feature flag that must be present in
-  // the JWT for the row to render. Options without a `feature` field show
-  // for everyone. `ownerOnly` (optional): when true the row only renders for
-  // the maintainer (the signed `is_admin` claim, __cb.isAdmin) — a UX gate
-  // while these surfaces are still being iterated on. The runtime filter sits
-  // at the top of openExportMenu.
-  const EXPORT_OPTIONS = [
-    { id: "csv",      label: "Export to CSV",             enabled: true },
-    { id: "xlsx",     label: "Export to Excel",           enabled: true },
-    { id: "package",       label: "Package CSVs",              enabled: true },
-    { id: "package-xlsx",  label: "Package Excel",             enabled: true },
-    { id: "gtme",     label: "Export to GTME Calculator", enabled: true,  feature: "gtme_export" },
-    { id: "dealdesk", label: "Submit to deal desk",       enabled: true,  feature: "gtme_export", ownerOnly: true },
-    { id: "share",    label: "Share scope link",          enabled: true,  feature: "share_links", ownerOnly: true },
-    // "Import Inspector" (formerly "Export as JSON") moved to the three-dots
-    // ("more") menu — see __cb.openMoreMenu in src/overlay.js.
-  ];
+  const CHEVRON_LEFT_ICON_SVG =
+    '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" ' +
+    'fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" ' +
+    'stroke-linejoin="round" aria-hidden="true"><polyline points="15 18 9 12 15 6"/></svg>';
+
+  const GTME_ICON_SVG =
+    '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" ' +
+    'fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" ' +
+    'stroke-linejoin="round" aria-hidden="true">' +
+    '<rect x="4" y="2" width="16" height="20" rx="2"/>' +
+    '<line x1="8" y1="6" x2="16" y2="6"/><line x1="8" y1="10" x2="10" y2="10"/>' +
+    '<line x1="14" y1="10" x2="16" y2="10"/><line x1="8" y1="14" x2="10" y2="14"/>' +
+    '<line x1="14" y1="14" x2="16" y2="14"/><line x1="8" y1="18" x2="16" y2="18"/></svg>';
+
+  const CSV_ICON_SVG =
+    '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" ' +
+    'fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" ' +
+    'stroke-linejoin="round" aria-hidden="true">' +
+    '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>' +
+    '<polyline points="14 2 14 8 20 8"/></svg>';
+
+  const DEAL_DESK_ICON_SVG =
+    '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" ' +
+    'fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" ' +
+    'stroke-linejoin="round" aria-hidden="true">' +
+    '<rect x="2" y="7" width="20" height="14" rx="2" ry="2"/>' +
+    '<path d="M16 7V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2"/></svg>';
+
+  const LINK_ICON_SVG =
+    '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" ' +
+    'fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" ' +
+    'stroke-linejoin="round" aria-hidden="true">' +
+    '<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>' +
+    '<path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>';
+
+  const PACKAGE_ICON_SVG =
+    '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" ' +
+    'fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" ' +
+    'stroke-linejoin="round" aria-hidden="true">' +
+    '<path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>' +
+    '<polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>';
 
   // ---- Menu ----
+  //
+  // Layout (top → bottom):
+  //   • Internal (@clay.com): Export to GTME Calculator (gtme_export flag),
+  //     Export to Excel (scoping sheet; auto-includes imported Clay tables).
+  //   • Maintainer (__cb.isAdmin): Admin ▶ (Deal Desk, Generate Link) and
+  //     Archived ▶ (Export CSV, Package CSVs) — same left-flyout pattern as
+  //     the More menu in src/overlay.js.
+  // "Import Inspector" lives in the More menu — see __cb.openMoreMenu.
 
   function closeExportMenu() {
     if (menuEl) { menuEl.remove(); menuEl = null; }
     if (menuBackdrop) { menuBackdrop.remove(); menuBackdrop = null; }
+    for (const el of exportSubmenuEls) el.remove();
+    exportSubmenuEls = [];
   }
 
   __cb.closeExportMenu = closeExportMenu;
 
+  function appendExportMenuDivider() {
+    const div = document.createElement("div");
+    div.className = "cb-export-menu-divider";
+    div.setAttribute("role", "separator");
+    menuEl.appendChild(div);
+  }
+
+  function appendExportAction(opts) {
+    const item = document.createElement("button");
+    item.type = "button";
+    item.className = "cb-export-menu-option cb-more-menu-option";
+    if (opts.title) item.title = opts.title;
+    item.innerHTML =
+      `<span class="cb-more-menu-icon">${opts.icon || ""}</span>` +
+      `<span class="cb-more-menu-label">${opts.label}</span>`;
+    item.addEventListener("click", (evt) => {
+      evt.stopPropagation();
+      closeExportMenu();
+      opts.onClick();
+    });
+    menuEl.appendChild(item);
+    return item;
+  }
+
+  // Left-opening flyout submenu — mirrors buildMoreSubmenu in src/overlay.js.
+  function buildExportSubmenu(opts) {
+    const row = document.createElement("button");
+    row.type = "button";
+    row.className = "cb-export-menu-option cb-more-menu-option cb-more-menu-has-submenu";
+    if (opts.title) row.title = opts.title;
+    row.innerHTML =
+      `<span class="cb-more-menu-icon">${CHEVRON_LEFT_ICON_SVG}</span>` +
+      `<span class="cb-more-menu-label">${opts.label}</span>`;
+
+    const submenu = document.createElement("div");
+    submenu.className = "cb-export-menu cb-more-menu cb-more-submenu";
+    submenu.style.display = "none";
+    submenu.addEventListener("mousedown", (evt) => evt.stopPropagation());
+
+    for (const item of opts.items || []) {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "cb-export-menu-option cb-more-menu-option";
+      if (item.title) b.title = item.title;
+      b.innerHTML =
+        `<span class="cb-more-menu-icon">${item.icon || ""}</span>` +
+        `<span class="cb-more-menu-label">${item.label}</span>`;
+      b.addEventListener("click", (evt) => {
+        evt.stopPropagation();
+        closeExportMenu();
+        item.onClick();
+      });
+      submenu.appendChild(b);
+    }
+
+    let hideTimer = null;
+    const position = () => {
+      const r = row.getBoundingClientRect();
+      submenu.style.position = "fixed";
+      submenu.style.top = r.top + "px";
+      submenu.style.right = Math.max(8, window.innerWidth - r.left + 6) + "px";
+      submenu.style.zIndex = "9999999";
+    };
+    const show = () => {
+      clearTimeout(hideTimer);
+      for (const other of exportSubmenuEls) {
+        if (other !== submenu && other._cbForceHide) other._cbForceHide();
+      }
+      position();
+      submenu.style.display = "block";
+      row.classList.add("cb-more-menu-option-active");
+    };
+    const hide = () => {
+      hideTimer = setTimeout(() => {
+        submenu.style.display = "none";
+        row.classList.remove("cb-more-menu-option-active");
+      }, 160);
+    };
+    submenu._cbForceHide = () => {
+      clearTimeout(hideTimer);
+      submenu.style.display = "none";
+      row.classList.remove("cb-more-menu-option-active");
+    };
+    row.addEventListener("mouseenter", show);
+    row.addEventListener("mouseleave", hide);
+    row.addEventListener("click", (evt) => {
+      evt.stopPropagation();
+      if (submenu.style.display === "none") show();
+      else hide();
+    });
+    submenu.addEventListener("mouseenter", () => clearTimeout(hideTimer));
+    submenu.addEventListener("mouseleave", hide);
+
+    exportSubmenuEls.push(submenu);
+    document.body.appendChild(submenu);
+    return row;
+  }
+
   __cb.openExportMenu = function openExportMenu(anchorEl) {
     closeExportMenu();
 
-    // Mirrors the backdrop+menu pattern used by showFrequencyPicker in
-    // src/config.js — full-viewport invisible backdrop catches outside
-    // clicks and dismisses the menu.
     menuBackdrop = document.createElement("div");
     menuBackdrop.style.cssText = "position:fixed;inset:0;z-index:9999998;";
     menuBackdrop.addEventListener("mousedown", (evt) => {
@@ -51,54 +178,97 @@
     });
 
     menuEl = document.createElement("div");
-    menuEl.className = "cb-export-menu";
+    menuEl.className = "cb-export-menu cb-more-menu";
     menuEl.addEventListener("mousedown", (evt) => evt.stopPropagation());
 
-    // Filter options the JWT doesn't entitle this user to see. Internal
-    // GTMEs get the feature-flagged rows; `ownerOnly` rows (Submit to deal
-    // desk) are further restricted to the maintainer via the signed `is_admin`
-    // claim. The handler switch below doesn't need its own
-    // checks because gated branches are unreachable when the row isn't rendered.
-    const isOwner = !!__cb.isAdmin;
-    const visibleOptions = EXPORT_OPTIONS.filter(
-      (opt) =>
-        (!opt.feature || (__cb.hasFeature && __cb.hasFeature(opt.feature))) &&
-        (!opt.ownerOnly || isOwner),
-    );
+    let hasItems = false;
+    const isInternal = !!__cb.isInternal;
+    const isMaintainer = !!__cb.isAdmin;
 
-    for (const opt of visibleOptions) {
-      const item = document.createElement("button");
-      item.type = "button";
-      item.className =
-        "cb-export-menu-option" +
-        (opt.enabled ? "" : " cb-export-menu-option-disabled");
-      item.textContent = opt.label;
-      if (!opt.enabled) {
-        // Placeholder rows are visible but inert. We still mark them as
-        // disabled at the DOM level so screenreaders skip them and the
-        // browser declines to focus them with the keyboard.
-        item.disabled = true;
-        item.setAttribute("aria-disabled", "true");
-      } else {
-        item.addEventListener("click", (evt) => {
-          evt.stopPropagation();
-          closeExportMenu();
-          if (opt.id === "gtme") __cb.openGtmeExportModal();
-          else if (opt.id === "dealdesk" && __cb.openDealDeskModal) __cb.openDealDeskModal();
-          else if (opt.id === "csv") __cb.exportCurrentTableCsv();
-          else if (opt.id === "xlsx") __cb.exportCurrentTableXlsx();
-          else if (opt.id === "package") __cb.packageScopeCsvs();
-          else if (opt.id === "package-xlsx") __cb.packageScopeXlsx();
-          else if (opt.id === "share" && __cb.openShareDialog) __cb.openShareDialog();
+    if (isInternal) {
+      if (__cb.hasFeature && __cb.hasFeature("gtme_export")) {
+        appendExportAction({
+          label: "Export to GTME Calculator",
+          icon: GTME_ICON_SVG,
+          title: "Open the GTME Calculator with this scope pre-filled",
+          onClick: () => __cb.openGtmeExportModal(),
         });
+        hasItems = true;
       }
-      menuEl.appendChild(item);
+
+      const importedCount = collectUnderlyingTables().length;
+      appendExportAction({
+        label: "Export to Excel",
+        icon: PACKAGE_ICON_SVG,
+        title: importedCount
+          ? `Scoping sheet plus ${importedCount} imported Clay table${
+              importedCount === 1 ? "" : "s"
+            }`
+          : "Scoping sheet for the active tab",
+        onClick: () => __cb.exportScopeExcel(),
+      });
+      hasItems = true;
     }
 
-    // With the export rows now gated (feature flags + owner-only), some users
-    // entitle to nothing. Show an inert placeholder so the menu doesn't render
-    // as an empty, broken-looking box.
-    if (visibleOptions.length === 0) {
+    if (isMaintainer) {
+      const adminItems = [];
+      if (__cb.hasFeature && __cb.hasFeature("gtme_export") && __cb.openDealDeskModal) {
+        adminItems.push({
+          label: "Export to Deal Desk",
+          icon: DEAL_DESK_ICON_SVG,
+          title: "Submit pricing to the deal-desk Slack app",
+          onClick: () => __cb.openDealDeskModal(),
+        });
+      }
+      if (__cb.hasFeature && __cb.hasFeature("share_links") && __cb.openShareDialog) {
+        adminItems.push({
+          label: "Generate Link",
+          icon: LINK_ICON_SVG,
+          title: "Publish a live, shareable scope link",
+          onClick: () => __cb.openShareDialog(),
+        });
+      }
+
+      const archivedItems = [
+        {
+          label: "Export CSV",
+          icon: CSV_ICON_SVG,
+          title: "Download the scoping table as CSV",
+          onClick: () => __cb.exportCurrentTableCsv(),
+        },
+        {
+          label: "Package CSVs",
+          icon: PACKAGE_ICON_SVG,
+          title: "Zip the scoping CSV with raw Clay table exports",
+          onClick: () => __cb.packageScopeCsvs(),
+        },
+      ];
+
+      if (adminItems.length || archivedItems.length) {
+        if (hasItems) appendExportMenuDivider();
+        if (adminItems.length) {
+          menuEl.appendChild(
+            buildExportSubmenu({
+              label: "Admin",
+              title: "Maintainer export tools",
+              items: adminItems,
+            }),
+          );
+        }
+        if (archivedItems.length) {
+          menuEl.appendChild(
+            buildExportSubmenu({
+              label: "Archived",
+              title: "Legacy CSV export paths",
+              items: archivedItems,
+            }),
+          );
+        }
+        hasItems = true;
+      }
+    }
+
+    if (!hasItems) {
       const empty = document.createElement("button");
       empty.type = "button";
       empty.className = "cb-export-menu-option cb-export-menu-option-disabled";
@@ -111,10 +281,6 @@
     document.body.appendChild(menuBackdrop);
     document.body.appendChild(menuEl);
 
-    // Anchor below the trigger and right-aligned with it: the Export button
-    // lives on the right edge of the topbar, so left-aligning would push the
-    // menu off-screen. We compute "right" by the anchor's right edge so the
-    // menu's right edge sits flush with the button's.
     const rect = anchorEl.getBoundingClientRect();
     menuEl.style.position = "fixed";
     menuEl.style.top = (rect.bottom + 6) + "px";
@@ -132,7 +298,8 @@
   // screen — including merged-enrichment runs (the Enrichments cell is blank on
   // a run's follower rows, the canonical CSV "merge").
   //
-  // Available to every export user (no feature/owner gate).
+  // Available to internal users via the Export menu; CSV path is under
+  // Maintainer → Archived.
   // ==========================================================================
 
   // Wrap a value for CSV: quote + double inner quotes when it contains a comma,
@@ -283,7 +450,9 @@
   //
   // Styled, section-grouped workbook for the active tab. Reuses the table's
   // section model (__cb.tableView.getXlsxExportData()) and hands it to the
-  // ExcelJS writer in src/xlsx-export.js. Available to every export user.
+  // ExcelJS writer in src/xlsx-export.js. Invoked directly by exportScopeExcel
+  // when no imported tables exist; otherwise packageScopeXlsx builds a multi-
+  // sheet workbook.
   // ==========================================================================
 
   __cb.exportCurrentTableXlsx = async function exportCurrentTableXlsx() {
@@ -339,7 +508,7 @@
   // Bundles the scoping-summary CSV (same as Export to CSV) with raw Clay table
   // CSVs for every imported underlying table. Clay table exports use the same
   // async export-job API as the Clay UI's "Download CSV" button — no DOM
-  // automation. Available to every export user (no feature/owner gate).
+  // automation. Maintainer → Archived in the Export menu.
   // ==========================================================================
 
   function sanitizeFilename(name) {
@@ -658,13 +827,21 @@
     __cb.showOverlayToast?.(`Downloaded Excel package \u2014 ${parts.join(", ")}.`);
   };
 
+  // Smart Excel export for internal users: one menu row that packages imported
+  // Clay tables when any exist in the scope, otherwise downloads the scoping
+  // sheet alone (same as exportCurrentTableXlsx).
+  __cb.exportScopeExcel = async function exportScopeExcel() {
+    if (collectUnderlyingTables().length > 0) {
+      return __cb.packageScopeXlsx();
+    }
+    return __cb.exportCurrentTableXlsx();
+  };
+
   // ==========================================================================
   // EXPORT TO GTME CALCULATOR
   //
   // Gated by the `gtme_export` feature flag — the menu row that triggers
-  // this modal is filtered out for non-internal users in openExportMenu
-  // above, so the function below is defined for everyone but only ever
-  // invoked by Clay-internal users.
+  // this modal only renders for internal users in openExportMenu above.
   //
   // Flow:
   //   1. saveTabs() — flushes the live canvas into __cb.tabStore.tabs[i].state

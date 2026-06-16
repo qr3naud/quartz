@@ -240,6 +240,13 @@
     return row;
   }
 
+  function appendMoreMenuDivider() {
+    const div = document.createElement("div");
+    div.className = "cb-export-menu-divider";
+    div.setAttribute("role", "separator");
+    moreMenuEl.appendChild(div);
+  }
+
   __cb.closeMoreMenu = closeMoreMenu;
 
   // Overflow menu that collapses Pro Mode + Old vs New Pricing under a
@@ -305,6 +312,7 @@
       if (__cb.openUpdateModal) __cb.openUpdateModal();
     });
     moreMenuEl.appendChild(updateItem);
+    let hasMoreMenuItems = true;
 
     // Request POC moved out of this menu into the guided rail as a first-class
     // step (see the cb-toolbar-request-poc button + updateGuidedFlow in
@@ -327,6 +335,7 @@
         __cb.startPricingComparison(anchorEl);
       });
       moreMenuEl.appendChild(pricingItem);
+      hasMoreMenuItems = true;
     }
 
     // Import Inspector (formerly "Export as JSON" in the Export menu) — a
@@ -346,14 +355,15 @@
         __cb.openExportJsonModal();
       });
       moreMenuEl.appendChild(inspectItem);
+      hasMoreMenuItems = true;
     }
 
-    // Archived — deprecated toggles (View + Pro Mode), kept available only to
-    // the maintainer. Hovering (or clicking) the row opens a flyout submenu to
-    // the left. The chevron-left icon hints at the open direction. Gated on the
-    // signed `is_admin` claim (src/auth.js), not a client-side email compare.
+    // Admin + Archived flyouts — maintainer only. Divider separates them from
+    // the rows every entitled user sees above.
     const isArchiveAdmin = !!__cb.isAdmin;
     if (isArchiveAdmin) {
+      if (hasMoreMenuItems) appendMoreMenuDivider();
+
       // Admin — a chevron-left submenu grouping maintainer tools, so the row
       // reads like "Archived" and scales as more admin tools are added.
       //   - Secret Configuration: edits public.app_settings in Supabase (e.g.

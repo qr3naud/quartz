@@ -2,7 +2,7 @@
  * Share dialog: publish the current tab's scoping view as a public,
  * token-slugged link served by the share-view Edge Function.
  *
- * Entry point: "Share scope link" row in the export menu (src/export.js),
+ * Entry point: "Generate Link" in the Export menu Admin submenu (src/export.js),
  * gated behind the `share_links` feature flag + maintainer (`__cb.isAdmin`)
  * while the surface is iterated on.
  *

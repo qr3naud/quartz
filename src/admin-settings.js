@@ -79,7 +79,7 @@
   // Labels/hints only — no emails or secrets live in this bundle.
   const INTERNAL_FEATURES = [
     { flag: "internal_branding", label: "Internal branding", hint: '"Quartz" name + internal UI instead of "Scoping".' },
-    { flag: "gtme_export",       label: "GTME export",        hint: "Export to GTME Calculator, Request POC, deal-desk row." },
+    { flag: "gtme_export",       label: "GTME export",        hint: "Export to GTME Calculator and Export to Deal Desk (Admin submenu)." },
     { flag: "pricing_comparison", label: "Pricing comparison", hint: "Old vs New Pricing comparison modal." },
     { flag: "sfdc",              label: "Salesforce",         hint: "Link and search SFDC opportunities." },
     { flag: "dust",              label: "Dust",               hint: "Dust AI POC integration." },
@@ -90,7 +90,9 @@
     { label: "Scope Ads", hint: "Table-view intro shortcut for the Ads scoping flow." },
     { label: "Demo spotlight", hint: "Right-click cell highlights + floppy-disk toolbar walkthrough replay." },
     { label: "Design Explorer", hint: "Interactive design-token + primitive gallery (preview only)." },
-    { label: "Submit to deal desk", hint: "Owner-only row in the Export menu." },
+    { label: "Export to Deal Desk", hint: "Admin submenu in the Export menu (gtme_export flag)." },
+    { label: "Generate Link", hint: "Admin submenu in the Export menu (share_links flag)." },
+    { label: "Archived export submenu", hint: "Export CSV + Package CSVs in the Export menu." },
     { label: "Canvas view",         hint: "The Cards / Tables toggle in the More menu." },
     { label: "Version picker",      hint: "Install / roll back to any version in the update modal." },
     { label: "Archived submenu",    hint: "Deprecated toggles in the More menu." },
