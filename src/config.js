@@ -228,7 +228,10 @@
     // Demo spotlight: right-click "Save in Quartz" on Clay grid cells +
     // floppy-disk toolbar button + dimmed walkthrough replay
     // (src/spotlight.js). Maintainer-only while the flow is being iterated.
+    // Set true to re-enable without restoring deleted code.
+    spotlightEnabled: false,
     canUseSpotlight() {
+      if (!window.__cb.spotlightEnabled) return false;
       return !!window.__cb.isAdmin;
     },
 

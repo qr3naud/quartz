@@ -88,7 +88,7 @@
   const MAINTAINER_SURFACES = [
     { label: "Secret configuration", hint: "Edits app_settings (e.g. Slack channels)." },
     { label: "Scope Ads", hint: "Table-view intro shortcut for the Ads scoping flow." },
-    { label: "Demo spotlight", hint: "Right-click cell highlights + floppy-disk toolbar walkthrough replay." },
+    { label: "Demo spotlight", hint: "Disabled in code (spotlightEnabled: false). Right-click cell highlights + floppy-disk toolbar walkthrough replay.", sessionOn: () => !!__cb.spotlightEnabled },
     { label: "Design Explorer", hint: "Interactive design-token + primitive gallery (preview only)." },
     { label: "Export to Deal Desk", hint: "Admin submenu in the Export menu (gtme_export flag)." },
     { label: "Generate Link", hint: "Admin submenu in the Export menu (share_links flag)." },
@@ -168,8 +168,9 @@
     section.appendChild(adminLabel);
     const isAdmin = !!__cb.isAdmin;
     for (const s of MAINTAINER_SURFACES) {
+      const on = s.sessionOn ? s.sessionOn() && isAdmin : isAdmin;
       section.appendChild(
-        buildFlagRow({ label: s.label, hint: s.hint, on: isAdmin, onText: "You", offText: "Locked" }),
+        buildFlagRow({ label: s.label, hint: s.hint, on, onText: "You", offText: "Locked" }),
       );
     }
 

@@ -400,7 +400,9 @@
 
     wrapper.appendChild(btn);
     wrapper.appendChild(buildStampButton());
-    wrapper.appendChild(buildHighlightButton());
+    if (__cb.spotlightEnabled) {
+      wrapper.appendChild(buildHighlightButton());
+    }
     return wrapper;
   }
 

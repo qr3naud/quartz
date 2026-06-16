@@ -429,7 +429,9 @@
     text.focus();
   }
 
-  document.addEventListener("contextmenu", onContextMenu, true);
+  if (__cb.spotlightEnabled) {
+    document.addEventListener("contextmenu", onContextMenu, true);
+  }
 
   // =====================================================================
   // REPLAY
