@@ -3388,11 +3388,20 @@
     };
 
     // Checkbox row — import picker checkbox + checked tint; single-line layout.
-    function appendFillExclCheckRow(parent, { label, metaText, checked, onToggle }) {
+    function fillExclRowMeta(count, pctOverride) {
+      const n = Number(count) || 0;
+      const pct = pctOverride != null
+        ? Number(pctOverride) || 0
+        : (valueCount > 0 ? Math.round((n / valueCount) * 100) : 0);
+      return `${pct}% · ${n.toLocaleString()}`;
+    }
+
+    function appendFillExclCheckRow(parent, { key, label, metaText, checked, onToggle }) {
       const row = document.createElement("label");
       row.className =
         "cb-table-picker-checkrow cb-fill-excl-checkrow" +
         (checked ? " cb-table-picker-checkrow-checked" : "");
+      if (key != null) row.dataset.fillExclKey = String(key);
       const cbx = document.createElement("input");
       cbx.type = "checkbox";
       cbx.className = "cb-table-picker-checkbox";
@@ -3431,8 +3440,9 @@
           : Math.round((pctOfTable / 100) * valueCount);
         const key = String(v);
         appendFillExclCheckRow(checkList, {
+          key,
           label: fillExclValueLabel(v),
-          metaText: `${pctOfTable}% · ${count.toLocaleString()}`,
+          metaText: fillExclRowMeta(count, pctOfTable),
           checked: working.has(key),
           onToggle: (checked) => {
             if (checked) working.set(key, { value: v, count, source: "common" });
@@ -3453,9 +3463,11 @@
     // Append (or refresh) one find-sourced custom row with an unchecking box.
     const addCustomRow = (e) => {
       const key = String(e.value);
+      if (checkList.querySelector(`[data-fill-excl-key="${key}"]`)) return;
       appendFillExclCheckRow(checkList, {
+        key,
         label: fillExclValueLabel(e.value),
-        metaText: Number(e.count).toLocaleString(),
+        metaText: fillExclRowMeta(e.count),
         checked: true,
         onToggle: (checked) => {
           if (!checked) { working.delete(key); renderPreview(); }
