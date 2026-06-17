@@ -367,28 +367,43 @@
 
     // Instant pill + banner from the SW's cached status, then a live re-check
     // that is the source of truth. The live result is authoritative: guard so
-    // a late-resolving (stale) cache read can't override it.
-    let liveResolved = false;
-    try {
-      chrome.storage.local.get("quartzUpdateInfo", (r) => {
-        if (liveResolved) return;
-        const info = r && r.quartzUpdateInfo;
-        if (info) {
-          setVersionPill(info.behind ? "behind" : "ok");
-          showBanner(info);
+    // a late-resolving (stale) cache read can't override it. Manual/git builds
+    // only — store builds wire nothing here.
+    function wireManualBanner() {
+      let liveResolved = false;
+      try {
+        chrome.storage.local.get("quartzUpdateInfo", (r) => {
+          if (liveResolved) return;
+          const info = r && r.quartzUpdateInfo;
+          if (info) {
+            setVersionPill(info.behind ? "behind" : "ok");
+            showBanner(info);
+          }
+        });
+      } catch {}
+      chrome.runtime.sendMessage({ type: "cb:update:status" }, (res) => {
+        liveResolved = true;
+        if (chrome.runtime.lastError || !res || !res.ok) {
+          setVersionPill("loading"); // unconfirmed (e.g. helper not installed)
+          showBanner(null);
+          return;
         }
+        const behind = (res.behind || 0) > 0;
+        setVersionPill(behind ? "behind" : "ok");
+        showBanner({ behind, latestVersion: res.latestVersion });
       });
-    } catch {}
-    chrome.runtime.sendMessage({ type: "cb:update:status" }, (res) => {
-      liveResolved = true;
-      if (chrome.runtime.lastError || !res || !res.ok) {
-        setVersionPill("loading"); // unconfirmed (e.g. helper not installed)
-        showBanner(null);
+    }
+
+    // Chrome Web Store builds update automatically: hide the banner, show a
+    // steady version pill, and never poll the (absent) native git host. cb:channel
+    // resolves after the SW has detected installType, so it's race-free.
+    chrome.runtime.sendMessage({ type: "cb:channel" }, (res) => {
+      if (!chrome.runtime.lastError && res && res.channel === "store") {
+        box.hidden = true;
+        setVersionPill("ok");
         return;
       }
-      const behind = (res.behind || 0) > 0;
-      setVersionPill(behind ? "behind" : "ok");
-      showBanner({ behind, latestVersion: res.latestVersion });
+      wireManualBanner();
     });
   }
 

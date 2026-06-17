@@ -267,52 +267,56 @@
     moreMenuEl.className = "cb-export-menu cb-more-menu";
     moreMenuEl.addEventListener("mousedown", (evt) => evt.stopPropagation());
 
-    // Update — leads the menu. Opens the center modal (src/update-modal.js)
-    // with the version timeline + an "Update now" action. The state pill is
-    // seeded from the cached status, then refreshed live so it never disagrees
-    // with the popup / toolbar cue.
-    const updateItem = document.createElement("button");
-    updateItem.type = "button";
-    updateItem.className = "cb-export-menu-option cb-more-menu-option";
-    updateItem.title = "See what's new and update the extension";
-    updateItem.innerHTML =
-      `<span class="cb-more-menu-icon">${UPDATE_ICON_SVG}</span>` +
-      `<span class="cb-more-menu-label">Update</span>` +
-      `<span class="cb-more-menu-state cb-update-state"></span>`;
-    const updateStateEl = updateItem.querySelector(".cb-update-state");
-    const renderUpdateState = (behind, latestVersion) => {
-      if (behind) {
-        // Amber pill via .cb-more-menu-option-active .cb-more-menu-state.
-        updateItem.classList.add("cb-more-menu-option-active");
-        updateStateEl.classList.remove("cb-update-state-ok");
-        updateStateEl.textContent = latestVersion ? `v${latestVersion}` : "Available";
-      } else {
-        updateItem.classList.remove("cb-more-menu-option-active");
-        updateStateEl.classList.add("cb-update-state-ok");
-        updateStateEl.textContent = "Up to date";
-      }
-    };
-    try {
-      chrome.storage.local.get("quartzUpdateInfo", (r) => {
-        const info = r && r.quartzUpdateInfo;
-        if (info) renderUpdateState(!!info.behind, info.latestVersion);
-        // Same behind-gate as the view-open check: once we're behind, keep the
-        // cached pill and skip the fetch — only the Update modal re-checks then.
-        if (info && info.behind) return;
-        chrome.runtime.sendMessage({ type: "cb:update:status" }, (res) => {
-          if (chrome.runtime.lastError || !res || !res.ok) return; // leave seeded state
-          renderUpdateState((res.behind || 0) > 0, res.latestVersion);
-          if (__cb.refreshMoreDot) __cb.refreshMoreDot();
+    // Update — leads the menu (manual/git builds only). Opens the center modal
+    // (src/update-modal.js) with the version timeline + an "Update now" action.
+    // The state pill is seeded from the cached status, then refreshed live so it
+    // never disagrees with the popup / toolbar cue. Chrome Web Store builds
+    // auto-update, so this row is omitted entirely there.
+    let hasMoreMenuItems = false;
+    if (!__cb.isStoreChannel()) {
+      const updateItem = document.createElement("button");
+      updateItem.type = "button";
+      updateItem.className = "cb-export-menu-option cb-more-menu-option";
+      updateItem.title = "See what's new and update the extension";
+      updateItem.innerHTML =
+        `<span class="cb-more-menu-icon">${UPDATE_ICON_SVG}</span>` +
+        `<span class="cb-more-menu-label">Update</span>` +
+        `<span class="cb-more-menu-state cb-update-state"></span>`;
+      const updateStateEl = updateItem.querySelector(".cb-update-state");
+      const renderUpdateState = (behind, latestVersion) => {
+        if (behind) {
+          // Amber pill via .cb-more-menu-option-active .cb-more-menu-state.
+          updateItem.classList.add("cb-more-menu-option-active");
+          updateStateEl.classList.remove("cb-update-state-ok");
+          updateStateEl.textContent = latestVersion ? `v${latestVersion}` : "Available";
+        } else {
+          updateItem.classList.remove("cb-more-menu-option-active");
+          updateStateEl.classList.add("cb-update-state-ok");
+          updateStateEl.textContent = "Up to date";
+        }
+      };
+      try {
+        chrome.storage.local.get("quartzUpdateInfo", (r) => {
+          const info = r && r.quartzUpdateInfo;
+          if (info) renderUpdateState(!!info.behind, info.latestVersion);
+          // Same behind-gate as the view-open check: once we're behind, keep the
+          // cached pill and skip the fetch — only the Update modal re-checks then.
+          if (info && info.behind) return;
+          chrome.runtime.sendMessage({ type: "cb:update:status" }, (res) => {
+            if (chrome.runtime.lastError || !res || !res.ok) return; // leave seeded state
+            renderUpdateState((res.behind || 0) > 0, res.latestVersion);
+            if (__cb.refreshMoreDot) __cb.refreshMoreDot();
+          });
         });
+      } catch {}
+      updateItem.addEventListener("click", (evt) => {
+        evt.stopPropagation();
+        closeMoreMenu();
+        if (__cb.openUpdateModal) __cb.openUpdateModal();
       });
-    } catch {}
-    updateItem.addEventListener("click", (evt) => {
-      evt.stopPropagation();
-      closeMoreMenu();
-      if (__cb.openUpdateModal) __cb.openUpdateModal();
-    });
-    moreMenuEl.appendChild(updateItem);
-    let hasMoreMenuItems = true;
+      moreMenuEl.appendChild(updateItem);
+      hasMoreMenuItems = true;
+    }
 
     // Request POC moved out of this menu into the guided rail as a first-class
     // step (see the cb-toolbar-request-poc button + updateGuidedFlow in
@@ -764,14 +768,16 @@
     // we're behind we stop auto-checking — the cue already shows, and only the
     // popup / Update modal refresh from there. The storage.onChanged listener
     // below repaints the dot once the SW writes a fresh result.
-    try {
-      chrome.storage.local.get("quartzUpdateInfo", (r) => {
-        if (r && r.quartzUpdateInfo && r.quartzUpdateInfo.behind) return;
-        chrome.runtime.sendMessage({ type: "cb:update:status" }, () => {
-          void chrome.runtime.lastError;
+    if (!__cb.isStoreChannel()) {
+      try {
+        chrome.storage.local.get("quartzUpdateInfo", (r) => {
+          if (r && r.quartzUpdateInfo && r.quartzUpdateInfo.behind) return;
+          chrome.runtime.sendMessage({ type: "cb:update:status" }, () => {
+            void chrome.runtime.lastError;
+          });
         });
-      });
-    } catch {}
+      } catch {}
+    }
     if (chrome.storage && chrome.storage.onChanged && !__cb.__quartzCueWired) {
       __cb.__quartzCueWired = true;
       chrome.storage.onChanged.addListener((changes, area) => {

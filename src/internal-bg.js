@@ -523,6 +523,41 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 const QUARTZ_HOST = "com.quartz.updater";
 const QUARTZ_ICON_SIZES = [16, 32, 48, 128];
 
+// ---------------------------------------------------------------------------
+// Distribution channel (manual git install vs Chrome Web Store)
+//
+// The same code ships both ways. installType "development" == an unpacked
+// (manual/installer) build, so the native git updater is live. "normal" /
+// "admin" == a Chrome Web Store build, so Chrome auto-updates, the git-updater
+// UI is hidden, and the native-messaging host is never contacted (the store
+// package also drops the nativeMessaging permission). chrome.management.getSelf
+// needs no "management" permission. The result is cached in storage so content
+// scripts (which can't call chrome.management) can read it.
+// ---------------------------------------------------------------------------
+let _quartzChannel = null;
+
+async function quartzGetChannel() {
+  if (_quartzChannel) return _quartzChannel;
+  let channel = "manual";
+  try {
+    const info = await chrome.management.getSelf();
+    channel = info && info.installType === "development" ? "manual" : "store";
+  } catch {
+    // Self-healing default: on a real unpacked install a misdetect just shows
+    // the one-time updater setup hint, never a hard break.
+    channel = "manual";
+  }
+  _quartzChannel = channel;
+  try {
+    await chrome.storage.local.set({ quartzChannel: channel });
+  } catch {}
+  return channel;
+}
+
+async function quartzIsManual() {
+  return (await quartzGetChannel()) === "manual";
+}
+
 // Toolbar icon as ImageData (per size). MV3 service workers can't decode an
 // image from a file path via chrome.action.setIcon({path}) — there's no
 // document — so we render the icon (optionally rotated 180deg for the
@@ -635,6 +670,8 @@ async function isQuartzAdmin() {
  *  the published version. Callers gate the cadence (the view-open / More-menu
  *  checks skip when already behind). */
 async function quartzCheckStatus() {
+  // Store builds auto-update via Chrome; never touch the native git host.
+  if (!(await quartzIsManual())) return { ok: false, error: "store-channel" };
   const published = !(await isQuartzAdmin());
   return quartzCacheStatus(await quartzNative("status", { published }));
 }
@@ -644,6 +681,7 @@ async function quartzCheckStatus() {
  *  open Clay tabs. Returns the helper's result (best-effort — the reload may
  *  tear down the message channel before the caller reads it). */
 async function quartzRunPull(cmd) {
+  if (!(await quartzIsManual())) return { ok: false, error: "store-channel" };
   const published = !(await isQuartzAdmin());
   let res = await quartzNative(cmd, { published });
   // ~/Quartz is a deploy clone the user never edits by hand, so a fast-forward
@@ -688,6 +726,7 @@ async function quartzRunPull(cmd) {
  *  don't assert behind:false — we just reload; the onInstalled("update") handler
  *  reloads tabs and reruns quartzCheckStatus(), which recomputes the real cue. */
 async function quartzRunCheckout(ref) {
+  if (!(await quartzIsManual())) return { ok: false, error: "store-channel" };
   const res = await quartzNative("checkout", { ref });
   if (res && res.ok && res.updated) {
     await chrome.storage.local.set({ quartzPendingReload: true });
@@ -698,6 +737,10 @@ async function quartzRunCheckout(ref) {
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (!msg || typeof msg.type !== "string") return;
+  if (msg.type === "cb:channel") {
+    quartzGetChannel().then((channel) => sendResponse({ ok: true, channel }));
+    return true;
+  }
   if (msg.type === "cb:update:status") {
     quartzCheckStatus().then(sendResponse);
     return true;
@@ -706,6 +749,8 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     // The Update modal is an explicit "check for exact details", so cache the
     // status + refresh the cue from the log result before returning commits.
     (async () => {
+      // Store builds auto-update via Chrome; never touch the native git host.
+      if (!(await quartzIsManual())) return { ok: false, error: "store-channel" };
       const published = !(await isQuartzAdmin());
       return quartzCacheStatus(await quartzNative("log", { published }));
     })().then(sendResponse);
@@ -725,21 +770,30 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   }
 });
 
+// Detect the distribution channel as soon as the SW spins up so content
+// scripts can read the cached value without waiting on a round-trip.
+quartzGetChannel();
+
 // Restore the cue from the last known status whenever the SW spins up (no
 // network) — keeps the icon cue correct across browser/SW restarts until the
-// next view-open / popup / modal check refreshes it.
-chrome.storage.local
-  .get("quartzUpdateInfo")
-  .then(({ quartzUpdateInfo }) => {
-    if (quartzUpdateInfo) quartzSetCue(!!quartzUpdateInfo.behind, quartzUpdateInfo.latestVersion);
-  })
-  .catch(() => {});
+// next view-open / popup / modal check refreshes it. Skipped on store builds:
+// there is no git updater, so the toolbar icon must never flip.
+quartzGetChannel().then((channel) => {
+  if (channel !== "manual") return;
+  chrome.storage.local
+    .get("quartzUpdateInfo")
+    .then(({ quartzUpdateInfo }) => {
+      if (quartzUpdateInfo) quartzSetCue(!!quartzUpdateInfo.behind, quartzUpdateInfo.latestVersion);
+    })
+    .catch(() => {});
+});
 
 // One-time check right after a fresh install so the cue is correct before the
 // user opens the view. There's no periodic background poll: status is rechecked
 // when the extension view / More menu opens (unless already behind), and always
 // when the popup or Update modal opens.
 chrome.runtime.onInstalled.addListener((details) => {
+  // quartzCheckStatus() self-gates to manual builds (store builds return early).
   if (details.reason === "install") quartzCheckStatus();
 });
 

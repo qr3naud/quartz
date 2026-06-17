@@ -1551,4 +1551,27 @@
       if (cb._providerChainBackdrop) { cb._providerChainBackdrop.remove(); cb._providerChainBackdrop = null; }
     },
   };
+
+  // ---- Distribution channel ------------------------------------------------
+  // Quartz ships two ways: the manual git/installer flow (Load unpacked, kept
+  // current by the native git updater) and a Chrome Web Store build. The same
+  // code runs in both; this flag decides whether the in-app git-updater UI is
+  // shown. Only the service worker can tell them apart (chrome.management.getSelf
+  // isn't available to content scripts), so we read the value it caches in
+  // storage and confirm it over a message. Defaults to "manual" so the updater
+  // UI never silently disappears on a real unpacked install if detection is
+  // momentarily unavailable.
+  window.__cb.channel = "manual";
+  window.__cb.isStoreChannel = function () {
+    return window.__cb.channel === "store";
+  };
+  try {
+    chrome.storage.local.get("quartzChannel", (r) => {
+      if (r && r.quartzChannel) window.__cb.channel = r.quartzChannel;
+    });
+    chrome.runtime.sendMessage({ type: "cb:channel" }, (res) => {
+      if (chrome.runtime.lastError || !res || !res.channel) return;
+      window.__cb.channel = res.channel;
+    });
+  } catch {}
 })();

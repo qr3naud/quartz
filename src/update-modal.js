@@ -317,6 +317,40 @@
     }
     closeModal();
 
+    // Chrome Web Store builds update automatically — there's no git host to pull
+    // from and no version timeline to show. Surface a passive note instead. (The
+    // More-menu Update row is already hidden on store builds; this is a guard for
+    // any other caller of openUpdateModal.)
+    if (__cb.isStoreChannel && __cb.isStoreChannel()) {
+      backdropEl = document.createElement("div");
+      backdropEl.className = "cb-update-backdrop";
+      backdropEl.addEventListener("click", closeModal);
+      backdropEl.addEventListener("mousedown", (evt) => evt.stopPropagation());
+
+      modalEl = document.createElement("div");
+      modalEl.className = "cb-update-modal";
+      modalEl.addEventListener("click", (evt) => evt.stopPropagation());
+      modalEl.addEventListener("mousedown", (evt) => evt.stopPropagation());
+
+      const storeVersion =
+        (chrome.runtime.getManifest && chrome.runtime.getManifest().version) || "";
+      modalEl.innerHTML =
+        '<div class="cb-update-header"><div class="cb-update-headleft">' +
+        '<div class="cb-update-title">Quartz</div></div>' +
+        '<div class="cb-update-headright">' +
+        `<span class="cb-update-version cb-update-version-ok">${storeVersion ? "v" + storeVersion : ""}</span>` +
+        "</div></div>" +
+        '<div class="cb-update-body"><p class="cb-update-empty">' +
+        "Quartz updates automatically through the Chrome Web Store. " +
+        "You're always on the latest published version." +
+        "</p></div>";
+
+      document.addEventListener("keydown", onKeydown);
+      document.body.appendChild(backdropEl);
+      document.body.appendChild(modalEl);
+      return;
+    }
+
     // Only the maintainer gets the per-version picker (install/rollback to any
     // commit). Gated on the signed `is_admin` claim (src/auth.js), same flag as
     // the Archived menu in src/overlay.js.
