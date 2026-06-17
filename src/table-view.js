@@ -3371,10 +3371,12 @@
       preview.appendChild(ratio);
     };
 
-    // Checkbox row — same markup/classes as Import Clay Table multi-select.
+    // Checkbox row — import picker checkbox + checked tint; single-line layout.
     function appendFillExclCheckRow(parent, { label, metaText, checked, onToggle }) {
       const row = document.createElement("label");
-      row.className = "cb-table-picker-checkrow" + (checked ? " cb-table-picker-checkrow-checked" : "");
+      row.className =
+        "cb-table-picker-checkrow cb-fill-excl-checkrow" +
+        (checked ? " cb-table-picker-checkrow-checked" : "");
       const cbx = document.createElement("input");
       cbx.type = "checkbox";
       cbx.className = "cb-table-picker-checkbox";
@@ -3383,18 +3385,15 @@
         row.classList.toggle("cb-table-picker-checkrow-checked", cbx.checked);
         onToggle(cbx.checked);
       });
-      const main = document.createElement("div");
-      main.className = "cb-table-picker-checkrow-main";
-      const nameEl = document.createElement("div");
+      const nameEl = document.createElement("span");
       nameEl.className = "cb-table-picker-checkrow-name";
       nameEl.textContent = label;
-      const meta = document.createElement("div");
+      const meta = document.createElement("span");
       meta.className = "cb-table-picker-checkrow-meta";
       meta.textContent = metaText;
-      main.appendChild(nameEl);
-      main.appendChild(meta);
       row.appendChild(cbx);
-      row.appendChild(main);
+      row.appendChild(nameEl);
+      row.appendChild(meta);
       parent.appendChild(row);
     }
 

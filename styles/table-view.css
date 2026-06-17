@@ -1524,6 +1524,17 @@
   margin-bottom: 6px;
 }
 
+/* Single-line row: label grows, count pinned right (import picker is stacked). */
+.cb-fill-excl-checkrow .cb-table-picker-checkrow-name {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.cb-fill-excl-checkrow .cb-table-picker-checkrow-meta {
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
 .cb-fill-excl-add {
   display: flex;
   gap: 6px;
