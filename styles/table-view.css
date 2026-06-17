@@ -1527,49 +1527,11 @@
   font-variant-numeric: tabular-nums;
 }
 
-.cb-fill-excl-body .cb-fill-excl-checklist {
-  display: flex;
-  flex-direction: column;
+.cb-fill-excl-body .cb-table-picker-checklist {
   margin-bottom: 6px;
 }
 
-/* Stacked rows: borders touch (1px shared edge), no gap between items. */
-.cb-fill-excl-checklist .cb-fill-excl-checkrow {
-  margin-top: -1px;
-  border-radius: 0;
-}
-
-.cb-fill-excl-checklist .cb-fill-excl-checkrow:first-child {
-  margin-top: 0;
-}
-
-/* Checked rows stay above neighbor hovers so the indigo border doesn't get painted over. */
-.cb-fill-excl-checklist .cb-table-picker-checkrow-checked {
-  position: relative;
-  z-index: 2;
-}
-
-.cb-fill-excl-checklist .cb-fill-excl-checkrow:hover:not(.cb-table-picker-checkrow-checked) {
-  position: relative;
-  z-index: 1;
-}
-
-/* Dynamic radius: outer corners of each contiguous checked run only. */
-.cb-fill-excl-checklist .cb-fill-excl-checkrow.cb-fill-excl-checkrow-solo {
-  border-radius: 6px;
-}
-
-.cb-fill-excl-checklist .cb-fill-excl-checkrow.cb-fill-excl-checkrow-run-top {
-  border-top-left-radius: 6px;
-  border-top-right-radius: 6px;
-}
-
-.cb-fill-excl-checklist .cb-fill-excl-checkrow.cb-fill-excl-checkrow-run-bottom {
-  border-bottom-left-radius: 6px;
-  border-bottom-right-radius: 6px;
-}
-
-.cb-fill-excl-checklist:empty {
+.cb-table-picker-checklist:empty {
   display: none;
   margin: 0;
 }

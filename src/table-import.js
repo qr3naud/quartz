@@ -3455,6 +3455,45 @@
     }
   }
 
+  // Stacked checkbox lists: touching borders, dynamic radius on contiguous
+  // checked runs, full radius on hover. Shared by Import Clay Table + fill editor.
+  const PICKER_CHECKROW_SHAPE_CLASSES = [
+    "cb-table-picker-checkrow-solo",
+    "cb-table-picker-checkrow-run-top",
+    "cb-table-picker-checkrow-run-mid",
+    "cb-table-picker-checkrow-run-bottom",
+  ];
+
+  function refreshPickerCheckrowShape(list) {
+    if (!list) return;
+    const rows = [...list.querySelectorAll(".cb-table-picker-checkrow")];
+    for (const row of rows) row.classList.remove(...PICKER_CHECKROW_SHAPE_CLASSES);
+    let i = 0;
+    while (i < rows.length) {
+      if (!rows[i].classList.contains("cb-table-picker-checkrow-checked")) {
+        i += 1;
+        continue;
+      }
+      let j = i + 1;
+      while (
+        j < rows.length &&
+        rows[j].classList.contains("cb-table-picker-checkrow-checked")
+      ) j += 1;
+      const run = rows.slice(i, j);
+      if (run.length === 1) run[0].classList.add("cb-table-picker-checkrow-solo");
+      else {
+        run[0].classList.add("cb-table-picker-checkrow-run-top");
+        for (let k = 1; k < run.length - 1; k += 1) {
+          run[k].classList.add("cb-table-picker-checkrow-run-mid");
+        }
+        run[run.length - 1].classList.add("cb-table-picker-checkrow-run-bottom");
+      }
+      i = j;
+    }
+  }
+
+  __cb.refreshPickerCheckrowShape = refreshPickerCheckrowShape;
+
   function showMultiTablePicker(tables, anchorEl, onImport, opts) {
     closeTablePicker();
 
@@ -3580,6 +3619,7 @@
         else selected.delete(table);
         row.classList.toggle("cb-table-picker-checkrow-checked", cb.checked);
         updateFooter();
+        refreshPickerCheckrowShape(row.parentElement);
       });
 
       const main = document.createElement("div");
@@ -3631,6 +3671,7 @@
         cb.checked = true;
         selected.add(table);
         row.classList.add("cb-table-picker-checkrow-checked");
+        refreshPickerCheckrowShape(row.parentElement);
       }
 
       refreshRowCount(table, defaultViewId, meta, cols);
@@ -3674,7 +3715,7 @@
         header.appendChild(countEl);
 
         const body = document.createElement("div");
-        body.className = "cb-table-picker-group-body";
+        body.className = "cb-table-picker-group-body cb-table-picker-checklist";
         if (!expanded) body.hidden = true;
 
         header.addEventListener("click", () => {
@@ -3690,8 +3731,12 @@
 
         for (const table of group.tables) renderTableRow(table, body);
       } else {
+        list.classList.add("cb-table-picker-checklist");
         for (const table of group.tables) renderTableRow(table, list);
       }
+    }
+    for (const checklist of list.querySelectorAll(".cb-table-picker-checklist")) {
+      refreshPickerCheckrowShape(checklist);
     }
     updateFooter();
 

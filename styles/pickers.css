@@ -243,6 +243,54 @@
   white-space: nowrap;
 }
 
+/* Stacked checkbox lists: touching borders, dynamic selection radius, full
+   radius on hover. Used by Import Clay Table + Adjust fill rate editor. */
+.cb-table-picker-checklist {
+  display: flex;
+  flex-direction: column;
+}
+
+.cb-table-picker-checklist .cb-table-picker-checkrow {
+  margin-top: -1px;
+  border-radius: 0;
+}
+
+.cb-table-picker-checklist .cb-table-picker-checkrow:first-child {
+  margin-top: 0;
+}
+
+.cb-table-picker-checklist .cb-table-picker-checkrow-checked {
+  position: relative;
+  z-index: 2;
+}
+
+.cb-table-picker-checklist .cb-table-picker-checkrow:hover:not(.cb-table-picker-checkrow-checked) {
+  position: relative;
+  z-index: 1;
+}
+
+.cb-table-picker-checklist .cb-table-picker-checkrow-checked:hover {
+  z-index: 3;
+}
+
+.cb-table-picker-checklist .cb-table-picker-checkrow:hover {
+  border-radius: 6px !important;
+}
+
+.cb-table-picker-checklist .cb-table-picker-checkrow.cb-table-picker-checkrow-solo {
+  border-radius: 6px;
+}
+
+.cb-table-picker-checklist .cb-table-picker-checkrow.cb-table-picker-checkrow-run-top {
+  border-top-left-radius: 6px;
+  border-top-right-radius: 6px;
+}
+
+.cb-table-picker-checklist .cb-table-picker-checkrow.cb-table-picker-checkrow-run-bottom {
+  border-bottom-left-radius: 6px;
+  border-bottom-right-radius: 6px;
+}
+
 /* Per-workbook collapsible section — only shown when the import spans more
    than one workbook (folder-scoped import). The current workbook starts
    expanded; siblings start collapsed. Header is sticky while scrolling. */
