@@ -2957,6 +2957,14 @@
   // run-status counts are already full-table from the import. While this is in
   // flight the table sits in __cb.fullProfilePending so the table view shows a
   // spinner in the Fill column (Actual mode) instead of a stale value.
+  //
+  // The /context nullPercentage disagrees with the grid's emptiness filter (it
+  // counts whitespace/empty-string cells as non-null), so on top of the profile
+  // we fetch an EXACT empty count per DP field via the /find EMPTY helper. That
+  // exact count is the fill numerator's source of truth (nonNull = total −
+  // empty); nullPercentage is only a fallback when the /find leg is missing,
+  // capped (approximate), or errored. EMPTY is counted (not NOT_EMPTY) because
+  // the empty set is small for the common high-fill case, keeping payloads light.
   async function fetchFullProfileInBackground(workspaceId, tableId) {
     if (!__cb.canvas) return;
     __cb.fullProfilePending = __cb.fullProfilePending || new Set();
@@ -3011,6 +3019,16 @@
       console.warn("[Clay Scoping] fetchFullProfileInBackground failed:", err);
     }
 
+    // Exact empty count per DP field — the fill numerator's source of truth.
+    // Run AFTER the profile so we know each card's totalRecords (sizes the
+    // /find limit), pooled so a wide table doesn't fan out dozens of requests
+    // at once. Stays inside the fullProfilePending window (cleared below) so the
+    // Fill column keeps its spinner until both legs land.
+    const emptyByFieldId = await fetchEmptyCountsForTable(
+      tableId,
+      nullByFieldId
+    );
+
     __cb.fullProfilePending.delete(tableId);
 
     let stamped = false;
@@ -3020,12 +3038,21 @@
         if (!d || d.tableId !== tableId || d.type !== "dp" || !d.fieldId) continue;
         const np = nullByFieldId.get(d.fieldId);
         if (!np) continue;
+        const exact = emptyByFieldId ? emptyByFieldId.get(d.fieldId) : null;
         d.stats = {
           ...(d.stats || {}),
           nullPercentage: np.nullPercentage,
           totalRecords: np.totalRecords,
           ...(np.commonValues ? { commonValues: np.commonValues } : {}),
           ...(np.valueCount ? { valueCount: np.valueCount } : {}),
+          // Exact grid-emptiness count (and its cap flag). Absent when the
+          // /find leg failed — actualFillPct then falls back to nullPercentage.
+          ...(exact
+            ? {
+                emptyCount: exact.count,
+                emptyCountApproximate: exact.approximate,
+              }
+            : {}),
         };
         stamped = true;
       }
@@ -3034,6 +3061,55 @@
     // Always refresh so the Fill spinner clears (whether data arrived or the
     // fetch failed — in which case the sampled fill is used as a fallback).
     if (__cb.tableView?.refresh) __cb.tableView.refresh();
+  }
+
+  // Fetch exact grid-emptiness counts for every DP field on `tableId`, pooled at
+  // a small concurrency so a wide table doesn't open dozens of /find requests at
+  // once. `profileByFieldId` (the /context result) supplies each field's
+  // totalRecords, which sizes the /find limit. Returns a Map<fieldId,
+  // {count, approximate}>, or null if there's nothing to fetch / the helper is
+  // unavailable. Individual failures are swallowed (that field just falls back
+  // to nullPercentage downstream).
+  async function fetchEmptyCountsForTable(tableId, profileByFieldId) {
+    if (typeof __cb.fetchFieldValueCount !== "function") return null;
+    if (!__cb.canvas) return null;
+
+    // Unique DP fields on this table that have a full-table profile.
+    const fieldIds = [];
+    const seen = new Set();
+    for (const card of __cb.canvas.getCards()) {
+      const d = card.data;
+      if (!d || d.tableId !== tableId || d.type !== "dp" || !d.fieldId) continue;
+      if (seen.has(d.fieldId)) continue;
+      if (profileByFieldId && !profileByFieldId.has(d.fieldId)) continue;
+      seen.add(d.fieldId);
+      fieldIds.push(d.fieldId);
+    }
+    if (fieldIds.length === 0) return null;
+
+    const out = new Map();
+    const CONCURRENCY = 6;
+    let cursor = 0;
+    const worker = async () => {
+      while (cursor < fieldIds.length) {
+        const fieldId = fieldIds[cursor++];
+        const totalRecords = profileByFieldId?.get(fieldId)?.totalRecords || 0;
+        try {
+          const { count, approximate } = await __cb.fetchFieldValueCount(
+            tableId,
+            fieldId,
+            { operator: "EMPTY", totalRecords }
+          );
+          out.set(fieldId, { count, approximate });
+        } catch (_e) {
+          /* leave unset — downstream falls back to nullPercentage */
+        }
+      }
+    };
+    await Promise.all(
+      Array.from({ length: Math.min(CONCURRENCY, fieldIds.length) }, worker)
+    );
+    return out.size > 0 ? out : null;
   }
 
   // ---------------------------------------------------------------------------

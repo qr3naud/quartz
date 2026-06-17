@@ -106,6 +106,7 @@
   // sentinel values as "not a real fill" per data point. Single instance.
   let fillExclPopoverEl = null;
   let fillExclPopoverBackdrop = null;
+  let fillExclResizeAnimEnd = null;
 
   // Run-share popover (the % badge on a multi-ER DP chip). Body-level so it
   // escapes the table's overflow clipping.
@@ -934,10 +935,23 @@
     const cb = window.__cb;
     if (!dpCard) return { pct: null };
     if (cb?.fullProfilePending?.has?.(dpCard.data.tableId)) return { loading: true };
-    const np = dpCard.data.stats?.nullPercentage;
-    const tot = Number(dpCard.data.stats?.totalRecords) || 0;
-    if (np == null || tot <= 0) return { pct: null };
-    const nonNull = ((100 - Number(np)) / 100) * tot;
+    const stats = dpCard.data.stats || {};
+    const np = stats.nullPercentage;
+    const tot = Number(stats.totalRecords) || 0;
+    if (tot <= 0) return { pct: null };
+    // Numerator: the exact grid-emptiness count (nonNull = total − empty) is the
+    // source of truth — Clay's nullPercentage counts whitespace/empty-string
+    // cells as non-null, so it overstates fill (the verified 595-vs-585 drift).
+    // Fall back to nullPercentage only when the exact /find leg is missing,
+    // capped (approximate), or errored.
+    let nonNull;
+    if (stats.emptyCount != null && !stats.emptyCountApproximate) {
+      nonNull = Math.max(0, tot - Number(stats.emptyCount));
+    } else if (np != null) {
+      nonNull = ((100 - Number(np)) / 100) * tot;
+    } else {
+      return { pct: null };
+    }
     // Adjusted fill: a rep can mark stored sentinel values (false, "", 0, …) as
     // "not a real fill" per data point (Actual mode only). Each exclusion
     // carries its whole-table row count, so we subtract the total from nonNull
@@ -964,11 +978,15 @@
 
   // Sum the whole-table row counts of a DP card's fill exclusions. Defensive
   // against legacy/garbage entries (count must be a finite non-negative number).
+  // Blank-valued entries are skipped: the fill numerator is now an exact
+  // non-empty count, so empties are already excluded — counting a legacy
+  // "(blank)" exclusion would double-subtract.
   function sumFillExclusions(dpCard) {
     const list = dpCard?.data?.fillExclusions;
     if (!Array.isArray(list) || !list.length) return 0;
     let total = 0;
     for (const ex of list) {
+      if (isBlankFillValue(ex?.value)) continue;
       const c = Number(ex?.count);
       if (Number.isFinite(c) && c > 0) total += c;
     }
@@ -1041,10 +1059,14 @@
               denom: af.denom,
               denomLabel: erCard?.data?.displayName || erCard?.data?.text || null,
               // Exclusion summary for the Fill cell tooltip + editor: total rows
-              // removed and the list of {value, count, source} entries.
+              // removed and the list of {value, count, source} entries. Blank
+              // entries are filtered out (legacy data) — empties are already out
+              // of the exact non-empty numerator, so they're not real exclusions.
               excluded: af.excluded || 0,
               exclusions: Array.isArray(dpCard.data.fillExclusions)
-                ? dpCard.data.fillExclusions
+                ? dpCard.data.fillExclusions.filter(
+                    (e) => !isBlankFillValue(e?.value)
+                  )
                 : [],
             };
       } else {
@@ -3259,42 +3281,26 @@
     return value == null || value === "";
   }
 
-  // Blank cells on rows the enrichment never ran (run condition not met, missing
-  // input, …) must not count toward fill exclusions — fill already divides by
-  // coverage.ran (successes only). Prefer ran − succeeded (= SUCCESS_NO_DATA);
-  // fall back to peeling condNotMet off a whole-table /find EMPTY count.
-  function blankRowsAmongRanSuccesses(erCard) {
-    const cov = erCard?.data?.stats?.coverage;
-    if (!cov || !Number(cov.ran)) return null;
-    if (cov.succeeded == null) return null;
-    return Math.max(0, Number(cov.ran) - Number(cov.succeeded));
-  }
-
-  async function countBlankForFillExclusion(dpCard, erCard, stats) {
-    const scoped = blankRowsAmongRanSuccesses(erCard);
-    if (scoped != null) {
-      return { count: scoped, approximate: false, scoped: true };
-    }
-    const { count, approximate } = await __cb.fetchFieldValueCount(
-      dpCard.data.tableId,
-      dpCard.data.fieldId,
-      { operator: "EMPTY", totalRecords: Number(stats.totalRecords) || 0 }
-    );
-    const peel = Number(erCard?.data?.stats?.condNotMet);
-    if (count > 0 && Number.isFinite(peel) && peel > 0) {
-      return {
-        count: Math.max(0, count - peel),
-        approximate,
-        scoped: true,
-        peeled: peel,
-      };
-    }
-    return { count, approximate, scoped: false };
-  }
-
   function closeFillExclusionPopover() {
+    if (fillExclPopoverEl && fillExclResizeAnimEnd) {
+      fillExclPopoverEl.removeEventListener("transitionend", fillExclResizeAnimEnd);
+      fillExclResizeAnimEnd = null;
+    }
     if (fillExclPopoverEl) { fillExclPopoverEl.remove(); fillExclPopoverEl = null; }
     if (fillExclPopoverBackdrop) { fillExclPopoverBackdrop.remove(); fillExclPopoverBackdrop = null; }
+  }
+
+  function positionFillExclPopover(pop, anchorEl) {
+    if (!pop || !anchorEl) return;
+    const aRect = anchorEl.getBoundingClientRect();
+    const pRect = pop.getBoundingClientRect();
+    let left = Math.min(aRect.left, window.innerWidth - pRect.width - 8);
+    let top = aRect.bottom + 6;
+    if (top + pRect.height > window.innerHeight - 8) {
+      top = Math.max(8, aRect.top - 6 - pRect.height);
+    }
+    pop.style.left = `${Math.max(8, left)}px`;
+    pop.style.top = `${top}px`;
   }
 
   // Persist a new exclusion set on the card and re-render so the Fill cell,
@@ -3321,16 +3327,19 @@
     const stats = card.data.stats || {};
     const valueCount = Number(stats.valueCount) || Number(stats.totalRecords) || 0;
     const commonValues = Array.isArray(stats.commonValues) ? stats.commonValues : [];
-    const widestEr = widestActualErForDp(card);
     // Base (unadjusted) non-null cells + denominator come straight off the Fill
     // cell descriptor so the editor's preview matches the cell exactly.
     const baseNonNull = (Number(fill?.nonNull) || 0) + (Number(fill?.excluded) || 0);
     const denom = Number(fill?.denom) || Number(stats.totalRecords) || 0;
 
-    // Working copy of the exclusions, keyed by value string for dedupe.
+    // Working copy of the exclusions, keyed by value string for dedupe. Blank
+    // entries (legacy data) are dropped — empties are already out of the exact
+    // non-empty numerator, so they're no longer valid exclusions.
     const working = new Map();
     for (const e of card.data.fillExclusions || []) {
-      if (e && e.value != null) working.set(String(e.value), { ...e });
+      if (e && e.value != null && !isBlankFillValue(e.value)) {
+        working.set(String(e.value), { ...e });
+      }
     }
 
     fillExclPopoverBackdrop = document.createElement("div");
@@ -3344,6 +3353,51 @@
     pop.className = "cb-fill-excl-popover";
     pop.addEventListener("mousedown", (evt) => evt.stopPropagation());
 
+    const popAnchor = anchorEl || hostEl;
+
+    // Grow/shrink the popover smoothly when rows or status text appear.
+    const animateFillExclResize = (mutate) => {
+      if (!pop) { mutate(); return; }
+      const reduce = window.matchMedia
+        && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+      if (fillExclResizeAnimEnd) {
+        pop.removeEventListener("transitionend", fillExclResizeAnimEnd);
+        fillExclResizeAnimEnd = null;
+      }
+      pop.style.transition = "none";
+
+      const startH = pop.offsetHeight;
+      pop.style.height = "auto";
+      mutate();
+      const endH = pop.offsetHeight;
+
+      if (reduce || Math.abs(startH - endH) < 1) {
+        pop.style.height = "";
+        pop.style.transition = "";
+        pop.style.overflow = "";
+        positionFillExclPopover(pop, popAnchor);
+        return;
+      }
+
+      pop.style.overflow = "hidden";
+      pop.style.height = `${startH}px`;
+      void pop.offsetHeight;
+      pop.style.transition = "height 0.18s ease";
+      pop.style.height = `${endH}px`;
+
+      fillExclResizeAnimEnd = (evt) => {
+        if (evt.target !== pop || evt.propertyName !== "height") return;
+        pop.style.transition = "";
+        pop.style.height = "";
+        pop.style.overflow = "";
+        pop.removeEventListener("transitionend", fillExclResizeAnimEnd);
+        fillExclResizeAnimEnd = null;
+        positionFillExclPopover(pop, popAnchor);
+      };
+      pop.addEventListener("transitionend", fillExclResizeAnimEnd);
+    };
+
     const header = document.createElement("div");
     header.className = "cb-fill-excl-header";
     const title = document.createElement("div");
@@ -3352,7 +3406,7 @@
     const sub = document.createElement("div");
     sub.className = "cb-fill-excl-sub";
     sub.textContent =
-      "Exclude placeholder values that aren\u2019t real output \u2014 blank cells, false, 0, and similar.";
+      "Exclude placeholder values that aren\u2019t real output (false, 0, N/A, and similar).";
     header.appendChild(title);
     header.appendChild(sub);
     pop.appendChild(header);
@@ -3370,7 +3424,7 @@
     preview.className = "cb-fill-excl-preview";
     body.appendChild(preview);
 
-    const renderPreview = () => {
+    const renderPreviewInner = () => {
       let excluded = 0;
       for (const e of working.values()) excluded += Number(e.count) || 0;
       const adjusted = Math.max(0, baseNonNull - excluded);
@@ -3399,6 +3453,7 @@
       }
       preview.appendChild(pill);
     };
+    const renderPreview = () => animateFillExclResize(renderPreviewInner);
 
     // Checkbox row — import picker checkbox + checked tint; single-line layout.
     function fillExclRowMeta(count, pctOverride) {
@@ -3442,19 +3497,24 @@
     // commonValues checkboxes + find-sourced rows share one list so spacing stays even.
     const checkList = document.createElement("div");
     checkList.className = "cb-table-picker-list cb-table-picker-checklist";
-    const commonKeys = new Set(commonValues.map((cv) => String(cv?.value)));
-    if (commonValues.length) {
+    // Blank/empty values are never exclusion options: the fill numerator is an
+    // exact non-empty count, so empties are already out of it — offering
+    // "(blank)" here would double-subtract.
+    const selectableCommonValues = commonValues.filter(
+      (cv) => !isBlankFillValue(cv?.value)
+    );
+    const commonKeys = new Set(
+      selectableCommonValues.map((cv) => String(cv?.value))
+    );
+    if (selectableCommonValues.length) {
       const sectionLabel = document.createElement("div");
       sectionLabel.className = "cb-fill-excl-section-label";
       sectionLabel.textContent = "Common values in this column";
       body.appendChild(sectionLabel);
-      for (const cv of commonValues) {
+      for (const cv of selectableCommonValues) {
         const v = cv?.value;
         const pctOfTable = Number(cv?.percentage) || 0;
-        const scopedBlank = isBlankFillValue(v) ? blankRowsAmongRanSuccesses(widestEr) : null;
-        const count = scopedBlank != null
-          ? scopedBlank
-          : Math.round((pctOfTable / 100) * valueCount);
+        const count = Math.round((pctOfTable / 100) * valueCount);
         const key = String(v);
         appendFillExclCheckRow(checkList, {
           key,
@@ -3478,7 +3538,7 @@
     body.appendChild(checkList);
 
     // Append (or refresh) one find-sourced custom row with an unchecking box.
-    const addCustomRow = (e) => {
+    const appendCustomRow = (e) => {
       const key = String(e.value);
       if (checkList.querySelector(`[data-fill-excl-key="${key}"]`)) return;
       appendFillExclCheckRow(checkList, {
@@ -3497,7 +3557,7 @@
     // commonValues checkbox above.
     for (const e of Array.from(working.values())) {
       if (e.source === "common" || commonKeys.has(String(e.value))) continue;
-      addCustomRow(e);
+      appendCustomRow(e);
     }
 
     // Custom-value / empty exclusion via the on-demand /find count.
@@ -3508,8 +3568,7 @@
     lookupTitle.textContent = "Look up other values";
     const lookupDesc = document.createElement("div");
     lookupDesc.className = "cb-fill-excl-section-desc";
-    lookupDesc.textContent =
-      "Count rows that match a stored value in the full table. Blank cells only counts empties on rows the enrichment actually ran on (run-condition skips are ignored).";
+    lookupDesc.textContent = "Count rows that match a value in the table.";
     lookupSection.appendChild(lookupTitle);
     lookupSection.appendChild(lookupDesc);
 
@@ -3523,13 +3582,8 @@
     addBtn.type = "button";
     addBtn.className = "cb-fill-excl-add-btn";
     addBtn.textContent = "Add";
-    const emptyBtn = document.createElement("button");
-    emptyBtn.type = "button";
-    emptyBtn.className = "cb-fill-excl-add-btn";
-    emptyBtn.textContent = "Blank cells";
     addWrap.appendChild(addInput);
     addWrap.appendChild(addBtn);
-    addWrap.appendChild(emptyBtn);
     lookupSection.appendChild(addWrap);
 
     const status = document.createElement("div");
@@ -3537,53 +3591,49 @@
     lookupSection.appendChild(status);
     body.appendChild(lookupSection);
 
-    const runFind = async (operator, value, label) => {
+    // Exact /find count for a concrete (non-empty) sentinel value. Blank cells
+    // are never excluded here — the fill numerator already counts only non-empty
+    // cells, so empties are out of it by construction.
+    const runFind = async (value, label) => {
       addBtn.disabled = true;
-      emptyBtn.disabled = true;
-      status.textContent = "Counting…";
+      animateFillExclResize(() => { status.textContent = "Counting\u2026"; });
       try {
-        const counted = operator === "EMPTY"
-          ? await countBlankForFillExclusion(card, widestEr, stats)
-          : await __cb.fetchFieldValueCount(
-            card.data.tableId,
-            card.data.fieldId,
-            { operator, value, totalRecords: Number(stats.totalRecords) || 0 }
-          ).then(({ count, approximate }) => ({ count, approximate, scoped: false }));
-        const { count, approximate, scoped } = counted;
+        const { count, approximate } = await __cb.fetchFieldValueCount(
+          card.data.tableId,
+          card.data.fieldId,
+          { operator: "EQUAL", value, totalRecords: Number(stats.totalRecords) || 0 }
+        );
         if (!count) {
-          status.textContent = operator === "EMPTY"
-            ? "No blank cells on rows the enrichment ran on."
-            : `No rows match "${label}".`;
+          animateFillExclResize(() => {
+            status.textContent = `No rows match "${label}".`;
+          });
           return;
         }
         const key = String(value ?? "");
         const entry = { value: value ?? "", count, source: "find" };
         const existed = working.has(key);
         working.set(key, entry);
-        const scopeNote = operator === "EMPTY" && scoped ? " among rows that ran" : "";
-        status.textContent =
-          `Excluding ${count.toLocaleString()}${approximate ? "+" : ""} rows (${label}${scopeNote}).`;
-        // Append the new row in place (unless it's already shown above) so the
-        // working set survives until Apply without a full re-render.
-        if (!existed && !commonKeys.has(key)) addCustomRow(entry);
+        animateFillExclResize(() => {
+          status.textContent =
+            `Excluding ${count.toLocaleString()}${approximate ? "+" : ""} rows (${label}).`;
+          if (!existed && !commonKeys.has(key)) appendCustomRow(entry);
+          renderPreviewInner();
+        });
         addInput.value = "";
-        renderPreview();
       } catch (_e) {
-        status.textContent = "Couldn't count — try again.";
+        animateFillExclResize(() => { status.textContent = "Couldn't count \u2014 try again."; });
       } finally {
         addBtn.disabled = false;
-        emptyBtn.disabled = false;
       }
     };
     addBtn.addEventListener("click", () => {
       const v = addInput.value.trim();
       if (!v) return;
-      runFind("EQUAL", v, v);
+      runFind(v, v);
     });
     addInput.addEventListener("keydown", (e) => {
       if (e.key === "Enter") { e.preventDefault(); addBtn.click(); }
     });
-    emptyBtn.addEventListener("click", () => runFind("EMPTY", undefined, "blank"));
 
     pop.appendChild(body);
 
@@ -3614,7 +3664,7 @@
     footer.appendChild(footerActions);
     pop.appendChild(footer);
 
-    renderPreview();
+    renderPreviewInner();
 
     document.body.appendChild(fillExclPopoverBackdrop);
     document.body.appendChild(pop);
@@ -3622,15 +3672,7 @@
 
     pop.style.position = "fixed";
     pop.style.zIndex = "9999999";
-    const aRect = (anchorEl || hostEl).getBoundingClientRect();
-    const pRect = pop.getBoundingClientRect();
-    let left = Math.min(aRect.left, window.innerWidth - pRect.width - 8);
-    let top = aRect.bottom + 6;
-    if (top + pRect.height > window.innerHeight - 8) {
-      top = Math.max(8, aRect.top - 6 - pRect.height);
-    }
-    pop.style.left = `${Math.max(8, left)}px`;
-    pop.style.top = `${top}px`;
+    positionFillExclPopover(pop, popAnchor);
   }
 
   // Rows an enrichment RAN on, from run-status (coverage.attempted) — NOT billed
