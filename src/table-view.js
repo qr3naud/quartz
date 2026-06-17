@@ -3360,31 +3360,32 @@
     const body = document.createElement("div");
     body.className = "cb-fill-excl-body";
 
-    const previewLabel = document.createElement("div");
-    previewLabel.className = "cb-fill-excl-section-label";
-    previewLabel.textContent = "Fill rate after exclusions";
-    body.appendChild(previewLabel);
-
-    // Live preview of the adjusted %.
-    const preview = document.createElement("div");
-    preview.className = "cb-fill-excl-preview";
-    body.appendChild(preview);
+    const statRow = document.createElement("div");
+    statRow.className = "cb-fill-excl-stat";
+    const statLabel = document.createElement("span");
+    statLabel.className = "cb-fill-excl-stat-label";
+    statLabel.textContent = "Fill rate after exclusions";
+    const statValues = document.createElement("span");
+    statValues.className = "cb-fill-excl-stat-values";
+    const pctEl = document.createElement("span");
+    pctEl.className = "cb-fill-excl-stat-pct";
+    const detailEl = document.createElement("span");
+    detailEl.className = "cb-fill-excl-stat-detail";
+    statValues.appendChild(pctEl);
+    statValues.appendChild(detailEl);
+    statRow.appendChild(statLabel);
+    statRow.appendChild(statValues);
+    body.appendChild(statRow);
 
     const renderPreview = () => {
       let excluded = 0;
       for (const e of working.values()) excluded += Number(e.count) || 0;
       const adjusted = Math.max(0, baseNonNull - excluded);
       const pct = denom > 0 ? Math.min(100, Math.max(0, Math.round((adjusted / denom) * 100))) : 0;
-      preview.innerHTML = "";
-      const pctEl = document.createElement("span");
-      pctEl.className = "cb-fill-excl-pct";
       pctEl.textContent = `${pct}%`;
-      const ratio = document.createElement("span");
-      ratio.className = "cb-fill-excl-ratio";
-      ratio.textContent = ` · ~${Math.round(adjusted).toLocaleString()} / ${Math.round(denom).toLocaleString()}` +
-        (excluded > 0 ? ` (−${Math.round(excluded).toLocaleString()})` : "");
-      preview.appendChild(pctEl);
-      preview.appendChild(ratio);
+      detailEl.textContent =
+        `~${Math.round(adjusted).toLocaleString()} / ${Math.round(denom).toLocaleString()}` +
+        (excluded > 0 ? ` \u2212${Math.round(excluded).toLocaleString()}` : "");
     };
 
     // Checkbox row — import picker checkbox + checked tint; single-line layout.
