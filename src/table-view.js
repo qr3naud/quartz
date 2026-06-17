@@ -3333,6 +3333,33 @@
       preview.appendChild(ratio);
     };
 
+    // Checkbox row — same markup/classes as Import Clay Table multi-select.
+    function appendFillExclCheckRow(parent, { label, metaText, checked, onToggle }) {
+      const row = document.createElement("label");
+      row.className = "cb-table-picker-checkrow" + (checked ? " cb-table-picker-checkrow-checked" : "");
+      const cbx = document.createElement("input");
+      cbx.type = "checkbox";
+      cbx.className = "cb-table-picker-checkbox";
+      cbx.checked = checked;
+      cbx.addEventListener("change", () => {
+        row.classList.toggle("cb-table-picker-checkrow-checked", cbx.checked);
+        onToggle(cbx.checked);
+      });
+      const main = document.createElement("div");
+      main.className = "cb-table-picker-checkrow-main";
+      const nameEl = document.createElement("div");
+      nameEl.className = "cb-table-picker-checkrow-name";
+      nameEl.textContent = label;
+      const meta = document.createElement("div");
+      meta.className = "cb-table-picker-checkrow-meta";
+      meta.textContent = metaText;
+      main.appendChild(nameEl);
+      main.appendChild(meta);
+      row.appendChild(cbx);
+      row.appendChild(main);
+      parent.appendChild(row);
+    }
+
     // commonValues checkboxes.
     const commonKeys = new Set(commonValues.map((cv) => String(cv?.value)));
     if (commonValues.length) {
@@ -3341,32 +3368,22 @@
       sectionLabel.textContent = "Common values in this column";
       body.appendChild(sectionLabel);
       const list = document.createElement("div");
-      list.className = "cb-fill-excl-list";
+      list.className = "cb-table-picker-list";
       for (const cv of commonValues) {
         const v = cv?.value;
         const pctOfTable = Number(cv?.percentage) || 0;
         const count = Math.round((pctOfTable / 100) * valueCount);
         const key = String(v);
-        const row = document.createElement("label");
-        row.className = "cb-fill-excl-row";
-        const cbx = document.createElement("input");
-        cbx.type = "checkbox";
-        cbx.checked = working.has(key);
-        cbx.addEventListener("change", () => {
-          if (cbx.checked) working.set(key, { value: v, count, source: "common" });
-          else working.delete(key);
-          renderPreview();
+        appendFillExclCheckRow(list, {
+          label: fillExclValueLabel(v),
+          metaText: `${pctOfTable}% · ${count.toLocaleString()}`,
+          checked: working.has(key),
+          onToggle: (checked) => {
+            if (checked) working.set(key, { value: v, count, source: "common" });
+            else working.delete(key);
+            renderPreview();
+          },
         });
-        const lbl = document.createElement("span");
-        lbl.className = "cb-fill-excl-row-label";
-        lbl.textContent = fillExclValueLabel(v);
-        const meta = document.createElement("span");
-        meta.className = "cb-fill-excl-row-meta";
-        meta.textContent = `${pctOfTable}% · ${count.toLocaleString()}`;
-        row.appendChild(cbx);
-        row.appendChild(lbl);
-        row.appendChild(meta);
-        list.appendChild(row);
       }
       body.appendChild(list);
     } else {
@@ -3380,31 +3397,21 @@
     // Container for find-sourced custom rows (existing + newly counted), kept
     // above the add controls so the list grows in place without re-rendering.
     const customList = document.createElement("div");
-    customList.className = "cb-fill-excl-list";
+    customList.className = "cb-table-picker-list";
     body.appendChild(customList);
 
     // Append (or refresh) one find-sourced custom row with an unchecking box.
     const addCustomRow = (e) => {
       const key = String(e.value);
-      const row = document.createElement("label");
-      row.className = "cb-fill-excl-row";
-      const cbx = document.createElement("input");
-      cbx.type = "checkbox";
-      cbx.checked = true;
-      cbx.addEventListener("change", () => {
-        if (!cbx.checked) { working.delete(key); renderPreview(); }
-        else { working.set(key, e); renderPreview(); }
+      appendFillExclCheckRow(customList, {
+        label: fillExclValueLabel(e.value),
+        metaText: Number(e.count).toLocaleString(),
+        checked: true,
+        onToggle: (checked) => {
+          if (!checked) { working.delete(key); renderPreview(); }
+          else { working.set(key, e); renderPreview(); }
+        },
       });
-      const lbl = document.createElement("span");
-      lbl.className = "cb-fill-excl-row-label";
-      lbl.textContent = fillExclValueLabel(e.value);
-      const meta = document.createElement("span");
-      meta.className = "cb-fill-excl-row-meta";
-      meta.textContent = `${Number(e.count).toLocaleString()}`;
-      row.appendChild(cbx);
-      row.appendChild(lbl);
-      row.appendChild(meta);
-      customList.appendChild(row);
     };
 
     // Render any already-excluded find-sourced values not covered by a
@@ -3431,7 +3438,7 @@
     addWrap.className = "cb-fill-excl-add";
     const addInput = document.createElement("input");
     addInput.type = "text";
-    addInput.className = "cb-fill-excl-input";
+    addInput.className = "cb-dust-poc-input";
     addInput.placeholder = "Exclude another value…";
     const addBtn = document.createElement("button");
     addBtn.type = "button";
