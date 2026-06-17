@@ -243,8 +243,8 @@
   white-space: nowrap;
 }
 
-/* Stacked checkbox lists: touching borders, dynamic selection radius, full
-   radius on hover. Used by Import Clay Table + Adjust fill rate editor. */
+/* Stacked checkbox lists: touching borders, dynamic selection radius. Unchecked
+   rows get full radius on hover; checked rows keep their run shape. */
 .cb-table-picker-checklist {
   display: flex;
   flex-direction: column;
@@ -267,14 +267,7 @@
 .cb-table-picker-checklist .cb-table-picker-checkrow:hover:not(.cb-table-picker-checkrow-checked) {
   position: relative;
   z-index: 1;
-}
-
-.cb-table-picker-checklist .cb-table-picker-checkrow-checked:hover {
-  z-index: 3;
-}
-
-.cb-table-picker-checklist .cb-table-picker-checkrow:hover {
-  border-radius: 6px !important;
+  border-radius: 6px;
 }
 
 .cb-table-picker-checklist .cb-table-picker-checkrow.cb-table-picker-checkrow-solo {
