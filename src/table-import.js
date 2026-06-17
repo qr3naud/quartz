@@ -631,44 +631,54 @@
   // ---------------------------------------------------------------------------
   // Coverage / fill-rate semantics.
   //
-  // `ERROR_RUN_CONDITION_NOT_MET` is bucketed into `successCount`
-  // server-side via isStatusTreatedAsSuccess
-  // (libs/shared/src/fields/status-processing-utils.ts line 5). Rows where
-  // the user's run-condition formula evaluated to false were never actually
-  // attempted, so we peel them out of the NUMERATOR using the raw
-  // `statusBreakdown` array.
+  // Clay's data profile gives three rolled-up counts (successCount, errorCount,
+  // inProgressCount), but they don't map cleanly onto "did this enrichment
+  // execute on the row, and did it return data" — three statuses are filed in
+  // the "wrong" bucket. So we re-read the raw `statusBreakdown` and peel them
+  // out, building a ladder of progressively stricter populations (each a subset
+  // of the one above):
   //
-  // Coverage = ran / total, where:
-  //   - `ran` (numerator) = rows the enrichment actually executed on
-  //     (success − condNotMet + error + inProgress). Excludes condition-skipped
-  //     and not-yet-run rows.
-  //   - `total` (denominator) = the WHOLE table (totalRecords). Keeping
-  //     condNotMet + notRun in the denominator is the point: coverage should
-  //     read as "this enrichment ran on X of N rows" — a real fraction. (Using
-  //     total − condNotMet made it ~N/N whenever the table was fully run, which
-  //     told the user nothing.)
-  // Fill rate keeps the `ran` denominator ("of successes, how much filled").
-  // Credit failures stay in `attempted` but out of fill.
+  //   total (totalRecords)  every row in the table    -> coverage DENOMINATOR
+  //   |_ attempted          executed at all            -> run-rate / chip badge
+  //      |_ ran             executed AND succeeded      -> coverage NUMERATOR,
+  //         (adjustedSuccess)                              fill DENOMINATOR, cost denom
+  //         |_ succeeded     ran AND returned a value   -> fill NUMERATOR (actions)
+  //
+  // The three mis-filed statuses, and where the server hides each (so each peel
+  // fixes a DIFFERENT number):
+  //   - ERROR_RUN_CONDITION_NOT_MET: run-condition formula was false, so the row
+  //     never executed. The server folds it into successCount
+  //     (isStatusTreatedAsSuccess, libs/shared/src/fields/status-processing-utils.ts
+  //     line 5), so we subtract it from success -> this is what lowers `ran`
+  //     (the headline coverage numerator).
+  //   - ERROR_MISSING_INPUT / ERROR_BLANK_TOKEN: a required input cell was empty,
+  //     so the action was skipped (no API call). It lands in errorCount and is
+  //     NEVER in successCount, so it already doesn't touch `ran`; we subtract it
+  //     from error only to keep it out of `attempted`. adjustedError exists for
+  //     this single purpose. Otherwise a fallback ER skipped on most rows reads
+  //     as if it fired on the whole table (verified: "Validate Claygent Domain"
+  //     — most cells "Missing input", yet its attempt count spanned all 650 rows).
+  //   - SUCCESS_NO_DATA: ran to completion but returned nothing. A real run (it
+  //     stays in `ran`) but not a "hit", so it's peeled out of `succeeded`.
+  //
+  // Two deliberate choices:
+  //   - `total` is the WHOLE table, NOT total minus skips: coverage should read
+  //     as a real "ran on X of N rows" fraction (e.g. 550/789). Dividing by the
+  //     post-skip count makes a fully-run table always ~100%, which says nothing.
+  //   - Fill divides by `ran` (successes), NOT `attempted`: credit/provider
+  //     failures live in `attempted` but out of the fill denominator -- they
+  //     never got a fair chance to return data.
+  //
+  // RUN_CONDITION_NOT_MET and MISSING_INPUT are split apart on the way IN (the
+  // server scattered them across success/error) but re-merged on the way OUT
+  // into the single `condNotMet` field -- semantically they're identical: rows
+  // the user effectively didn't run.
   //
   // Returns a stat block matching the rest of buildStatsByFieldId's output
   // shape, or null when there's no usable data on this field.
   // ---------------------------------------------------------------------------
-  // Statuses where the enrichment never actually EXECUTED on the row (no API
-  // call, no credits) — so they must be peeled out of the coverage numerator:
-  //   - ERROR_RUN_CONDITION_NOT_MET — the run-condition formula was false. The
-  //     server buckets this into successCount (isStatusTreatedAsSuccess), so we
-  //     subtract it from success.
-  //   - ERROR_MISSING_INPUT ("Missing input") / ERROR_BLANK_TOKEN ("Some inputs
-  //     missing") — the action's required input was empty, so it was skipped.
-  //     These land in errorCount, so we subtract them from error.
-  // Without peeling the input-missing ones, a fallback/second-tier enrichment
-  // that's skipped on most rows reads as 100% coverage (verified: "Validate
-  // Claygent Domain" showed 650/650 while most cells said "Missing input").
   const COND_SKIP_STATUS = "ERROR_RUN_CONDITION_NOT_MET";
   const INPUT_MISSING_STATUSES = new Set(["ERROR_MISSING_INPUT", "ERROR_BLANK_TOKEN"]);
-  // Rows that ran to completion but produced no value. The server folds these
-  // into successCount, but they are NOT a "hit": the success-rate metric peels
-  // them out so it reads "of the rows that ran, how many returned a value."
   const NO_DATA_STATUS = "SUCCESS_NO_DATA";
 
   function deriveActionStatsFromDataProfile(dp) {
