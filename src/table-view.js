@@ -1229,6 +1229,22 @@
     return td;
   }
 
+  // Compact [icon | % | icon] cluster — fixed 22px side slots keep values aligned
+  // across rows; the whole group is centered in the Fill cell via text-align.
+  function createFillInnerEl() {
+    const inner = document.createElement("span");
+    inner.className = "cb-fill-inner";
+    const left = document.createElement("span");
+    left.className = "cb-fill-side cb-fill-side-left";
+    const center = createFillCenterEl();
+    const right = document.createElement("span");
+    right.className = "cb-fill-side cb-fill-side-right";
+    inner.appendChild(left);
+    inner.appendChild(center);
+    inner.appendChild(right);
+    return { inner, left, center, right };
+  }
+
   // Center column wrapper for Fill cells — keeps the % value centered in a
   // fixed 3-column grid while optional spotcheck / adjust icons occupy the sides.
   function createFillCenterEl() {
@@ -1242,7 +1258,7 @@
     const td = document.createElement("td");
     if (fill && fill.mode === "projected") {
       td.className = "col-fill";
-      const center = createFillCenterEl();
+      const { inner, center } = createFillInnerEl();
       const input = document.createElement("input");
       input.type = "number";
       input.min = "0";
@@ -1259,15 +1275,15 @@
       suffix.textContent = "%";
       center.appendChild(input);
       center.appendChild(suffix);
-      td.appendChild(center);
+      td.appendChild(inner);
     } else if (fill && fill.loading) {
       td.className = "col-fill cb-table-view-cell-muted";
-      const center = createFillCenterEl();
+      const { inner, center } = createFillInnerEl();
       const sp = document.createElement("span");
       sp.className = "cb-table-view-fill-spinner";
       sp.title = "Loading actual fill rate\u2026";
       center.appendChild(sp);
-      td.appendChild(center);
+      td.appendChild(inner);
     } else if (fill && fill.pct != null) {
       td.className = "col-fill";
       // Match the Projected input's box metrics + grey "%" so the value sits in
@@ -1278,7 +1294,7 @@
       const suffix = document.createElement("span");
       suffix.className = "cb-table-view-cell-suffix";
       suffix.textContent = "%";
-      const center = createFillCenterEl();
+      const { inner, left, center, right } = createFillInnerEl();
       center.appendChild(numSpan);
       center.appendChild(suffix);
       // "Spotcheck" affordance: when a DP column isn't fully filled, reveal a
@@ -1306,9 +1322,9 @@
           e.stopPropagation();
           spotcheckMissing(cardForFill, spot);
         });
-        td.appendChild(spot);
+        left.appendChild(spot);
       }
-      td.appendChild(center);
+      td.appendChild(inner);
       // Hover tooltip: expose the underlying ratio so a low fill % is legible
       // (e.g. "1%" reads as "~10 / 789"). Numerator = non-empty cells in this
       // column (from its nullPercentage); denominator = coverage.ran on the
@@ -1363,13 +1379,13 @@
           e.stopPropagation();
           openFillExclusionPopover(cardId, td, fill);
         });
-        td.appendChild(adj);
+        right.appendChild(adj);
       }
     } else {
       td.className = "col-fill cb-table-view-cell-muted";
-      const center = createFillCenterEl();
+      const { inner, center } = createFillInnerEl();
       center.textContent = "\u2014";
-      td.appendChild(center);
+      td.appendChild(inner);
     }
     return td;
   }
@@ -3397,15 +3413,15 @@
       parent.appendChild(row);
     }
 
-    // commonValues checkboxes.
+    // commonValues checkboxes + find-sourced rows share one list so spacing stays even.
+    const checkList = document.createElement("div");
+    checkList.className = "cb-table-picker-list cb-fill-excl-checklist";
     const commonKeys = new Set(commonValues.map((cv) => String(cv?.value)));
     if (commonValues.length) {
       const sectionLabel = document.createElement("div");
       sectionLabel.className = "cb-fill-excl-section-label";
       sectionLabel.textContent = "Common values in this column";
       body.appendChild(sectionLabel);
-      const list = document.createElement("div");
-      list.className = "cb-table-picker-list";
       for (const cv of commonValues) {
         const v = cv?.value;
         const pctOfTable = Number(cv?.percentage) || 0;
@@ -3414,7 +3430,7 @@
           ? scopedBlank
           : Math.round((pctOfTable / 100) * valueCount);
         const key = String(v);
-        appendFillExclCheckRow(list, {
+        appendFillExclCheckRow(checkList, {
           label: fillExclValueLabel(v),
           metaText: `${pctOfTable}% · ${count.toLocaleString()}`,
           checked: working.has(key),
@@ -3425,7 +3441,6 @@
           },
         });
       }
-      body.appendChild(list);
     } else {
       const empty = document.createElement("div");
       empty.className = "cb-fill-excl-empty";
@@ -3433,17 +3448,12 @@
         "No frequent values in the import sample \u2014 look up a specific value below.";
       body.appendChild(empty);
     }
-
-    // Container for find-sourced custom rows (existing + newly counted), kept
-    // above the add controls so the list grows in place without re-rendering.
-    const customList = document.createElement("div");
-    customList.className = "cb-table-picker-list";
-    body.appendChild(customList);
+    body.appendChild(checkList);
 
     // Append (or refresh) one find-sourced custom row with an unchecking box.
     const addCustomRow = (e) => {
       const key = String(e.value);
-      appendFillExclCheckRow(customList, {
+      appendFillExclCheckRow(checkList, {
         label: fillExclValueLabel(e.value),
         metaText: Number(e.count).toLocaleString(),
         checked: true,

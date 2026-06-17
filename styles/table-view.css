@@ -1346,11 +1346,26 @@
   }
 }
 
-/* Fill cell: keep td as a table cell (not grid/flex) so vertical-align: middle
-   centers the % when ER chips wrap and stretch the row. Side icons are
-   absolutely positioned so they don't steal layout width from the value. */
+/* Fill cell: compact [spot | % | adjust] cluster centered in the column.
+   Fixed 22px side slots (empty when no icon) keep % aligned row-to-row. */
 .cb-table-view-table td.col-fill {
   position: relative;
+}
+
+.cb-fill-inner {
+  display: inline-grid;
+  grid-template-columns: 22px auto 22px;
+  column-gap: 5px;
+  align-items: center;
+  vertical-align: middle;
+}
+
+.cb-fill-side {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
 }
 
 .cb-fill-center {
@@ -1361,10 +1376,6 @@
 
 /* "Spotcheck missing data" — left of the fill %; revealed on row hover. */
 .cb-fill-spotcheck {
-  position: absolute;
-  left: 0;
-  top: 50%;
-  transform: translateY(-50%);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1394,10 +1405,6 @@
 
 /* Adjusted-fill (exclude values) affordance — right of the fill %. */
 .cb-fill-adjust {
-  position: absolute;
-  right: 0;
-  top: 50%;
-  transform: translateY(-50%);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1520,8 +1527,16 @@
   font-variant-numeric: tabular-nums;
 }
 
-.cb-fill-excl-body .cb-table-picker-list {
+.cb-fill-excl-body .cb-fill-excl-checklist {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
   margin-bottom: 6px;
+}
+
+.cb-fill-excl-checklist:empty {
+  display: none;
+  margin: 0;
 }
 
 /* Single-line row: label grows, count pinned right (import picker is stacked). */
