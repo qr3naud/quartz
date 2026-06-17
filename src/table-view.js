@@ -945,7 +945,9 @@
     // Fall back to nullPercentage only when the exact /find leg is missing,
     // capped (approximate), or errored.
     let nonNull;
-    if (stats.emptyCount != null && !stats.emptyCountApproximate) {
+    const exactNumerator =
+      stats.emptyCount != null && !stats.emptyCountApproximate;
+    if (exactNumerator) {
       nonNull = Math.max(0, tot - Number(stats.emptyCount));
     } else if (np != null) {
       nonNull = ((100 - Number(np)) / 100) * tot;
@@ -967,12 +969,13 @@
     const ran = Number(cov?.ran) || 0;
     const denom = ran > 0 ? ran : tot;
     // `nonNull` / `denom` are surfaced so the table's Fill cell can show the
-    // underlying ratio on hover (a bare "1%" is opaque; "~10 / 789" is not).
+    // underlying ratio on hover (a bare "1%" is opaque; "10 / 789" is not).
     return {
       pct: Math.min(100, Math.max(0, Math.round((adjustedNonNull / denom) * 100))),
       nonNull: Math.round(adjustedNonNull),
       denom,
       excluded: Math.round(excluded),
+      exactNumerator,
     };
   }
 
@@ -1057,6 +1060,7 @@
               // name lives on displayName/text (mirrors buildErChipData).
               nonNull: af.nonNull,
               denom: af.denom,
+              exactNumerator: !!af.exactNumerator,
               denomLabel: erCard?.data?.displayName || erCard?.data?.text || null,
               // Exclusion summary for the Fill cell tooltip + editor: total rows
               // removed and the list of {value, count, source} entries. Blank
@@ -1348,13 +1352,15 @@
       }
       td.appendChild(inner);
       // Hover tooltip: expose the underlying ratio so a low fill % is legible
-      // (e.g. "1%" reads as "~10 / 789"). Numerator = non-empty cells in this
-      // column (from its nullPercentage); denominator = coverage.ran on the
-      // widest linked enrichment (successes only — credit failures excluded).
+      // (e.g. "1%" reads as "10 / 789"). Numerator = non-empty cells in this
+      // column (exact /find EMPTY count when available, else nullPercentage);
+      // denominator = coverage.ran on the widest linked enrichment (successes
+      // only — credit failures excluded). "~" only on the nullPercentage fallback.
       if (fill.denom != null && fill.nonNull != null) {
         const numTxt = Number(fill.nonNull).toLocaleString();
         const denomTxt = Number(fill.denom).toLocaleString();
-        const ratioLine = `~${numTxt} / ${denomTxt} filled`;
+        const ratioPrefix = fill.exactNumerator ? "" : "~";
+        const ratioLine = `${ratioPrefix}${numTxt} / ${denomTxt} filled`;
         const whyLine = fill.denomLabel
           ? `non-empty cells \u00F7 rows \u201C${fill.denomLabel}\u201D succeeded on`
           : `non-empty cells \u00F7 rows the enrichment succeeded on`;
