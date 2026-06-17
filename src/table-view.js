@@ -3384,17 +3384,20 @@
       const ratio = document.createElement("span");
       ratio.className = "cb-fill-excl-ratio";
       ratio.textContent =
-        `~${Math.round(adjusted).toLocaleString()} / ${Math.round(denom).toLocaleString()} filled`;
+        `${Math.round(adjusted).toLocaleString()} / ${Math.round(denom).toLocaleString()}`;
       main.appendChild(pctEl);
       main.appendChild(ratio);
       preview.appendChild(main);
+      const pill = document.createElement("span");
+      pill.className = "cb-fill-excl-excluded-pill";
       if (excluded > 0) {
-        const pill = document.createElement("span");
-        pill.className = "cb-fill-excl-excluded-pill";
         pill.textContent = `\u2212${Math.round(excluded).toLocaleString()} excluded`;
         pill.title = "Rows subtracted by your exclusions below";
-        preview.appendChild(pill);
+      } else {
+        pill.classList.add("cb-fill-excl-excluded-pill-reserved");
+        pill.setAttribute("aria-hidden", "true");
       }
+      preview.appendChild(pill);
     };
 
     // Checkbox row — import picker checkbox + checked tint; single-line layout.
