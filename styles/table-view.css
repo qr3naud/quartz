@@ -1555,16 +1555,16 @@
 }
 
 /* Dynamic radius: outer corners of each contiguous checked run only. */
-.cb-fill-excl-checkrow-solo {
+.cb-fill-excl-checklist .cb-fill-excl-checkrow.cb-fill-excl-checkrow-solo {
   border-radius: 6px;
 }
 
-.cb-fill-excl-checkrow-run-top {
+.cb-fill-excl-checklist .cb-fill-excl-checkrow.cb-fill-excl-checkrow-run-top {
   border-top-left-radius: 6px;
   border-top-right-radius: 6px;
 }
 
-.cb-fill-excl-checkrow-run-bottom {
+.cb-fill-excl-checklist .cb-fill-excl-checkrow.cb-fill-excl-checkrow-run-bottom {
   border-bottom-left-radius: 6px;
   border-bottom-right-radius: 6px;
 }
