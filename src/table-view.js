@@ -3396,6 +3396,40 @@
       return `${pct}% · ${n.toLocaleString()}`;
     }
 
+    function refreshFillExclCheckrowShape(list) {
+      const rows = [...list.querySelectorAll(".cb-fill-excl-checkrow")];
+      for (const row of rows) {
+        row.classList.remove(
+          "cb-fill-excl-checkrow-solo",
+          "cb-fill-excl-checkrow-run-top",
+          "cb-fill-excl-checkrow-run-mid",
+          "cb-fill-excl-checkrow-run-bottom",
+        );
+      }
+      let i = 0;
+      while (i < rows.length) {
+        if (!rows[i].classList.contains("cb-table-picker-checkrow-checked")) {
+          i += 1;
+          continue;
+        }
+        let j = i + 1;
+        while (
+          j < rows.length &&
+          rows[j].classList.contains("cb-table-picker-checkrow-checked")
+        ) j += 1;
+        const run = rows.slice(i, j);
+        if (run.length === 1) run[0].classList.add("cb-fill-excl-checkrow-solo");
+        else {
+          run[0].classList.add("cb-fill-excl-checkrow-run-top");
+          for (let k = 1; k < run.length - 1; k += 1) {
+            run[k].classList.add("cb-fill-excl-checkrow-run-mid");
+          }
+          run[run.length - 1].classList.add("cb-fill-excl-checkrow-run-bottom");
+        }
+        i = j;
+      }
+    }
+
     function appendFillExclCheckRow(parent, { key, label, metaText, checked, onToggle }) {
       const row = document.createElement("label");
       row.className =
@@ -3409,6 +3443,7 @@
       cbx.addEventListener("change", () => {
         row.classList.toggle("cb-table-picker-checkrow-checked", cbx.checked);
         onToggle(cbx.checked);
+        refreshFillExclCheckrowShape(parent);
       });
       const nameEl = document.createElement("span");
       nameEl.className = "cb-table-picker-checkrow-name";
@@ -3420,6 +3455,7 @@
       row.appendChild(nameEl);
       row.appendChild(meta);
       parent.appendChild(row);
+      refreshFillExclCheckrowShape(parent);
     }
 
     // commonValues checkboxes + find-sourced rows share one list so spacing stays even.

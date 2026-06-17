@@ -1541,22 +1541,32 @@
 
 .cb-fill-excl-checklist .cb-fill-excl-checkrow:first-child {
   margin-top: 0;
+}
+
+/* Checked rows stay above neighbor hovers so the indigo border doesn't get painted over. */
+.cb-fill-excl-checklist .cb-table-picker-checkrow-checked {
+  position: relative;
+  z-index: 2;
+}
+
+.cb-fill-excl-checklist .cb-fill-excl-checkrow:hover:not(.cb-table-picker-checkrow-checked) {
+  position: relative;
+  z-index: 1;
+}
+
+/* Dynamic radius: outer corners of each contiguous checked run only. */
+.cb-fill-excl-checkrow-solo {
+  border-radius: 6px;
+}
+
+.cb-fill-excl-checkrow-run-top {
   border-top-left-radius: 6px;
   border-top-right-radius: 6px;
 }
 
-.cb-fill-excl-checklist .cb-fill-excl-checkrow:last-child {
+.cb-fill-excl-checkrow-run-bottom {
   border-bottom-left-radius: 6px;
   border-bottom-right-radius: 6px;
-}
-
-.cb-fill-excl-checklist .cb-fill-excl-checkrow:only-child {
-  border-radius: 6px;
-}
-
-.cb-fill-excl-checklist .cb-fill-excl-checkrow:hover {
-  position: relative;
-  z-index: 1;
 }
 
 .cb-fill-excl-checklist:empty {
