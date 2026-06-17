@@ -3360,32 +3360,41 @@
     const body = document.createElement("div");
     body.className = "cb-fill-excl-body";
 
-    const statRow = document.createElement("div");
-    statRow.className = "cb-fill-excl-stat";
-    const statLabel = document.createElement("span");
-    statLabel.className = "cb-fill-excl-stat-label";
-    statLabel.textContent = "Fill rate after exclusions";
-    const statValues = document.createElement("span");
-    statValues.className = "cb-fill-excl-stat-values";
-    const pctEl = document.createElement("span");
-    pctEl.className = "cb-fill-excl-stat-pct";
-    const detailEl = document.createElement("span");
-    detailEl.className = "cb-fill-excl-stat-detail";
-    statValues.appendChild(pctEl);
-    statValues.appendChild(detailEl);
-    statRow.appendChild(statLabel);
-    statRow.appendChild(statValues);
-    body.appendChild(statRow);
+    const previewLabel = document.createElement("div");
+    previewLabel.className = "cb-fill-excl-section-label";
+    previewLabel.textContent = "Fill rate after exclusions";
+    body.appendChild(previewLabel);
+
+    // Live preview of the adjusted %.
+    const preview = document.createElement("div");
+    preview.className = "cb-fill-excl-preview";
+    body.appendChild(preview);
 
     const renderPreview = () => {
       let excluded = 0;
       for (const e of working.values()) excluded += Number(e.count) || 0;
       const adjusted = Math.max(0, baseNonNull - excluded);
       const pct = denom > 0 ? Math.min(100, Math.max(0, Math.round((adjusted / denom) * 100))) : 0;
+      preview.innerHTML = "";
+      const main = document.createElement("div");
+      main.className = "cb-fill-excl-preview-main";
+      const pctEl = document.createElement("span");
+      pctEl.className = "cb-fill-excl-pct";
       pctEl.textContent = `${pct}%`;
-      detailEl.textContent =
-        `~${Math.round(adjusted).toLocaleString()} / ${Math.round(denom).toLocaleString()}` +
-        (excluded > 0 ? ` \u2212${Math.round(excluded).toLocaleString()}` : "");
+      const ratio = document.createElement("span");
+      ratio.className = "cb-fill-excl-ratio";
+      ratio.textContent =
+        `~${Math.round(adjusted).toLocaleString()} / ${Math.round(denom).toLocaleString()} filled`;
+      main.appendChild(pctEl);
+      main.appendChild(ratio);
+      preview.appendChild(main);
+      if (excluded > 0) {
+        const pill = document.createElement("span");
+        pill.className = "cb-fill-excl-excluded-pill";
+        pill.textContent = `\u2212${Math.round(excluded).toLocaleString()} excluded`;
+        pill.title = "Rows subtracted by your exclusions below";
+        preview.appendChild(pill);
+      }
     };
 
     // Checkbox row — import picker checkbox + checked tint; single-line layout.
