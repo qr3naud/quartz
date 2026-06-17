@@ -3239,6 +3239,43 @@
     return String(value);
   }
 
+  function isBlankFillValue(value) {
+    return value == null || value === "";
+  }
+
+  // Blank cells on rows the enrichment never ran (run condition not met, missing
+  // input, …) must not count toward fill exclusions — fill already divides by
+  // coverage.ran (successes only). Prefer ran − succeeded (= SUCCESS_NO_DATA);
+  // fall back to peeling condNotMet off a whole-table /find EMPTY count.
+  function blankRowsAmongRanSuccesses(erCard) {
+    const cov = erCard?.data?.stats?.coverage;
+    if (!cov || !Number(cov.ran)) return null;
+    if (cov.succeeded == null) return null;
+    return Math.max(0, Number(cov.ran) - Number(cov.succeeded));
+  }
+
+  async function countBlankForFillExclusion(dpCard, erCard, stats) {
+    const scoped = blankRowsAmongRanSuccesses(erCard);
+    if (scoped != null) {
+      return { count: scoped, approximate: false, scoped: true };
+    }
+    const { count, approximate } = await __cb.fetchFieldValueCount(
+      dpCard.data.tableId,
+      dpCard.data.fieldId,
+      { operator: "EMPTY", totalRecords: Number(stats.totalRecords) || 0 }
+    );
+    const peel = Number(erCard?.data?.stats?.condNotMet);
+    if (count > 0 && Number.isFinite(peel) && peel > 0) {
+      return {
+        count: Math.max(0, count - peel),
+        approximate,
+        scoped: true,
+        peeled: peel,
+      };
+    }
+    return { count, approximate, scoped: false };
+  }
+
   function closeFillExclusionPopover() {
     if (fillExclPopoverEl) { fillExclPopoverEl.remove(); fillExclPopoverEl = null; }
     if (fillExclPopoverBackdrop) { fillExclPopoverBackdrop.remove(); fillExclPopoverBackdrop = null; }
@@ -3268,6 +3305,7 @@
     const stats = card.data.stats || {};
     const valueCount = Number(stats.valueCount) || Number(stats.totalRecords) || 0;
     const commonValues = Array.isArray(stats.commonValues) ? stats.commonValues : [];
+    const widestEr = widestActualErForDp(card);
     // Base (unadjusted) non-null cells + denominator come straight off the Fill
     // cell descriptor so the editor's preview matches the cell exactly.
     const baseNonNull = (Number(fill?.nonNull) || 0) + (Number(fill?.excluded) || 0);
@@ -3372,7 +3410,10 @@
       for (const cv of commonValues) {
         const v = cv?.value;
         const pctOfTable = Number(cv?.percentage) || 0;
-        const count = Math.round((pctOfTable / 100) * valueCount);
+        const scopedBlank = isBlankFillValue(v) ? blankRowsAmongRanSuccesses(widestEr) : null;
+        const count = scopedBlank != null
+          ? scopedBlank
+          : Math.round((pctOfTable / 100) * valueCount);
         const key = String(v);
         appendFillExclCheckRow(list, {
           label: fillExclValueLabel(v),
@@ -3430,7 +3471,7 @@
     const lookupDesc = document.createElement("div");
     lookupDesc.className = "cb-fill-excl-section-desc";
     lookupDesc.textContent =
-      "Count rows that match a stored value in the full table, or exclude every blank cell at once.";
+      "Count rows that match a stored value in the full table. Blank cells only counts empties on rows the enrichment actually ran on (run-condition skips are ignored).";
     lookupSection.appendChild(lookupTitle);
     lookupSection.appendChild(lookupDesc);
 
@@ -3463,21 +3504,27 @@
       emptyBtn.disabled = true;
       status.textContent = "Counting…";
       try {
-        const { count, approximate } = await __cb.fetchFieldValueCount(
-          card.data.tableId,
-          card.data.fieldId,
-          { operator, value, totalRecords: Number(stats.totalRecords) || 0 }
-        );
+        const counted = operator === "EMPTY"
+          ? await countBlankForFillExclusion(card, widestEr, stats)
+          : await __cb.fetchFieldValueCount(
+            card.data.tableId,
+            card.data.fieldId,
+            { operator, value, totalRecords: Number(stats.totalRecords) || 0 }
+          ).then(({ count, approximate }) => ({ count, approximate, scoped: false }));
+        const { count, approximate, scoped } = counted;
         if (!count) {
-          status.textContent = `No rows match "${label}".`;
+          status.textContent = operator === "EMPTY"
+            ? "No blank cells on rows the enrichment ran on."
+            : `No rows match "${label}".`;
           return;
         }
         const key = String(value ?? "");
         const entry = { value: value ?? "", count, source: "find" };
         const existed = working.has(key);
         working.set(key, entry);
+        const scopeNote = operator === "EMPTY" && scoped ? " among rows that ran" : "";
         status.textContent =
-          `Excluding ${count.toLocaleString()}${approximate ? "+" : ""} rows (${label}).`;
+          `Excluding ${count.toLocaleString()}${approximate ? "+" : ""} rows (${label}${scopeNote}).`;
         // Append the new row in place (unless it's already shown above) so the
         // working set survives until Apply without a full re-render.
         if (!existed && !commonKeys.has(key)) addCustomRow(entry);
