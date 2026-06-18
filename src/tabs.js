@@ -12,6 +12,48 @@
     return ids ? `cb-tabs-${ids.workbookId}` : null;
   }
 
+  // The localStorage tab mirror is per-workbook and is only an offline / 
+  // Supabase-down fallback (Supabase is the source of truth — see loadTabs).
+  // Every workbook ever opened leaves a `cb-tabs-{wb}` blob behind (hundreds of
+  // KB each), so they accumulate and eat the ~5MB origin budget shared with
+  // Clay. Keep only the current workbook's mirror + per-workbook prefs; drop
+  // the rest. Best-effort: never throw (a prune failure must not block a load).
+  __cb.pruneTabMirrors = function (currentWorkbookId) {
+    if (!currentWorkbookId) return;
+    const suffix = `-${currentWorkbookId}`;
+    const PREFIXES = ["cb-tabs-", "cb-active-tab-", "cb-pro-mode-", "cb-open-", "cb-canvas-"];
+    try {
+      const doomed = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (!k) continue;
+        if (PREFIXES.some((p) => k.startsWith(p)) && !k.endsWith(suffix)) doomed.push(k);
+      }
+      for (const k of doomed) localStorage.removeItem(k);
+    } catch (err) {
+      console.warn("[Clay Scoping] pruneTabMirrors failed:", err);
+    }
+  };
+
+  // Writes a tab blob to localStorage, pruning other workbooks' mirrors and
+  // retrying once on a quota error before giving up. The mirror is only an
+  // offline fallback (Supabase is authoritative), so a final failure is
+  // non-fatal. `context` labels the warning for the originating call site.
+  function safeWriteTabMirror(key, value, context) {
+    try {
+      localStorage.setItem(key, value);
+    } catch (e) {
+      try {
+        const wb = __cb.currentWorkbookId || __cb.parseIdsFromUrl()?.workbookId;
+        __cb.pruneTabMirrors(wb);
+        localStorage.setItem(key, value);
+      } catch (retryErr) {
+        console.warn(`[Clay Scoping] ${context || "tab mirror"} write failed:`, retryErr);
+      }
+    }
+  }
+  __cb.safeWriteTabMirror = safeWriteTabMirror;
+
   // Pro Mode is a UX preference, not workbook content: the user's last
   // toggle should survive close/reopen for a short window so they don't
   // have to re-enable it every time. Stored per-workbook because the saved
@@ -151,6 +193,9 @@
     if (!key) return null;
 
     const ids = __cb.parseIdsFromUrl();
+    // Scope the localStorage tab mirrors to the current workbook before doing
+    // anything else — this is the natural "we know the current workbook" point.
+    if (ids?.workbookId) __cb.pruneTabMirrors(ids.workbookId);
     const supa = window.__cbSupabase;
     if (ids && supa) {
       try {
@@ -168,11 +213,7 @@
           // already ensured the canvases row exists since rows came back, so
           // mark it as ensured to skip a redundant POST on the next save.
           ensuredCanvasRows.add(ids.workbookId);
-          try {
-            localStorage.setItem(key, JSON.stringify(store));
-          } catch (e) {
-            console.warn("[Clay Scoping] localStorage cache write failed:", e);
-          }
+          safeWriteTabMirror(key, JSON.stringify(store), "loadTabs cache");
           bumpNextTabIdFromStore(store);
           return store;
         }
@@ -189,11 +230,7 @@
         });
         if (Array.isArray(legacy) && legacy.length > 0 && legacy[0].state?.tabs) {
           const store = legacy[0].state;
-          try {
-            localStorage.setItem(key, JSON.stringify(store));
-          } catch (e) {
-            console.warn("[Clay Scoping] localStorage cache write failed:", e);
-          }
+          safeWriteTabMirror(key, JSON.stringify(store), "loadTabs legacy cache");
           bumpNextTabIdFromStore(store);
           return store;
         }
@@ -316,11 +353,7 @@
     if (!workbookId || !__cb.tabStore?.tabs?.length) return;
 
     const key = `cb-tabs-${workbookId}`;
-    try {
-      localStorage.setItem(key, JSON.stringify(__cb.tabStore));
-    } catch (e) {
-      console.warn("[Clay Scoping] persistSharedTabBlobs localStorage failed:", e);
-    }
+    safeWriteTabMirror(key, JSON.stringify(__cb.tabStore), "persistSharedTabBlobs");
 
     const tabs = __cb.tabStore.tabs;
     await Promise.all(
@@ -499,11 +532,7 @@
     // Local-first: localStorage cache is always current. We still write the
     // full tabStore here because that's what loadTabsLocal reads, and it's
     // a useful offline backup.
-    try {
-      localStorage.setItem(key, JSON.stringify(__cb.tabStore));
-    } catch (e) {
-      console.warn("[Clay Scoping] saveTabs failed:", e);
-    }
+    safeWriteTabMirror(key, JSON.stringify(__cb.tabStore), "saveTabs");
 
     // Persist only the active tab to Supabase. Other tabs aren't dirty and
     // don't need to be re-uploaded; their canvas_tabs rows still hold the
@@ -659,7 +688,7 @@
         }
       }
       const key = tabsStorageKey();
-      if (key) { try { localStorage.setItem(key, JSON.stringify(__cb.tabStore)); } catch {} }
+      if (key) safeWriteTabMirror(key, JSON.stringify(__cb.tabStore), "applyRemoteTab delete");
       try { renderTabBar(); } catch {}
       return;
     }
@@ -689,9 +718,7 @@
 
     // Cache to localStorage so a refresh shows the new state.
     const key = tabsStorageKey();
-    if (key) {
-      try { localStorage.setItem(key, JSON.stringify(__cb.tabStore)); } catch {}
-    }
+    if (key) safeWriteTabMirror(key, JSON.stringify(__cb.tabStore), "applyRemoteTab");
 
     // If this is the tab the user is currently viewing, repaint the canvas.
     // Strip view so user B keeps their own pan/zoom (same pattern undo/redo

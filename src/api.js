@@ -19,8 +19,34 @@
     actions: (ws) => `cb-cache-actions-${ws}`,
     modelpricing: (ws) => `cb-cache-modelpricing-${ws}`,
     plan: (ws) => `cb-cache-plan-${ws}`,
-    subroutines: (ws) => `cb-cache-subroutines-${ws}`,
     workspace: (ws) => `cb-cache-workspace-${ws}`,
+  };
+
+  // Every static-cache key is suffixed with the workspace id. Switching
+  // workspaces (or impersonating into another) writes a fresh blob under the
+  // new key and orphans the old one forever — the action catalog alone is
+  // ~600KB per workspace, so a few switches exhaust the ~5MB localStorage
+  // budget app.clay.com shares between Clay and Quartz. We only ever need the
+  // current workspace's static data, so drop every other workspace's caches.
+  // Best-effort: never throw (a prune failure must not block an import).
+  __cb.pruneStaticCaches = function (currentWorkspaceId) {
+    if (!currentWorkspaceId) return;
+    const suffix = `-${currentWorkspaceId}`;
+    try {
+      const doomed = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (!k || !k.startsWith("cb-cache-")) continue;
+        // `cb-cache-subroutines-*` is a deprecated prefix — we no longer
+        // persist it (it could be hundreds of KB), so drop it unconditionally,
+        // including for the current workspace where it would otherwise never be
+        // overwritten and linger forever.
+        if (k.startsWith("cb-cache-subroutines-") || !k.endsWith(suffix)) doomed.push(k);
+      }
+      for (const k of doomed) localStorage.removeItem(k);
+    } catch (err) {
+      console.warn("[Clay Scoping] pruneStaticCaches failed:", err);
+    }
   };
 
   function extVersion() {
@@ -49,14 +75,25 @@
   };
 
   __cb.writeStaticCache = function (key, workspaceId, data) {
+    const payload = JSON.stringify({
+      workspaceId,
+      version: extVersion(),
+      fetchedAt: Date.now(),
+      data,
+    });
     try {
-      localStorage.setItem(
-        key,
-        JSON.stringify({ workspaceId, version: extVersion(), fetchedAt: Date.now(), data })
-      );
+      localStorage.setItem(key, payload);
     } catch (err) {
-      // Quota or serialization failure — non-fatal, just skip caching.
-      console.warn("[Clay Scoping] static cache write failed:", err);
+      // Most likely a quota error: app.clay.com's localStorage is shared with
+      // Clay and capped at ~5MB. Prune other workspaces' caches and retry once
+      // before giving up — caching is an optimization, so a final failure is
+      // non-fatal (the in-memory lookups are already populated by the caller).
+      try {
+        __cb.pruneStaticCaches(workspaceId);
+        localStorage.setItem(key, payload);
+      } catch (retryErr) {
+        console.warn("[Clay Scoping] static cache write failed:", retryErr);
+      }
     }
   };
 
@@ -88,10 +125,14 @@
   __cb.ensureStaticData = async function (workspaceId) {
     if (!workspaceId) return;
 
+    // Drop every OTHER workspace's static caches first — this is the natural
+    // "we know the current workspace" point (hit on every import), and keeps
+    // localStorage scoped to the workspace we're actually using.
+    __cb.pruneStaticCaches(workspaceId);
+
     const actionsCache = __cb.readStaticCache(CACHE_KEYS.actions(workspaceId), workspaceId);
     const modelCache = __cb.readStaticCache(CACHE_KEYS.modelpricing(workspaceId), workspaceId);
     const planCache = __cb.readStaticCache(CACHE_KEYS.plan(workspaceId), workspaceId);
-    const subroutinesCache = __cb.readStaticCache(CACHE_KEYS.subroutines(workspaceId), workspaceId);
 
     // 1. Hydrate in-memory state from cache (instant, no network).
     if (Object.keys(__cb.actionByIdLookup || {}).length === 0 && Array.isArray(actionsCache?.data)) {
@@ -102,14 +143,6 @@
     }
     if (!__cb.currentPlanPricing && planCache && "data" in planCache) {
       __cb.currentPlanPricing = planCache.data;
-    }
-    // A workspace can legitimately have zero functions, so an empty map is a
-    // valid "loaded" state — key the hydrate off the map being unset (vs the
-    // emptiness test used for actions / pricing) and off cache presence for the
-    // fetch decision below (mirrors the `plan` path, whose data can be null).
-    if (!__cb.subroutineByTableId && subroutinesCache && subroutinesCache.data) {
-      __cb.subroutineByTableId = subroutinesCache.data.byTableId || {};
-      __cb.subroutineByName = subroutinesCache.data.byName || {};
     }
 
     // 2. Decide what to fetch now (no usable value) vs in the background (stale).
@@ -134,9 +167,12 @@
       background.push(() => __cb.fetchCurrentPlanPricing(workspaceId));
     }
 
-    if (!subroutinesCache) {
-      mustAwait.push(__cb.fetchSubroutines(workspaceId));
-    } else if (!isCacheFresh(subroutinesCache)) {
+    // Subroutines are no longer persisted to localStorage (the workspace blob
+    // can be hundreds of KB — e.g. 830 functions in workspace 4515). Warm the
+    // in-memory map once per session in the background; per-table cost still
+    // resolves authoritatively on demand via fetchSubroutineCosts when a
+    // function card is added (see resolveSubroutineCostsForCards).
+    if (!__cb.subroutineByTableId) {
       background.push(() => __cb.fetchSubroutines(workspaceId));
     }
 
@@ -256,25 +292,18 @@
   // apps/api/v3/tables/endpoints/subroutines.endpoints.ts). We index them by
   // referenced table id AND lowercased name so the picker can resolve a picked
   // function's projected cost + referenced table without a per-function
-  // round-trip, and the import flow can stamp cost synchronously. Cached like
-  // model pricing (24h stale-while-revalidate). `cost` is the same
-  // getRunCostEstimate number __cb.fetchSubroutineCosts returns for a single
-  // table (standalone sub-columns summed, waterfall steps averaged), so the
-  // cached value and the per-table fetch agree.
+  // round-trip, and the import flow can stamp cost synchronously. `cost` is the
+  // same getRunCostEstimate number __cb.fetchSubroutineCosts returns for a
+  // single table (standalone sub-columns summed, waterfall steps averaged).
+  //
+  // NOT persisted to localStorage: the full workspace blob is large (e.g. 830
+  // functions / ~230KB in workspace 4515) and would compete with Clay for the
+  // shared ~5MB origin budget. The map is warmed in memory once per session
+  // (ensureStaticData / startPickerMode); any function added afterwards still
+  // gets an authoritative cost on demand via fetchSubroutineCosts (see
+  // resolveSubroutineCostsForCards), so dropping the cache costs at most one
+  // bulk fetch per session, never correctness.
   __cb.fetchSubroutines = async function (workspaceId) {
-    // Instant hydrate from the localStorage cache so the picker can resolve a
-    // function's cost the moment it's picked, even before this network refetch
-    // returns. This runs synchronously (before the first await), so a caller
-    // that doesn't await fetchSubroutines (the picker) still sees the warm map
-    // immediately. Detection itself doesn't need this (it scrapes the row's
-    // table-id link), but it makes the cost show without waiting on the network.
-    if (!__cb.subroutineByTableId) {
-      const cached = __cb.readStaticCache(CACHE_KEYS.subroutines(workspaceId), workspaceId);
-      if (cached && cached.data) {
-        __cb.subroutineByTableId = cached.data.byTableId || {};
-        __cb.subroutineByName = cached.data.byName || {};
-      }
-    }
     try {
       const res = await fetch(
         `https://api.clay.com/v3/workspaces/${workspaceId}/subroutines`,
@@ -300,7 +329,6 @@
       }
       __cb.subroutineByTableId = byTableId;
       __cb.subroutineByName = byName;
-      __cb.writeStaticCache(CACHE_KEYS.subroutines(workspaceId), workspaceId, { byTableId, byName });
     } catch (err) {
       console.warn("[Clay Scoping] subroutines fetch failed:", err);
       // Keep any previously-hydrated map; ensure the lookups exist so callers
