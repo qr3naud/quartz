@@ -2963,7 +2963,8 @@
         // the one-shot /v3/me fetch kicked off at script init.
         (async () => {
           if (__cb.userIdReady) await __cb.userIdReady;
-          if (__cb.markCanvasActivity) await __cb.markCanvasActivity(ids.workbookId);
+          if (__cb.markCanvasActivity) await __cb.markCanvasActivity(ids.workbookId, { force: true });
+          if (__cb.startCanvasActivityHeartbeat) __cb.startCanvasActivityHeartbeat(ids.workbookId);
           if (__cb.refreshCollaborators) __cb.refreshCollaborators(ids.workbookId);
 
           // Realtime: join the channel, mount the cursor overlay, hook up
@@ -3205,6 +3206,7 @@
     if (__cb.uninstallRealtimeTabSync) __cb.uninstallRealtimeTabSync();
     if (__cb.realtime?.leaveWorkbook) __cb.realtime.leaveWorkbook();
     if (__cb.unmountCollaboratorsWidget) __cb.unmountCollaboratorsWidget();
+    if (__cb.stopCanvasActivityHeartbeat) __cb.stopCanvasActivityHeartbeat();
     __cb.overlayEl.remove();
     __cb.overlayEl = null;
     __cb.resetTabBar();

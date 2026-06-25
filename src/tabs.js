@@ -380,6 +380,23 @@
     }
   }
 
+  const ACTIVITY_HEARTBEAT_MS = 5 * 60 * 1000;
+  const lastActivityEventAt = new Map();
+  let activityHeartbeatTimer = null;
+
+  async function pushActivityEvent(workbookId, now) {
+    const supa = window.__cbSupabase;
+    if (!supa || !__cb.userId || !workbookId) return;
+    await supa.supabaseFetch("canvas_activity_events", "POST", {
+      body: {
+        workbook_id: workbookId,
+        user_id: __cb.userId,
+        seen_at: now,
+      },
+    });
+    lastActivityEventAt.set(workbookId, Date.now());
+  }
+
   // Upserts a single tab's row to canvas_tabs. The trigger broadcasts a
   // tabState event (full row) and a tabInvalidate fallback to peers in the
   // same workbook. Fire-and-forget: errors are logged, never thrown.
@@ -415,6 +432,11 @@
             last_accessed_at: now,
           },
         });
+        try {
+          await pushActivityEvent(workbookId, now);
+        } catch {
+          // Non-critical heartbeat log.
+        }
       }
     } catch (err) {
       console.warn("[Clay Scoping] pushTabToSupabase failed:", err);
@@ -426,26 +448,51 @@
    * this does NOT touch the canvases row, so it's safe to call purely on
    * view (no edit needed) and as a periodic heartbeat.
    *
+   * Also appends to canvas_activity_events (throttled) so usage analytics can
+   * reconstruct daily session spans from discrete heartbeats.
+   *
    * Silently ignores errors: the most common failure is an FK violation when
    * the user opens a never-saved workbook (no canvases row exists yet). The
    * first real save will create the canvases row and subsequent heartbeats
    * will succeed.
    */
-  __cb.markCanvasActivity = async function (workbookId) {
+  __cb.markCanvasActivity = async function (workbookId, { force = false } = {}) {
     const supa = window.__cbSupabase;
     if (!supa || !__cb.userId || !workbookId) return;
+    const now = new Date().toISOString();
+    const lastPing = lastActivityEventAt.get(workbookId) || 0;
+    const shouldLogEvent = force || Date.now() - lastPing >= ACTIVITY_HEARTBEAT_MS;
     try {
       await supa.supabaseFetch("canvas_contributors", "POST", {
         prefer: "resolution=merge-duplicates",
         body: {
           workbook_id: workbookId,
           user_id: __cb.userId,
-          last_accessed_at: new Date().toISOString(),
+          last_accessed_at: now,
         },
       });
+      if (shouldLogEvent) await pushActivityEvent(workbookId, now);
     } catch {
       // Non-critical; collaborators widget will just lack this user until the
       // next successful upsert (usually after the first save).
+    }
+  };
+
+  __cb.startCanvasActivityHeartbeat = function (workbookId) {
+    if (activityHeartbeatTimer) {
+      clearInterval(activityHeartbeatTimer);
+      activityHeartbeatTimer = null;
+    }
+    if (!workbookId) return;
+    activityHeartbeatTimer = setInterval(() => {
+      __cb.markCanvasActivity(workbookId);
+    }, ACTIVITY_HEARTBEAT_MS);
+  };
+
+  __cb.stopCanvasActivityHeartbeat = function () {
+    if (activityHeartbeatTimer) {
+      clearInterval(activityHeartbeatTimer);
+      activityHeartbeatTimer = null;
     }
   };
 
