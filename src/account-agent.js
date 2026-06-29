@@ -510,16 +510,15 @@
       change.className = "cb-aa-change-btn";
       change.textContent = "Change";
       change.title = "Pick a different account";
-      change.addEventListener("click", () => enterPickerMode(state.account?.name || ""));
+      change.addEventListener("click", () => enterPickerMode(""));
       contextEl.appendChild(chip);
       contextEl.appendChild(change);
     } else {
       const sub = document.createElement("div");
       sub.className = "cb-aa-context-sub";
       if (!state.ws) sub.textContent = "Open a Clay workbook to begin.";
-      else if (state.resolving) sub.textContent = "Resolving the linked account\u2026";
-      else if (!state.opp) sub.textContent = "No Salesforce opportunity linked.";
-      else sub.textContent = "Pick the Clay account to ask about.";
+      else if (state.resolving) sub.textContent = "Loading accounts\u2026";
+      else sub.textContent = "Pick an account to ask about.";
       contextEl.appendChild(sub);
     }
   }
@@ -547,7 +546,7 @@
       s.className = "cb-aa-resolving";
       s.innerHTML = '<span class="cb-aa-spinner" aria-hidden="true"></span>';
       const label = document.createElement("span");
-      label.textContent = "Finding the Clay account\u2026";
+      label.textContent = "Loading accounts\u2026";
       s.appendChild(label);
       bodyEl.appendChild(s);
       return;
@@ -559,15 +558,17 @@
       retry.type = "button";
       retry.className = "cb-aa-secondary-btn";
       retry.textContent = "Try again";
-      retry.addEventListener("click", startResolution);
+      retry.addEventListener("click", startAccountSelection);
       bodyEl.appendChild(retry);
       return;
     }
 
-    if (!state.opp) {
-      renderLinkCta();
-      return;
-    }
+    // LONG-TERM (commented with the SFDC flow): when no opp is linked, prompt to
+    // link one. The temporary flow picks the account from the segment instead.
+    // if (!state.opp) {
+    //   renderLinkCta();
+    //   return;
+    // }
 
     if (state.pickerMode) {
       renderPicker();
@@ -634,11 +635,10 @@
 
     const hint = document.createElement("div");
     hint.className = "cb-aa-picker-hint";
-    if (state.opp?.accountName) {
-      hint.textContent = `No exact match for "${state.opp.accountName}". Pick the right account:`;
-    } else {
-      hint.textContent = "Pick the account to ask about:";
-    }
+    const segActive = !!(state.segment && state.segment.id && !state.segment.missing);
+    hint.textContent = segActive
+      ? `Pick an account from \u201c${state.segment.name}\u201d:`
+      : "Search accounts and pick one to ask about:";
 
     const results = document.createElement("div");
     results.className = "cb-aa-picker-results";
@@ -789,7 +789,7 @@
     footerEl.classList.toggle("cb-aa-footer-disabled", !state.account);
     if (state.busy) inputEl.placeholder = "Waiting for the agent\u2026";
     else if (state.account) inputEl.placeholder = "Ask about this account\u2026";
-    else inputEl.placeholder = "Resolve an account first\u2026";
+    else inputEl.placeholder = "Pick an account first\u2026";
   }
 
   // --- Actions ---------------------------------------------------------------
@@ -810,6 +810,38 @@
     renderAll();
   }
 
+  // TEMPORARY FLOW (current default): pick an account directly from the
+  // configured segment via the search bar — no SFDC opportunity involved. The
+  // SFDC-opp reconciliation (startResolution + renderLinkCta) is the better
+  // long-term design and is kept below, just no longer wired into open().
+  async function startAccountSelection() {
+    const token = ++state.resolveToken;
+    state.account = null;
+    state.pickerMode = false;
+    state.resolveError = null;
+    state.opp = null;
+    state.ws = workspaceId();
+
+    if (!state.ws) {
+      state.resolving = false;
+      renderAll();
+      return;
+    }
+
+    state.resolving = true;
+    renderAll();
+
+    // Load the configured scope segment so the picker lists/searches within it.
+    state.segment = await getConfiguredSegment(state.ws);
+    if (token !== state.resolveToken) return;
+
+    state.resolving = false;
+    // Empty prefill → the picker default-lists the segment's accounts.
+    enterPickerMode("");
+  }
+
+  // LONG-TERM FLOW (currently unused — kept for when we switch back to
+  // resolving the account from the canvas's linked SFDC opportunity).
   async function startResolution() {
     const token = ++state.resolveToken;
     state.account = null;
@@ -946,24 +978,26 @@
 
   function openAccountAgent() {
     if (panelEl) {
-      // Already open — bring to attention and re-check the linked opp.
+      // Already open — bring to attention; re-open the segment picker if idle.
       panelEl.classList.remove("cb-aa-flash");
       void panelEl.offsetWidth;
       panelEl.classList.add("cb-aa-flash");
-      if (!state.account && !state.busy) startResolution();
+      if (!state.account && !state.busy) startAccountSelection();
       return;
     }
     buildPanel();
-    // Re-resolve whenever the canvas's linked opportunity changes while open.
-    if (__cb.sfdc?.onLinkedOppChange) {
-      unsubscribeOpp = __cb.sfdc.onLinkedOppChange(() => {
-        // Don't yank an active chat out from under the user mid-question.
-        if (state.busy) return;
-        startResolution();
-      });
-    } else {
-      startResolution();
-    }
+    // TEMPORARY: pick the account directly from the configured segment.
+    startAccountSelection();
+    // LONG-TERM (kept for later) — resolve the account from the canvas's linked
+    // SFDC opportunity, re-resolving whenever that link changes:
+    // if (__cb.sfdc?.onLinkedOppChange) {
+    //   unsubscribeOpp = __cb.sfdc.onLinkedOppChange(() => {
+    //     if (state.busy) return; // don't yank an active chat mid-question
+    //     startResolution();
+    //   });
+    // } else {
+    //   startResolution();
+    // }
   }
 
   function closePanel() {
