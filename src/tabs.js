@@ -269,11 +269,12 @@
   // parent row clearly exists (we just inserted/updated it ourselves).
   const ensuredCanvasRows = new Set();
 
-  // Upserts the parent canvases row so the canvas_tabs FK is satisfied. Cheap
-  // metadata-only write -- no `state` column included now that per-tab state
-  // lives in canvas_tabs.
-  async function ensureCanvasRow(workbookId, workspaceId) {
-    if (!workbookId || ensuredCanvasRows.has(workbookId)) return;
+  // Upserts canvases metadata (workspace + workbook names from the current URL).
+  // Unlike ensureCanvasRow, always runs — used on canvas open so the breadcrumb
+  // workspace (customer) is persisted even when the workbook was first saved
+  // from an internal workspace.
+  async function upsertCanvasMeta(workbookId, workspaceId) {
+    if (!workbookId || !workspaceId) return;
     const supa = window.__cbSupabase;
     if (!supa) return;
     const updatedBy = __cb.userId || "unknown";
@@ -308,21 +309,39 @@
     if (workbookName) body.workbook_name = workbookName;
     if (workspaceName) {
       body.workspace_name = workspaceName;
-      // "" = resolved, workspace has no icon (null would read as "never
-      // resolved" and trigger popup live-fetch fallbacks forever).
       body.workspace_icon_url = workspaceIconUrl || "";
     }
 
+    await supa.supabaseFetch("canvases", "POST", {
+      prefer: "resolution=merge-duplicates",
+      body,
+    });
+  }
+
+  // Upserts the parent canvases row so the canvas_tabs FK is satisfied. Cheap
+  // metadata-only write -- no `state` column included now that per-tab state
+  // lives in canvas_tabs.
+  async function ensureCanvasRow(workbookId, workspaceId) {
+    if (!workbookId || ensuredCanvasRows.has(workbookId)) return;
+    const supa = window.__cbSupabase;
+    if (!supa) return;
     try {
-      await supa.supabaseFetch("canvases", "POST", {
-        prefer: "resolution=merge-duplicates",
-        body,
-      });
+      await upsertCanvasMeta(workbookId, workspaceId);
       ensuredCanvasRows.add(workbookId);
     } catch (err) {
       console.warn("[Clay Scoping] ensureCanvasRow failed:", err);
     }
   }
+
+  __cb.refreshCanvasContextMeta = async function (workbookId, workspaceId) {
+    if (!workbookId || !workspaceId) return;
+    try {
+      await upsertCanvasMeta(workbookId, workspaceId);
+      ensuredCanvasRows.add(workbookId);
+    } catch {
+      // Non-critical — analytics may fall back to workbook name.
+    }
+  };
 
   // Convenience: upsert a tab by id, looking up its sort_order from the
   // current tabStore order. Used by tab CRUD paths (rename, hide, restore,

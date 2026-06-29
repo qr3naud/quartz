@@ -2963,6 +2963,9 @@
         // the one-shot /v3/me fetch kicked off at script init.
         (async () => {
           if (__cb.userIdReady) await __cb.userIdReady;
+          if (__cb.refreshCanvasContextMeta) {
+            await __cb.refreshCanvasContextMeta(ids.workbookId, ids.workspaceId);
+          }
           if (__cb.markCanvasActivity) await __cb.markCanvasActivity(ids.workbookId, { force: true });
           if (__cb.startCanvasActivityHeartbeat) __cb.startCanvasActivityHeartbeat(ids.workbookId);
           if (__cb.refreshCollaborators) __cb.refreshCollaborators(ids.workbookId);
