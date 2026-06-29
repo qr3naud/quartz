@@ -2525,6 +2525,8 @@
       const expanded = pricingGroup.classList.toggle("is-expanded");
       chevronEl.classList.toggle("cb-chevron-open", expanded);
       pricingToggleText.textContent = expanded ? "Hide" : "Show";
+      if (expanded) __cb.overlayEl?.setAttribute("data-cb-pricing-shown", "");
+      else __cb.overlayEl?.removeAttribute("data-cb-pricing-shown");
       if (__cb.debouncedSave) __cb.debouncedSave();
     });
 
@@ -3057,6 +3059,7 @@
         pricingGroup.classList.add("is-expanded");
         chevronEl.classList.add("cb-chevron-open");
         pricingToggleText.textContent = "Hide";
+        __cb.overlayEl?.setAttribute("data-cb-pricing-shown", "");
       }
       // Restore global frequency. `skipSave` avoids kicking off a save for
       // state we just loaded — the first user interaction will save.

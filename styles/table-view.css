@@ -3006,9 +3006,10 @@
 }
 
 /* Per-use-case dollar cost badge — matches the cost pill (white bg, grey
- * outline, muted grey text + $ icon). */
+ * outline, muted grey text + $ icon). Hidden until the summary-bar Pricing
+ * section is expanded (data-cb-pricing-shown on .cb-overlay). */
 .cb-uc-scope-dollar {
-  display: inline-flex;
+  display: none;
   align-items: center;
   gap: 5px;
   height: var(--cb-pill-height);
@@ -3021,6 +3022,10 @@
   font-size: 11.5px;
   font-weight: 500;
   font-variant-numeric: tabular-nums;
+}
+
+.cb-overlay[data-cb-pricing-shown] .cb-uc-scope-dollar {
+  display: inline-flex;
 }
 
 .cb-uc-scope-dollar svg {

@@ -1453,6 +1453,8 @@
       pricingGroup.classList.toggle("is-expanded", expanded);
       if (chevronEl) chevronEl.classList.toggle("cb-chevron-open", expanded);
       if (pricingToggleText) pricingToggleText.textContent = expanded ? "Hide" : "Show";
+      if (expanded) __cb.overlayEl?.setAttribute("data-cb-pricing-shown", "");
+      else __cb.overlayEl?.removeAttribute("data-cb-pricing-shown");
     }
 
     // Multi-year pricing view: restore contract length + per-year records first,
