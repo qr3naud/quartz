@@ -391,9 +391,24 @@ export default function QuartzAdoption() {
   const [cohortFilter, setCohortFilter] = useCanvasState<CohortFilter>("cohortFilter", "all");
   const [selectedDay, setSelectedDay] = useCanvasState<string | null>("selectedDay", null);
   const [openRows, setOpenRows] = useCanvasState<Record<string, boolean>>("openRows", {});
+  const [weeksView, setWeeksView] = useCanvasState<string>("weeksView", "all");
 
   const selectedDetail = selectedDay ? CALENDAR.dayDetails[selectedDay] : null;
   const usedRate = Math.round((SUMMARY.used / SUMMARY.people) * 100);
+
+  // Week-range filter for the trend charts (applies to both weekly charts).
+  const totalWeeks = WEEKLY.weeks.length;
+  const weekOpts = [
+    ...[4, 8, 12].filter((x) => x < totalWeeks).map((x) => ({ id: String(x), label: x + "w" })),
+    { id: "all", label: "All " + totalWeeks + "w" },
+  ];
+  const shown = weeksView === "all" ? totalWeeks : Math.min(totalWeeks, parseInt(weeksView, 10) || totalWeeks);
+  const start = Math.max(0, totalWeeks - shown);
+  const viewWeeks = WEEKLY.weeks.slice(start);
+  const sliceSeries = (s: Record<string, number[]>) =>
+    Object.fromEntries(COHORTS.map((k) => [k, s[k].slice(start)])) as Record<string, number[]>;
+  const viewWau = sliceSeries(WEEKLY.wau);
+  const viewCreated = sliceSeries(WEEKLY.created);
 
   // --- Clay UI kit (hand-rolled to match Glaze) ------------------------------
   const dot = (color: string, size = 8) => (
@@ -541,8 +556,9 @@ export default function QuartzAdoption() {
   );
 
   // --- Hand-rolled stacked bar chart (Clay cohort colors) --------------------
-  const bars = (cats: WeekMeta[], series: Record<string, number[]>, unit: string, peak: number) => {
+  const bars = (cats: WeekMeta[], series: Record<string, number[]>, unit: string) => {
     const H = 196;
+    const peak = Math.max(1, ...cats.map((_, i) => COHORTS.reduce((s, k) => s + series[k][i], 0)));
     return (
       <Stack gap={8}>
         <Row gap={8} align="stretch">
@@ -635,18 +651,24 @@ export default function QuartzAdoption() {
         </Grid>
 
         <Stack gap={12}>
-          <Stack gap={4}>
-            {heading("Weekly active users")}
-            {caption(
-              "Distinct users active per ISO week (Mon–Sun), stacked by role. Peak " + WEEKLY.wauPeak + " users/week. " +
-              (WEEKLY.measuredFromLabel
-                ? "Faded weeks before " + WEEKLY.measuredFromLabel + " are inferred from contributor first/last windows (over-count); from " + WEEKLY.measuredFromLabel + " on they are measured from 5-min heartbeats."
-                : "All weeks are inferred from contributor windows — heartbeats are not yet accumulating, so these over-count actives.") +
-              " Source: Supabase · " + SNAPSHOT,
-            )}
-          </Stack>
+          <Row justify="space-between" align="end" wrap style={{ gap: 12 }}>
+            <Stack gap={4} style={{ flex: 1, minWidth: 280 }}>
+              {heading("Weekly active users")}
+              {caption(
+                "Distinct users active per ISO week (Mon–Sun), stacked by role. Peak " + WEEKLY.wauPeak + " users/week. " +
+                (WEEKLY.measuredFromLabel
+                  ? "Faded weeks before " + WEEKLY.measuredFromLabel + " are inferred from contributor first/last windows (over-count); from " + WEEKLY.measuredFromLabel + " on they are measured from 5-min heartbeats."
+                  : "All weeks are inferred from contributor windows — heartbeats are not yet accumulating, so these over-count actives.") +
+                " Source: Supabase · " + SNAPSHOT,
+              )}
+            </Stack>
+            <Row gap={8} align="center">
+              <span style={{ fontSize: 12, color: c.tertiary }}>Weeks in view</span>
+              {segmented(weekOpts, weeksView, (v) => setWeeksView(v as string))}
+            </Row>
+          </Row>
           {legend()}
-          {bars(WEEKLY.weeks, WEEKLY.wau, " users", WEEKLY.wauPeak)}
+          {bars(viewWeeks, viewWau, " users")}
         </Stack>
 
         <Stack gap={12}>
@@ -654,11 +676,11 @@ export default function QuartzAdoption() {
             {heading("Customer tables created per week")}
             {caption(
               "New Quartz tables by creation week (earliest contributor touch), stacked by creator role. Excludes internal / demo workspaces. " +
-              WEEKLY.createdAllTime.total + " customer tables to date. Source: Supabase canvases + contributors · " + SNAPSHOT,
+              WEEKLY.createdAllTime.total + " customer tables to date · showing " + viewWeeks.length + " of " + totalWeeks + " weeks. Source: Supabase canvases + contributors · " + SNAPSHOT,
             )}
           </Stack>
           {legend()}
-          {bars(WEEKLY.weeks, WEEKLY.created, " tables", WEEKLY.createdPeak)}
+          {bars(viewWeeks, viewCreated, " tables")}
         </Stack>
 
         <Stack gap={12}>
