@@ -9101,7 +9101,13 @@
       return text;
     }
     if (er.isAi && er.model?.name) {
-      return `${actionName} (${er.model.name}) via ${columnName}`;
+      const base = `${actionName} (${er.model.name})`;
+      // Append "via {column}" only when the catalog tool name (e.g. "Claygent")
+      // differs from the column name — otherwise it reads redundantly as
+      // "X (model) via X".
+      return actionName && columnName && actionName !== columnName
+        ? `${base} via ${columnName}`
+        : base;
     }
     if (er.isSource || er.kind === "Action" || er.kind === "Source") {
       const pkg = er.packageName || "Clay";
@@ -9452,7 +9458,7 @@
       volumeNum: exportVolumeNumber(cf.coverage),
       fillPct:
         cf.fill && !cf.fill.loading && cf.fill.pct != null ? Number(cf.fill.pct) : null,
-      benchmarkNum: creditsNum,
+      creditsNum,
       dataCredits: erTotals
         ? exportMirrorCreditsText(erTotals.credits, erTotals.creditsUnknown)
         : "",
@@ -9477,7 +9483,7 @@
     for (const block of normalized) {
       const records = mirrorRecordsFromRows(block.rows);
       for (const r of records) {
-        if (r.benchmarkNum != null) totalCredits += r.benchmarkNum;
+        if (r.creditsNum != null) totalCredits += r.creditsNum;
       }
       outBlocks.push({
         groupLabel: block.groupLabel || "",
