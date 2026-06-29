@@ -46,6 +46,15 @@
   // segment id to scope account search to. Empty = search the whole workspace.
   const SEG_SETTING_KEY = "audience_segment_id";
 
+  // The /agents/account/run endpoint sits behind a ~60s gateway idle timeout. A
+  // run that exceeds it gets a CORS-less error page from the proxy, which the
+  // browser surfaces as an opaque "Failed to fetch". Run time scales with
+  // `maxSteps` — measured live (ws 4515): maxSteps 3 ≈ 19s, 6 ≈ 46s, 50 → times
+  // out. We cap steps to stay comfortably under the wall and abort client-side
+  // just before it so we can show a clear message instead of "Failed to fetch".
+  const RUN_MAX_STEPS = 5;
+  const RUN_TIMEOUT_MS = 58000;
+
   // Resolved configured segment, cached per workspace for the session. Reset on
   // panel close so a Secret-Configuration change takes effect on reopen.
   // Shape: { id, name, filterAst, segmentType, signalDaysLookback, missing }.
@@ -79,6 +88,9 @@
   }
 
   function errText(e) {
+    if (e?.code === "AA_TIMEOUT" || e?.code === "AA_NETWORK" || /failed to fetch/i.test(e?.message || "")) {
+      return "The agent ran past the ~60s server limit and the request was cut off. Ask a narrower question (broad asks need more reasoning steps than the limit allows).";
+    }
     if (e?.status === 403) {
       return "Your Clay account doesn't have permission to run the account agent in this workspace (needs Audiences \u2192 Manage actions).";
     }
@@ -240,12 +252,32 @@
   }
 
   async function runAccountAgent(ws, accountId, message) {
-    const res = await fetch(`${API_BASE}/v3/workspaces/${ws}/agents/account/run`, {
-      method: "POST",
-      credentials: "include",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ accountId, message, options: { maxSteps: 50 } }),
-    });
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), RUN_TIMEOUT_MS);
+    let res;
+    try {
+      res = await fetch(`${API_BASE}/v3/workspaces/${ws}/agents/account/run`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accountId, message, options: { maxSteps: RUN_MAX_STEPS } }),
+        signal: controller.signal,
+      });
+    } catch (e) {
+      // AbortError = we hit RUN_TIMEOUT_MS first; "Failed to fetch" = the gateway
+      // killed a >60s run (CORS-less error page) or a real network drop. Both
+      // map to a clear timeout message rather than the browser's opaque text.
+      if (e?.name === "AbortError") {
+        const err = new Error("timeout");
+        err.code = "AA_TIMEOUT";
+        throw err;
+      }
+      const err = new Error(e?.message || "Network error");
+      err.code = "AA_NETWORK";
+      throw err;
+    } finally {
+      clearTimeout(timer);
+    }
     if (!res.ok) throw await httpError(res);
     return res.json();
   }
