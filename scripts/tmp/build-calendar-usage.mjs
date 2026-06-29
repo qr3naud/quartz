@@ -51,8 +51,21 @@ async function fetchPaged(path, serviceRole) {
   return rows;
 }
 
+// ethan.huang and chris.viglietta are excluded: their historical activity was
+// the maintainer impersonating them, not genuine usage. Keep this in sync with
+// the ROSTER_EMAILS removal in build-cohort-canvas-data.mjs.
+const EXCLUDED_EMAILS = new Set([
+  "ethan.huang@clay.com",
+  "chris.viglietta@clay.com",
+]);
+
 function cohortFilter(row) {
-  return row.email?.endsWith("@clay.com") && !row.email.includes("quentin.renaud");
+  const email = (row.email || "").toLowerCase();
+  return (
+    email.endsWith("@clay.com") &&
+    !email.includes("quentin.renaud") &&
+    !EXCLUDED_EMAILS.has(email)
+  );
 }
 
 async function loadSessions(serviceRole) {

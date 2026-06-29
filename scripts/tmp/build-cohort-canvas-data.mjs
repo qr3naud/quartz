@@ -20,11 +20,14 @@ const INTERNAL_WS = new Set([
 ]);
 const INTERNAL_WS_IDS = new Set(["4515", "91642", "1047027", "584238", "1119306"]);
 
+// chris.viglietta@clay.com and ethan.huang@clay.com were removed: their past
+// "usage" was the maintainer impersonating them, not real adoption. They are
+// also filtered out of the usage feeds in build-calendar-usage.mjs.
 const ROSTER_EMAILS = [
   "greyson.lampley@clay.com", "nick.vandenberg@clay.com", "ryan.spychalski@clay.com",
   "ramin.parvin@clay.com", "shenez.ahmed@clay.com", "nick.goel@clay.com",
-  "arturo.orozco@clay.com", "noah.scafati@clay.com", "chris.viglietta@clay.com",
-  "ethan.huang@clay.com", "jason.chapman@clay.com", "clayton.miller@clay.com",
+  "arturo.orozco@clay.com", "noah.scafati@clay.com",
+  "jason.chapman@clay.com", "clayton.miller@clay.com",
   "liam.goldfarb@clay.com", "lara.garrido@clay.com", "tom.reha@clay.com",
   "lorcan.orourke@clay.com", "marat@clay.com", "mopi@clay.com",
   "julia.govberg@clay.com", "sachit.bhat@clay.com", "jeremie.cabling@clay.com",
@@ -33,6 +36,19 @@ const ROSTER_EMAILS = [
   "nate.segal@clay.com", "david.madding@clay.com", "travers.nammack@clay.com",
   "sab.glaser@clay.com", "alex.lindahl@clay.com", "jake.rainess@clay.com",
 ];
+
+// Cohort comes from the SFDC User.Title (authoritative — User_Role_Type__c is
+// null for every SE). "Solutions Engineer" / "GTM Solutions Engineer" -> SE;
+// "GTM Engineer" or User_Role_Type__c GTME -> GTME; "Growth Strategist" / GS ->
+// GS; anything else (e.g. Chief of Staff, no title) -> Other.
+function classifyCohort(u) {
+  const title = (u?.Title || "").toLowerCase();
+  const roleType = (u?.User_Role_Type__c || "").toUpperCase();
+  if (title.includes("solutions engineer")) return "SE";
+  if (title.includes("gtm engineer") || roleType === "GTME") return "GTME";
+  if (title.includes("growth strategist") || roleType === "GS") return "GS";
+  return "Other";
+}
 
 function quartzUrl(ws, wb) {
   return `https://app.clay.com/workspaces/${ws}/workbooks/${wb}/#cb-open`;
@@ -293,7 +309,7 @@ function serviceRoleKey() {
 async function main() {
   const { q } = await sfdcAuth();
   const emailList = ROSTER_EMAILS.map((e) => `'${e}'`).join(",");
-  const users = await q(`SELECT Id, Name, Email, User_Role_Type__c FROM User WHERE Email IN (${emailList})`);
+  const users = await q(`SELECT Id, Name, Email, Title, User_Role_Type__c FROM User WHERE Email IN (${emailList})`);
   const ownerIds = users.map((u) => `'${u.Id}'`).join(",");
   const opps = await q(`SELECT Id, Name, OwnerId, StageName, Account.Name, Amount, IsClosed, IsWon, CloseDate, POC_Doc_Link__c FROM Opportunity WHERE IsClosed = false AND StageName IN ('2. Discovery','3. Scoping','4. Validating') AND OwnerId IN (${ownerIds})`);
 
@@ -406,6 +422,8 @@ async function main() {
     const u = userByEmail[email];
     const name = u?.Name || email;
     const role = u?.User_Role_Type__c || "";
+    const title = u?.Title || "";
+    const cohort = classifyCohort(u);
     const ownerOpps = u ? (oppsByOwner.get(u.Id) || []) : [];
 
     const quartzTables = tables
@@ -456,6 +474,8 @@ async function main() {
       name,
       email,
       role,
+      title,
+      cohort,
       used,
       totalRows,
       tableCount: quartzTables.length,
@@ -471,6 +491,18 @@ async function main() {
     return b.totalRows - a.totalRows || b.notInQuartz.length - a.notInQuartz.length;
   });
 
+  const COHORTS = ["SE", "GTME", "GS", "Other"];
+  const cohortCounts = {};
+  for (const c of COHORTS) {
+    const group = people.filter((p) => p.cohort === c);
+    cohortCounts[c] = { people: group.length, used: group.filter((p) => p.used).length };
+  }
+
+  // email (lowercased) -> cohort, so the calendar/weekly aggregation can tag
+  // any active @clay.com user by cohort (non-roster emails default to Other).
+  const roleByEmail = {};
+  for (const p of people) roleByEmail[p.email.toLowerCase()] = p.cohort;
+
   const summary = {
     people: people.length,
     used: people.filter((p) => p.used).length,
@@ -479,9 +511,10 @@ async function main() {
     pipelineDeals: people.reduce((s, p) => s + p.pipelineCount, 0),
     inQuartzDeals: people.reduce((s, p) => s + p.inQuartz.length, 0),
     notInQuartzDeals: people.reduce((s, p) => s + p.notInQuartz.length, 0),
+    cohortCounts,
   };
 
-  writeFileSync(OUT, JSON.stringify({ summary, people }, null, 2));
+  writeFileSync(OUT, JSON.stringify({ summary, roleByEmail, people }, null, 2));
   console.log(JSON.stringify(summary, null, 2));
 }
 
