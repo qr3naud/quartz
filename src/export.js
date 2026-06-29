@@ -207,6 +207,16 @@
           : "Scoping sheet for the active tab",
         onClick: () => __cb.exportScopeExcel(),
       });
+      appendExportAction({
+        label: "Export to Excel (Mirror)",
+        icon: PACKAGE_ICON_SVG,
+        title: importedCount
+          ? `Customer-style methodology sheet plus ${importedCount} data-only Clay table${
+              importedCount === 1 ? "" : "s"
+            }`
+          : "Customer-style methodology sheet for the active tab",
+        onClick: () => __cb.exportScopeExcelMirror(),
+      });
       hasItems = true;
     }
 
@@ -565,6 +575,32 @@
     return [...byId.values()];
   }
 
+  async function resolveTableFromWorkbook(workbookId, tableId) {
+    if (!workbookId || !tableId || !__cb.fetchTableList) return null;
+    try {
+      const list = await __cb.fetchTableList(workbookId);
+      const tables = list?.tables || list || [];
+      return (Array.isArray(tables) ? tables : []).find((t) => t.id === tableId) || null;
+    } catch (err) {
+      console.warn("[Clay Scoping] resolveTableFromWorkbook failed:", err);
+      return null;
+    }
+  }
+
+  // Column names to keep in Mirror Clay data sheets: mapped inputs, formulas,
+  // and other basic data columns — drop action/source enrichments (including
+  // waterfall steps). Matches the import classifier's enrichment vs data split.
+  function buildNonEnrichmentKeepSet(table) {
+    const keep = new Set();
+    if (!table?.fields) return keep;
+    for (const f of table.fields) {
+      if (f.type === "action" || f.type === "source") continue;
+      const name = String(f.name || "").trim();
+      if (name) keep.add(name);
+    }
+    return keep;
+  }
+
   async function resolveViewIds(entries, workbookId) {
     if (!workbookId || !entries.some((e) => !e.viewId) || !__cb.fetchTableList) {
       return entries;
@@ -835,6 +871,117 @@
       return __cb.packageScopeXlsx();
     }
     return __cb.exportCurrentTableXlsx();
+  };
+
+  // ==========================================================================
+  // EXPORT TO EXCEL (MIRROR)
+  //
+  // Customer-facing workbook mirroring the manual SE scoping file:
+  //   • Sheet 1 — Methodology / Data Credits / Actions (friendly names, exact
+  //     "X.X credits" + integer actions on first row of each enrichment run)
+  //   • Additional sheets — imported Clay tables with enrichment columns stripped
+  // ==========================================================================
+
+  __cb.exportScopeExcelMirror = async function exportScopeExcelMirror() {
+    if (typeof __cb.buildMirrorXlsxBlob !== "function") {
+      __cb.showOverlayToast?.("Mirror Excel export unavailable \u2014 ExcelJS not loaded.");
+      return;
+    }
+
+    if (__cb.saveTabs) __cb.saveTabs();
+
+    const methodologyData =
+      __cb.tableView && __cb.tableView.getMirrorXlsxExportData
+        ? __cb.tableView.getMirrorXlsxExportData()
+        : null;
+    const sectionRowCount = methodologyData
+      ? (methodologyData.sections || []).reduce(
+          (n, s) =>
+            n +
+            (s.blocks || []).reduce((bn, b) => bn + (b.rows ? b.rows.length : 0), 0),
+          0,
+        )
+      : 0;
+    if (!methodologyData || sectionRowCount === 0) {
+      __cb.showOverlayToast?.(
+        "Nothing to export \u2014 add data points to this tab first.",
+      );
+      return;
+    }
+
+    const tabName = activeTabName();
+    const ids = __cb.parseIdsFromUrl?.();
+    const workbookId = __cb.currentWorkbookId ?? ids?.workbookId;
+    const underlying = collectUnderlyingTables();
+    if (underlying.length && workbookId) {
+      await resolveViewIds(underlying, workbookId);
+    }
+
+    const totalSheets = 1 + underlying.length;
+    __cb.showOverlayToast?.(
+      underlying.length
+        ? `Building Mirror Excel (${totalSheets} sheets)\u2026`
+        : "Building Mirror Excel (methodology sheet only)\u2026",
+    );
+
+    const tableSheets = [];
+    let tableSuccess = 0;
+    let tableFailed = 0;
+
+    for (let i = 0; i < underlying.length; i++) {
+      const entry = underlying[i];
+      __cb.showOverlayToast?.(
+        `Exporting table ${i + 1}/${underlying.length}: ${entry.name}\u2026`,
+      );
+      try {
+        const { blob } = await fetchClayTableCsv(entry);
+        const csvText = await blob.text();
+        const tableMeta = workbookId
+          ? await resolveTableFromWorkbook(workbookId, entry.tableId)
+          : null;
+        const keepColumns = buildNonEnrichmentKeepSet(tableMeta);
+        tableSheets.push({
+          name: entry.name,
+          csvText,
+          keepColumns: keepColumns.size > 0 ? keepColumns : null,
+        });
+        tableSuccess++;
+      } catch (err) {
+        console.warn(
+          "[Clay Scoping] Mirror Excel table export failed:",
+          entry.tableId,
+          err,
+        );
+        tableFailed++;
+      }
+    }
+
+    let packageBlob;
+    try {
+      packageBlob = await __cb.buildMirrorXlsxBlob({
+        methodologyData,
+        tabName,
+        tables: tableSheets,
+      });
+    } catch (err) {
+      console.warn("[Clay Scoping] Mirror Excel build failed:", err);
+      __cb.showOverlayToast?.("Mirror Excel failed \u2014 see console for details.");
+      return;
+    }
+
+    const filename = await resolveScopingExportFilename(tabName, "xlsx", "Mirror");
+    downloadBlob(filename, packageBlob);
+
+    const parts = ["methodology sheet"];
+    if (tableSuccess) {
+      parts.push(
+        `${tableSuccess} data sheet${tableSuccess === 1 ? "" : "s"}`,
+      );
+    }
+    if (tableFailed) {
+      parts.push(`${tableFailed} table export${tableFailed === 1 ? "" : "s"} failed`);
+    }
+    __cb.showOverlayToast?.(`Downloaded Mirror Excel \u2014 ${parts.join(", ")}.`);
   };
 
   // ==========================================================================

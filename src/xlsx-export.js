@@ -43,6 +43,14 @@
   const COL_COUNT = COLS.length;
   const NUM_FMT = "#,##0.0";
 
+  const MIRROR_COLS = [
+    { key: "dataPoint", label: "Data point", width: 34, kind: "label" },
+    { key: "methodology", label: "Methodology", width: 52, kind: "label" },
+    { key: "dataCredits", label: "Data Credits", width: 14, kind: "metric" },
+    { key: "actions", label: "Actions", width: 10, kind: "metric" },
+  ];
+  const MIRROR_COL_COUNT = MIRROR_COLS.length;
+
   function solid(argb) {
     return { type: "pattern", pattern: "solid", fgColor: { argb } };
   }
@@ -66,13 +74,14 @@
   }
 
   // Darker merged row labelling an inner group inside a use case.
-  function renderGroupDivider(ws, label) {
-    const row = ws.addRow(new Array(COL_COUNT).fill(""));
+  function renderGroupDivider(ws, label, colCount) {
+    const n = colCount || COL_COUNT;
+    const row = ws.addRow(new Array(n).fill(""));
     row.getCell(1).value = label;
-    ws.mergeCells(row.number, 1, row.number, COL_COUNT);
+    ws.mergeCells(row.number, 1, row.number, n);
     row.getCell(1).font = { bold: true };
     row.getCell(1).alignment = { vertical: "middle", horizontal: "left" };
-    for (let c = 1; c <= COL_COUNT; c++) {
+    for (let c = 1; c <= n; c++) {
       const cell = row.getCell(c);
       cell.fill = solid(FILL_GROUP);
       cell.border = BORDER_ALL;
@@ -185,6 +194,77 @@
     ws.addRow([]);
   }
 
+  // Mirror scoping sheet: Methodology / Data Credits / Actions (no cell merges).
+  function renderMirrorDataRow(ws, rec) {
+    const row = ws.addRow(new Array(MIRROR_COL_COUNT).fill(""));
+    row.getCell(1).value = rec.dataPoint || "";
+    row.getCell(2).value = rec.methodology || "";
+    row.getCell(3).value = rec.dataCredits || "";
+    row.getCell(4).value = rec.actions || "";
+    for (let c = 1; c <= MIRROR_COL_COUNT; c++) {
+      styleDataCell(row.getCell(c), MIRROR_COLS[c - 1].kind);
+    }
+    return row.number;
+  }
+
+  function renderMirrorSection(ws, section, fallbackTitle) {
+    const blocks = section.blocks && section.blocks.length > 0
+      ? section.blocks
+      : section.rows
+        ? [{ groupLabel: "", rows: section.rows }]
+        : [];
+
+    const titleRow = ws.addRow(new Array(MIRROR_COL_COUNT).fill(""));
+    titleRow.getCell(1).value = section.title || fallbackTitle || "Scope";
+    ws.mergeCells(titleRow.number, 1, titleRow.number, MIRROR_COL_COUNT);
+    titleRow.getCell(1).font = { bold: true, size: 12 };
+    titleRow.getCell(1).alignment = { vertical: "middle", horizontal: "left" };
+    for (let c = 1; c <= MIRROR_COL_COUNT; c++) {
+      const cell = titleRow.getCell(c);
+      cell.fill = solid(FILL_TITLE);
+      cell.border = BORDER_ALL;
+    }
+    titleRow.height = 20;
+
+    const headerRow = ws.addRow(new Array(MIRROR_COL_COUNT).fill(""));
+    for (let c = 1; c <= MIRROR_COL_COUNT; c++) {
+      const cell = headerRow.getCell(c);
+      cell.value = MIRROR_COLS[c - 1].label;
+      cell.font = { bold: true };
+      cell.fill = solid(FILL_TITLE);
+      cell.border = BORDER_ALL;
+      cell.alignment = { vertical: "middle", wrapText: true };
+    }
+
+    for (const block of blocks) {
+      const records = block.rows || [];
+      if (records.length === 0) continue;
+      if (block.groupLabel) renderGroupDivider(ws, block.groupLabel, MIRROR_COL_COUNT);
+      for (const rec of records) renderMirrorDataRow(ws, rec);
+    }
+
+    ws.addRow([]);
+  }
+
+  function addMirrorScopingSheet(wb, data, tabName, usedNames) {
+    const safeName = sanitizeSheetName(tabName || "Scope", usedNames);
+    const ws = wb.addWorksheet(safeName, {
+      views: [{ state: "frozen", ySplit: 0 }],
+    });
+
+    MIRROR_COLS.forEach((c, i) => {
+      ws.getColumn(i + 1).width = c.width;
+    });
+
+    const sections = (data && data.sections) || [];
+    if (sections.length === 0) {
+      renderMirrorSection(ws, { title: tabName || "Scope", blocks: [] }, tabName);
+    } else {
+      for (const section of sections) renderMirrorSection(ws, section, tabName);
+    }
+    return ws;
+  }
+
   // Excel sheet names: max 31 chars, no []:*?/\; dedupe within one workbook.
   function sanitizeSheetName(name, usedNames) {
     let base =
@@ -279,10 +359,25 @@
     return ws;
   }
 
-  function addPlainCsvSheet(wb, sheetName, csvText, usedNames) {
+  function filterCsvRows(rows, keepColumns) {
+    if (!keepColumns || keepColumns.size === 0 || rows.length === 0) return rows;
+    const header = rows[0] || [];
+    const keepIdx = [];
+    for (let i = 0; i < header.length; i++) {
+      const name = String(header[i] ?? "").trim();
+      if (keepColumns.has(name)) keepIdx.push(i);
+    }
+    if (keepIdx.length === 0) return [header];
+    return rows.map((row) => keepIdx.map((i) => (row[i] != null ? row[i] : "")));
+  }
+
+  function addPlainCsvSheet(wb, sheetName, csvText, usedNames, opts) {
     const safeName = sanitizeSheetName(sheetName, usedNames);
     const ws = wb.addWorksheet(safeName);
-    const rows = parseCsvText(csvText);
+    let rows = parseCsvText(csvText);
+    if (opts?.keepColumns) {
+      rows = filterCsvRows(rows, opts.keepColumns);
+    }
     if (rows.length === 0) return ws;
 
     ws.addRows(rows);
@@ -352,6 +447,32 @@
     for (const table of tables || []) {
       if (!table?.csvText) continue;
       addPlainCsvSheet(wb, table.name || "Table", table.csvText, usedNames);
+    }
+
+    return workbookToBlob(wb);
+  };
+
+  // Mirror package: methodology scoping sheet + filtered Clay table data sheets.
+  __cb.buildMirrorXlsxBlob = async function buildMirrorXlsxBlob({
+    methodologyData,
+    tabName,
+    tables,
+  }) {
+    if (typeof window.ExcelJS === "undefined") {
+      throw new Error("ExcelJS not loaded");
+    }
+    const wb = new window.ExcelJS.Workbook();
+    wb.creator = "Quartz";
+    wb.created = new Date();
+
+    const usedNames = new Set();
+    addMirrorScopingSheet(wb, methodologyData, tabName, usedNames);
+
+    for (const table of tables || []) {
+      if (!table?.csvText) continue;
+      addPlainCsvSheet(wb, table.name || "Table", table.csvText, usedNames, {
+        keepColumns: table.keepColumns,
+      });
     }
 
     return workbookToBlob(wb);

@@ -3047,6 +3047,12 @@
     const isSource = !!d.isSource;
     const isAi = !!d.isAi;
 
+    const lookupKey = d.actionKey
+      ? `${d.packageId ?? d.actionPackageId ?? "clay"}-${d.actionKey}`
+      : null;
+    const catalogInfo = lookupKey ? __cb.actionByIdLookup?.[lookupKey] : null;
+    const actionDisplayName = catalogInfo?.displayName || null;
+
     // Resolve the selected AI model (name + provider + per-row credits) so the
     // chip menu can show "which model this AI column runs". modelOptions is
     // stamped at import time (buildErCardData) with live workspace pricing.
@@ -3130,6 +3136,8 @@
       isAi,
       kind,
       providerChain,
+      actionDisplayName,
+      validationName: isWaterfall ? (d.validationName || null) : null,
       packageName: d.packageName || null,
       // Logo inputs (mirror the canvas card icon logic in cards.js).
       iconUrl: d.iconUrl || null,
@@ -9078,6 +9086,50 @@
       .join("; ");
   }
 
+  // Customer-facing methodology label (manual scoping sheet style). Composed
+  // deterministically from catalog action name, model, package, and column name.
+  function exportMethodologyForEr(er) {
+    if (!er) return "";
+    const columnName = er.name || "";
+    const actionName = er.actionDisplayName || columnName;
+
+    if (er.isWaterfall) {
+      let text = columnName || "Waterfall";
+      if (er.validationName) {
+        text += ` + ${er.validationName} Validation`;
+      }
+      return text;
+    }
+    if (er.isAi && er.model?.name) {
+      return `${actionName} (${er.model.name}) via ${columnName}`;
+    }
+    if (er.isSource || er.kind === "Action" || er.kind === "Source") {
+      const pkg = er.packageName || "Clay";
+      return `${actionName} (${pkg})`;
+    }
+    if (er.isFunction) {
+      return columnName ? `Formula (derived from ${columnName})` : actionName;
+    }
+    return columnName || actionName;
+  }
+
+  function exportMethodologyText(ers) {
+    if (!ers || ers.length === 0) return "";
+    return ers.map(exportMethodologyForEr).join(" + ");
+  }
+
+  // Mirror export: "2.5 credits" (one decimal) or blank.
+  function exportMirrorCreditsText(credits, creditsUnknown) {
+    if (creditsUnknown || credits == null || !Number.isFinite(credits)) return "";
+    return `${Number(credits).toFixed(1)} credits`;
+  }
+
+  // Mirror export: integer actions or blank.
+  function exportMirrorActionsText(actions) {
+    if (actions == null || !Number.isFinite(actions) || actions <= 0) return "";
+    return String(Math.round(actions));
+  }
+
   // Row-level note (DP / orphan primary card) plus per-ER chip notes, merged
   // into one Comments cell. Multiple contributions are newline-separated; ER
   // notes are prefixed with the enrichment name when more than one note is
@@ -9381,6 +9433,108 @@
     };
   }
 
+  // ---- Mirror (customer scoping sheet) export ----
+  //
+  // Methodology / Data Credits / Actions layout matching the manual SE workbook.
+  // Credits and actions appear on the first row of each enrichment merge run only;
+  // follower rows leave those cells blank (no rowspan merge in the writer).
+
+  function mirrorRowRecord(row) {
+    const isOrphan = row.kind === "orphan-er";
+    const isSkip = row.mergeMode === "skip";
+    const erTotals = isSkip ? null : exportErCostTotals(row.ers);
+    return {
+      kind: row.kind,
+      dataPoint: isOrphan ? "" : row.name || "",
+      methodology: exportMethodologyText(row.ers),
+      dataCredits: erTotals
+        ? exportMirrorCreditsText(erTotals.credits, erTotals.creditsUnknown)
+        : "",
+      actions: erTotals ? exportMirrorActionsText(erTotals.actions) : "",
+      mergeMode: row.mergeMode || "single",
+      mergeSpan: row.mergeSpan || 1,
+    };
+  }
+
+  function mirrorRecordsFromRows(rows) {
+    annotateMergeRuns(rows.filter((r) => r.kind === "dp"));
+    return rows.map(mirrorRowRecord);
+  }
+
+  function makeMirrorUseCase(title, blocks) {
+    const normalized = (blocks || []).filter((b) => b.rows && b.rows.length > 0);
+    const outBlocks = [];
+    for (const block of normalized) {
+      outBlocks.push({
+        groupLabel: block.groupLabel || "",
+        rows: mirrorRecordsFromRows(block.rows),
+      });
+    }
+    return { title: title || "", blocks: outBlocks };
+  }
+
+  function buildMirrorXlsxExportData() {
+    const { orphanErRows, groupSections, dpRows, tableGroups } = buildRows();
+    const sections = [];
+    const pushUseCase = (title, blocks) => {
+      const section = makeMirrorUseCase(title, blocks);
+      if (section.blocks.length === 0) return;
+      sections.push(section);
+    };
+
+    for (const tg of tableGroups || []) {
+      const blocks = [];
+      for (const sub of tg.sections || []) {
+        if (sub.rows && sub.rows.length > 0) {
+          blocks.push({ groupLabel: sub.groupName || "", rows: sub.rows });
+        }
+      }
+      if (tg.rows && tg.rows.length > 0) {
+        blocks.push({ groupLabel: "", rows: tg.rows });
+      }
+      pushUseCase(tg.tableName || "", blocks);
+    }
+
+    const topLevel = (groupSections || []).filter((s) => !s.parentId);
+    const childrenByParent = new Map();
+    for (const s of groupSections || []) {
+      if (s.parentId == null) continue;
+      const key = `g-${s.parentId}`;
+      if (!childrenByParent.has(key)) childrenByParent.set(key, []);
+      childrenByParent.get(key).push(s);
+    }
+    for (const list of childrenByParent.values()) {
+      list.sort((a, b) =>
+        compareByTableOrderThenY(a.minTableOrder, a.minY, b.minTableOrder, b.minY),
+      );
+    }
+    for (const section of topLevel) {
+      const blocks = [];
+      if (section.rows && section.rows.length > 0) {
+        blocks.push({ groupLabel: "", rows: section.rows });
+      }
+      for (const child of childrenByParent.get(section.groupId) || []) {
+        if (child.rows && child.rows.length > 0) {
+          blocks.push({ groupLabel: child.groupName || "", rows: child.rows });
+        }
+      }
+      pushUseCase(section.groupName || "", blocks);
+    }
+
+    const hasSectionsAbove =
+      (groupSections || []).length > 0 || (tableGroups || []).length > 0;
+    const otherLabel = hasSectionsAbove || orphanErRows.length > 0 ? "Other" : "";
+    const otherRows = [...dpRows, ...orphanErRows];
+    if (otherRows.length > 0) {
+      pushUseCase(otherLabel, [{ groupLabel: "", rows: otherRows }]);
+    }
+
+    return {
+      viewMode: window.__cb && window.__cb.viewMode === "actual" ? "actual" : "projected",
+      sections,
+    };
+  }
+
   // ---- Public API ----
 
   __cb.tableView = {
@@ -9492,6 +9646,11 @@
     // Section-grouped variant for the styled XLSX export (src/xlsx-export.js).
     getXlsxExportData() {
       return buildXlsxExportData();
+    },
+    // Mirror scoping sheet (Methodology / Data Credits / Actions) for
+    // src/xlsx-export.js buildMirrorXlsxBlob.
+    getMirrorXlsxExportData() {
+      return buildMirrorXlsxExportData();
     },
   };
 })();
