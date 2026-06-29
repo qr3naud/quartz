@@ -36,6 +36,10 @@
       label: "Deal desk Slack channel",
       slack: true,
     },
+    audience_segment_id: {
+      label: "Account agent segment",
+      segment: true,
+    },
   };
 
   // Fetch the Slack channels the bot is a member of via the slack-channels Edge
@@ -272,6 +276,12 @@
     let slackChannels = null;
     const slackControlRebuilders = new Map();
 
+    // Audience segment dropdown state (mirrors the Slack pattern). null =
+    // loading, false = failed/unavailable (the control still accepts a pasted
+    // id), or an array of segment objects { id, name, estimatedSize, ... }.
+    let audienceSegments = null;
+    const segmentControlRebuilders = new Map();
+
     function makeTextInput(value, placeholder) {
       const input = document.createElement("input");
       input.type = "text";
@@ -415,10 +425,135 @@
       trigger.addEventListener("click", (e) => { e.stopPropagation(); open(); });
     }
 
+    // Audience segment combobox: an editable text input that accepts a pasted
+    // segment id (audseg_…) AND surfaces a searchable dropdown of the
+    // workspace's account segments. The saved value is always the input's text
+    // (an id); picking from the dropdown fills the id in. A hint line resolves
+    // the current id to its segment name + size when known.
+    function buildSegmentControl(cell, value, editor) {
+      cell.innerHTML = "";
+      const wrap = document.createElement("div");
+      wrap.className = "cb-secret-seg";
+
+      const input = document.createElement("input");
+      input.type = "text";
+      input.className = "cb-gtme-input";
+      input.autocomplete = "off";
+      input.spellcheck = false;
+      input.placeholder = "Paste a segment id (audseg_\u2026) or search by name";
+      input.value = value || "";
+      input.style.width = "100%";
+      wrap.appendChild(input);
+
+      const hint = document.createElement("div");
+      hint.className = "cb-secret-seg-hint";
+      wrap.appendChild(hint);
+
+      cell.appendChild(wrap);
+      editor.getValue = () => input.value.trim();
+
+      function segById(id) {
+        return Array.isArray(audienceSegments) ? audienceSegments.find((s) => s.id === id) : null;
+      }
+      function sizeSuffix(n) {
+        return Number.isFinite(n) ? ` \u00b7 ${Number(n).toLocaleString()} accounts` : "";
+      }
+      function paintHint() {
+        const v = input.value.trim();
+        hint.className = "cb-secret-seg-hint";
+        if (!v) { hint.textContent = "Empty = account agent searches the whole workspace."; return; }
+        if (audienceSegments === null) { hint.textContent = "Loading segments\u2026"; return; }
+        const s = segById(v);
+        if (s) {
+          hint.className = "cb-secret-seg-hint cb-secret-seg-hint-ok";
+          hint.textContent = `\u2713 ${s.name}${sizeSuffix(s.estimatedSize)}`;
+        } else if (/^audseg_/.test(v)) {
+          hint.textContent = "Segment id set (not in this workspace's account segment list).";
+        } else {
+          hint.textContent = "Type to search, then pick a segment below.";
+        }
+      }
+      paintHint();
+
+      let panel = null;
+      let onDocDown = null;
+      function closePanel() {
+        if (panel) { panel.remove(); panel = null; }
+        if (onDocDown) { document.removeEventListener("mousedown", onDocDown, true); onDocDown = null; }
+      }
+      function renderList(q) {
+        if (!panel) return;
+        const list = panel.querySelector(".cb-secret-dd-list");
+        list.innerHTML = "";
+        const qq = q.trim().toLowerCase();
+        const matches = (Array.isArray(audienceSegments) ? audienceSegments : [])
+          .filter((s) => !qq || s.name.toLowerCase().includes(qq) || s.id.toLowerCase().includes(qq))
+          .slice(0, 50);
+        if (!matches.length) {
+          const empty = document.createElement("div");
+          empty.className = "cb-secret-dd-empty";
+          empty.textContent =
+            audienceSegments === false ? "Couldn't load segments \u2014 paste an id." : "No segments match.";
+          list.appendChild(empty);
+          return;
+        }
+        for (const s of matches) {
+          const opt = document.createElement("button");
+          opt.type = "button";
+          opt.className =
+            "cb-secret-dd-option cb-secret-dd-option-2l" +
+            (s.id === input.value.trim() ? " cb-secret-dd-option-selected" : "");
+          const nm = document.createElement("span");
+          nm.className = "cb-secret-seg-opt-name";
+          nm.textContent = s.name;
+          const meta = document.createElement("span");
+          meta.className = "cb-secret-seg-opt-meta";
+          meta.textContent = (Number.isFinite(s.estimatedSize) ? `${Number(s.estimatedSize).toLocaleString()} \u00b7 ` : "") + s.id;
+          opt.appendChild(nm);
+          opt.appendChild(meta);
+          opt.addEventListener("click", (e) => {
+            e.stopPropagation();
+            input.value = s.id;
+            paintHint();
+            closePanel();
+          });
+          list.appendChild(opt);
+        }
+      }
+      function openPanel() {
+        if (panel) return;
+        if (!Array.isArray(audienceSegments)) return; // loading/failed → plain paste field
+        panel = document.createElement("div");
+        panel.className = "cb-secret-dd-panel";
+        const list = document.createElement("div");
+        list.className = "cb-secret-dd-list";
+        panel.appendChild(list);
+        document.body.appendChild(panel);
+        panel.style.width = `${input.offsetWidth}px`;
+        if (__cb.placePopover) __cb.placePopover(panel, input, { gap: 4 });
+        renderList(input.value.trim());
+        onDocDown = (e) => {
+          if (!wrap.contains(e.target) && !(panel && panel.contains(e.target))) closePanel();
+        };
+        setTimeout(() => document.addEventListener("mousedown", onDocDown, true), 0);
+      }
+
+      input.addEventListener("focus", openPanel);
+      input.addEventListener("input", () => {
+        paintHint();
+        if (!panel) openPanel();
+        renderList(input.value.trim());
+      });
+      input.addEventListener("keydown", (e) => {
+        if (e.key === "Escape") { e.stopPropagation(); closePanel(); }
+      });
+    }
+
     function renderRows(rows) {
       fieldsWrap.innerHTML = "";
       fieldsWrap.style.opacity = "1";
       slackControlRebuilders.clear();
+      segmentControlRebuilders.clear();
       // Render every known setting (so unset ones still show and can be
       // created), then any extra keys already in the DB we have no metadata for.
       // se_captain_map has its own dedicated editor (src/captain-map.js), so it
@@ -450,6 +585,12 @@
           // Re-rendered in place when the channel list resolves.
           const rebuild = () => buildChannelDropdown(controlCell, value, editor);
           slackControlRebuilders.set(key, rebuild);
+          rebuild();
+        } else if (meta.segment) {
+          // Re-rendered in place when the segment list resolves; works as a
+          // plain paste field until then.
+          const rebuild = () => buildSegmentControl(controlCell, value, editor);
+          segmentControlRebuilders.set(key, rebuild);
           rebuild();
         } else {
           const input = makeTextInput(value, "");
@@ -565,6 +706,25 @@
         slackChannels = Array.isArray(chs) ? chs : false;
         for (const rebuild of slackControlRebuilders.values()) rebuild();
       });
+      // Fetch the workspace's account segments for the segment combobox. Same
+      // in-place rebuild pattern. Failure leaves the control as a paste field.
+      const segWs = __cb.currentWorkspaceId || __cb.parseIdsFromUrl?.()?.workspaceId || null;
+      if (segWs && __cb.fetchAudienceSegments) {
+        __cb.fetchAudienceSegments(segWs, "ACCOUNT")
+          .then((segs) => {
+            audienceSegments = Array.isArray(segs) ? segs : false;
+          })
+          .catch((err) => {
+            console.warn("[Clay Scoping] fetchAudienceSegments failed:", err);
+            audienceSegments = false;
+          })
+          .finally(() => {
+            for (const rebuild of segmentControlRebuilders.values()) rebuild();
+          });
+      } else {
+        audienceSegments = false;
+        for (const rebuild of segmentControlRebuilders.values()) rebuild();
+      }
     }
   }
 

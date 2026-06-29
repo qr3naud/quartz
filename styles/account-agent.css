@@ -143,6 +143,37 @@
   background: var(--cb-accent-surface, #eef2ff);
 }
 
+/* --- Scope strip (configured segment) --- */
+.cb-aa-scope {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border-bottom: 1px solid var(--cb-border-faint, #eef0f3);
+  background: var(--cb-accent-surface, #eef2ff);
+  font-size: 11px;
+  flex-shrink: 0;
+}
+.cb-aa-scope-label {
+  color: var(--cb-text-faint, #9ca3af);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-weight: 600;
+  font-size: 9.5px;
+  flex-shrink: 0;
+}
+.cb-aa-scope-name {
+  color: var(--cb-accent-strong, #4338ca);
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cb-aa-scope-warn {
+  background: var(--cb-amber-surface, #fffbeb);
+  color: var(--cb-amber-text, #b45309);
+}
+
 /* --- Body --- */
 .cb-aa-body {
   flex: 1 1 auto;

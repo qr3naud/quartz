@@ -42,6 +42,16 @@
   const FIELD_DOMAIN = "domain";
   const ENTITY_FIELD_TABLE = "account_entity_field_values";
   const POS_KEY = "cb-aa-pos";
+  // app_settings key (edited in Secret Configuration) holding the audience
+  // segment id to scope account search to. Empty = search the whole workspace.
+  const SEG_SETTING_KEY = "audience_segment_id";
+
+  // Resolved configured segment, cached per workspace for the session. Reset on
+  // panel close so a Secret-Configuration change takes effect on reopen.
+  // Shape: { id, name, filterAst, segmentType, signalDaysLookback, missing }.
+  let cachedSegment = null;
+  let cachedSegmentWs = null;
+  let cachedSegmentLoaded = false;
 
   // --- Small helpers ---------------------------------------------------------
 
@@ -117,20 +127,50 @@
     };
   }
 
-  async function fetchAccounts(ws, filters, limit) {
+  // Segment membership on POST .../accounts comes from the segment's saved
+  // `filterAst` (NOT `segmentId` alone — verified against the query service), so
+  // we AND the segment's AST into our own filter and also pass segmentId /
+  // segmentType for CPJ-exclusion + draft-source resolution. `baseFilters` is
+  // our own GroupOp (e.g. org_name Equal) or undefined to just list the segment.
+  function applySegmentToBody(body, segment, baseFilters) {
+    if (segment && segment.id && !segment.missing) {
+      body.segmentId = segment.id;
+      body.segmentType = segment.segmentType ?? null;
+      if (segment.signalDaysLookback != null) body.signalDaysLookback = segment.signalDaysLookback;
+      const segAst = segment.filterAst || null;
+      const baseItems = baseFilters && Array.isArray(baseFilters.items) ? baseFilters.items : [];
+      if (!baseItems.length) {
+        // List-the-segment case: pass the segment's filterAst verbatim (this is
+        // the shape verified live to return the segment's full membership).
+        body.filters = segAst || baseFilters || undefined;
+      } else if (segAst && Array.isArray(segAst.items) && segAst.items.length) {
+        // Intersect: nest the whole segment AST as one child so its internal
+        // And/Or is preserved, then AND our own conditions alongside.
+        body.filters = { type: "GroupOp", combinationMode: "And", items: [segAst, ...baseItems] };
+      } else {
+        body.filters = baseFilters;
+      }
+    } else if (baseFilters) {
+      body.filters = baseFilters;
+    }
+    return body;
+  }
+
+  async function fetchAccounts(ws, baseFilters, limit, segment) {
+    const body = {
+      limit,
+      offset: 0,
+      includeDeleted: false,
+      // Match the Audiences UI: exclude in-progress CPJ drafts.
+      shouldInjectDraftFilter: true,
+      segmentType: null,
+    };
+    applySegmentToBody(body, segment, baseFilters);
     const res = await fetch(`${API_BASE}/v3/workspaces/${ws}/audiences/accounts`, {
       method: "POST",
       credentials: "include",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        limit,
-        offset: 0,
-        includeDeleted: false,
-        // Match the Audiences UI: exclude in-progress CPJ drafts.
-        shouldInjectDraftFilter: true,
-        segmentType: null,
-        filters,
-      }),
+      body: JSON.stringify(body),
     });
     if (!res.ok) throw await httpError(res);
     const data = await res.json();
@@ -139,15 +179,64 @@
 
   // Free-text search for the inline picker. A token with a dot and no spaces is
   // treated as a domain; otherwise we match the org name. `Contain` keeps it
-  // forgiving.
-  async function searchAccounts(ws, query) {
+  // forgiving. With a segment configured, an empty query lists the segment's
+  // first accounts so the picker is useful before typing.
+  async function searchAccounts(ws, query, segment) {
     const q = (query || "").trim();
-    if (q.length < 2) return [];
+    const scoped = !!(segment && segment.id && !segment.missing);
+    if (q.length < 2) {
+      return scoped ? fetchAccounts(ws, undefined, 25, segment) : [];
+    }
     const looksLikeDomain = /\./.test(q) && !/\s/.test(q);
-    const filters = looksLikeDomain
+    const base = looksLikeDomain
       ? buildFieldFilter(FIELD_DOMAIN, "Contain", normalizeDomain(q))
       : buildFieldFilter(FIELD_ORG_NAME, "Contain", q);
-    return fetchAccounts(ws, filters, 10);
+    return fetchAccounts(ws, base, 10, segment);
+  }
+
+  // Reads the configured segment id from app_settings (Supabase) and fetches its
+  // filterAst from Clay. Cached per workspace for the session. Returns null when
+  // nothing is configured; returns a `{ missing: true }` stub when an id is set
+  // but the segment can't be loaded in this workspace (so the UI can warn rather
+  // than silently fall back to the whole workspace).
+  async function getConfiguredSegment(ws) {
+    if (cachedSegmentLoaded && cachedSegmentWs === ws) return cachedSegment;
+    cachedSegmentLoaded = true;
+    cachedSegmentWs = ws;
+    cachedSegment = null;
+    try {
+      const supa = window.__cbSupabase;
+      if (!supa || !ws) return null;
+      const rows = await supa.supabaseFetch("app_settings", "GET", {
+        query: { key: "eq." + SEG_SETTING_KEY, select: "value", limit: "1" },
+      });
+      const segId = ((rows && rows[0] && rows[0].value) || "").trim();
+      if (!segId) return null;
+      const seg = __cb.fetchAudienceSegment ? await __cb.fetchAudienceSegment(ws, segId) : null;
+      if (seg && seg.id) {
+        cachedSegment = {
+          id: seg.id,
+          name: seg.name || seg.id,
+          filterAst: seg.filterAst || null,
+          segmentType: seg.segmentType ?? null,
+          signalDaysLookback: seg.signalDaysLookback ?? null,
+          missing: false,
+        };
+      } else {
+        cachedSegment = {
+          id: segId,
+          name: segId,
+          filterAst: null,
+          segmentType: null,
+          signalDaysLookback: null,
+          missing: true,
+        };
+      }
+    } catch (err) {
+      console.warn("[Clay Scoping] getConfiguredSegment failed:", err);
+      cachedSegment = null;
+    }
+    return cachedSegment;
   }
 
   async function runAccountAgent(ws, accountId, message) {
@@ -177,6 +266,7 @@
   let panelEl = null;
   let headerEl = null;
   let contextEl = null;
+  let scopeEl = null;
   let bodyEl = null;
   let footerEl = null;
   let inputEl = null;
@@ -187,6 +277,7 @@
     ws: null,
     opp: null, // { id, name, url, accountName? }
     account: null, // { id, name, domain }
+    segment: null, // configured scope segment (see getConfiguredSegment)
     resolving: false,
     resolveError: null,
     pickerMode: false,
@@ -304,6 +395,10 @@
     contextEl = document.createElement("div");
     contextEl.className = "cb-aa-context";
 
+    scopeEl = document.createElement("div");
+    scopeEl.className = "cb-aa-scope";
+    scopeEl.style.display = "none";
+
     bodyEl = document.createElement("div");
     bodyEl.className = "cb-aa-body";
 
@@ -332,6 +427,7 @@
 
     panelEl.appendChild(headerEl);
     panelEl.appendChild(contextEl);
+    panelEl.appendChild(scopeEl);
     panelEl.appendChild(bodyEl);
     panelEl.appendChild(footerEl);
 
@@ -353,8 +449,40 @@
 
   function renderAll() {
     renderContext();
+    renderScope();
     renderBody();
     renderFooter();
+  }
+
+  // Thin strip under the context bar communicating the account-search scope:
+  // the configured segment when active, or a warning when one is configured but
+  // couldn't be loaded in this workspace.
+  function renderScope() {
+    if (!scopeEl) return;
+    const seg = state.segment;
+    if (seg && seg.id && !seg.missing) {
+      scopeEl.className = "cb-aa-scope";
+      scopeEl.style.display = "";
+      scopeEl.innerHTML = "";
+      const label = document.createElement("span");
+      label.className = "cb-aa-scope-label";
+      label.textContent = "Scoped to";
+      const name = document.createElement("span");
+      name.className = "cb-aa-scope-name";
+      name.textContent = seg.name;
+      name.title = `${seg.name} (${seg.id})`;
+      scopeEl.appendChild(label);
+      scopeEl.appendChild(name);
+    } else if (seg && seg.missing) {
+      scopeEl.className = "cb-aa-scope cb-aa-scope-warn";
+      scopeEl.style.display = "";
+      scopeEl.textContent =
+        "Configured segment isn't in this workspace \u2014 searching all accounts.";
+      scopeEl.title = seg.id;
+    } else {
+      scopeEl.style.display = "none";
+      scopeEl.innerHTML = "";
+    }
   }
 
   function renderContext() {
@@ -550,11 +678,16 @@
       }
     }
 
+    const scoped = !!(state.segment && state.segment.id && !state.segment.missing);
+    if (scoped) {
+      search.placeholder = "Search this segment by name or domain\u2026";
+    }
+
     async function run(q) {
       const reqId = ++pickerReqId;
-      status.textContent = "Searching\u2026";
+      status.textContent = q ? "Searching\u2026" : "Loading segment accounts\u2026";
       try {
-        const accounts = await searchAccounts(state.ws, q);
+        const accounts = await searchAccounts(state.ws, q, state.segment);
         if (reqId !== pickerReqId) return;
         renderRows(accounts);
       } catch (err) {
@@ -568,16 +701,24 @@
       const q = search.value.trim();
       clearTimeout(pickerDebounce);
       if (q.length < 2) {
-        results.innerHTML = "";
-        status.textContent = "";
+        // Scoped: an empty box lists the segment's accounts; unscoped: clear.
+        if (scoped) {
+          pickerDebounce = setTimeout(() => run(""), 200);
+        } else {
+          results.innerHTML = "";
+          status.textContent = "";
+        }
         return;
       }
       pickerDebounce = setTimeout(() => run(q), 250);
     });
 
-    // Auto-run when prefilled (the name-match fallback).
+    // Auto-run when prefilled (the name-match fallback) or, when scoped, to
+    // list the segment's accounts immediately.
     search.focus();
-    if ((state.pickerPrefill || "").trim().length >= 2) run(state.pickerPrefill.trim());
+    const prefill = (state.pickerPrefill || "").trim();
+    if (prefill.length >= 2) run(prefill);
+    else if (scoped) run("");
   }
 
   // --- Transcript ------------------------------------------------------------
@@ -686,6 +827,12 @@
     state.resolving = true;
     renderAll();
 
+    // Load the configured scope segment (if any) before matching so both the
+    // exact match and the picker stay within it.
+    state.segment = await getConfiguredSegment(state.ws);
+    if (token !== state.resolveToken) return;
+    renderScope();
+
     // The linked-opp record in memory only has { id, name, url } — `name` is the
     // OPPORTUNITY name, not the account. Fetch the full record for accountName.
     let accountName = "";
@@ -704,6 +851,7 @@
           state.ws,
           buildFieldFilter(FIELD_ORG_NAME, "Equal", accountName),
           2,
+          state.segment,
         );
         if (token !== state.resolveToken) return;
         if (matches.length === 1) {
@@ -829,10 +977,11 @@
       panelEl.remove();
       panelEl = null;
     }
-    headerEl = contextEl = bodyEl = footerEl = inputEl = sendBtn = null;
+    headerEl = contextEl = scopeEl = bodyEl = footerEl = inputEl = sendBtn = null;
     // Reset session state — no history is kept across opens.
     state.opp = null;
     state.account = null;
+    state.segment = null;
     state.resolving = false;
     state.resolveError = null;
     state.pickerMode = false;
@@ -840,6 +989,10 @@
     state.busy = false;
     state.transcript = [];
     state.resolveToken++;
+    // Re-read the configured segment on next open (picks up Secret-Config edits).
+    cachedSegmentLoaded = false;
+    cachedSegmentWs = null;
+    cachedSegment = null;
   }
 
   function escapeHtml(s) {

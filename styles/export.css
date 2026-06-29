@@ -889,6 +889,55 @@
   color: #6b7280;
 }
 
+/* Audience segment combobox (account-agent scope): an editable input that
+   accepts a pasted id and surfaces a searchable segment dropdown, plus a hint
+   line resolving the current id to its segment name. Stacks within the fixed
+   52px control row. */
+.cb-secret-seg {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  width: 100%;
+}
+.cb-secret-seg .cb-gtme-input {
+  height: 34px;
+}
+.cb-secret-seg-hint {
+  font-size: 11px;
+  line-height: 1.25;
+  color: #9ca3af;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cb-secret-seg-hint-ok {
+  color: #0a8a50;
+}
+/* Two-line dropdown option (name + meta) for the segment list. */
+.cb-secret-dd-option-2l {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  white-space: normal;
+}
+.cb-secret-seg-opt-name {
+  font-size: 13px;
+  color: #374151;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cb-secret-dd-option-selected .cb-secret-seg-opt-name {
+  color: #4338ca;
+}
+.cb-secret-seg-opt-meta {
+  font-size: 11px;
+  color: #9ca3af;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* Read-only display for fields the user can't edit (e.g. fixed contract
    length). Mirrors .cb-gtme-input's metrics so the row stays balanced. */
 .cb-gtme-static-value {

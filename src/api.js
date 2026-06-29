@@ -1394,4 +1394,46 @@
       await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
     }
   };
+
+  // -------------------------------------------------------------------------
+  // Audiences segments — used by the account-agent feature (scope account
+  // search to a configured segment) and the Secret Configuration picker.
+  // Session cookies authenticate; the read endpoints need AudienceAbility.Read.
+  // -------------------------------------------------------------------------
+
+  // Lists audience segments for a workspace. `entityType` is one of
+  // 'ACCOUNT' | 'CONTACT' | 'CUSTOM' (omit for all). Returns the raw segment
+  // array ({ id, name, entityType, segmentType, filterAst, estimatedSize, ... }).
+  __cb.fetchAudienceSegments = async function (workspaceId, entityType) {
+    if (!workspaceId) return [];
+    const qs = entityType ? `?entityType=${encodeURIComponent(entityType)}` : "";
+    const res = await fetch(
+      `https://api.clay.com/v3/workspaces/${workspaceId}/audiences/segments${qs}`,
+      { credentials: "include" },
+    );
+    if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
+    const data = await res.json();
+    return data?.segments || [];
+  };
+
+  // Fetches a single segment by id. Returns the segment object (with its
+  // `filterAst` + `segmentType`) or null on any error — segment scoping is an
+  // enhancement, so a missing/foreign segment must never break the agent.
+  __cb.fetchAudienceSegment = async function (workspaceId, segmentId) {
+    if (!workspaceId || !segmentId) return null;
+    try {
+      const res = await fetch(
+        `https://api.clay.com/v3/workspaces/${workspaceId}/audiences/segments/${encodeURIComponent(segmentId)}`,
+        { credentials: "include" },
+      );
+      if (!res.ok) return null;
+      const data = await res.json();
+      // ts-rest returns the segment as the response body directly; tolerate a
+      // { segment } wrapper just in case.
+      return data?.id ? data : data?.segment || null;
+    } catch (err) {
+      console.warn("[Clay Scoping] fetchAudienceSegment failed:", err);
+      return null;
+    }
+  };
 })();
