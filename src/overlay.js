@@ -55,6 +55,18 @@
     '<circle cx="12" cy="12" r="1.6"/>' +
     '<circle cx="12" cy="19" r="1.6"/></svg>';
 
+  // Robot glyph for the "Ask account agent" row — surfaces the Audiences
+  // account agent in a floating chat window (src/account-agent.js).
+  const ACCOUNT_AGENT_ICON_SVG =
+    '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" ' +
+    'fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" ' +
+    'stroke-linejoin="round" aria-hidden="true">' +
+    '<rect x="3" y="11" width="18" height="10" rx="2"/>' +
+    '<circle cx="12" cy="5" r="2"/>' +
+    '<path d="M12 7v4"/>' +
+    '<line x1="8" y1="16" x2="8" y2="16"/>' +
+    '<line x1="16" y1="16" x2="16" y2="16"/></svg>';
+
   // Arrow-right-left swap glyph for the Canvas / Tables view row. Reads
   // as "swap between views" in both directions so the same icon works
   // regardless of which view is currently active.
@@ -315,6 +327,27 @@
         if (__cb.openUpdateModal) __cb.openUpdateModal();
       });
       moreMenuEl.appendChild(updateItem);
+      hasMoreMenuItems = true;
+    }
+
+    // Ask account agent — opens the floating chat window (src/account-agent.js)
+    // that resolves the canvas's linked SFDC opportunity to a Clay Audiences
+    // account and queries the account agent. Published only when the `sfdc`
+    // feature flag is on, so the `__cb.openAccountAgent` check is the gate.
+    if (__cb.openAccountAgent) {
+      const agentItem = document.createElement("button");
+      agentItem.type = "button";
+      agentItem.className = "cb-export-menu-option cb-more-menu-option";
+      agentItem.title = "Ask Clay's account agent about the linked opportunity's account";
+      agentItem.innerHTML =
+        `<span class="cb-more-menu-icon">${ACCOUNT_AGENT_ICON_SVG}</span>` +
+        `<span class="cb-more-menu-label">Ask account agent</span>`;
+      agentItem.addEventListener("click", (evt) => {
+        evt.stopPropagation();
+        closeMoreMenu();
+        __cb.openAccountAgent();
+      });
+      moreMenuEl.appendChild(agentItem);
       hasMoreMenuItems = true;
     }
 
