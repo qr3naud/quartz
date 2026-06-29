@@ -118,6 +118,36 @@ body {
   color: #6b7280;
 }
 
+.cb-popup-search {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--cb-border);
+}
+
+.cb-popup-search[hidden] {
+  display: none;
+}
+
+.cb-popup-search-input {
+  width: 100%;
+  padding: 7px 10px;
+  font-size: 13px;
+  border: 1px solid var(--cb-border);
+  border-radius: 6px;
+  font-family: inherit;
+  color: var(--cb-fg);
+  background: var(--cb-bg);
+  outline: none;
+}
+
+.cb-popup-search-input:focus {
+  border-color: var(--cb-accent);
+  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.15);
+}
+
+.cb-popup-search-input::placeholder {
+  color: var(--cb-fg-muted);
+}
+
 /* Reusable avatar element. Two sizes: default (24px, rows) and sm (32px, header). */
 .cb-popup-avatar {
   width: 24px;

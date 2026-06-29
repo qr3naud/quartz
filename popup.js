@@ -14,8 +14,16 @@
   const supa = window.cbSupabase;
   const statusEl = document.getElementById("cb-popup-status");
   const listEl = document.getElementById("cb-popup-list");
+  const searchEl = document.getElementById("cb-popup-search");
+  const searchInputEl = document.getElementById("cb-popup-search-input");
   const userNameEl = document.getElementById("cb-popup-user-name");
   const userAvatarEl = document.getElementById("cb-popup-user-avatar");
+
+  /** Cached after the initial fetch so search re-renders without re-fetching. */
+  let cachedRows = null;
+  let cachedCurrentIds = null;
+  let cachedWsMetaById = null;
+  let searchWired = false;
 
   function showStatus(text, isError) {
     statusEl.textContent = text;
@@ -26,6 +34,23 @@
 
   function hideStatus() {
     statusEl.hidden = true;
+  }
+
+  function showNoMatches(query) {
+    statusEl.textContent = `No matches for "${query.trim()}"`;
+    statusEl.hidden = false;
+    statusEl.classList.remove("cb-popup-status-error");
+    listEl.hidden = true;
+  }
+
+  function matchesFilter(row, wsMetaById, query) {
+    const q = (query || "").trim().toLowerCase();
+    if (!q) return true;
+    const workbookName = (row.canvases?.workbook_name || row.workbook_id || "").toLowerCase();
+    const workspaceId = row.canvases?.workspace_id;
+    const ws = (workspaceId && wsMetaById.get(workspaceId)) || { name: "Workspace" };
+    const workspaceName = (ws.name || "").toLowerCase();
+    return workbookName.includes(q) || workspaceName.includes(q);
   }
 
   /** Returns the workspaceId/workbookId from a Clay URL, or null. */
@@ -229,7 +254,7 @@
     });
   }
 
-  function renderList(rows, currentIds, wsMetaById) {
+  function renderList(rows, currentIds, wsMetaById, filterQuery) {
     listEl.innerHTML = "";
 
     if (!rows || rows.length === 0) {
@@ -237,10 +262,19 @@
       return;
     }
 
+    const filtered = filterQuery
+      ? rows.filter((row) => matchesFilter(row, wsMetaById, filterQuery))
+      : rows;
+
+    if (filtered.length === 0) {
+      showNoMatches(filterQuery);
+      return;
+    }
+
     hideStatus();
     listEl.hidden = false;
 
-    for (const row of rows) {
+    for (const row of filtered) {
       const li = document.createElement("li");
       li.className = "cb-popup-item";
 
@@ -287,6 +321,21 @@
 
       listEl.appendChild(li);
     }
+  }
+
+  function wireSearch() {
+    if (searchWired || !searchInputEl) return;
+    searchWired = true;
+    searchInputEl.addEventListener("input", () => {
+      if (!cachedRows) return;
+      renderList(cachedRows, cachedCurrentIds, cachedWsMetaById, searchInputEl.value);
+    });
+  }
+
+  function revealSearch() {
+    if (!searchEl) return;
+    searchEl.hidden = false;
+    wireSearch();
   }
 
   /**
@@ -472,6 +521,10 @@
             backfillWorkspaceMeta(id, meta);
           });
         }
+        cachedRows = rows;
+        cachedCurrentIds = currentIds;
+        cachedWsMetaById = wsMetaById;
+        if (rows && rows.length > 0) revealSearch();
         renderList(rows, currentIds, wsMetaById);
       } catch (err) {
         console.error("[Clay Scoping Popup] fetchCanvases failed:", err);
