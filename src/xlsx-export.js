@@ -43,13 +43,27 @@
   const COL_COUNT = COLS.length;
   const NUM_FMT = "#,##0.0";
 
+  // Mirror layout matches the manual customer scoping sheet exactly:
+  //   (blank spacer) | {Section title / Data point} | Volume | Fill Rate |
+  //   Benchmark | Data Credits | Actions | Methodology
+  // Column 1 is an unstyled spacer; the section title lives in column 2 of the
+  // header row, with the metric/Methodology labels in columns 3-8.
   const MIRROR_COLS = [
-    { key: "dataPoint", label: "Data point", width: 34, kind: "label" },
-    { key: "methodology", label: "Methodology", width: 52, kind: "label" },
-    { key: "dataCredits", label: "Data Credits", width: 14, kind: "metric" },
-    { key: "actions", label: "Actions", width: 10, kind: "metric" },
+    { key: "spacer", label: "", width: 2.5, kind: "spacer" },
+    { key: "dataPoint", label: "", width: 46, kind: "label" },
+    { key: "volume", label: "Volume", width: 10, kind: "metric" },
+    { key: "fillRate", label: "Fill Rate", width: 10, kind: "metric" },
+    { key: "benchmark", label: "Benchmark", width: 11, kind: "metric" },
+    { key: "dataCredits", label: "Data Credits", width: 13, kind: "metric" },
+    { key: "actions", label: "Actions", width: 9, kind: "metric" },
+    { key: "methodology", label: "Methodology", width: 60, kind: "label" },
   ];
   const MIRROR_COL_COUNT = MIRROR_COLS.length;
+  // First styled column (after the blank spacer).
+  const MIRROR_FIRST_COL = 2;
+  const FILL_PCT_FMT = "0%";
+  const INT_FMT = "#,##0";
+  const BENCH_FMT = "0.#";
 
   function solid(argb) {
     return { type: "pattern", pattern: "solid", fgColor: { argb } };
@@ -194,16 +208,61 @@
     ws.addRow([]);
   }
 
-  // Mirror scoping sheet: Methodology / Data Credits / Actions (no cell merges).
+  // Yellow body cells across the styled columns (spacer stays blank/white).
+  function styleMirrorBodyRow(ws, row) {
+    for (let c = MIRROR_FIRST_COL; c <= MIRROR_COL_COUNT; c++) {
+      const cell = row.getCell(c);
+      cell.fill = solid(FILL_METRIC);
+      cell.border = BORDER_ALL;
+      cell.alignment = {
+        vertical: "top",
+        wrapText: MIRROR_COLS[c - 1].kind === "label",
+      };
+    }
+  }
+
+  // Data point row. Volume + Fill render on every row; Benchmark / Data Credits /
+  // Actions only when present (first row of a run); Methodology repeats. Numbers
+  // get native formats so Excel right-aligns them like the manual sheet.
   function renderMirrorDataRow(ws, rec) {
     const row = ws.addRow(new Array(MIRROR_COL_COUNT).fill(""));
-    row.getCell(1).value = rec.dataPoint || "";
-    row.getCell(2).value = rec.methodology || "";
-    row.getCell(3).value = rec.dataCredits || "";
-    row.getCell(4).value = rec.actions || "";
-    for (let c = 1; c <= MIRROR_COL_COUNT; c++) {
-      styleDataCell(row.getCell(c), MIRROR_COLS[c - 1].kind);
+    row.getCell(2).value = rec.dataPoint ? `     ${rec.dataPoint}` : "";
+    if (rec.volumeNum != null && Number.isFinite(rec.volumeNum)) {
+      row.getCell(3).value = rec.volumeNum;
+      row.getCell(3).numFmt = INT_FMT;
     }
+    if (rec.fillPct != null && Number.isFinite(rec.fillPct)) {
+      row.getCell(4).value = rec.fillPct / 100;
+      row.getCell(4).numFmt = FILL_PCT_FMT;
+    }
+    if (rec.benchmarkNum != null && Number.isFinite(rec.benchmarkNum)) {
+      row.getCell(5).value = rec.benchmarkNum;
+      row.getCell(5).numFmt = BENCH_FMT;
+    }
+    row.getCell(6).value = rec.dataCredits || "";
+    if (rec.actionsNum != null && Number.isFinite(rec.actionsNum)) {
+      row.getCell(7).value = rec.actionsNum;
+      row.getCell(7).numFmt = INT_FMT;
+    }
+    row.getCell(8).value = rec.methodology || "";
+    styleMirrorBodyRow(ws, row);
+    return row.number;
+  }
+
+  // Darker grey divider for a nested group inside a use case (spans the styled
+  // columns; the spacer stays blank).
+  function renderMirrorGroupDivider(ws, label) {
+    const row = ws.addRow(new Array(MIRROR_COL_COUNT).fill(""));
+    row.getCell(MIRROR_FIRST_COL).value = label;
+    ws.mergeCells(row.number, MIRROR_FIRST_COL, row.number, MIRROR_COL_COUNT);
+    row.getCell(MIRROR_FIRST_COL).font = { bold: true };
+    row.getCell(MIRROR_FIRST_COL).alignment = { vertical: "middle", horizontal: "left" };
+    for (let c = MIRROR_FIRST_COL; c <= MIRROR_COL_COUNT; c++) {
+      const cell = row.getCell(c);
+      cell.fill = solid(FILL_GROUP);
+      cell.border = BORDER_ALL;
+    }
+    row.height = 18;
     return row.number;
   }
 
@@ -214,33 +273,37 @@
         ? [{ groupLabel: "", rows: section.rows }]
         : [];
 
-    const titleRow = ws.addRow(new Array(MIRROR_COL_COUNT).fill(""));
-    titleRow.getCell(1).value = section.title || fallbackTitle || "Scope";
-    ws.mergeCells(titleRow.number, 1, titleRow.number, MIRROR_COL_COUNT);
-    titleRow.getCell(1).font = { bold: true, size: 12 };
-    titleRow.getCell(1).alignment = { vertical: "middle", horizontal: "left" };
-    for (let c = 1; c <= MIRROR_COL_COUNT; c++) {
-      const cell = titleRow.getCell(c);
-      cell.fill = solid(FILL_TITLE);
-      cell.border = BORDER_ALL;
-    }
-    titleRow.height = 20;
-
+    // Combined title + column-header row: title in column 2, labels in 3-8.
     const headerRow = ws.addRow(new Array(MIRROR_COL_COUNT).fill(""));
-    for (let c = 1; c <= MIRROR_COL_COUNT; c++) {
+    headerRow.getCell(MIRROR_FIRST_COL).value = section.title || fallbackTitle || "Scope";
+    for (let c = MIRROR_FIRST_COL; c <= MIRROR_COL_COUNT; c++) {
       const cell = headerRow.getCell(c);
-      cell.value = MIRROR_COLS[c - 1].label;
+      if (c > MIRROR_FIRST_COL) cell.value = MIRROR_COLS[c - 1].label;
       cell.font = { bold: true };
       cell.fill = solid(FILL_TITLE);
       cell.border = BORDER_ALL;
-      cell.alignment = { vertical: "middle", wrapText: true };
+      cell.alignment = { vertical: "middle", wrapText: c > MIRROR_FIRST_COL };
     }
+    headerRow.height = 20;
 
     for (const block of blocks) {
       const records = block.rows || [];
       if (records.length === 0) continue;
-      if (block.groupLabel) renderGroupDivider(ws, block.groupLabel, MIRROR_COL_COUNT);
+      if (block.groupLabel) renderMirrorGroupDivider(ws, block.groupLabel);
       for (const rec of records) renderMirrorDataRow(ws, rec);
+    }
+
+    // Use-case total row: blended credits per record (sum of per-row Data Credits).
+    const totalRow = ws.addRow(new Array(MIRROR_COL_COUNT).fill(""));
+    totalRow.getCell(MIRROR_FIRST_COL).value = "Total";
+    if (section.totalCredits != null && Number.isFinite(section.totalCredits)) {
+      totalRow.getCell(6).value = `${Number(section.totalCredits).toFixed(1)} credits`;
+    }
+    for (let c = MIRROR_FIRST_COL; c <= MIRROR_COL_COUNT; c++) {
+      const cell = totalRow.getCell(c);
+      cell.font = { bold: true };
+      cell.fill = solid(FILL_TOTAL);
+      cell.border = BORDER_ALL;
     }
 
     ws.addRow([]);

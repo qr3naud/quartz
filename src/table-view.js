@@ -9124,12 +9124,6 @@
     return `${Number(credits).toFixed(1)} credits`;
   }
 
-  // Mirror export: integer actions or blank.
-  function exportMirrorActionsText(actions) {
-    if (actions == null || !Number.isFinite(actions) || actions <= 0) return "";
-    return String(Math.round(actions));
-  }
-
   // Row-level note (DP / orphan primary card) plus per-ER chip notes, merged
   // into one Comments cell. Multiple contributions are newline-separated; ER
   // notes are prefixed with the enrichment name when more than one note is
@@ -9439,18 +9433,30 @@
   // Credits and actions appear on the first row of each enrichment merge run only;
   // follower rows leave those cells blank (no rowspan merge in the writer).
 
+  // One mirror row. Volume + Fill appear on every row; Benchmark / Data Credits /
+  // Actions only on the first row of an enrichment merge run (blank on followers);
+  // Methodology repeats on every row — matching the manual customer scoping sheet.
   function mirrorRowRecord(row) {
     const isOrphan = row.kind === "orphan-er";
     const isSkip = row.mergeMode === "skip";
     const erTotals = isSkip ? null : exportErCostTotals(row.ers);
+    const cf = row.coverageFill || {};
+    const creditsNum =
+      erTotals && !erTotals.creditsUnknown ? Number(erTotals.credits) || 0 : null;
+    const actionsNum =
+      erTotals && Number(erTotals.actions) > 0 ? Math.round(Number(erTotals.actions)) : null;
     return {
       kind: row.kind,
       dataPoint: isOrphan ? "" : row.name || "",
       methodology: exportMethodologyText(row.ers),
+      volumeNum: exportVolumeNumber(cf.coverage),
+      fillPct:
+        cf.fill && !cf.fill.loading && cf.fill.pct != null ? Number(cf.fill.pct) : null,
+      benchmarkNum: creditsNum,
       dataCredits: erTotals
         ? exportMirrorCreditsText(erTotals.credits, erTotals.creditsUnknown)
         : "",
-      actions: erTotals ? exportMirrorActionsText(erTotals.actions) : "",
+      actionsNum,
       mergeMode: row.mergeMode || "single",
       mergeSpan: row.mergeSpan || 1,
     };
@@ -9464,13 +9470,21 @@
   function makeMirrorUseCase(title, blocks) {
     const normalized = (blocks || []).filter((b) => b.rows && b.rows.length > 0);
     const outBlocks = [];
+    // Section total mirrors the manual sheet's "Total … X.X credits": the sum
+    // of per-row Data Credits, counted once per enrichment run (skip rows are
+    // already null), i.e. blended credits per processed record.
+    let totalCredits = 0;
     for (const block of normalized) {
+      const records = mirrorRecordsFromRows(block.rows);
+      for (const r of records) {
+        if (r.benchmarkNum != null) totalCredits += r.benchmarkNum;
+      }
       outBlocks.push({
         groupLabel: block.groupLabel || "",
-        rows: mirrorRecordsFromRows(block.rows),
+        rows: records,
       });
     }
-    return { title: title || "", blocks: outBlocks };
+    return { title: title || "", blocks: outBlocks, totalCredits };
   }
 
   function buildMirrorXlsxExportData() {
