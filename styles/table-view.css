@@ -185,6 +185,15 @@
   }
 }
 
+/* Provider-cost view toggle (rainbow) — active state mirrors the search
+   toggle's indigo "open" palette so the on/off read is consistent. */
+.cb-table-view-cost-basis-toggle-on,
+.cb-table-view-cost-basis-toggle-on:hover {
+  background: #eef2ff;
+  border-color: #c7d2fe;
+  color: #4338ca;
+}
+
 /* ---- Inline search ---- */
 
 .cb-table-view-search {
@@ -1047,9 +1056,12 @@
   border-left: 2px solid #c7d2fe;
 }
 
-/* Only the ERs cell is rowspanned now, so it's the one that needs vertical
-   centering across the run; per-row Credits/Actions align like normal cells. */
-.cb-table-view-dp-row-merge-first td.col-ers {
+/* Rowspanned cells need vertical centering across the run. The ERs cell is
+   always rowspanned; in provider-cost view the Credits/Actions cells are too
+   (they carry the .cb-table-view-cell-merged class only when merged). */
+.cb-table-view-dp-row-merge-first td.col-ers,
+.cb-table-view-table td.col-credits.cb-table-view-cell-merged,
+.cb-table-view-table td.col-actions.cb-table-view-cell-merged {
   vertical-align: middle;
 }
 

@@ -574,6 +574,31 @@
     return wrap;
   }
 
+  // Rounded toggle for the provider-cost view. Off by default; when on, the
+  // Credits/Actions columns show the undivided per-enrichment cost merged across
+  // each run (see getCostBasis). Persisted globally; flips + re-renders on click.
+  function buildCostBasisToggle() {
+    const on = getCostBasis() === "provider";
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className =
+      "cb-table-view-group-toggle cb-table-view-cost-basis-toggle" +
+      (on ? " cb-table-view-cost-basis-toggle-on" : "");
+    btn.title = on
+      ? "Showing cost per enrichment (provider) \u2014 click for cost per data point"
+      : "Show cost per enrichment (provider) instead of per data point";
+    btn.setAttribute("aria-label", "Toggle provider cost view");
+    btn.setAttribute("aria-pressed", on ? "true" : "false");
+    btn.innerHTML = rainbowSvg(15);
+    btn.addEventListener("mousedown", (e) => e.stopPropagation());
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      setCostBasis(getCostBasis() === "provider" ? "dp" : "provider");
+      render();
+    });
+    return btn;
+  }
+
   // Pricing mode: the collapse/expand-all buttons fold/unfold the use-case
   // boxes (state in __cb._pricingCollapsed, keyed by use-case key).
   function pricingCollapseAll() {
@@ -6506,6 +6531,9 @@
     // internal-only "View Bands" control.
     introLead.appendChild(buildGroupToggleControls());
     if (!__cb.pricingMode) {
+      // Provider-cost view toggle (rainbow) — switches the Credits/Actions
+      // columns between per-data-point split and merged per-enrichment cost.
+      introLead.appendChild(buildCostBasisToggle());
       // Collapsed search affordance — sits to the right of the collaborators
       // pill, expands inline on click or Cmd/Ctrl+F. State is module-scoped so
       // applySearchHighlight() (end of render) restores highlights afterwards.
@@ -7360,24 +7388,51 @@
     // (read-only), spinner while the full profile loads.
     tr.appendChild(buildFillCell(row.coverageFill?.fill, row.cardId));
 
-    // Actions / credits render per DP row — each carries its own split share
-    // (ER credits ÷ #DPs the ER feeds), so a merge run still sums to the ER's
-    // true per-row cost. Only the ERs chips collapse into the "first" row of a
-    // merge run via rowspan; followers ("skip") omit just that one cell.
-    const actionsCell = document.createElement("td");
-    actionsCell.className = "col-actions cb-table-view-cell-readonly";
-    actionsCell.textContent = formatNumber(row.actions);
-    tr.appendChild(actionsCell);
+    // Actions / credits.
+    //   "dp" basis (default): each row carries its own split share (ER cost ÷
+    //     #DPs the ER feeds), so a merge run still sums to the ER's true per-row
+    //     cost. Rendered on every row; only the ERs chips rowspan-merge.
+    //   "provider" basis: show the undivided per-enrichment cost once, merged +
+    //     centered across the run (skip followers omit the cells), mirroring the
+    //     Enrichments column — makes clear that dropping a DP doesn't lower cost.
+    if (getCostBasis() === "provider") {
+      if (mergeMode !== "skip") {
+        const erTotals = exportErCostTotals(row.ers);
+        const mergedCls = mergeSpan > 1 ? " cb-table-view-cell-merged" : "";
 
-    const creditsCell = document.createElement("td");
-    creditsCell.className = "col-credits cb-table-view-cell-readonly";
-    if (row.creditsUnknown) {
-      creditsCell.textContent = "\u2014";
-      creditsCell.title = "Function cost is loading\u2026 switch to Actual for real spend";
+        const actionsCell = document.createElement("td");
+        actionsCell.className = "col-actions cb-table-view-cell-readonly" + mergedCls;
+        if (mergeSpan > 1) actionsCell.rowSpan = mergeSpan;
+        actionsCell.textContent = formatNumber(erTotals.actions);
+        tr.appendChild(actionsCell);
+
+        const creditsCell = document.createElement("td");
+        creditsCell.className = "col-credits cb-table-view-cell-readonly" + mergedCls;
+        if (mergeSpan > 1) creditsCell.rowSpan = mergeSpan;
+        if (erTotals.creditsUnknown) {
+          creditsCell.textContent = "\u2014";
+          creditsCell.title = "Function cost is loading\u2026 switch to Actual for real spend";
+        } else {
+          creditsCell.textContent = formatNumber(erTotals.credits);
+        }
+        tr.appendChild(creditsCell);
+      }
     } else {
-      creditsCell.textContent = formatNumber(row.credits);
+      const actionsCell = document.createElement("td");
+      actionsCell.className = "col-actions cb-table-view-cell-readonly";
+      actionsCell.textContent = formatNumber(row.actions);
+      tr.appendChild(actionsCell);
+
+      const creditsCell = document.createElement("td");
+      creditsCell.className = "col-credits cb-table-view-cell-readonly";
+      if (row.creditsUnknown) {
+        creditsCell.textContent = "\u2014";
+        creditsCell.title = "Function cost is loading\u2026 switch to Actual for real spend";
+      } else {
+        creditsCell.textContent = formatNumber(row.credits);
+      }
+      tr.appendChild(creditsCell);
     }
-    tr.appendChild(creditsCell);
 
     if (mergeMode !== "skip") {
       const ersCell = document.createElement("td");
@@ -8185,6 +8240,28 @@
     try { localStorage.setItem("cb-cost-unit", cb.costUnit); } catch (_) {}
   }
 
+  // Global cost BASIS for the per-row Credits/Actions columns:
+  //   "dp"       — split an enrichment's per-row cost across the data points it
+  //                feeds (default; the column row-sums to the use-case total).
+  //   "provider" — show the undivided per-enrichment (provider) cost once,
+  //                merged + centered across the enrichment's run, so a customer
+  //                sees that dropping a data point doesn't lower cost.
+  // Persisted in page localStorage (unprefixed key, survives workspace/workbook
+  // pruning) so the rep's choice carries across all workspaces.
+  function getCostBasis() {
+    const cb = window.__cb;
+    if (cb.costBasis == null) {
+      try { cb.costBasis = localStorage.getItem("cb-cost-basis") || "dp"; }
+      catch (_) { cb.costBasis = "dp"; }
+    }
+    return cb.costBasis === "provider" ? "provider" : "dp";
+  }
+  function setCostBasis(basis) {
+    const cb = window.__cb;
+    cb.costBasis = basis === "provider" ? "provider" : "dp";
+    try { localStorage.setItem("cb-cost-basis", cb.costBasis); } catch (_) {}
+  }
+
   // Dropdown to switch the credit/action cost badges between "Per year" and
   // "Per record". Mounted on body + fixed-positioned like the other overlay
   // popovers; toggling re-renders the table so every use case stays in sync.
@@ -8744,6 +8821,21 @@
       'stroke-linejoin="round" aria-hidden="true">' +
       '<circle cx="11" cy="11" r="7"/>' +
       '<line x1="21" y1="21" x2="16.5" y2="16.5"/>' +
+      '</svg>'
+    );
+  }
+
+  // Lucide "rainbow" glyph — three nested arcs. Marks the provider-cost view
+  // toggle.
+  function rainbowSvg(size) {
+    const s = String(size);
+    return (
+      `<svg xmlns="http://www.w3.org/2000/svg" width="${s}" height="${s}" viewBox="0 0 24 24" ` +
+      'fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" ' +
+      'stroke-linejoin="round" aria-hidden="true">' +
+      '<path d="M22 17a10 10 0 0 0-20 0"/>' +
+      '<path d="M6 17a6 6 0 0 1 12 0"/>' +
+      '<path d="M10 17a2 2 0 0 1 4 0"/>' +
       '</svg>'
     );
   }
