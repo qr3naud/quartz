@@ -196,13 +196,29 @@
 }
 
 
-.cb-collab-row-name {
+.cb-collab-row-text {
   flex: 1;
   min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.cb-collab-row-name {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   color: #1f2937;
+}
+
+.cb-collab-row-lastseen {
+  font-size: 11px;
+  color: #6b7280;
+  line-height: 1.2;
+}
+
+.cb-collab-row-active .cb-collab-row-lastseen {
+  color: #6366f1;
 }
 
 .cb-collab-row-you {

@@ -64,6 +64,32 @@
     return (name || "?").trim().charAt(0).toUpperCase();
   }
 
+  /** Relative time for last-seen subtitles; falls back to a locale date after 30d. */
+  function formatLastSeen(isoDate) {
+    if (!isoDate) return null;
+    const then = new Date(isoDate).getTime();
+    if (isNaN(then)) return null;
+    const diff = Date.now() - then;
+    const sec = Math.round(diff / 1000);
+    if (sec < 60) return "just now";
+    const min = Math.round(sec / 60);
+    if (min < 60) return `${min}m ago`;
+    const hr = Math.round(min / 60);
+    if (hr < 24) return `${hr}h ago`;
+    const day = Math.round(hr / 24);
+    if (day < 30) return `${day}d ago`;
+    return new Date(isoDate).toLocaleDateString();
+  }
+
+  /** Subtitle + optional tooltip for a dropdown row. */
+  function lastSeenLabel(c) {
+    if (isActive(c)) return { text: "Viewing now", title: "" };
+    const rel = formatLastSeen(c.lastAccessedAt);
+    if (!rel) return null;
+    const title = new Date(c.lastAccessedAt).toLocaleString();
+    return { text: `Last seen ${rel}`, title: isNaN(new Date(c.lastAccessedAt).getTime()) ? "" : title };
+  }
+
   /**
    * Builds an avatar element. Uses a photo when available, otherwise shows
    * a colored circle with the user's first initial.
@@ -251,10 +277,24 @@
 
       row.appendChild(buildAvatar(c.name, c.profilePicture, { size: "lg" }));
 
+      const textCol = document.createElement("div");
+      textCol.className = "cb-collab-row-text";
+
       const nameEl = document.createElement("span");
       nameEl.className = "cb-collab-row-name";
       nameEl.textContent = c.name;
-      row.appendChild(nameEl);
+      textCol.appendChild(nameEl);
+
+      const seen = lastSeenLabel(c);
+      if (seen) {
+        const seenEl = document.createElement("span");
+        seenEl.className = "cb-collab-row-lastseen";
+        seenEl.textContent = seen.text;
+        if (seen.title) seenEl.title = seen.title;
+        textCol.appendChild(seenEl);
+      }
+
+      row.appendChild(textCol);
 
       if (c.id === __cb.userId) {
         const youBadge = document.createElement("span");
