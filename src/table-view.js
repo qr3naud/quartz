@@ -5331,6 +5331,188 @@
     if (__cb.saveTabs) __cb.saveTabs();
   }
 
+  // Deep-clone a top-level use case (L1 group), its L2 sub-groups, and every
+  // member card. Remaps ER lineage keys + cluster ids so the duplicate's DPs
+  // link to its own ERs (not the source) and coverage / fill / cost stay correct.
+  function duplicateUseCase(groupId) {
+    const model = __cb.model;
+    const canvas = __cb.canvas;
+    if (!model?.createGroup || !canvas) return;
+    const source = model.getGroup(groupId);
+    if (!source || (source.parentId ?? null) !== null) return;
+
+    const subtreeIds = model.groupSubtreeIds(groupId);
+    const sourceCards = model.cardsInGroup(groupId, { deep: true });
+    const siblings = model.childGroups(null) || [];
+    const maxOrder = siblings.reduce(
+      (m, g) => (g.order != null ? Math.max(m, Number(g.order)) : m),
+      -1,
+    );
+    const POS_OFFSET = 40;
+    const cloneDeep = (obj) => (obj != null ? JSON.parse(JSON.stringify(obj)) : obj);
+    const erLineageKey = (card) =>
+      canvas.erLineageKeyOf ? canvas.erLineageKeyOf(card) : lineageKeyOf(card);
+
+    let newGroup = null;
+    const groupMap = new Map();
+    const keyMap = new Map();
+    const clusterMap = new Map();
+
+    const remapClusterId = (oldId) => {
+      if (oldId == null) return null;
+      if (!clusterMap.has(oldId)) {
+        if (!canvas.allocateClusterId) return oldId;
+        clusterMap.set(oldId, canvas.allocateClusterId());
+      }
+      return clusterMap.get(oldId);
+    };
+
+    model.setRestoring(true);
+    try {
+      const srcLabel = (source.label || "").trim();
+      newGroup = model.createGroup({
+        parentId: null,
+        label: srcLabel ? `${srcLabel} (copy)` : "Untitled use case (copy)",
+        source: source.source === "import-table" ? "manual" : (source.source || "manual"),
+        tableId: source.tableId ?? null,
+        viewId: source.viewId ?? null,
+        records: source.records ?? null,
+        frequency: source.frequency ?? null,
+        color: source.color ?? null,
+        order: maxOrder + 1,
+      });
+      groupMap.set(groupId, newGroup.id);
+
+      const childGroupIds = [...subtreeIds]
+        .filter((id) => id !== groupId)
+        .sort((a, b) => model.groupDepth(a) - model.groupDepth(b));
+      for (const oldId of childGroupIds) {
+        const g = model.getGroup(oldId);
+        if (!g) continue;
+        const ng = model.createGroup({
+          parentId: groupMap.get(g.parentId) ?? newGroup.id,
+          label: g.label || "",
+          source: g.source || null,
+          clusterKey: g.clusterKey ?? null,
+          color: g.color ?? null,
+          tableId: g.tableId ?? null,
+          viewId: g.viewId ?? null,
+        });
+        groupMap.set(oldId, ng.id);
+      }
+
+      const erCards = sourceCards.filter((c) => isErType(c.data?.type));
+      const dpCards = sourceCards.filter((c) => c.data?.type === "dp");
+      const otherCards = sourceCards.filter(
+        (c) => !isErType(c.data?.type) && c.data?.type !== "dp",
+      );
+
+      for (const src of erCards) {
+        const data = cloneDeep(src.data);
+        const oldKey = erLineageKey(src);
+        if (data.type === "waterfall") delete data.groupCluster;
+        else delete data.fieldId;
+        const newCard = canvas.addCard(data, {
+          x: src.x + POS_OFFSET,
+          y: src.y + POS_OFFSET,
+          clusterId: remapClusterId(src.clusterId),
+          tableOrder: src.tableOrder ?? null,
+        });
+        if (!newCard) continue;
+        newCard.groupId = groupMap.get(src.groupId) ?? newGroup.id;
+        if (oldKey != null) {
+          const newKey = canvas.ensureErLineageKey?.(newCard);
+          if (newKey != null) keyMap.set(oldKey, newKey);
+        }
+      }
+
+      for (const src of dpCards) {
+        const d = src.data || {};
+        const oldKeys = __cb.dpErKeys(src);
+        const newKeys = oldKeys.map((k) => keyMap.get(k)).filter((k) => k != null);
+        const remappedShares = {};
+        if (d.sourceEnrichmentShares && typeof d.sourceEnrichmentShares === "object") {
+          for (const [ok, share] of Object.entries(d.sourceEnrichmentShares)) {
+            const nk = keyMap.get(ok);
+            if (nk != null) remappedShares[nk] = share;
+          }
+        }
+        const opts = {
+          x: src.x + POS_OFFSET,
+          y: src.y + POS_OFFSET,
+          clusterId: remapClusterId(src.clusterId),
+          tableOrder: src.tableOrder ?? null,
+          fillRate: d.fillRate ? cloneDeep(d.fillRate) : undefined,
+          fillRateCustom: d.fillRateCustom,
+          fillExclusions: d.fillExclusions ? cloneDeep(d.fillExclusions) : undefined,
+          stats: d.stats ? cloneDeep(d.stats) : undefined,
+          fieldId: d.fieldId ?? null,
+          tableId: d.tableId ?? null,
+          viewId: d.viewId ?? null,
+          tableName: d.tableName ?? null,
+          importColor: d.importColor ?? null,
+          groupCluster: d.groupCluster ?? null,
+          note: d.note ?? null,
+        };
+        const newDp = canvas.addDataPointCard(d.text || d.displayName || "", opts);
+        if (!newDp) continue;
+        newDp.groupId = groupMap.get(src.groupId) ?? newGroup.id;
+        if (newKeys.length > 0 && __cb.setDpErKeys) {
+          __cb.setDpErKeys(newDp, newKeys);
+          if (Object.keys(remappedShares).length > 0) {
+            newDp.data.sourceEnrichmentShares = { ...remappedShares };
+          }
+        }
+      }
+
+      for (const src of otherCards) {
+        const d = src.data || {};
+        const commonOpts = {
+          x: src.x + POS_OFFSET,
+          y: src.y + POS_OFFSET,
+          clusterId: remapClusterId(src.clusterId),
+          tableOrder: src.tableOrder ?? null,
+          fieldId: d.fieldId ?? null,
+          tableId: d.tableId ?? null,
+          viewId: d.viewId ?? null,
+          tableName: d.tableName ?? null,
+          importColor: d.importColor ?? null,
+          groupCluster: d.groupCluster ?? null,
+        };
+        let newCard = null;
+        if (d.type === "comment" && canvas.addCommentCard) {
+          newCard = canvas.addCommentCard(d.text || d.displayName || "", commonOpts);
+        } else if (d.type === "input" && canvas.addInputCard) {
+          newCard = canvas.addInputCard(d.text || d.displayName || "", commonOpts);
+        }
+        if (newCard) newCard.groupId = groupMap.get(src.groupId) ?? newGroup.id;
+      }
+    } finally {
+      model.setRestoring(false);
+    }
+
+    if (!newGroup) return;
+
+    const srcScopeKey = `g-${groupId}`;
+    const newScopeKey = `g-${newGroup.id}`;
+    const budget = __cb.useCaseScope?.[srcScopeKey]?.budget;
+    if (budget != null) {
+      __cb.useCaseScope = __cb.useCaseScope || {};
+      __cb.useCaseScope[newScopeKey] = {
+        ...(__cb.useCaseScope[newScopeKey] || {}),
+        budget,
+      };
+    }
+
+    canvas.clusterByLineage?.();
+    canvas.refreshCreditTotal?.();
+    canvas.updateGroupCredits?.();
+    canvas.notifyChange?.();
+    if (__cb.saveTabs) __cb.saveTabs();
+    pendingFocusGroupId = `g-${newGroup.id}`;
+    if (__cb.tableView?.refresh) __cb.tableView.refresh();
+  }
+
   // Demote a use case (L1) to a sub-group nested under another use case (L2).
   // Guarded by the caller to the 2-level cap (only offered when the group has
   // no sub-groups of its own).
@@ -6441,6 +6623,12 @@
           if (g) {
             const isTopLevel = (g.parentId ?? null) === null;
             const hasChildren = (__cb.model?.childGroups?.(g.id) || []).length > 0;
+            if (isTopLevel) {
+              items.push({
+                label: "Duplicate use case",
+                action: () => duplicateUseCase(g.id),
+              });
+            }
             if (!isTopLevel) {
               // Sub-group (L2) -> promote to a use case (L1).
               items.push({
