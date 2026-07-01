@@ -1059,12 +1059,31 @@
       }
     }
 
-    // Private-key state: prefer the server signal (stats.cost.isPrivateKey)
-    // because it reflects the field's actual authAccountId resolution. Falls
-    // back to the catalog "requiresApiKey + no shared cost" heuristic.
-    const usePrivateKey = stats?.cost?.isPrivateKey
-      ? true
-      : (requiresApiKey && credits == null);
+    // Private-key (BYOK) state. The server /context signal
+    // (stats.cost.isPrivateKey) is preferred when present, but the extension's
+    // /context fetch frequently returns no creditCost block at all, so we ALSO
+    // apply Clay's client-side rule (libs/shared credit-cost-utils.ts): a field
+    // wired to an authAccountId that is NOT a Clay-shared public key bills 0
+    // credits. appAccountById is warmed by fetchAppAccounts in the import flow;
+    // an unresolved account defaults to private (matches the server fallback).
+    // Final fallback: the catalog key-only heuristic (requiresApiKey + no cost).
+    const authAccountId = field?.typeSettings?.authAccountId ?? null;
+    const byokViaAuth =
+      !!authAccountId && !__cb.appAccountById?.[authAccountId]?.isSharedPublicKey;
+    const usePrivateKey =
+      stats?.cost?.isPrivateKey === true ||
+      byokViaAuth ||
+      (requiresApiKey && credits == null);
+
+    // BYOK zeroes billed data credits (Clay isn't paying the provider). The
+    // stats.cost branch above already zeroes when /context flagged it; this also
+    // covers the authAccountId path when /context carried no cost. Stash the
+    // pre-zero value so the table-view "use Clay credits" toggle can restore it.
+    let originalCredits = null;
+    if (usePrivateKey && credits != null && credits > 0) {
+      originalCredits = credits;
+      credits = 0;
+    }
 
     let iconUrl = info?.iconUrl ?? null;
     if (ai && selectedModel) {
@@ -1143,6 +1162,7 @@
       clayBudget,
       requiresApiKey,
       usePrivateKey,
+      _originalCredits: originalCredits,
       fieldId: fieldId ?? field?.id,
       tableId: tableId ?? null,
       viewId: viewId ?? null,
@@ -2109,6 +2129,61 @@
   //     surfaces actual Redshift-billed credit usage — only policy
   //     pricing.
   // ---------------------------------------------------------------------------
+  // Re-import cost/BYOK refresh. The import dedups fields already on the canvas
+  // (existingKeys below), so an ER card imported before BYOK detection existed —
+  // or before the field switched to a private key in Clay — keeps a stale
+  // projected credit and no BYOK flag; a plain re-import wouldn't fix it. Re-run
+  // the BYOK rule (authAccountId wired to a non-shared key, via appAccountById;
+  // same rule as buildErCardData) against EXISTING standalone / basic-group ER
+  // cards for this table so a re-import updates BYOK pricing in place. Minimal +
+  // reversible: only touches usePrivateKey + credits (zeroed for BYOK via the
+  // _originalCredits round-trip) and stamps stats.cost when /context provided
+  // one; model / frequency / coverage / notes are untouched. Waterfall steps
+  // (per-provider cost) are not refreshed here. Returns whether anything changed.
+  function refreshImportedErByok(tableId, statsByFieldId, fieldById) {
+    if (!__cb.model?.getNodes) return false;
+    let changed = false;
+    for (const c of __cb.model.getNodes()) {
+      const d = c && c.data;
+      if (!d || d.tableId !== tableId || !d.fieldId) continue;
+      if (
+        d.type === "dp" ||
+        d.type === "input" ||
+        d.type === "comment" ||
+        d.type === "waterfall"
+      ) {
+        continue;
+      }
+      const field = fieldById?.[d.fieldId];
+      const authAccountId = field?.typeSettings?.authAccountId ?? null;
+      const byokViaAuth =
+        !!authAccountId && !__cb.appAccountById?.[authAccountId]?.isSharedPublicKey;
+      const cost = statsByFieldId?.get(d.fieldId)?.cost || null;
+      if (cost) {
+        const hadCost = !!(d.stats && d.stats.cost);
+        d.stats = d.stats || {};
+        d.stats.cost = cost;
+        if (!hadCost) changed = true;
+      }
+      const isPk = byokViaAuth || !!(cost && (cost.isPrivateKey || cost.unlimited));
+      if (isPk && !d.usePrivateKey) {
+        if (d._originalCredits == null && d.credits != null) d._originalCredits = d.credits;
+        d.usePrivateKey = true;
+        d.credits = 0;
+        changed = true;
+      } else if (!isPk && d.usePrivateKey) {
+        // BYOK removed in Clay (back on a shared key) → restore the catalog credit.
+        d.usePrivateKey = false;
+        if (d._originalCredits != null) {
+          d.credits = d._originalCredits;
+          d._originalCredits = null;
+        }
+        changed = true;
+      }
+    }
+    return changed;
+  }
+
   async function importTableToCanvas(table, overrideViewId, anchorEl) {
     if (!__cb.canvas) return false;
 
@@ -2231,6 +2306,16 @@
         : null;
     } finally {
       closeImportStatus();
+    }
+
+    // Warm the app-accounts map so BYOK (private-key) detection works
+    // client-side. buildErCardData + refreshImportedErByok read
+    // __cb.appAccountById to apply Clay's rule (authAccountId wired to a
+    // non-shared key -> 0 credits). The extension's /context creditCost is an
+    // unreliable source for the isPrivateKey signal, so the field's
+    // authAccountId is our source of truth.
+    if (workspaceId && typeof __cb.fetchAppAccounts === "function") {
+      await __cb.fetchAppAccounts(workspaceId).catch(() => {});
     }
 
     const tableRecordCount = await prefillRecordsCount(context, {
@@ -2769,6 +2854,12 @@
       importedAny = true;
     }
 
+    // Re-import cost/BYOK refresh on existing (deduped) cards from the fresh
+    // context. Runs even when importedAny is false (a full re-import of an
+    // already-imported table adds nothing new), so it needs its own persist +
+    // re-render below.
+    const refreshedCosts = refreshImportedErByok(tableId, statsByFieldId, fieldById);
+
     // Seed the initial table-view row order so each enrichment's data points
     // are contiguous (and the Enrichments cell merges into one section). Only
     // sets defaults; drag-to-reorder takes over afterward.
@@ -2802,13 +2893,21 @@
     // calls refreshCreditTotal, but we run it again here so a no-op view
     // change (e.g. user already on Projected) still produces a fresh
     // recompute against the just-added cards.
-    if (importedAny) {
+    if (importedAny || refreshedCosts) {
       if (typeof __cb.canvas.refreshCreditTotal === "function") {
         __cb.canvas.refreshCreditTotal();
       }
       if (typeof __cb.canvas.updateGroupCredits === "function") {
         __cb.canvas.updateGroupCredits();
       }
+    }
+
+    // A cost-only refresh (BYOK/pricing updated on existing cards, no new cards)
+    // doesn't go through the addCard -> notifyChange -> re-render path, so persist
+    // the mutated card data and re-render the table explicitly.
+    if (refreshedCosts) {
+      __cb.canvas?.notifyChange?.();
+      __cb.tableView?.refresh?.();
     }
 
     // Background ACTUAL leg: the session picker is the single source of Actual
