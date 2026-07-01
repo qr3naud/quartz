@@ -2052,10 +2052,12 @@
       const hideScope = !!multi || !!__cb.pricingMode;
       setScopeCollapsed(hideScope);
 
-      // Legacy plans have no action-execution billing dimension — hide the
+      // The legacy era has no action-execution billing dimension — hide the
       // action summary boxes (Actions/Row, Total Actions, Action Cost). Their
       // values are already 0 via cost-model planBillsActions; this drops the
-      // now-empty boxes so a legacy scope reads credits-only.
+      // now-empty boxes so a legacy scope reads credits-only. planBillsActions()
+      // follows the effective era, so a modern pricing scenario on a legacy
+      // workspace reveals these boxes (and the re-priced totals fill them).
       const hideActionBoxes = __cb.planBillsActions ? !__cb.planBillsActions() : false;
       actionsBox.classList.toggle("cb-summary-box-hidden", hideActionBoxes);
       totalActionsBox.classList.toggle("cb-summary-box-hidden", hideActionBoxes);

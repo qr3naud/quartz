@@ -25,17 +25,137 @@
     return type === "dp" || type === "input" || type === "comment";
   }
 
+  // ---------------------------------------------------------------------------
+  // Pricing era ("legacy" pre-2026 vs "modern" post-2026). The workspace's own
+  // era is fixed by its plan; the EFFECTIVE era can be temporarily overridden by
+  // a display-only scenario (`cb.pricingScenario`) so a rep can model "what would
+  // this cost on the other era" without changing the real quote. Every cost
+  // surface funnels through perRowCost, which re-prices to the effective era; the
+  // quote surfaces (computeTabTotals / computePricingUseCases → export, deal
+  // desk) pin themselves to the real workspace era so a scenario never leaks into
+  // a customer number.
+  // ---------------------------------------------------------------------------
+
+  // The workspace's REAL era from its plan. Unknown plans (fetch failed, or a
+  // non-legacy/non-modern type) resolve to "modern" so we never hide real modern
+  // spend — matching the prior `planIsLegacy !== true` default.
+  function workspaceEra() {
+    return cb.currentPlanPricing?.planIsLegacy === true ? "legacy" : "modern";
+  }
+  cb.workspaceEra = workspaceEra;
+
+  // The era every display surface prices at: the scenario override when set to a
+  // valid era, else the workspace era. Quote paths bypass this via an explicit
+  // `era` option (see perRowCost / computeTabTotals).
+  function effectiveEra() {
+    const s = cb.pricingScenario;
+    return s === "legacy" || s === "modern" ? s : workspaceEra();
+  }
+  cb.effectiveEra = effectiveEra;
+
   // Action executions are a MODERN-plan-only billing dimension: the 2026 pricing
   // split introduced them, so legacy (pre-2026) plans never bill them — even
   // though Clay's action catalog carries a per-action `actionExecution` count on
   // its LEGACY tier too (e.g. use-ai's prePricingChange2026 lists actionExecution
   // 1). The catalog value only says an action *can* bill an execution; whether it
-  // *is* billed is a plan property. Gate on the plan, not the catalog. An unknown
-  // plan (fetch failed) keeps actions so we never hide real modern spend.
-  function planBillsActions() {
-    return cb.currentPlanPricing?.planIsLegacy !== true;
+  // *is* billed is a plan property. Gate on the era, not the catalog. Defaults to
+  // the effective era so a legacy workspace modeling modern (scenario) shows
+  // actions, and vice-versa — with no scenario this is exactly the old
+  // `planIsLegacy !== true` behavior.
+  function planBillsActions(era) {
+    return (era || effectiveEra()) === "modern";
   }
   cb.planBillsActions = planBillsActions;
+
+  // Per-row credit cost for a catalog entry at a given era, mirroring the
+  // Old-vs-New modal's tier resolution (checkRequiresCredentials in
+  // libs/shared/src/credits/credit-cost-utils.ts): a key-only action
+  // (requiresApiKey || disableSharedKey) bills its privateKeyCredits (usually 0);
+  // otherwise the shared-key credit. Legacy reads the prePricingChange2026
+  // siblings (legacyCredits / legacyPrivateKeyCredits); modern reads the post-2026
+  // fields. Single source of truth for both the modal and the scenario re-pricing.
+  function resolveTierCredits(info, era) {
+    if (!info) return { credits: 0, isPrivateKey: false };
+    const isPrivateKey = !!(info.requiresApiKey || info.disableSharedKey);
+    if (era === "legacy") {
+      const credits = isPrivateKey
+        ? Number(info.legacyPrivateKeyCredits) || 0
+        : Number(info.legacyCredits) || 0;
+      return { credits, isPrivateKey };
+    }
+    const credits = isPrivateKey
+      ? Number(info.privateKeyCredits) || 0
+      : Number(info.credits) || 0;
+    return { credits, isPrivateKey };
+  }
+  cb.resolveTierCredits = resolveTierCredits;
+
+  // Modern plans bill an actionExecution per row when the action's catalog entry
+  // sets pricing.credits.actionExecution. Read / lookup / source actions omit it
+  // and bill 0 (the server rule in calculateActionExecutionCost is
+  // `pricing?.credits?.actionExecution ?? 0`). Counted regardless of private-key
+  // state — matches canvas/credits.js summing er.data.actionExecutions.
+  function modernActionsForField(info) {
+    const n = Number(info?.actionExecutions);
+    return Number.isFinite(n) && n > 0 ? n : 0;
+  }
+  cb.modernActionsForField = modernActionsForField;
+
+  // Combined per-row { credits, actions, isPrivateKey } for a catalog entry at an
+  // era. `usePrivateKey:true` forces credits to 0 (a card wired to a BYOK auth
+  // account bills nothing regardless of the catalog's shared-key rate). Actions
+  // are the modern actionExecution count on "modern", 0 on "legacy".
+  function resolveEraCost(info, era, opts) {
+    opts = opts || {};
+    const tier = era === "legacy" ? "legacy" : "modern";
+    const base = resolveTierCredits(info, tier);
+    const credits = opts.usePrivateKey === true ? 0 : base.credits;
+    const actions = tier === "modern" ? modernActionsForField(info) : 0;
+    return { credits, actions, isPrivateKey: base.isPrivateKey };
+  }
+  cb.resolveEraCost = resolveEraCost;
+
+  // Re-price a per-row result (mutated in place) for a scenario era — the
+  // "what if this workspace were on the other pricing era" display. Credits scale
+  // by the catalog legacy↔modern base ratio, so a re-import isn't needed and no
+  // /context call is made (synchronous catalog lookup by the card's
+  // packageId+actionKey). AI cards are left untouched on the credit dimension:
+  // per-model pricing is era-agnostic in Clay's data (only the action-level base
+  // splits pre/post-2026), so scaling the model credit by the action ratio would
+  // distort it. Actions are re-derived from the era: modern injects the projected
+  // catalog action count (waterfalls use the hardcoded average), legacy → 0.
+  // No-ops for frozen / non-ER cards and when the catalog entry is missing.
+  function repriceForEra(card, r, era) {
+    // Frozen (0 everywhere) and no-spend (Actual, skipped by callers) results
+    // carry no cost to re-price — leave them so a modern scenario doesn't inject
+    // phantom actions onto a card that contributes nothing.
+    if (!r || r.frozen || r.noSpend) return r;
+    const d = (card && card.data) || {};
+    if (isNonErType(d.type)) return r;
+    const info = cb.actionByIdLookup?.[`${d.packageId}-${d.actionKey}`];
+    if (info && !d.isAi) {
+      const cur = Number(resolveTierCredits(info, workspaceEra()).credits) || 0;
+      const tgt = Number(resolveTierCredits(info, era).credits) || 0;
+      // Guard div-by-zero (BYOK / subroutine / free actions have 0 base): keep
+      // the stamped/measured credits. r.credits is already 0 for BYOK, so the
+      // multiply is a safe no-op there anyway.
+      if (cur > 0 && tgt !== cur) r.credits = r.credits * (tgt / cur);
+    }
+    // Signals bill actions per monitoring run via their own path — don't inject
+    // a per-row catalog action count for them; the era gate below still applies.
+    if (!isSignalCard(card)) {
+      if (era === "modern") {
+        r.actions =
+          d.type === "waterfall"
+            ? Number(cb.WATERFALL_ACTION_EXECUTIONS) || 0
+            : modernActionsForField(info);
+      } else {
+        r.actions = 0;
+      }
+    }
+    return r;
+  }
+  cb.repriceForEra = repriceForEra;
 
   // Rows an enrichment actually ran on — the per-row denominator for Actual.
   // Order: run-status coverage.ran (genuine "did it run", frozen at import) →
@@ -130,14 +250,23 @@
     return { credits, actions, creditsUnknown };
   }
 
-  // Public per-row cost. Wraps perRowCostRaw with the plan-level action gate:
-  // legacy plans never bill action executions, so zero them here — the single
+  // Public per-row cost. Wraps perRowCostRaw with the era layer — the single
   // chokepoint every surface funnels through (per-row columns, ER chips,
-  // computeUseCaseTotals, the summary grand total, and computeTabTotals/exports).
-  // credits are left to perRowCostRaw (usePrivateKey / actual spend / catalog).
+  // computeUseCaseTotals, the summary grand total, and computeTabTotals/exports):
+  //   1. Resolve the era: an explicit `opts.era` (quote surfaces pin the real
+  //      workspace era) else the effective era (display surfaces follow the
+  //      scenario toggle).
+  //   2. When that era differs from the workspace era a scenario is active, so
+  //      re-price credits + actions to it (repriceForEra) — display only; the
+  //      stamped card data is untouched.
+  //   3. Apply the era action gate: legacy never bills action executions.
+  // credits are otherwise left to perRowCostRaw (usePrivateKey / actual / catalog).
   function perRowCost(card, opts) {
+    opts = opts || {};
+    const era = opts.era || effectiveEra();
     const r = perRowCostRaw(card, opts);
-    if (r && r.actions && !planBillsActions()) r.actions = 0;
+    if (era !== workspaceEra()) repriceForEra(card, r, era);
+    if (r && r.actions && !planBillsActions(era)) r.actions = 0;
     return r;
   }
 
@@ -731,11 +860,13 @@
         recs = globalRecords;
         freqId = d.frequencyCustom ? d.frequency : d.frequency || globalFreq;
       }
+      // Quote surface: always price at the REAL workspace era. A display-only
+      // pricing scenario must never leak into an exported / deal-desk number.
       const pr = perRowCost(
         c,
         projected
-          ? { viewMode: "projected" }
-          : { viewMode: "actual", fallbackToProjected: false },
+          ? { viewMode: "projected", era: workspaceEra() }
+          : { viewMode: "actual", fallbackToProjected: false, era: workspaceEra() },
       );
       if (pr.noSpend) continue;
       const mult = freqMult(freqId);
@@ -784,12 +915,14 @@
       // annualVolume). TODO: model recurring signal cost in the contract view.
       if (isSignalCard(c)) continue;
       // Mode-aware: Projected uses catalog credits; Actual uses measured per-row
-      // spend (spend/ran) and skips cards with no spend yet.
+      // spend (spend/ran) and skips cards with no spend yet. Quote surface (drives
+      // the multi-year contract / deal desk): pinned to the real workspace era so
+      // a display pricing scenario never leaks into a committed quote.
       const pr = perRowCost(
         c,
         projected
-          ? { viewMode: "projected" }
-          : { viewMode: "actual", fallbackToProjected: false },
+          ? { viewMode: "projected", era: workspaceEra() }
+          : { viewMode: "actual", fallbackToProjected: false, era: workspaceEra() },
       );
       if (pr.noSpend) continue;
       const freqId = d.frequencyCustom
@@ -862,6 +995,13 @@
 
   cb.cost = {
     isNonErType,
+    workspaceEra,
+    effectiveEra,
+    planBillsActions,
+    resolveTierCredits,
+    modernActionsForField,
+    resolveEraCost,
+    repriceForEra,
     perRowCost,
     actualRowDenominator,
     coverageRatio,

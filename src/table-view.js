@@ -599,6 +599,52 @@
     return btn;
   }
 
+  // Pretty label for a pricing era.
+  function eraLabel(era) {
+    return era === "legacy" ? "legacy" : "modern";
+  }
+
+  // Set the display-only pricing scenario (target era to model) or clear it
+  // (null). Read by cost-model.effectiveEra so every cost surface re-prices;
+  // persisted per-tab in tabs.js like viewMode.
+  function setPricingScenario(era) {
+    window.__cb.pricingScenario =
+      era === "legacy" || era === "modern" ? era : null;
+  }
+
+  // Rounded toggle that models the OTHER pricing era: on a legacy workspace it
+  // re-prices the table + summary to modern (actions appear, credits shift to the
+  // modern tier), and vice-versa. Display only — exports/deal-desk keep the real
+  // workspace pricing. Off by default; flips + re-renders on click. Returns null
+  // (no toggle) until the workspace plan era is known.
+  function buildPricingScenarioToggle() {
+    const cost = window.__cb.cost;
+    if (!window.__cb.currentPlanPricing || !cost?.workspaceEra) return null;
+    const workspaceEra = cost.workspaceEra();
+    const targetEra = workspaceEra === "legacy" ? "modern" : "legacy";
+    const on = window.__cb.pricingScenario === targetEra;
+
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className =
+      "cb-table-view-group-toggle cb-table-view-scenario-toggle" +
+      (on ? " cb-table-view-scenario-toggle-on" : "");
+    btn.title = on
+      ? `Modeling ${eraLabel(targetEra)} pricing \u2014 click to return to your plan's ${eraLabel(workspaceEra)} pricing`
+      : `Model ${eraLabel(targetEra)} pricing (your plan is ${eraLabel(workspaceEra)}) \u2014 display only, doesn't change quotes`;
+    btn.setAttribute("aria-label", "Toggle pricing-era scenario");
+    btn.setAttribute("aria-pressed", on ? "true" : "false");
+    btn.innerHTML = eraSwapSvg(15);
+    btn.addEventListener("mousedown", (e) => e.stopPropagation());
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      setPricingScenario(on ? null : targetEra);
+      render();
+      __cb.canvas?.refreshCreditTotal?.();
+    });
+    return btn;
+  }
+
   // Pricing mode: the collapse/expand-all buttons fold/unfold the use-case
   // boxes (state in __cb._pricingCollapsed, keyed by use-case key).
   function pricingCollapseAll() {
@@ -6531,6 +6577,11 @@
     // internal-only "View Bands" control.
     introLead.appendChild(buildGroupToggleControls());
     if (!__cb.pricingMode) {
+      // Pricing-era scenario toggle — re-prices the table + summary to the other
+      // era (legacy↔modern) for "what would this cost on the new plan" modeling.
+      // Display only; null until the workspace plan era is known.
+      const scenarioToggle = buildPricingScenarioToggle();
+      if (scenarioToggle) introLead.appendChild(scenarioToggle);
       // Provider-cost view toggle (rainbow) — switches the Credits/Actions
       // columns between per-data-point split and merged per-enrichment cost.
       introLead.appendChild(buildCostBasisToggle());
@@ -6626,8 +6677,11 @@
 
     const table = document.createElement("table");
     table.className = "cb-table-view-table";
-    // Legacy plans don't bill action executions, so hide the Actions / row
-    // column entirely (values are already zeroed via cost-model planBillsActions).
+    // The EFFECTIVE era decides the Actions column: legacy never bills action
+    // executions, so hide the column entirely (values are zeroed via cost-model
+    // planBillsActions). planBillsActions() defaults to the effective era, so a
+    // legacy workspace modeling modern (scenario on) SHOWS the column, and a
+    // modern workspace modeling legacy hides it.
     if (window.__cb.planBillsActions && !window.__cb.planBillsActions()) {
       table.classList.add("cb-table-view-hide-actions");
     }
@@ -7797,7 +7851,8 @@
     const records = Number(er.records) || 0;
     const mult = er.multiplier ?? 1;
     const freqOverridden = mult !== 1;
-    // Legacy plans never bill action executions (see cost-model planBillsActions).
+    // Legacy era never bills action executions (see cost-model planBillsActions,
+    // which follows the effective era — so a modern scenario surfaces them).
     const billsActions = window.__cb.planBillsActions ? window.__cb.planBillsActions() : true;
     // BYOK: data credits are 0 (Clay bills against the user's own key), but the
     // action execution is still charged when the plan bills it — so the Total
@@ -8857,6 +8912,20 @@
       '<path d="M22 17a10 10 0 0 0-20 0"/>' +
       '<path d="M6 17a6 6 0 0 1 12 0"/>' +
       '<path d="M10 17a2 2 0 0 1 4 0"/>' +
+      '</svg>'
+    );
+  }
+
+  // Lucide "arrow-left-right" glyph — two opposing arrows. Marks the pricing-era
+  // scenario toggle ("model the other era's pricing").
+  function eraSwapSvg(size) {
+    const s = String(size);
+    return (
+      `<svg xmlns="http://www.w3.org/2000/svg" width="${s}" height="${s}" viewBox="0 0 24 24" ` +
+      'fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" ' +
+      'stroke-linejoin="round" aria-hidden="true">' +
+      '<path d="M8 3 4 7l4 4"/><path d="M4 7h16"/>' +
+      '<path d="m16 21 4-4-4-4"/><path d="M20 17H4"/>' +
       '</svg>'
     );
   }

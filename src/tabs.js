@@ -567,6 +567,14 @@
         // Projected/Actual is per-tab so a multi-tab export can mix modes — each
         // tab remembers the view it was last left in (restored in switchTab).
         state.viewMode = __cb.viewMode === "actual" ? "actual" : "projected";
+        // Display-only pricing-era scenario (model the other era's pricing) is
+        // per-tab like viewMode — a rep can leave one tab modeling modern and
+        // another on the real plan. Null when off. Never affects exported quotes
+        // (cost-model pins those to the real workspace era).
+        state.pricingScenario =
+          __cb.pricingScenario === "legacy" || __cb.pricingScenario === "modern"
+            ? __cb.pricingScenario
+            : null;
         // Multi-year pricing view: whether the tab is in pricing mode, the
         // selected contract length, and the per-use-case per-year records, so a
         // saved quote restores exactly.
@@ -1426,6 +1434,12 @@
     __cb.viewMode = desiredMode;
     if (__cb.tabStore) __cb.tabStore.viewMode = desiredMode;
     if (__cb.overlayEl) __cb.overlayEl.setAttribute("data-cb-view-mode", desiredMode);
+    // Restore this tab's display-only pricing-era scenario (null = off).
+    __cb.pricingScenario =
+      tab?.state?.pricingScenario === "legacy" ||
+      tab?.state?.pricingScenario === "modern"
+        ? tab.state.pricingScenario
+        : null;
     // Refresh the Actual loading flag for the tab we just entered (its cards may
     // already carry spend, or none) BEFORE the recalc below, so the summary
     // doesn't blur known numbers using the previous tab's state.

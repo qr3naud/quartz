@@ -194,6 +194,16 @@
   color: #4338ca;
 }
 
+/* Pricing-era scenario toggle — active state uses an amber palette (distinct
+   from the indigo view toggles) to flag that the displayed numbers are a
+   "what-if" model, not the workspace's real plan pricing. */
+.cb-table-view-scenario-toggle-on,
+.cb-table-view-scenario-toggle-on:hover {
+  background: #fffbeb;
+  border-color: #fde68a;
+  color: #b45309;
+}
+
 /* ---- Inline search ---- */
 
 .cb-table-view-search {

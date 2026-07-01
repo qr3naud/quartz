@@ -445,43 +445,20 @@
   }
 
   // Returns { credits, isPrivateKey } for the given catalog `info` and
-  // pricing tier. Mirrors checkRequiresCredentials in
-  // libs/shared/src/credits/credit-cost-utils.ts: when the action requires
-  // its own auth (requiresApiKey || disableSharedKey), the effective
-  // billable cost is `usesPrivateKeyCredits` (usually 0). Otherwise it's
-  // the shared-key `credits.basic` value.
-  //
-  // tier "legacy" reads the prePricingChange2026 sibling (legacyCredits /
-  // legacyPrivateKeyCredits); tier "modern" reads the post-2026 fields
-  // (credits / privateKeyCredits) — the same numbers the canvas already
-  // uses for its cost math.
+  // pricing tier ("legacy" | "modern"). Single implementation lives in
+  // cost-model.js (cb.resolveTierCredits) so the Old-vs-New modal and the
+  // scenario re-pricing in perRowCost agree; this thin wrapper keeps the
+  // modal's existing call sites unchanged. Mirrors checkRequiresCredentials
+  // in libs/shared/src/credits/credit-cost-utils.ts.
   function resolveTierCredits(info, tier) {
-    if (!info) return { credits: 0, isPrivateKey: false };
-    const isPrivateKey = !!(info.requiresApiKey || info.disableSharedKey);
-    if (tier === "legacy") {
-      const credits = isPrivateKey
-        ? (Number(info.legacyPrivateKeyCredits) || 0)
-        : (Number(info.legacyCredits) || 0);
-      return { credits, isPrivateKey };
-    }
-    const credits = isPrivateKey
-      ? (Number(info.privateKeyCredits) || 0)
-      : (Number(info.credits) || 0);
-    return { credits, isPrivateKey };
+    return __cb.resolveTierCredits(info, tier);
   }
 
-  // Modern plans bill an actionExecution per row when the action's
-  // catalog entry sets pricing.credits.actionExecution. Read / lookup /
-  // source actions intentionally omit that field — they bill 0 actions
-  // per row (the server-side rule in calculateActionExecutionCost is
-  // `pricing?.credits?.actionExecution ?? 0`). Defaulting the missing
-  // value to 1 was overcounting every Salesforce / Pardot lookup +
-  // every records-* source action. Return 0 when the catalog says 0.
-  // Counted regardless of private-key state — matches canvas/credits.js
-  // which sums er.data.actionExecutions unconditionally.
+  // Modern-plan per-row actionExecution count for a field. Single
+  // implementation in cost-model.js (cb.modernActionsForField); wrapper kept
+  // so the modal's call sites read unchanged.
   function modernActionsForField(info) {
-    const n = Number(info?.actionExecutions);
-    return Number.isFinite(n) && n > 0 ? n : 0;
+    return __cb.modernActionsForField(info);
   }
 
   // Resolves an AI field/step's per-row credit cost based on the model
