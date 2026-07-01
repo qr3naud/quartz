@@ -611,6 +611,11 @@
     return "$" + v.toFixed(4);
   }
 
+  // Strip trailing "Plan" from billing API display names so rows stay on one line.
+  function planPickerDisplayName(name) {
+    return (name || "").replace(/\s+plan$/i, "").trim() || name;
+  }
+
   // ---- Plan picker (Phase 2) ----------------------------------------------
   // Supersedes the Phase 1 era toggle. Selecting a plan PREVIEWS the scope
   // re-priced to that plan's era + dollar rates (cb.selectedPlan, display only).
@@ -639,36 +644,58 @@
     return order.length + 1;
   }
 
-  // Editable per-column "Custom" rates, seeded from internal list pricing
-  // (5c/credit for both eras; 0.8c/action for modern — legacy bills no actions).
-  // Persisted for the page session so a rep's tweak survives reopening the menu.
-  let planPickerCustomRates = null;
-  function ensurePlanPickerCustomRates() {
-    if (planPickerCustomRates) return planPickerCustomRates;
-    const listCpc = window.__cb.pricing?.LIST_CPC ?? 0.05;
-    const listCpa = window.__cb.pricing?.LIST_CPA ?? 0.008;
-    planPickerCustomRates = {
-      legacy: { cpc: listCpc },
-      modern: { cpc: listCpc, cpa: listCpa },
-    };
-    return planPickerCustomRates;
+  const PLAN_RATE_EPS = 0.00001;
+  function planPickerRatesMatch(cpcA, cpaA, cpcB, cpaB, era) {
+    if (!Number.isFinite(Number(cpcA)) || !Number.isFinite(Number(cpcB))) return false;
+    if (Math.abs(Number(cpcA) - Number(cpcB)) > PLAN_RATE_EPS) return false;
+    if (era === "legacy") return true;
+    return Math.abs(Number(cpaA ?? 0) - Number(cpaB ?? 0)) <= PLAN_RATE_EPS;
   }
 
-  // A synthetic plan built from the current custom rates for an era. type/id are
-  // null so it flows through preview/apply like the old list-rate era entries;
-  // samePlan() matches it by displayName + era.
-  function planPickerCustomPlan(era) {
-    const r = ensurePlanPickerCustomRates()[era];
-    return {
-      type: null,
-      id: null,
-      displayName: era === "legacy" ? "Custom (legacy)" : "Custom (modern)",
-      era,
-      cpc: Number(r.cpc),
-      cpa: era === "modern" ? Number(r.cpa) : null,
-      source: "custom",
-      isCurrent: false,
-    };
+  function planPickerFindMatchingPlan(plans, era, cpc, cpa) {
+    return (plans || []).find((p) =>
+      p.era === era &&
+      planPickerRatesMatch(cpc, cpa, p.cpc, p.cpa, era),
+    ) || null;
+  }
+
+  // Resolves which catalog row (if any) is active and whether the rep is on
+  // custom pricing — i.e. their effective rates don't match any standard plan.
+  function planPickerActiveState(plans) {
+    const cb = window.__cb;
+    const preview = cb.selectedPlan || null;
+    const committed = cb.quotePlan || null;
+
+    // Previewing a catalog plan — that row wins (preview drives effective rates).
+    if (preview?.type != null) {
+      const matched = (plans || []).find((p) => p.type === preview.type) || preview;
+      return { era: preview.era, matchedPlan: matched, isCustom: false };
+    }
+
+    const era = cb.quoteEra || cb.effectiveEra?.() || cb.workspaceEra?.() || "modern";
+    const cpc = cb.getEffectiveCreditCost?.() ?? cb.getCreditCost?.() ?? (cb.pricing?.LIST_CPC ?? 0.05);
+    const cpa = era === "modern"
+      ? (cb.getEffectiveActionCost?.() ?? cb.getActionCost?.() ?? (cb.pricing?.LIST_CPA ?? 0.008))
+      : null;
+    const matched = planPickerFindMatchingPlan(plans, era, cpc, cpa);
+
+    if (!matched) {
+      return { era, matchedPlan: null, isCustom: true };
+    }
+
+    // Rates align with a catalog tier. Committed styling only when the rep
+    // explicitly applied that same plan and rates haven't drifted since.
+    if (committed?.type != null && committed.type === matched.type) {
+      return { era, matchedPlan: matched, isCustom: false };
+    }
+
+    return { era, matchedPlan: matched, isCustom: false };
+  }
+
+  function planPickerListRates(era) {
+    const listCpc = window.__cb.pricing?.LIST_CPC ?? 0.05;
+    const listCpa = window.__cb.pricing?.LIST_CPA ?? 0.008;
+    return era === "modern" ? { cpc: listCpc, cpa: listCpa } : { cpc: listCpc, cpa: null };
   }
 
   // Projected annual credit/action volumes for plan tier selection. Uses the
@@ -853,22 +880,37 @@
       (a.type != null ? a.type === b.type : a.displayName === b.displayName && a.era === b.era);
   }
 
-  // Re-apply preview/committed highlight classes + footer/reset state in place,
-  // without rebuilding the menu — so editing a custom rate input keeps focus.
+  // Re-apply preview/committed/custom highlight classes + footer/reset state in
+  // place without rebuilding the menu.
   function refreshPlanPickerHighlights(menu) {
     const cb = window.__cb;
+    const plans = planPickerPlans || [];
     const preview = cb.selectedPlan || null;
     const committed = cb.quotePlan || null;
+    const active = planPickerActiveState(plans);
+
     for (const row of menu.querySelectorAll(".cb-plan-picker-row")) {
       const plan = row.__plan;
+      if (!plan) continue;
+      if (plan.isCustomRow) {
+        const customActive = active.isCustom && plan.era === active.era;
+        row.classList.toggle("cb-plan-picker-row-preview", false);
+        row.classList.toggle("cb-plan-picker-row-committed", customActive);
+        continue;
+      }
       row.classList.toggle("cb-plan-picker-row-preview", planPickerSamePlan(preview, plan));
       row.classList.toggle(
         "cb-plan-picker-row-committed",
-        !preview && planPickerSamePlan(committed, plan),
+        !preview && !active.isCustom && planPickerSamePlan(committed, plan),
       );
     }
     const resetBtn = menu.querySelector(".cb-plan-picker-reset");
-    if (resetBtn) resetBtn.classList.toggle("cb-plan-picker-reset-active", !preview && !committed);
+    if (resetBtn) {
+      resetBtn.classList.toggle(
+        "cb-plan-picker-reset-active",
+        !preview && !committed && !active.isCustom,
+      );
+    }
     const apply = menu.querySelector(".cb-plan-picker-apply");
     if (apply) {
       apply.disabled = !preview;
@@ -876,78 +918,44 @@
     }
   }
 
-  // The editable "Custom" row that sits atop each era column. Renders a $/credit
-  // input (and, for modern, a $/action input) seeded from the era's custom
-  // rates. Editing a field previews the custom plan live; clicking the label
-  // (re)previews it without touching a field.
-  function buildPlanPickerCustomRow(menu, era) {
-    const rates = ensurePlanPickerCustomRates()[era];
-    const cp = planPickerCustomPlan(era);
+  // Static "Custom" row at the top of each era column — always shows internal
+  // list pricing. Highlighted when the rep's effective rates don't match any
+  // standard catalog plan in that era (manual edits, workspace deal pricing, etc.).
+  function buildPlanPickerCustomRow(era, active) {
+    const rates = planPickerListRates(era);
     const row = document.createElement("div");
     row.className = "cb-plan-picker-row cb-plan-picker-custom";
-    // Matches only by displayName + era, so a live object is unnecessary.
-    row.__plan = { type: null, displayName: cp.displayName, era };
+    row.__plan = { isCustomRow: true, era };
 
     const name = document.createElement("span");
     name.className = "cb-plan-picker-name";
     name.textContent = "Custom";
     row.appendChild(name);
 
-    const previewCustom = () => {
-      setSelectedPlan(planPickerCustomPlan(era));
-      refreshPlanPickerHighlights(menu);
-    };
+    const rate = document.createElement("span");
+    rate.className = "cb-plan-picker-rate";
+    const cpcStr = `${fmtRate(rates.cpc)}/cr`;
+    const cpaStr = era === "modern" && Number.isFinite(Number(rates.cpa))
+      ? ` \u00b7 ${fmtRate(rates.cpa)}/act`
+      : "";
+    rate.textContent = cpcStr + cpaStr;
+    row.appendChild(rate);
 
-    name.style.cursor = "pointer";
-    name.addEventListener("click", (e) => { e.stopPropagation(); previewCustom(); });
-
-    const fields = document.createElement("div");
-    fields.className = "cb-plan-picker-custom-fields";
-
-    const addField = (key, suffix) => {
-      const field = document.createElement("label");
-      field.className = "cb-plan-picker-custom-field";
-      const prefix = document.createElement("span");
-      prefix.textContent = "$";
-      const input = document.createElement("input");
-      input.type = "text";
-      input.className = "cb-plan-picker-custom-input";
-      input.value = Number(rates[key]).toFixed(4);
-      input.addEventListener("mousedown", (e) => e.stopPropagation());
-      input.addEventListener("click", (e) => e.stopPropagation());
-      input.addEventListener("input", () => {
-        const v = parseFloat(input.value.replace(/[^0-9.]/g, ""));
-        if (Number.isFinite(v) && v >= 0) {
-          rates[key] = v;
-          previewCustom();
-        }
-      });
-      const unit = document.createElement("span");
-      unit.textContent = suffix;
-      field.appendChild(prefix);
-      field.appendChild(input);
-      field.appendChild(unit);
-      fields.appendChild(field);
-    };
-
-    addField("cpc", "/cr");
-    if (era === "modern") addField("cpa", "/act");
-    row.appendChild(fields);
-
-    if (planPickerSamePlan(window.__cb.selectedPlan, cp)) {
-      row.classList.add("cb-plan-picker-row-preview");
+    if (active.isCustom && active.era === era) {
+      row.classList.add("cb-plan-picker-row-committed");
     }
     return row;
   }
 
   // (Re)build the menu body: a full-width "Your plan" reset, then two side-by-side
-  // era columns (legacy | modern), each led by an editable Custom row and then
-  // its catalog plans in rank order, and a shared Apply footer.
+  // era columns (legacy | modern), each led by a Custom row and then its catalog
+  // plans in rank order, and a shared Apply footer.
   function renderPlanPickerMenu(menu) {
     const cb = window.__cb;
     const plans = (planPickerPlans && planPickerPlans.length) ? planPickerPlans : [];
     const preview = cb.selectedPlan || null;
     const committed = cb.quotePlan || null;
+    const active = planPickerActiveState(plans);
     const samePlan = planPickerSamePlan;
 
     menu.innerHTML = "";
@@ -956,7 +964,8 @@
     const header = document.createElement("button");
     header.type = "button";
     header.className =
-      "cb-plan-picker-reset" + (!preview && !committed ? " cb-plan-picker-reset-active" : "");
+      "cb-plan-picker-reset" +
+      (!preview && !committed && !active.isCustom ? " cb-plan-picker-reset-active" : "");
     header.textContent = "Your plan (workspace pricing)";
     header.addEventListener("click", (e) => {
       e.stopPropagation();
@@ -981,8 +990,7 @@
       gh.textContent = g.label;
       col.appendChild(gh);
 
-      // Custom row leads every column.
-      col.appendChild(buildPlanPickerCustomRow(menu, g.era));
+      col.appendChild(buildPlanPickerCustomRow(g.era, active));
 
       const inGroup = plans
         .filter((p) => p.era === g.era)
@@ -998,22 +1006,17 @@
         row.className =
           "cb-plan-picker-row" +
           (samePlan(preview, plan) ? " cb-plan-picker-row-preview" : "") +
-          (!preview && samePlan(committed, plan) ? " cb-plan-picker-row-committed" : "");
+          (!preview && !active.isCustom && samePlan(committed, plan)
+            ? " cb-plan-picker-row-committed"
+            : "");
 
         const name = document.createElement("span");
         name.className = "cb-plan-picker-name";
-        name.textContent = plan.displayName;
+        name.textContent = planPickerDisplayName(plan.displayName);
         if (plan.isCurrent) {
           const badge = document.createElement("span");
           badge.className = "cb-plan-picker-current";
           badge.textContent = "Your plan";
-          name.appendChild(badge);
-        }
-        if (plan.source === "list") {
-          const badge = document.createElement("span");
-          badge.className = "cb-plan-picker-listbadge";
-          badge.textContent = "list rate";
-          badge.title = "No contract price available for this plan — using internal list pricing";
           name.appendChild(badge);
         }
         row.appendChild(name);

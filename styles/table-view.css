@@ -299,49 +299,18 @@
 }
 
 .cb-plan-picker-custom {
-  flex-wrap: wrap;
-  gap: 6px 8px;
   cursor: default;
 }
 
-.cb-plan-picker-custom-fields {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 4px 10px;
-  width: 100%;
-}
-
-.cb-plan-picker-custom-field {
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-  font-size: 11px;
-  color: #6b7280;
-}
-
-.cb-plan-picker-custom-input {
-  width: 56px;
-  padding: 2px 4px;
-  border: 1px solid #d1d5db;
-  border-radius: 4px;
-  background: #ffffff;
-  font-family: inherit;
-  font-size: 11.5px;
-  font-variant-numeric: tabular-nums;
-  color: #111827;
-}
-
-.cb-plan-picker-custom-input:focus {
-  outline: none;
-  border-color: var(--cb-green);
+.cb-plan-picker-custom:not(.cb-plan-picker-row-committed):hover {
+  background: none;
 }
 
 .cb-plan-picker-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
+  gap: 8px;
   width: 100%;
   padding: 7px 10px;
   border: none;
@@ -350,6 +319,7 @@
   font-family: inherit;
   text-align: left;
   cursor: pointer;
+  flex-wrap: nowrap;
 }
 
 .cb-plan-picker-row:hover {
@@ -376,6 +346,10 @@
   font-weight: 600;
   color: #111827;
   min-width: 0;
+  flex: 1 1 auto;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .cb-plan-picker-current {
