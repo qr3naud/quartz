@@ -6626,6 +6626,11 @@
 
     const table = document.createElement("table");
     table.className = "cb-table-view-table";
+    // Legacy plans don't bill action executions, so hide the Actions / row
+    // column entirely (values are already zeroed via cost-model planBillsActions).
+    if (window.__cb.planBillsActions && !window.__cb.planBillsActions()) {
+      table.classList.add("cb-table-view-hide-actions");
+    }
     tableEl = table;
 
     const thead = document.createElement("thead");
@@ -7792,6 +7797,13 @@
     const records = Number(er.records) || 0;
     const mult = er.multiplier ?? 1;
     const freqOverridden = mult !== 1;
+    // Legacy plans never bill action executions (see cost-model planBillsActions).
+    const billsActions = window.__cb.planBillsActions ? window.__cb.planBillsActions() : true;
+    // BYOK: data credits are 0 (Clay bills against the user's own key), but the
+    // action execution is still charged when the plan bills it — so the Total
+    // stays meaningful (Private key + actions when relevant) instead of
+    // collapsing to nothing, even when there's no measured credit spend.
+    const byok = !!er.usePrivateKey;
     let credits, actions;
     if (er.isSignal) {
       // Per-run signals: server cost is already the full run total (× monitored
@@ -7802,34 +7814,36 @@
         // for per-run/per-record it's the raw spend, for per-result it equals
         // per-unit × results pulled. Annualize by frequency; never scale by the
         // output table's Records.
-        if (!er.spendTotal) return null;
-        credits = (Number(er.spendTotal.credits) || 0) * mult;
-        actions = (Number(er.spendTotal.actions) || 0) * mult;
+        if (!er.spendTotal && !byok) return null;
+        credits = byok ? 0 : (Number(er.spendTotal?.credits) || 0) * mult;
+        actions = (Number(er.spendTotal?.actions) || 0) * mult;
       } else {
         const runVol = er.signalRunVolume ?? 1;
-        credits = (er.usePrivateKey ? 0 : Number(er.cost?.credits) || 0) * runVol * mult;
+        credits = (byok ? 0 : Number(er.cost?.credits) || 0) * runVol * mult;
         actions = (Number(er.cost?.actions) || 0) * runVol * mult;
       }
     } else if (which === "actual") {
-      if (!er.spendTotal) return null;
+      if (!er.spendTotal && !byok) return null;
       // Scale measured spend to the scoped Records: spend × (records / total) ×
       // frequency — matches the use-case header. Falls back to raw × frequency
       // when there's no coverage total to scale by.
       const total = er.actualCoverage && er.actualCoverage.total > 0 ? er.actualCoverage.total : 0;
       const scale = total > 0 && records > 0 ? records / total : 1;
-      credits = (Number(er.spendTotal.credits) || 0) * scale * mult;
-      actions = (Number(er.spendTotal.actions) || 0) * scale * mult;
+      credits = byok ? 0 : (Number(er.spendTotal?.credits) || 0) * scale * mult;
+      actions = (Number(er.spendTotal?.actions) || 0) * scale * mult;
     } else {
       if (!records || (er.cost && er.cost.creditsUnknown)) return null;
       const cov = er.coverageRows != null && records > 0
         ? Math.min(1, er.coverageRows / records)
         : 1;
-      const perCr = er.usePrivateKey ? 0 : (Number(er.cost?.credits) || 0);
+      const perCr = byok ? 0 : (Number(er.cost?.credits) || 0);
       const perAct = Number(er.cost?.actions) || 0;
       credits = perCr * records * cov * mult;
       actions = perAct * records * cov * mult;
     }
-    if (credits <= 0 && actions <= 0) return null;
+    if (!billsActions) actions = 0;
+    // Render for BYOK even when both are 0 so the private-key state stays visible.
+    if (credits <= 0 && actions <= 0 && !byok) return null;
     const pill = document.createElement("span");
     pill.className = "cb-pill cb-table-view-er-cost-pill";
     // Amber when frequency is overridden, or (Actual) when Records is overridden
@@ -7846,9 +7860,16 @@
     }
     const credSeg = document.createElement("span");
     credSeg.className = "cb-pill-seg cb-table-view-er-cost-seg cb-table-view-er-cost-credits";
-    credSeg.title = `${formatNumber(credits)} credits total`;
-    const coin = Math.abs(credits) <= 1 ? coinSvg(12) : coinsSvg(12);
-    credSeg.innerHTML = coin + `<span>${formatNumber(Math.round(credits))}</span>`;
+    if (byok) {
+      // Mirror the "Cost per row" credit segment's private-key treatment.
+      credSeg.classList.add("cb-table-view-er-cost-credits-key");
+      credSeg.title = "Billing against your private key (0 credits)";
+      credSeg.innerHTML = KEY_TOGGLE_KEY_SVG + "<span>Private key</span>";
+    } else {
+      credSeg.title = `${formatNumber(credits)} credits total`;
+      const coin = Math.abs(credits) <= 1 ? coinSvg(12) : coinsSvg(12);
+      credSeg.innerHTML = coin + `<span>${formatNumber(Math.round(credits))}</span>`;
+    }
     pill.appendChild(credSeg);
     return pill;
   }

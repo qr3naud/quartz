@@ -873,6 +873,12 @@
   flex-shrink: 0;
 }
 
+/* Hidden on legacy plans, which don't bill action executions (Actions/Row,
+   Total Actions, Action Cost boxes). Toggled in recalcTotal. */
+.cb-summary-box.cb-summary-box-hidden {
+  display: none !important;
+}
+
 /* Adaptive bar: the per-scope boxes (Actions/Row, Avg Credits/Row, Records,
    Frequency) hide together when there are 2+ imported-table use cases — those
    controls move to each table's header. Total + prices stay. They live in this

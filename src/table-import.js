@@ -916,8 +916,12 @@
   }
   function planAwareActionExecutions(info) {
     if (!info) return 0;
-    // Legacy plans have no actionExecution billing dimension, so this is
-    // typically 0 on legacy and 0/1 on modern.
+    // Legacy plans have no actionExecution billing dimension. Clay's catalog
+    // still carries an actionExecution count on the legacy tier (e.g. use-ai's
+    // prePricingChange2026 lists actionExecution 1), but a legacy plan never
+    // bills it — so stamp 0 rather than the catalog value. The display layer
+    // (cost-model planBillsActions) also gates this for already-imported cards.
+    if (__cb.currentPlanPricing?.planIsLegacy === true) return 0;
     const v = importPlanIsModern()
       ? (info.actionExecutions ?? info.legacyActionExecutions ?? 0)
       : (info.legacyActionExecutions ?? info.actionExecutions ?? 0);

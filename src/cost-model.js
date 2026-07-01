@@ -25,6 +25,18 @@
     return type === "dp" || type === "input" || type === "comment";
   }
 
+  // Action executions are a MODERN-plan-only billing dimension: the 2026 pricing
+  // split introduced them, so legacy (pre-2026) plans never bill them — even
+  // though Clay's action catalog carries a per-action `actionExecution` count on
+  // its LEGACY tier too (e.g. use-ai's prePricingChange2026 lists actionExecution
+  // 1). The catalog value only says an action *can* bill an execution; whether it
+  // *is* billed is a plan property. Gate on the plan, not the catalog. An unknown
+  // plan (fetch failed) keeps actions so we never hide real modern spend.
+  function planBillsActions() {
+    return cb.currentPlanPricing?.planIsLegacy !== true;
+  }
+  cb.planBillsActions = planBillsActions;
+
   // Rows an enrichment actually ran on — the per-row denominator for Actual.
   // Order: run-status coverage.ran (genuine "did it run", frozen at import) →
   // the Records field → cellCount (last resort). NOT cellCount-first: cellCount
@@ -58,7 +70,7 @@
   // `creditsUnknown` is set when a function's projected cost hasn't resolved
   // yet (resolveSubroutineCostsForCards still in flight) so callers can show
   // a placeholder instead of a misleading 0.
-  function perRowCost(card, opts) {
+  function perRowCostRaw(card, opts) {
     opts = opts || {};
     const viewMode = opts.viewMode || cb.viewMode;
     const fallbackToProjected = opts.fallbackToProjected !== false;
@@ -116,6 +128,17 @@
     const creditsUnknown =
       d.actionKey === "execute-subroutine" && d.credits == null && !d.usePrivateKey;
     return { credits, actions, creditsUnknown };
+  }
+
+  // Public per-row cost. Wraps perRowCostRaw with the plan-level action gate:
+  // legacy plans never bill action executions, so zero them here — the single
+  // chokepoint every surface funnels through (per-row columns, ER chips,
+  // computeUseCaseTotals, the summary grand total, and computeTabTotals/exports).
+  // credits are left to perRowCostRaw (usePrivateKey / actual spend / catalog).
+  function perRowCost(card, opts) {
+    const r = perRowCostRaw(card, opts);
+    if (r && r.actions && !planBillsActions()) r.actions = 0;
+    return r;
   }
 
   // Native signal source: its credits/actions are a RECURRING per-run (or

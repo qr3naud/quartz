@@ -606,6 +606,25 @@
       __cb.currentWorkspaceId = ids.workspaceId;
     }
 
+    // Hydrate the shared static datasets (catalog / model pricing / PLAN) on
+    // open, not just on import/export. Cache hydration inside ensureStaticData is
+    // synchronous, so __cb.currentPlanPricing is populated before the table first
+    // renders on a warm cache — which plan-aware display depends on (cost-model
+    // planBillsActions gates action executions to modern plans). On a cold cache
+    // the plan is fetched async, so re-render the table + summary once it lands.
+    if (ids?.workspaceId && __cb.ensureStaticData) {
+      const staticReady = __cb.ensureStaticData(ids.workspaceId);
+      const planHydratedSync = !!__cb.currentPlanPricing;
+      staticReady
+        .then(() => {
+          if (!planHydratedSync && __cb.currentPlanPricing) {
+            __cb.tableView?.refresh?.();
+            __cb.canvas?.refreshCreditTotal?.();
+          }
+        })
+        .catch(() => {});
+    }
+
     __cb.overlayEl = document.createElement("div");
     __cb.overlayEl.className = "cb-overlay";
 
@@ -2032,6 +2051,15 @@
       // collapses the scope group (the cost/savings strip takes over).
       const hideScope = !!multi || !!__cb.pricingMode;
       setScopeCollapsed(hideScope);
+
+      // Legacy plans have no action-execution billing dimension — hide the
+      // action summary boxes (Actions/Row, Total Actions, Action Cost). Their
+      // values are already 0 via cost-model planBillsActions; this drops the
+      // now-empty boxes so a legacy scope reads credits-only.
+      const hideActionBoxes = __cb.planBillsActions ? !__cb.planBillsActions() : false;
+      actionsBox.classList.toggle("cb-summary-box-hidden", hideActionBoxes);
+      totalActionsBox.classList.toggle("cb-summary-box-hidden", hideActionBoxes);
+      actionCostBox.classList.toggle("cb-summary-box-hidden", hideActionBoxes);
       if (multi && Array.isArray(multi.perUseCase)) {
         const lines = multi.perUseCase
           .slice()

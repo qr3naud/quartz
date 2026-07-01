@@ -468,6 +468,12 @@
   width: auto;
 }
 
+/* Legacy plans have no action-execution billing dimension — hide the
+   Actions / row column entirely (toggled on the table root in render()). */
+.cb-table-view-table.cb-table-view-hide-actions .col-actions {
+  display: none;
+}
+
 .cb-table-view-table .col-actions-end {
   width: 44px;
   text-align: right;
