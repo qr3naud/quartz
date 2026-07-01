@@ -576,10 +576,16 @@
   flex: 0 1 auto;
   min-height: 0;
   box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+  /* Hug the table columns and center the card in the wrap (legacy hides
+     Actions/row, so the table is narrower — without this the white card
+     stretches full width and leaves a dead zone right of Enrichments). */
+  width: fit-content;
+  max-width: 100%;
+  align-self: center;
 }
 
 .cb-table-view-table {
-  width: 100%;
+  width: auto;
   /* Floor the table width so narrow viewports scroll horizontally instead of
      crushing the columns. With table-layout:fixed the Enrichments column is the
      remainder, so it's what shrinks first — keep the floor high enough that it
@@ -658,6 +664,10 @@
 
 /* Legacy plans have no action-execution billing dimension — hide the
    Actions / row column entirely (toggled on the table root in render()). */
+.cb-table-view-table.cb-table-view-hide-actions {
+  min-width: 1090px;
+}
+
 .cb-table-view-table.cb-table-view-hide-actions .col-actions {
   display: none;
 }
