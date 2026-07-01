@@ -604,45 +604,310 @@
     return era === "legacy" ? "legacy" : "modern";
   }
 
-  // Set the display-only pricing scenario (target era to model) or clear it
-  // (null). Read by cost-model.effectiveEra so every cost surface re-prices;
-  // persisted per-tab in tabs.js like viewMode.
-  function setPricingScenario(era) {
-    window.__cb.pricingScenario =
-      era === "legacy" || era === "modern" ? era : null;
+  // Format a per-unit dollar rate for the picker (e.g. $0.0452).
+  function fmtRate(n) {
+    const v = Number(n);
+    if (!Number.isFinite(v)) return "";
+    return "$" + v.toFixed(4);
   }
 
-  // Rounded toggle that models the OTHER pricing era: on a legacy workspace it
-  // re-prices the table + summary to modern (actions appear, credits shift to the
-  // modern tier), and vice-versa. Display only — exports/deal-desk keep the real
-  // workspace pricing. Off by default; flips + re-renders on click. Returns null
-  // (no toggle) until the workspace plan era is known.
-  function buildPricingScenarioToggle() {
-    const cost = window.__cb.cost;
-    if (!window.__cb.currentPlanPricing || !cost?.workspaceEra) return null;
-    const workspaceEra = cost.workspaceEra();
-    const targetEra = workspaceEra === "legacy" ? "modern" : "legacy";
-    const on = window.__cb.pricingScenario === targetEra;
+  // ---- Plan picker (Phase 2) ----------------------------------------------
+  // Supersedes the Phase 1 era toggle. Selecting a plan PREVIEWS the scope
+  // re-priced to that plan's era + dollar rates (cb.selectedPlan, display only).
+  // "Apply to quote" COMMITS the plan's rates into the summary inputs and its era
+  // to the tab (cb.quotePlan / cb.quoteEra), which drives exports/deal-desk.
+
+  // Cached buildPlanPricing() result for the open menu, so a preview click can
+  // re-highlight without re-fetching. Cleared when the menu closes.
+  let planPickerPlans = null;
+  let planPickerMenuEl = null;
+  let planPickerBackdrop = null;
+
+  // Projected annual credit/action volumes for plan tier selection. Uses the
+  // contract calculator (synthesizes a single "Scope" use case when there are no
+  // imported tables) so a canvas-only scope still resolves a tier. Best-effort.
+  function projectedAnnualVolumes() {
+    try {
+      const t = window.__cb.cost?.computeContractTotals?.({ viewMode: "projected" });
+      return { credits: Number(t?.avgCredits) || 0, actions: Number(t?.avgActions) || 0 };
+    } catch {
+      return { credits: 0, actions: 0 };
+    }
+  }
+
+  // PREVIEW a plan (display only): set cb.selectedPlan and re-price the table +
+  // summary. Pass null to clear the preview.
+  function setSelectedPlan(plan) {
+    window.__cb.selectedPlan = plan || null;
+    render();
+    window.__cb.canvas?.refreshCreditTotal?.();
+    window.__cb.debouncedSave?.();
+  }
+
+  // COMMIT a plan to the quote: write its CPC/CPA into the summary Credit/Action
+  // Cost inputs (so exports read them) and stamp its era on the tab (so
+  // computeTabTotals re-prices the exported volumes). Preserves the rep's
+  // pre-apply rates once so "Your plan" can restore them. Clears the preview.
+  function applyPlanToQuote(plan) {
+    const cb = window.__cb;
+    if (!plan) return;
+    // Snapshot the rep's current rates the first time we apply, so a later reset
+    // can restore exactly what they had before any plan was committed.
+    if (!cb.preQuoteRates) {
+      const cc = document.getElementById("cb-credit-cost-input");
+      const ac = document.getElementById("cb-action-cost-input");
+      cb.preQuoteRates = {
+        creditCost: cc ? cc.value : null,
+        actionCost: ac ? ac.value : null,
+      };
+    }
+    // Push the plan's rates into the real inputs (dispatch blur so overlay.js
+    // parses + persists them, same path as a manual edit / tab restore).
+    const cc = document.getElementById("cb-credit-cost-input");
+    const ac = document.getElementById("cb-action-cost-input");
+    if (cc && Number.isFinite(Number(plan.cpc))) {
+      cc.value = "$" + Number(plan.cpc).toFixed(4);
+      cc.dispatchEvent(new Event("blur"));
+    }
+    // Legacy plans have no action rate (cpa null) — leave the action input as-is.
+    if (ac && Number.isFinite(Number(plan.cpa))) {
+      ac.value = "$" + Number(plan.cpa).toFixed(4);
+      ac.dispatchEvent(new Event("blur"));
+    }
+    cb.quotePlan = plan;
+    cb.quoteEra = plan.era === "legacy" || plan.era === "modern" ? plan.era : null;
+    cb.selectedPlan = null; // commit replaces the preview
+    render();
+    cb.canvas?.refreshCreditTotal?.();
+    cb.debouncedSave?.();
+  }
+
+  // "Your plan" reset: drop both the preview and the committed plan, and restore
+  // the rep's pre-apply rates so exports return to the workspace's own pricing.
+  function resetToWorkspacePlan() {
+    const cb = window.__cb;
+    if (cb.preQuoteRates) {
+      const cc = document.getElementById("cb-credit-cost-input");
+      const ac = document.getElementById("cb-action-cost-input");
+      if (cc && cb.preQuoteRates.creditCost != null) {
+        cc.value = cb.preQuoteRates.creditCost;
+        cc.dispatchEvent(new Event("blur"));
+      }
+      if (ac && cb.preQuoteRates.actionCost != null) {
+        ac.value = cb.preQuoteRates.actionCost;
+        ac.dispatchEvent(new Event("blur"));
+      }
+      cb.preQuoteRates = null;
+    }
+    cb.selectedPlan = null;
+    cb.quotePlan = null;
+    cb.quoteEra = null;
+    render();
+    cb.canvas?.refreshCreditTotal?.();
+    cb.debouncedSave?.();
+  }
+
+  // The plan-picker button in the intro lead. Label + color reflect state:
+  // amber "<Plan> preview" while previewing, green "Quote: <Plan>" once committed,
+  // neutral "Your plan" otherwise. Opens the plan menu on click.
+  function buildPlanPickerControl() {
+    const cb = window.__cb;
+    const preview = cb.selectedPlan || null;
+    const committed = cb.quotePlan || null;
 
     const btn = document.createElement("button");
     btn.type = "button";
-    btn.className =
-      "cb-table-view-group-toggle cb-table-view-scenario-toggle" +
-      (on ? " cb-table-view-scenario-toggle-on" : "");
-    btn.title = on
-      ? `Modeling ${eraLabel(targetEra)} pricing \u2014 click to return to your plan's ${eraLabel(workspaceEra)} pricing`
-      : `Model ${eraLabel(targetEra)} pricing (your plan is ${eraLabel(workspaceEra)}) \u2014 display only, doesn't change quotes`;
-    btn.setAttribute("aria-label", "Toggle pricing-era scenario");
-    btn.setAttribute("aria-pressed", on ? "true" : "false");
-    btn.innerHTML = eraSwapSvg(15);
+    let cls = "cb-table-view-group-toggle cb-table-view-plan-picker";
+    let label;
+    let title;
+    if (preview) {
+      cls += " cb-table-view-plan-picker-preview";
+      label = `${preview.displayName} preview`;
+      title = `Previewing ${preview.displayName} pricing (display only) \u2014 open to Apply to the quote or reset`;
+    } else if (committed) {
+      cls += " cb-table-view-plan-picker-committed";
+      label = `Quote: ${committed.displayName}`;
+      title = `Quote priced on ${committed.displayName} \u2014 open to change plan or reset to your workspace plan`;
+    } else {
+      label = "Your plan";
+      title = "Model this scope on a different plan's pricing";
+    }
+    btn.className = cls;
+    btn.title = title;
+    btn.setAttribute("aria-label", "Choose a pricing plan");
+    btn.setAttribute("aria-haspopup", "true");
+    btn.innerHTML = eraSwapSvg(14);
+    const labelEl = document.createElement("span");
+    labelEl.className = "cb-table-view-plan-picker-label";
+    labelEl.textContent = label;
+    btn.appendChild(labelEl);
+    btn.insertAdjacentHTML("beforeend", chevronDownSvg(11));
     btn.addEventListener("mousedown", (e) => e.stopPropagation());
     btn.addEventListener("click", (e) => {
       e.stopPropagation();
-      setPricingScenario(on ? null : targetEra);
-      render();
-      __cb.canvas?.refreshCreditTotal?.();
+      if (planPickerMenuEl) closePlanPickerMenu();
+      else showPlanPickerMenu(btn);
     });
     return btn;
+  }
+
+  function closePlanPickerMenu() {
+    if (planPickerMenuEl) { planPickerMenuEl.remove(); planPickerMenuEl = null; }
+    if (planPickerBackdrop) { planPickerBackdrop.remove(); planPickerBackdrop = null; }
+    planPickerPlans = null;
+  }
+
+  // Position the menu under its anchor (fixed, right-aligned like showCostUnitMenu).
+  function positionPlanPickerMenu(menu, anchorEl) {
+    const rect = anchorEl.getBoundingClientRect();
+    const width = 300;
+    menu.style.position = "fixed";
+    menu.style.zIndex = "9999999";
+    menu.style.top = (rect.bottom + 6) + "px";
+    menu.style.left = Math.max(8, rect.left) + "px";
+    menu.style.width = width + "px";
+  }
+
+  async function showPlanPickerMenu(anchorEl) {
+    const cb = window.__cb;
+    closePlanPickerMenu();
+
+    const backdrop = document.createElement("div");
+    backdrop.style.cssText = "position:fixed;inset:0;z-index:9999998;";
+    backdrop.addEventListener("mousedown", (e) => { e.stopPropagation(); closePlanPickerMenu(); });
+
+    const menu = document.createElement("div");
+    menu.className = "cb-plan-picker-menu";
+    menu.addEventListener("mousedown", (e) => e.stopPropagation());
+    menu.innerHTML = '<div class="cb-plan-picker-loading">Loading plans\u2026</div>';
+
+    document.body.appendChild(backdrop);
+    document.body.appendChild(menu);
+    positionPlanPickerMenu(menu, anchorEl);
+    planPickerMenuEl = menu;
+    planPickerBackdrop = backdrop;
+
+    // Load the plan catalog (cached after first open), then build the rows. Bail
+    // if the menu was closed while awaiting.
+    const vols = projectedAnnualVolumes();
+    try { await cb.ensurePlanPricing?.(); } catch { /* fall back below */ }
+    if (planPickerMenuEl !== menu) return;
+    planPickerPlans = (cb.buildPlanPricing ? cb.buildPlanPricing(vols) : []) || [];
+    renderPlanPickerMenu(menu);
+  }
+
+  // Fallback plan entries when the billing API yields no catalog: plain
+  // legacy/modern era rows at internal list pricing. Preserves the core Phase 1
+  // "model the other era" value offline / for non-internal users.
+  function fallbackEraPlans() {
+    const listCpc = window.__cb.pricing?.LIST_CPC ?? 0.05;
+    const listCpa = window.__cb.pricing?.LIST_CPA ?? 0.008;
+    return [
+      { type: null, id: null, displayName: "Legacy pricing", era: "legacy", cpc: listCpc, cpa: null, source: "list", isCurrent: false },
+      { type: null, id: null, displayName: "Modern pricing", era: "modern", cpc: listCpc, cpa: listCpa, source: "list", isCurrent: false },
+    ];
+  }
+
+  // (Re)build the menu body from planPickerPlans. Preview highlight tracks
+  // cb.selectedPlan (by type, else displayName for the fallback era rows).
+  function renderPlanPickerMenu(menu) {
+    const cb = window.__cb;
+    const plans = (planPickerPlans && planPickerPlans.length) ? planPickerPlans : fallbackEraPlans();
+    const preview = cb.selectedPlan || null;
+    const committed = cb.quotePlan || null;
+    const samePlan = (a, b) =>
+      !!a && !!b && (a.type != null ? a.type === b.type : a.displayName === b.displayName && a.era === b.era);
+
+    menu.innerHTML = "";
+
+    // Header: reset to the workspace's own plan (clears preview + commit).
+    const header = document.createElement("button");
+    header.type = "button";
+    header.className =
+      "cb-plan-picker-reset" + (!preview && !committed ? " cb-plan-picker-reset-active" : "");
+    header.textContent = "Your plan (workspace pricing)";
+    header.addEventListener("click", (e) => {
+      e.stopPropagation();
+      resetToWorkspacePlan();
+      closePlanPickerMenu();
+    });
+    menu.appendChild(header);
+
+    // Group rows by era.
+    const groups = [
+      { era: "legacy", label: "Legacy plans" },
+      { era: "modern", label: "Modern plans" },
+    ];
+    for (const g of groups) {
+      const inGroup = plans.filter((p) => p.era === g.era);
+      if (inGroup.length === 0) continue;
+      const gh = document.createElement("div");
+      gh.className = "cb-plan-picker-group";
+      gh.textContent = g.label;
+      menu.appendChild(gh);
+
+      for (const plan of inGroup) {
+        const row = document.createElement("button");
+        row.type = "button";
+        row.className =
+          "cb-plan-picker-row" +
+          (samePlan(preview, plan) ? " cb-plan-picker-row-preview" : "") +
+          (!preview && samePlan(committed, plan) ? " cb-plan-picker-row-committed" : "");
+
+        const name = document.createElement("span");
+        name.className = "cb-plan-picker-name";
+        name.textContent = plan.displayName;
+        if (plan.isCurrent) {
+          const badge = document.createElement("span");
+          badge.className = "cb-plan-picker-current";
+          badge.textContent = "Your plan";
+          name.appendChild(badge);
+        }
+        if (plan.source === "list") {
+          const badge = document.createElement("span");
+          badge.className = "cb-plan-picker-listbadge";
+          badge.textContent = "list rate";
+          badge.title = "No contract price available for this plan — using internal list pricing";
+          name.appendChild(badge);
+        }
+        row.appendChild(name);
+
+        const rate = document.createElement("span");
+        rate.className = "cb-plan-picker-rate";
+        const cpcStr = Number.isFinite(Number(plan.cpc)) ? `${fmtRate(plan.cpc)}/cr` : "";
+        const cpaStr = plan.era === "modern" && Number.isFinite(Number(plan.cpa))
+          ? ` \u00b7 ${fmtRate(plan.cpa)}/act`
+          : "";
+        rate.textContent = cpcStr + cpaStr;
+        row.appendChild(rate);
+
+        row.addEventListener("click", (e) => {
+          e.stopPropagation();
+          // Preview on click; keep the menu open and re-highlight so the rep can
+          // compare, then Apply from the footer.
+          setSelectedPlan(plan);
+          renderPlanPickerMenu(menu);
+        });
+        menu.appendChild(row);
+      }
+    }
+
+    // Footer: Apply the previewed plan to the quote (disabled without a preview).
+    const footer = document.createElement("div");
+    footer.className = "cb-plan-picker-footer";
+    const apply = document.createElement("button");
+    apply.type = "button";
+    apply.className = "cb-plan-picker-apply";
+    apply.textContent = preview ? `Apply ${preview.displayName} to quote` : "Apply to quote";
+    apply.disabled = !preview;
+    apply.addEventListener("click", (e) => {
+      e.stopPropagation();
+      if (!cb.selectedPlan) return;
+      applyPlanToQuote(cb.selectedPlan);
+      closePlanPickerMenu();
+    });
+    footer.appendChild(apply);
+    menu.appendChild(footer);
   }
 
   // Pricing mode: the collapse/expand-all buttons fold/unfold the use-case
@@ -6577,11 +6842,9 @@
     // internal-only "View Bands" control.
     introLead.appendChild(buildGroupToggleControls());
     if (!__cb.pricingMode) {
-      // Pricing-era scenario toggle — re-prices the table + summary to the other
-      // era (legacy↔modern) for "what would this cost on the new plan" modeling.
-      // Display only; null until the workspace plan era is known.
-      const scenarioToggle = buildPricingScenarioToggle();
-      if (scenarioToggle) introLead.appendChild(scenarioToggle);
+      // Plan picker — model this scope on a specific plan's era + dollar rates.
+      // Selecting previews (display only); Apply commits rates + era to the quote.
+      introLead.appendChild(buildPlanPickerControl());
       // Provider-cost view toggle (rainbow) — switches the Credits/Actions
       // columns between per-data-point split and merged per-enrichment cost.
       introLead.appendChild(buildCostBasisToggle());
@@ -8492,8 +8755,8 @@
           const fresh = (cb._multiTotals?.perUseCase || []).find((u) => u.key === ucKey);
           const recs = cb.cost.useCaseRecords(ucKey);
           if (fresh && recs > 0) {
-            const creditCost = cb.getCreditCost ? cb.getCreditCost() : 0;
-            const actionCost = cb.getActionCost ? cb.getActionCost() : 0;
+            const creditCost = cb.getEffectiveCreditCost ? cb.getEffectiveCreditCost() : (cb.getCreditCost ? cb.getCreditCost() : 0);
+            const actionCost = cb.getEffectiveActionCost ? cb.getEffectiveActionCost() : (cb.getActionCost ? cb.getActionCost() : 0);
             const dollars = (fresh.credits || 0) * creditCost + (fresh.actions || 0) * actionCost;
             const perRecord = dollars / recs;
             if (perRecord > 0) {
@@ -8539,8 +8802,9 @@
 
       // Dollar pill = this use case's total cost (always the per-year total).
       // Clicking it opens the target-cost editor to back-calculate records.
-      const creditCost = cb.getCreditCost ? cb.getCreditCost() : 0;
-      const actionCost = cb.getActionCost ? cb.getActionCost() : 0;
+      // Effective rate so a plan preview re-prices the pill (real rate otherwise).
+      const creditCost = cb.getEffectiveCreditCost ? cb.getEffectiveCreditCost() : (cb.getCreditCost ? cb.getCreditCost() : 0);
+      const actionCost = cb.getEffectiveActionCost ? cb.getEffectiveActionCost() : (cb.getActionCost ? cb.getActionCost() : 0);
       const dollars = (sub.credits || 0) * creditCost + (sub.actions || 0) * actionCost;
       const perRecord = recs > 0 ? dollars / recs : 0;
       const dol = document.createElement("span");

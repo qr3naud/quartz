@@ -131,6 +131,10 @@
     // Joined with currentPlanPricing in applyCurrentPlanAutoFill to derive
     // the workspace's specific CPA. null until the prefetch resolves.
     actionTiersCatalog: null,
+    // Full public-plan catalog (both eras) from GET /v3/billingplans, stashed by
+    // fetchCurrentPlanPricing. Drives buildPlanPricing → the plan picker's
+    // per-plan CPC/CPA. null until the billing fetch resolves.
+    publicPlans: null,
     // Hardcoded projected action-executions per waterfall row. Real billed
     // run data (provider-step runs + per-step validation runs, over the rows
     // the waterfall actually ran on) lands at ~3.0-3.1 for email / phone

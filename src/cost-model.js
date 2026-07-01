@@ -26,14 +26,18 @@
   }
 
   // ---------------------------------------------------------------------------
-  // Pricing era ("legacy" pre-2026 vs "modern" post-2026). The workspace's own
-  // era is fixed by its plan; the EFFECTIVE era can be temporarily overridden by
-  // a display-only scenario (`cb.pricingScenario`) so a rep can model "what would
-  // this cost on the other era" without changing the real quote. Every cost
-  // surface funnels through perRowCost, which re-prices to the effective era; the
-  // quote surfaces (computeTabTotals / computePricingUseCases → export, deal
-  // desk) pin themselves to the real workspace era so a scenario never leaks into
-  // a customer number.
+  // Pricing era ("legacy" pre-2026 vs "modern" post-2026). Three layers, in
+  // priority order for display:
+  //   1. cb.selectedPlan  — a plan PREVIEWED in the plan picker (display only;
+  //      its era + dollar rates re-price the on-screen table/summary). Never
+  //      reaches a quote.
+  //   2. cb.quoteEra      — a plan COMMITTED to the active tab via "Apply to
+  //      quote" (the real workspace era unless the rep committed a cross-era
+  //      plan). This DOES drive exports/deal-desk.
+  //   3. workspaceEra()   — the workspace's own plan era, the default.
+  // Every cost surface funnels through perRowCost, which re-prices to the
+  // effective era. Quote surfaces pass an explicit `era` (the committed quoteEra)
+  // so a plan PREVIEW never leaks into a customer number.
   // ---------------------------------------------------------------------------
 
   // The workspace's REAL era from its plan. Unknown plans (fetch failed, or a
@@ -44,12 +48,16 @@
   }
   cb.workspaceEra = workspaceEra;
 
-  // The era every display surface prices at: the scenario override when set to a
-  // valid era, else the workspace era. Quote paths bypass this via an explicit
-  // `era` option (see perRowCost / computeTabTotals).
+  // Normalize an era-ish value to "legacy" | "modern" | null.
+  function asEra(v) {
+    return v === "legacy" || v === "modern" ? v : null;
+  }
+
+  // The era every DISPLAY surface prices at: a previewed plan's era wins, else
+  // the committed quote era, else the workspace era. Quote paths bypass this via
+  // an explicit `era` option (see perRowCost / computeTabTotals).
   function effectiveEra() {
-    const s = cb.pricingScenario;
-    return s === "legacy" || s === "modern" ? s : workspaceEra();
+    return asEra(cb.selectedPlan?.era) || asEra(cb.quoteEra) || workspaceEra();
   }
   cb.effectiveEra = effectiveEra;
 
@@ -776,6 +784,11 @@
     opts = opts || {};
     const cards = tabState && Array.isArray(tabState.cards) ? tabState.cards : [];
     const projected = (opts.viewMode || "projected") !== "actual";
+    // Quote era: an explicit opts.era wins, else the era COMMITTED to this tab
+    // via "Apply to quote" (state.quoteEra), else the real workspace era. A plan
+    // PREVIEW (cb.selectedPlan) is never consulted here, so a what-if never
+    // leaks into an exported quote — only an explicit Apply does.
+    const quoteEra = asEra(opts.era) || asEra(tabState && tabState.quoteEra) || workspaceEra();
     const scope = (tabState && tabState.useCaseScope) || {};
     const parseRecs = (r) => {
       const n = parseInt(String(r == null ? "" : r).replace(/[^\d]/g, ""), 10);
@@ -860,13 +873,13 @@
         recs = globalRecords;
         freqId = d.frequencyCustom ? d.frequency : d.frequency || globalFreq;
       }
-      // Quote surface: always price at the REAL workspace era. A display-only
-      // pricing scenario must never leak into an exported / deal-desk number.
+      // Quote surface: price at the committed quote era (workspace era unless the
+      // rep applied a cross-era plan). A plan PREVIEW never reaches here.
       const pr = perRowCost(
         c,
         projected
-          ? { viewMode: "projected", era: workspaceEra() }
-          : { viewMode: "actual", fallbackToProjected: false, era: workspaceEra() },
+          ? { viewMode: "projected", era: quoteEra }
+          : { viewMode: "actual", fallbackToProjected: false, era: quoteEra },
       );
       if (pr.noSpend) continue;
       const mult = freqMult(freqId);
@@ -899,6 +912,12 @@
     const cards = cb.model?.getNodes?.() || [];
     const freqMult = (id) => (cb.getFrequencyMultiplier ? cb.getFrequencyMultiplier(id) : 1);
     const hasImported = listUseCases().length > 0;
+    // Quote era for the multi-year contract view: an explicit opts.era wins, else
+    // the committed quote era (cb.quoteEra — this reads live state because the
+    // pricing view only runs for the active tab), else the workspace era. A plan
+    // PREVIEW (cb.selectedPlan) is deliberately NOT consulted — the contract view
+    // is a quote surface.
+    const quoteEra = asEra(opts.era) || asEra(cb.quoteEra) || workspaceEra();
     const buckets = new Map(); // key -> { perRowCredits, perRowActions }
     for (const c of cards) {
       const d = c && c.data;
@@ -916,13 +935,13 @@
       if (isSignalCard(c)) continue;
       // Mode-aware: Projected uses catalog credits; Actual uses measured per-row
       // spend (spend/ran) and skips cards with no spend yet. Quote surface (drives
-      // the multi-year contract / deal desk): pinned to the real workspace era so
-      // a display pricing scenario never leaks into a committed quote.
+      // the multi-year contract / deal desk): priced at the committed quote era so
+      // a plan PREVIEW never leaks into a committed quote.
       const pr = perRowCost(
         c,
         projected
-          ? { viewMode: "projected", era: workspaceEra() }
-          : { viewMode: "actual", fallbackToProjected: false, era: workspaceEra() },
+          ? { viewMode: "projected", era: quoteEra }
+          : { viewMode: "actual", fallbackToProjected: false, era: quoteEra },
       );
       if (pr.noSpend) continue;
       const freqId = d.frequencyCustom

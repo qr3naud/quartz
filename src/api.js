@@ -3,6 +3,31 @@
 
   const __cb = window.__cb;
 
+  // Plan-type era classification, mirroring libs/shared/src/billing/Billing.ts
+  // (NewAvailableBillingPlanTypes = modern/post-2026; everything else legacy).
+  // Module-scoped so both fetchCurrentPlanPricing (workspace's own plan) and
+  // buildPlanPricing (the plan picker's full catalog) classify identically.
+  const PLAN_LEGACY_TYPES = new Set([
+    "starterApril2023", "explorerApril2023", "proApril2023",
+    "basic", "explorer", "pro", "proV2",
+    "enterprise", "enterpriseApril2023",
+  ]);
+  const PLAN_MODERN_TYPES = new Set([
+    "launch", "growth",
+    "postPricingChange2026Free", "postPricingChange2026Trial",
+    "postPricingChange2026Enterprise",
+  ]);
+  // "modern" for post-2026 plan types, else "legacy" (matches cost-model's
+  // era vocabulary). Unknown types default to legacy — the safe pre-2026 side.
+  __cb.planEraForType = (type) => (PLAN_MODERN_TYPES.has(type) ? "modern" : "legacy");
+
+  // Free / trial plan types — excluded from the plan picker (no contract price
+  // to quote against).
+  const PLAN_SKIP_TYPES = new Set([
+    "free", "freeApril2023", "trial", "trialApril2023",
+    "postPricingChange2026Free", "postPricingChange2026Trial",
+  ]);
+
   // ===========================================================================
   // Static-data cache (stale-while-revalidate, localStorage)
   //
@@ -371,16 +396,8 @@
     // a $0/1B-credit placeholder Stripe subscription billed manually —
     // its priceInfo can't be derived from, so the hasUsablePrice guard
     // below skips auto-fill for it without needing a workspace allowlist).
-    const LEGACY_TYPES = new Set([
-      "starterApril2023", "explorerApril2023", "proApril2023",
-      "basic", "explorer", "pro", "proV2",
-      "enterprise", "enterpriseApril2023",
-    ]);
-    const MODERN_TYPES = new Set([
-      "launch", "growth",
-      "postPricingChange2026Free", "postPricingChange2026Trial",
-      "postPricingChange2026Enterprise",
-    ]);
+    const LEGACY_TYPES = PLAN_LEGACY_TYPES;
+    const MODERN_TYPES = PLAN_MODERN_TYPES;
 
     try {
       // Fan out to both endpoints in parallel — billingplans gives us the
@@ -433,7 +450,14 @@
       // (e.g., plan_vsdV8nMgFJ4eq for Launch), not the human plan type.
       // billingplans returns the id alongside type on each entry in
       // publicPlans, so we just look ours up there — no extra fetch.
-      const planId = (data?.publicPlans ?? []).find((p) => p?.type === cp.type)?.id ?? null;
+      const publicPlans = Array.isArray(data?.publicPlans) ? data.publicPlans : [];
+      const planId = publicPlans.find((p) => p?.type === cp.type)?.id ?? null;
+      // Stash the full public-plan catalog (both eras — the billingplans API
+      // returns every sellable plan regardless of the workspace's own
+      // generation) so buildPlanPricing can derive a per-plan CPC/CPA for the
+      // plan picker. Not persisted in the static cache: priceInfos carry Stripe
+      // ids + amounts we always want fresh, and it's a single cheap join.
+      __cb.publicPlans = publicPlans;
 
       const isLegacyType = LEGACY_TYPES.has(cp.type);
       const isModernType = MODERN_TYPES.has(cp.type);
@@ -526,6 +550,168 @@
       console.warn("[Clay Scoping] action tiers fetch failed:", err);
       __cb.actionTiersCatalog = [];
     }
+  };
+
+  // Ensures the plan-picker's data dependencies are loaded: the public-plan
+  // catalog (via fetchCurrentPlanPricing, which also stashes __cb.publicPlans)
+  // and the action-tier catalog. Both are page-session caches, so this is a
+  // no-op after the first successful load. Fire from the picker's open handler
+  // so a rep who never opens it never pays the fetch. Never throws.
+  __cb.ensurePlanPricing = async function () {
+    const jobs = [];
+    if (!Array.isArray(__cb.publicPlans)) {
+      const ws = __cb.currentWorkspaceId || __cb.parseIdsFromUrl?.()?.workspaceId;
+      if (ws && __cb.fetchCurrentPlanPricing) jobs.push(__cb.fetchCurrentPlanPricing(ws));
+    }
+    if (!Array.isArray(__cb.actionTiersCatalog) && __cb.fetchActionTiers) {
+      jobs.push(__cb.fetchActionTiers());
+    }
+    if (jobs.length) {
+      try { await Promise.all(jobs); } catch { /* getters fall back below */ }
+    }
+    return __cb.buildPlanPricing();
+  };
+
+  // The Enterprise "unlimited" credit sentinel (1B) — a placeholder Stripe
+  // subscription that would derive a degenerate $0/credit. Same cap the
+  // current-plan CPC guard uses.
+  const CREDIT_SENTINEL_CAP = 100_000_000;
+  // Plausibility ceiling for a derived per-credit rate. No real Clay list band
+  // exceeds ~$0.069/cr, so a derived rate above this signals a placeholder /
+  // manual-billing priceInfo (e.g. modern Enterprise's $1/cr stub) rather than a
+  // sellable rate — treat it as unusable so the plan falls back to the list rate.
+  const CPC_PLAUSIBLE_MAX = 0.2;
+
+  // Picks the priceInfo tier for a plan at a target annual credit volume:
+  // prefer the annual schedule, progressive selection (highest tier whose
+  // basicCredits <= volume, floored at the smallest tier). Excludes the
+  // Enterprise unlimited sentinel. Returns the chosen priceInfo or null.
+  function pickCreditTier(priceInfos, volume) {
+    if (!Array.isArray(priceInfos) || priceInfos.length === 0) return null;
+    const usable = priceInfos.filter((p) => {
+      const amt = Number(p?.amount);
+      const cr = Number(p?.basicCredits);
+      if (!(Number.isFinite(amt) && amt > 0 && Number.isFinite(cr) && cr > 0 && cr < CREDIT_SENTINEL_CAP)) {
+        return false;
+      }
+      // Reject implausible placeholder rates (e.g. modern Enterprise's $1/cr stub).
+      return (amt / 100) / cr <= CPC_PLAUSIBLE_MAX;
+    });
+    if (usable.length === 0) return null;
+    // Prefer annual tiers; fall back to whatever schedule exists.
+    const annual = usable.filter((p) => p.billingSchedule === "annually");
+    const pool = annual.length ? annual : usable;
+    const sorted = pool.slice().sort((a, b) => Number(a.basicCredits) - Number(b.basicCredits));
+    const v = Number(volume) || 0;
+    let chosen = sorted[0];
+    for (const p of sorted) {
+      if (v >= Number(p.basicCredits)) chosen = p;
+    }
+    return chosen;
+  }
+
+  // Picks the action-tier row for a plan at a target annual action volume,
+  // joining the action-tier catalog on billingPlanId + (preferably) the annual
+  // schedule. Progressive selection by actionExecutionLimit. Returns the row or
+  // null (legacy plans have no action tiers — they bill no action executions).
+  function pickActionTier(planId, volume) {
+    const catalog = __cb.actionTiersCatalog;
+    if (!planId || !Array.isArray(catalog) || catalog.length === 0) return null;
+    const rows = catalog.filter((t) => {
+      const amt = Number(t?.amount);
+      const lim = Number(t?.actionExecutionLimit);
+      return (
+        t?.billingPlanId === planId &&
+        Number.isFinite(amt) && amt > 0 &&
+        Number.isFinite(lim) && lim > 0
+      );
+    });
+    if (rows.length === 0) return null;
+    const annual = rows.filter((t) => t.billingSchedule === "annually");
+    const pool = annual.length ? annual : rows;
+    const sorted = pool.slice().sort((a, b) => Number(a.actionExecutionLimit) - Number(b.actionExecutionLimit));
+    const v = Number(volume) || 0;
+    let chosen = sorted[0];
+    for (const t of sorted) {
+      if (v >= Number(t.actionExecutionLimit)) chosen = t;
+    }
+    return chosen;
+  }
+
+  // Builds the plan-picker catalog: one row per public plan with a derived
+  // per-credit (cpc) and per-action (cpa) rate at the scope's projected annual
+  // volumes. CPC = (amount/100)/basicCredits from the plan's own priceInfos;
+  // CPA = (amount/100)/actionExecutionLimit from the action-tier catalog
+  // (modern plans only — legacy plans have no action-execution billing). When a
+  // plan's priceInfos are unusable (Enterprise placeholder / missing), the rate
+  // falls back to the internal list price so the plan is still selectable, with
+  // `source: "list"` so the UI can flag it.
+  //
+  // opts.creditVolume / opts.actionVolume — projected annual volumes for tier
+  //   selection (default: 0 → the smallest, entry tier for every plan).
+  //
+  // Returns [] when no public plans are loaded (the picker then offers plain
+  // legacy/modern era entries at list price — see the UI fallback).
+  __cb.buildPlanPricing = function (opts) {
+    opts = opts || {};
+    const plans = Array.isArray(__cb.publicPlans) ? __cb.publicPlans : [];
+    if (plans.length === 0) return [];
+    const listCpc = __cb.pricing?.LIST_CPC ?? 0.05;
+    const listCpa = __cb.pricing?.LIST_CPA ?? 0.008;
+    const creditVolume = Number(opts.creditVolume) || 0;
+    const actionVolume = Number(opts.actionVolume) || 0;
+    const currentType = __cb.currentPlanPricing?.planType ?? null;
+
+    const out = [];
+    for (const plan of plans) {
+      if (!plan || !plan.type) continue;
+      // Free / trial plans aren't meaningful pricing options for a scoping quote
+      // (no per-credit contract), so keep the picker to paid + enterprise tiers.
+      if (PLAN_SKIP_TYPES.has(plan.type)) continue;
+      const era = __cb.planEraForType(plan.type);
+      const creditTier = pickCreditTier(plan.priceInfos, creditVolume);
+      let cpc = null;
+      let cpcSource = "list";
+      if (creditTier) {
+        cpc = (Number(creditTier.amount) / 100) / Number(creditTier.basicCredits);
+        cpcSource = "plan";
+      } else {
+        cpc = listCpc;
+      }
+      // Actions: modern plans only. Legacy plans bill no action executions, so
+      // leave cpa null (the picker shows credits-only for them).
+      let cpa = null;
+      let actionTier = null;
+      if (era === "modern") {
+        actionTier = pickActionTier(plan.id, actionVolume);
+        cpa = actionTier
+          ? (Number(actionTier.amount) / 100) / Number(actionTier.actionExecutionLimit)
+          : listCpa;
+      }
+      out.push({
+        type: plan.type,
+        id: plan.id ?? null,
+        displayName: plan.displayName || plan.type,
+        era,
+        cpc,
+        cpa,
+        creditTier: creditTier
+          ? { basicCredits: Number(creditTier.basicCredits), amountCents: Number(creditTier.amount), billingSchedule: creditTier.billingSchedule }
+          : null,
+        actionTier: actionTier
+          ? { actionExecutionLimit: Number(actionTier.actionExecutionLimit), amountCents: Number(actionTier.amount), billingSchedule: actionTier.billingSchedule }
+          : null,
+        source: cpcSource,
+        isCurrent: currentType != null && plan.type === currentType,
+      });
+    }
+    // Stable order: legacy first (older catalog), then modern; entry tier price
+    // ascending within each era so the cheapest sellable plan reads first.
+    out.sort((a, b) => {
+      if (a.era !== b.era) return a.era === "legacy" ? -1 : 1;
+      return (a.cpc ?? 0) - (b.cpc ?? 0);
+    });
+    return out;
   };
 
   // Fetches Clay's built-in waterfall attributes (the WaterfallRow rows in

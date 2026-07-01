@@ -567,14 +567,19 @@
         // Projected/Actual is per-tab so a multi-tab export can mix modes — each
         // tab remembers the view it was last left in (restored in switchTab).
         state.viewMode = __cb.viewMode === "actual" ? "actual" : "projected";
-        // Display-only pricing-era scenario (model the other era's pricing) is
-        // per-tab like viewMode — a rep can leave one tab modeling modern and
-        // another on the real plan. Null when off. Never affects exported quotes
-        // (cost-model pins those to the real workspace era).
-        state.pricingScenario =
-          __cb.pricingScenario === "legacy" || __cb.pricingScenario === "modern"
-            ? __cb.pricingScenario
-            : null;
+        // Plan picker (Phase 2), per-tab like viewMode:
+        //   selectedPlan  — the plan being PREVIEWED (display only; re-prices the
+        //                   table/summary). Never affects exports.
+        //   quotePlan     — the plan COMMITTED via "Apply to quote".
+        //   quoteEra      — committed era (== quotePlan.era); drives computeTabTotals
+        //                   so exports re-price to a committed cross-era plan.
+        //   preQuoteRates — the rep's rates before the first Apply, so "Your plan"
+        //                   can restore them.
+        state.selectedPlan = __cb.selectedPlan ?? null;
+        state.quotePlan = __cb.quotePlan ?? null;
+        state.quoteEra =
+          __cb.quoteEra === "legacy" || __cb.quoteEra === "modern" ? __cb.quoteEra : null;
+        state.preQuoteRates = __cb.preQuoteRates ?? null;
         // Multi-year pricing view: whether the tab is in pricing mode, the
         // selected contract length, and the per-use-case per-year records, so a
         // saved quote restores exactly.
@@ -1434,12 +1439,32 @@
     __cb.viewMode = desiredMode;
     if (__cb.tabStore) __cb.tabStore.viewMode = desiredMode;
     if (__cb.overlayEl) __cb.overlayEl.setAttribute("data-cb-view-mode", desiredMode);
-    // Restore this tab's display-only pricing-era scenario (null = off).
-    __cb.pricingScenario =
-      tab?.state?.pricingScenario === "legacy" ||
-      tab?.state?.pricingScenario === "modern"
-        ? tab.state.pricingScenario
-        : null;
+    // Restore this tab's plan-picker state (Phase 2). selectedPlan = a live
+    // preview; quotePlan/quoteEra = the committed plan (drives exports);
+    // preQuoteRates lets "Your plan" restore the rep's pre-apply rates. A legacy
+    // tab saved under Phase 1 carried `pricingScenario` (an era string) instead —
+    // migrate it into a preview so the display still re-prices on open.
+    __cb.selectedPlan = tab?.state?.selectedPlan ?? null;
+    __cb.quotePlan = tab?.state?.quotePlan ?? null;
+    __cb.quoteEra =
+      tab?.state?.quoteEra === "legacy" || tab?.state?.quoteEra === "modern"
+        ? tab.state.quoteEra
+        : (tab?.state?.quotePlan?.era ?? null);
+    __cb.preQuoteRates = tab?.state?.preQuoteRates ?? null;
+    if (!__cb.selectedPlan && !__cb.quotePlan) {
+      const legacyScenario = tab?.state?.pricingScenario;
+      if (legacyScenario === "legacy" || legacyScenario === "modern") {
+        __cb.selectedPlan = {
+          type: null,
+          id: null,
+          displayName: legacyScenario === "legacy" ? "Legacy pricing" : "Modern pricing",
+          era: legacyScenario,
+          cpc: __cb.getCreditCost ? __cb.getCreditCost() : null,
+          cpa: null,
+          source: "list",
+        };
+      }
+    }
     // Refresh the Actual loading flag for the tab we just entered (its cards may
     // already carry spend, or none) BEFORE the recalc below, so the summary
     // doesn't blur known numbers using the previous tab's state.

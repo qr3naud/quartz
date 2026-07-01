@@ -1896,6 +1896,23 @@
     __cb.getCreditCost = () => creditCost;
     __cb.getActionCost = () => actionCost;
 
+    // Effective (DISPLAY) dollar rates: when a plan is being PREVIEWED in the
+    // plan picker (cb.selectedPlan), the on-screen table + summary price at that
+    // plan's CPC/CPA so the rep sees "what this costs on that plan" live. With no
+    // preview these return the rep's real per-tab rates (getCreditCost/
+    // getActionCost). Exports read the persisted tab rates directly, never these,
+    // so a preview never reaches a quote — only "Apply to quote" writes the
+    // plan's rates into the real inputs. A previewed plan with a null cpa (legacy
+    // plan → no action billing) falls back to the real action rate.
+    __cb.getEffectiveCreditCost = () => {
+      const p = __cb.selectedPlan;
+      return p && Number.isFinite(Number(p.cpc)) ? Number(p.cpc) : creditCost;
+    };
+    __cb.getEffectiveActionCost = () => {
+      const p = __cb.selectedPlan;
+      return p && Number.isFinite(Number(p.cpa)) ? Number(p.cpa) : actionCost;
+    };
+
     function parseDollar(str) {
       const n = parseFloat(String(str).replace(/[^\d.]/g, ""));
       return isNaN(n) ? 0 : n;
@@ -2029,8 +2046,12 @@
       setSummaryNumber(totalValue, totalCredits, roundComma);
       setSummaryNumber(totalActionsValue, totalActions, roundComma);
 
-      const creditDollars = totalCredits * creditCost;
-      const actionDollars = totalActions * actionCost;
+      // DISPLAY dollars: use the effective rate so a plan preview re-prices the
+      // summary boxes. Falls back to the rep's real rate when nothing is previewed.
+      const dispCreditCost = __cb.getEffectiveCreditCost ? __cb.getEffectiveCreditCost() : creditCost;
+      const dispActionCost = __cb.getEffectiveActionCost ? __cb.getEffectiveActionCost() : actionCost;
+      const creditDollars = totalCredits * dispCreditCost;
+      const actionDollars = totalActions * dispActionCost;
       // Card totals round to whole dollars like Total Cost — at scoping volumes
       // the sub-dollar tail (e.g. $67.695) is noise.
       setSummaryNumber(creditDollarValue, creditDollars, formatDollarRounded);
@@ -2345,9 +2366,13 @@
     // targetTotal / perRowDollarCost(). Uses the frequency-weighted per-row
     // numbers so the derivation matches what recalcTotal multiplies by.
     function perRowDollarCost() {
+      // Effective rate so a pinned budget stays consistent with the displayed
+      // totals while a plan is previewed (falls back to the real rate otherwise).
+      const cc = __cb.getEffectiveCreditCost ? __cb.getEffectiveCreditCost() : creditCost;
+      const ac = __cb.getEffectiveActionCost ? __cb.getEffectiveActionCost() : actionCost;
       return (
-        currentWeightedCreditsPerRow * creditCost +
-        currentWeightedActionsPerRow * actionCost
+        currentWeightedCreditsPerRow * cc +
+        currentWeightedActionsPerRow * ac
       );
     }
 
@@ -2507,8 +2532,10 @@
       menu.appendChild(title);
       menu.appendChild(help);
 
+      const ucCreditCost = __cb.getEffectiveCreditCost ? __cb.getEffectiveCreditCost() : creditCost;
+      const ucActionCost = __cb.getEffectiveActionCost ? __cb.getEffectiveActionCost() : actionCost;
       for (const u of rows.slice().sort((a, b) => b.credits - a.credits)) {
-        const dollars = (u.credits || 0) * creditCost + (u.actions || 0) * actionCost;
+        const dollars = (u.credits || 0) * ucCreditCost + (u.actions || 0) * ucActionCost;
         const recs = __cb.cost?.useCaseRecords ? Number(__cb.cost.useCaseRecords(u.key)) || 0 : 0;
         const perRecord = recs > 0 ? dollars / recs : 0;
 
