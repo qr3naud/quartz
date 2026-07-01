@@ -3150,6 +3150,37 @@
         actionCostInput.value = activeTab.state.actionCost;
         actionCost = parseDollar(activeTab.state.actionCost);
       }
+      // Plan picker (Phase 2): a plain refresh loads via openCanvas, not
+      // switchTab, so mirror switchTab's plan-picker restore here or an
+      // applied plan is lost on reload. selectedPlan = live preview (display
+      // only); quotePlan/quoteEra = the committed plan (drives cross-era export
+      // math); preQuoteRates lets "Your plan" restore the rep's pre-apply
+      // rates. A Phase 1 tab carried `pricingScenario` (an era string) instead
+      // — migrate it into a preview so the display still re-prices on open. Set
+      // before recalcTotal() so getEffectiveCreditCost/ActionCost price at the
+      // preview, and before setPricingMode/setBrainstormView so the picker
+      // label + export era are correct when the table mounts.
+      __cb.selectedPlan = activeTab.state.selectedPlan ?? null;
+      __cb.quotePlan = activeTab.state.quotePlan ?? null;
+      __cb.quoteEra =
+        activeTab.state.quoteEra === "legacy" || activeTab.state.quoteEra === "modern"
+          ? activeTab.state.quoteEra
+          : (activeTab.state.quotePlan?.era ?? null);
+      __cb.preQuoteRates = activeTab.state.preQuoteRates ?? null;
+      if (!__cb.selectedPlan && !__cb.quotePlan) {
+        const legacyScenario = activeTab.state.pricingScenario;
+        if (legacyScenario === "legacy" || legacyScenario === "modern") {
+          __cb.selectedPlan = {
+            type: null,
+            id: null,
+            displayName: legacyScenario === "legacy" ? "Legacy pricing" : "Modern pricing",
+            era: legacyScenario,
+            cpc: __cb.getCreditCost ? __cb.getCreditCost() : null,
+            cpa: null,
+            source: "list",
+          };
+        }
+      }
       if (activeTab.state.pricingExpanded) {
         pricingGroup.classList.add("is-expanded");
         chevronEl.classList.add("cb-chevron-open");
