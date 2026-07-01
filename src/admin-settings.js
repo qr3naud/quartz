@@ -91,7 +91,6 @@
 
   const MAINTAINER_SURFACES = [
     { label: "Secret configuration", hint: "Edits app_settings (e.g. Slack channels)." },
-    { label: "Scope Ads", hint: "Table-view intro shortcut for the Ads scoping flow." },
     { label: "Demo spotlight", hint: "Disabled in code (spotlightEnabled: false). Right-click cell highlights + floppy-disk toolbar walkthrough replay.", sessionOn: () => !!__cb.spotlightEnabled },
     { label: "Design Explorer", hint: "Interactive design-token + primitive gallery (preview only)." },
     { label: "Export to Deal Desk", hint: "Admin submenu in the Export menu (gtme_export flag)." },

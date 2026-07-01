@@ -7048,6 +7048,68 @@
     contextMenuEl.style.top = `${top}px`;
   }
 
+  // "Scope" dropdown — the pre-built scoping quick-starts. Mirrors openAddMenu's
+  // anchored context-menu pattern; each item hands off to a self-contained modal
+  // module (scope-ads.js / scope-signals.js).
+  function openScopeMenu(anchorEl) {
+    closeContextMenu();
+    const items = [
+      {
+        label: "Ads",
+        hint: "Scope an always-on Ads audience sync.",
+        action: () => __cb.startScopeAds?.(),
+      },
+      {
+        label: "Signals",
+        hint: "Quote monitoring signals (job changes, news\u2026) from scratch.",
+        action: () => __cb.startScopeSignals?.(),
+      },
+    ];
+
+    contextMenuBackdrop = document.createElement("div");
+    contextMenuBackdrop.className = "cb-table-view-context-backdrop";
+    contextMenuBackdrop.addEventListener("mousedown", (evt) => {
+      evt.stopPropagation();
+      closeContextMenu();
+    });
+
+    contextMenuEl = document.createElement("div");
+    contextMenuEl.className = "cb-table-view-context-menu";
+    contextMenuEl.addEventListener("mousedown", (evt) => evt.stopPropagation());
+    for (const item of items) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "cb-table-view-context-menu-option";
+      const labelEl = document.createElement("div");
+      labelEl.className = "cb-table-view-context-menu-option-label";
+      labelEl.textContent = item.label;
+      btn.appendChild(labelEl);
+      if (item.hint) {
+        const hintEl = document.createElement("div");
+        hintEl.className = "cb-table-view-context-menu-option-hint";
+        hintEl.textContent = item.hint;
+        btn.appendChild(hintEl);
+      }
+      btn.addEventListener("click", () => {
+        closeContextMenu();
+        item.action();
+      });
+      contextMenuEl.appendChild(btn);
+    }
+
+    document.body.appendChild(contextMenuBackdrop);
+    document.body.appendChild(contextMenuEl);
+    const aRect = anchorEl.getBoundingClientRect();
+    const rect = contextMenuEl.getBoundingClientRect();
+    const left = Math.min(aRect.left, window.innerWidth - rect.width - 8);
+    let top = aRect.bottom + 6;
+    if (top + rect.height > window.innerHeight - 8) {
+      top = Math.max(8, aRect.top - 6 - rect.height);
+    }
+    contextMenuEl.style.left = `${Math.max(8, left)}px`;
+    contextMenuEl.style.top = `${top}px`;
+  }
+
   // Dropdown under the Projected toggle button. Mirrors openAddMenu's anchored
   // pattern + the shared context-menu teardown (one menu at a time, Escape /
   // outside-click close). Opened by re-clicking Projected while already in
@@ -7228,20 +7290,21 @@
       if (__cb.sessionCutoff) wireActualSessionUI();
     }
 
-    // "Scope Ads" / "Add" lead the action row as scoping quick-starts. Hidden
-    // in pricing mode (the view is for pricing an already-built scope, not
-    // adding to it). Scope Ads is maintainer-only (see
-    // __cb.canUseScopeShortcuts in config.js).
+    // "Scope" / "Add" lead the action row as scoping quick-starts. Hidden in
+    // pricing mode (the view is for pricing an already-built scope, not adding
+    // to it). "Scope" opens a dropdown with the pre-built scoping flows (Ads,
+    // Signals) — available to everyone (each flow is a normal use case).
     if (!__cb.pricingMode) {
-      if (__cb.canUseScopeShortcuts?.()) {
-        const scopeAdsBtn = document.createElement("button");
-        scopeAdsBtn.type = "button";
-        scopeAdsBtn.className = "cb-table-view-add-er-btn";
-        scopeAdsBtn.title = "Scope an Ads use case";
-        scopeAdsBtn.innerHTML = targetSvg(12) + "<span>Scope Ads</span>";
-        scopeAdsBtn.addEventListener("click", () => __cb.startScopeAds?.());
-        introActions.appendChild(scopeAdsBtn);
-      }
+      const scopeBtn = document.createElement("button");
+      scopeBtn.type = "button";
+      scopeBtn.className = "cb-table-view-add-er-btn";
+      scopeBtn.title = "Scope a use case";
+      scopeBtn.innerHTML = targetSvg(12) + "<span>Scope</span>" + chevronDownSvg(12);
+      scopeBtn.addEventListener("click", (evt) => {
+        evt.stopPropagation();
+        openScopeMenu(scopeBtn);
+      });
+      introActions.appendChild(scopeBtn);
 
       // Single "Add" control — opens a dropdown with the two granular add
       // actions (data point / enrichment) so the header stays compact now that

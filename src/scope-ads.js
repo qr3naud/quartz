@@ -1,6 +1,6 @@
 /**
- * "Scope Ads" flow (maintainer-only, gated by __cb.canUseScopeShortcuts in
- * src/config.js — wired from the table-view intro action row).
+ * "Scope Ads" flow (wired from the table-view "Scope" dropdown in
+ * src/table-view.js — openScopeMenu; the dropdown is open to everyone).
  *
  * A two-step modal that scopes an Ads usage-based sync:
  *   Step 1 — disclaimer: Ads pricing is now usage-based (Before/After table).

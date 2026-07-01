@@ -222,9 +222,10 @@
       return !!window.__cb.isAdmin;
     },
 
-    // "Scope Ads" intro shortcut in the table view action row
-    // (src/table-view.js). Maintainer-only while the flow is being iterated
-    // on — same signed `is_admin` gate as canvas/pricing.
+    // Legacy gate for the table-view "Scope" shortcuts. The "Scope" dropdown
+    // (Ads + Signals) is now open to everyone (src/table-view.js openScopeMenu),
+    // so this is no longer wired to the button — kept for any future per-flow
+    // gating. Same signed `is_admin` claim as canvas/pricing.
     canUseScopeShortcuts() {
       return !!window.__cb.isAdmin;
     },
