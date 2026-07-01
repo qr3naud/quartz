@@ -837,6 +837,13 @@
     tabBarEl = null;
   };
 
+  // Exposed so overlay.js can repaint the tab bar when a tab's pricing state
+  // changes (toggling pricing view, adding/deleting options) — the amber tab
+  // styling + options-count badge below read from tab.state.
+  __cb.refreshTabBar = function () {
+    try { renderTabBar(); } catch {}
+  };
+
   // ---- Tab bar UI ----
 
   __cb.buildTabBar = function (leftGroup) {
@@ -853,8 +860,12 @@
     const visibleTabs = __cb.tabStore.tabs.filter(t => !t.hidden);
 
     for (const tab of visibleTabs) {
+      const inPricing = !!tab.state?.pricingMode;
       const tabEl = document.createElement("div");
-      tabEl.className = "cb-tab" + (tab.id === __cb.tabStore.activeId ? " cb-tab-active" : "");
+      tabEl.className =
+        "cb-tab" +
+        (tab.id === __cb.tabStore.activeId ? " cb-tab-active" : "") +
+        (inPricing ? " cb-tab-pricing" : "");
       tabEl.setAttribute("data-tab-id", tab.id);
 
       const nameSpan = document.createElement("span");
@@ -886,6 +897,18 @@
       });
 
       tabEl.appendChild(nameSpan);
+      // Pricing view: a small amber pill with the number of options on this tab
+      // (defaults to 1 for the ever-present Option A). Styled like the Actual
+      // session-count badge.
+      if (inPricing) {
+        const badge = document.createElement("span");
+        badge.className = "cb-tab-pricing-badge";
+        const optCount = Array.isArray(tab.state?.pricingOptions)
+          ? tab.state.pricingOptions.length
+          : 1;
+        badge.textContent = String(Math.max(1, optCount));
+        tabEl.appendChild(badge);
+      }
       tabEl.appendChild(closeBtn);
       tabBarEl.appendChild(tabEl);
     }

@@ -629,6 +629,31 @@
     pricingTipEl = tip;
   }
 
+  // Multi-line variant for the approval badge: one row per reason. Reuses the
+  // same pricingTipEl slot + teardown so it never collides with the % tip.
+  function showPricingTipLines(anchor, lines) {
+    hidePricingTip();
+    const list = Array.isArray(lines) ? lines.filter(Boolean) : [];
+    if (!list.length) return;
+    const tip = document.createElement("div");
+    tip.className = "cb-pricing-tip cb-pricing-tip-multiline";
+    for (const line of list) {
+      const row = document.createElement("div");
+      row.className = "cb-pricing-tip-row";
+      row.textContent = line;
+      tip.appendChild(row);
+    }
+    document.body.appendChild(tip);
+    tip.style.position = "fixed";
+    const r = anchor.getBoundingClientRect();
+    const tw = tip.getBoundingClientRect().width || 0;
+    let left = Math.round(r.left);
+    left = Math.max(8, Math.min(left, window.innerWidth - tw - 8));
+    tip.style.left = `${left}px`;
+    tip.style.top = `${Math.round(r.bottom + 6)}px`;
+    pricingTipEl = tip;
+  }
+
   function pinIconSvg() {
     return '<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="17" x2="12" y2="22"/><path d="M9 2h6l-1 7 3 3v2H7v-2l3-3-1-7z"/></svg>';
   }
@@ -1021,7 +1046,10 @@
       const cell = document.createElement("div");
       cell.className = "cb-ptg-cell cb-ptg-pricecell";
       const b = document.createElement("div");
-      b.className = "cb-ptg-repfloor" + (opts?.list ? " cb-ptg-listbox" : "");
+      b.className =
+        "cb-ptg-repfloor" +
+        (opts?.list ? " cb-ptg-listbox" : "") +
+        (opts?.authorized ? " cb-ptg-authbox" : "");
       b.textContent = rate != null ? pricingRate(rate) : "\u2014";
       cell.appendChild(b);
       if (opts?.showPct) {
@@ -1102,8 +1130,8 @@
 
     // Authorized (rep floor) — sits above Discount as the reference ceiling.
     grid.appendChild(mkRowLabel("Authorized"));
-    grid.appendChild(priceBox(actionRep, LIST_CPA, { showPct: true }));
-    grid.appendChild(priceBox(creditRep, LIST_CPC, { showPct: true }));
+    grid.appendChild(priceBox(actionRep, LIST_CPA, { showPct: true, authorized: true }));
+    grid.appendChild(priceBox(creditRep, LIST_CPC, { showPct: true, authorized: true }));
 
     // Discount (rep-entered; defaults to list).
     grid.appendChild(mkRowLabel("Discount", "cb-ptg-rowlabel-discount"));
@@ -1136,6 +1164,13 @@
     const apBadge = document.createElement("span");
     apBadge.className = "cb-ptg-approval-badge " + apInfo.cls;
     apBadge.textContent = apInfo.label;
+    // Custom hover tooltip listing why approval is needed (manager / deal desk).
+    // Auto-approved has no reasons, so no tooltip there.
+    const reasons = approval && Array.isArray(approval.reasons) ? approval.reasons : [];
+    if (reasons.length) {
+      apBadge.addEventListener("mouseenter", () => showPricingTipLines(apBadge, reasons));
+      apBadge.addEventListener("mouseleave", hidePricingTip);
+    }
     apCell.appendChild(apBadge);
     grid.appendChild(apCell);
 

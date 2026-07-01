@@ -3708,6 +3708,14 @@
   color: var(--cb-text-muted);
 }
 
+/* Authorized row box: matches the Average cell's dashed-border look (read-only,
+   so no pointer cursor / hover-darken — it's not clickable like the Average
+   cell that opens the band matrix). */
+.cb-ptg-authbox {
+  border: 1px dashed var(--cb-border-strong);
+  background: var(--cb-surface-subtle);
+}
+
 /* Price cell: the rate box / input + the "% off list" chip on one line. */
 .cb-ptg-pricecell {
   display: flex;
@@ -3750,6 +3758,18 @@
   font-weight: 600;
   white-space: nowrap;
   box-shadow: var(--cb-shadow-tooltip);
+}
+
+/* Multi-line variant (approval reasons): one row per reason, left-aligned. */
+.cb-pricing-tip-multiline {
+  white-space: normal;
+  max-width: 260px;
+  padding: 6px 10px;
+  text-align: left;
+}
+
+.cb-pricing-tip-multiline .cb-pricing-tip-row + .cb-pricing-tip-row {
+  margin-top: 4px;
 }
 
 /* Year label: text + an optional reset-to-proposed button (shown when the

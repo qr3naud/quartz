@@ -2111,6 +2111,9 @@
         if (at?.state) at.state.pricingMode = next;
       }
       if (!next && __cb.pricingBands?.close) __cb.pricingBands.close();
+      // Repaint the tab bar so this tab picks up (or drops) the amber pricing
+      // styling + options-count badge.
+      if (__cb.refreshTabBar) __cb.refreshTabBar();
       recalcTotal();
       if (__cb.tableView?.refresh) __cb.tableView.refresh();
       if (__cb.debouncedSave) __cb.debouncedSave();
@@ -2183,6 +2186,8 @@
     function afterPricingOptionsChange() {
       persistPricingOptions();
       updatePricingStrip();
+      // Keep the tab's options-count badge in sync when options are added/removed.
+      if (__cb.refreshTabBar) __cb.refreshTabBar();
       if (__cb.tableView?.refresh) __cb.tableView.refresh();
       if (__cb.debouncedSave) __cb.debouncedSave();
     }
