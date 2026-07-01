@@ -623,6 +623,54 @@
   let planPickerMenuEl = null;
   let planPickerBackdrop = null;
 
+  // Rank order for the two plan columns. Plans are matched case-insensitively by
+  // displayName substring, so "Pro Plan" / "proV2" still land on "pro". Anything
+  // unmatched sorts to the bottom of its column.
+  const PLAN_PICKER_RANK = {
+    legacy: ["starter", "explorer", "pro", "enterprise"],
+    modern: ["launch", "growth", "enterprise"],
+  };
+  function planPickerRank(plan) {
+    const order = PLAN_PICKER_RANK[plan.era] || [];
+    const name = (plan.displayName || "").toLowerCase();
+    for (let i = 0; i < order.length; i++) {
+      if (name.includes(order[i])) return i;
+    }
+    return order.length + 1;
+  }
+
+  // Editable per-column "Custom" rates, seeded from internal list pricing
+  // (5c/credit for both eras; 0.8c/action for modern — legacy bills no actions).
+  // Persisted for the page session so a rep's tweak survives reopening the menu.
+  let planPickerCustomRates = null;
+  function ensurePlanPickerCustomRates() {
+    if (planPickerCustomRates) return planPickerCustomRates;
+    const listCpc = window.__cb.pricing?.LIST_CPC ?? 0.05;
+    const listCpa = window.__cb.pricing?.LIST_CPA ?? 0.008;
+    planPickerCustomRates = {
+      legacy: { cpc: listCpc },
+      modern: { cpc: listCpc, cpa: listCpa },
+    };
+    return planPickerCustomRates;
+  }
+
+  // A synthetic plan built from the current custom rates for an era. type/id are
+  // null so it flows through preview/apply like the old list-rate era entries;
+  // samePlan() matches it by displayName + era.
+  function planPickerCustomPlan(era) {
+    const r = ensurePlanPickerCustomRates()[era];
+    return {
+      type: null,
+      id: null,
+      displayName: era === "legacy" ? "Custom (legacy)" : "Custom (modern)",
+      era,
+      cpc: Number(r.cpc),
+      cpa: era === "modern" ? Number(r.cpa) : null,
+      source: "custom",
+      isCurrent: false,
+    };
+  }
+
   // Projected annual credit/action volumes for plan tier selection. Uses the
   // contract calculator (synthesizes a single "Scope" use case when there are no
   // imported tables) so a canvas-only scope still resolves a tier. Best-effort.
@@ -760,11 +808,13 @@
   // Position the menu under its anchor (fixed, right-aligned like showCostUnitMenu).
   function positionPlanPickerMenu(menu, anchorEl) {
     const rect = anchorEl.getBoundingClientRect();
-    const width = 300;
+    const width = 480;
     menu.style.position = "fixed";
     menu.style.zIndex = "9999999";
     menu.style.top = (rect.bottom + 6) + "px";
-    menu.style.left = Math.max(8, rect.left) + "px";
+    // Right-align to the anchor so the wider two-column menu stays on-screen.
+    const left = Math.min(rect.left, window.innerWidth - width - 8);
+    menu.style.left = Math.max(8, left) + "px";
     menu.style.width = width + "px";
   }
 
@@ -796,27 +846,109 @@
     renderPlanPickerMenu(menu);
   }
 
-  // Fallback plan entries when the billing API yields no catalog: plain
-  // legacy/modern era rows at internal list pricing. Preserves the core Phase 1
-  // "model the other era" value offline / for non-internal users.
-  function fallbackEraPlans() {
-    const listCpc = window.__cb.pricing?.LIST_CPC ?? 0.05;
-    const listCpa = window.__cb.pricing?.LIST_CPA ?? 0.008;
-    return [
-      { type: null, id: null, displayName: "Legacy pricing", era: "legacy", cpc: listCpc, cpa: null, source: "list", isCurrent: false },
-      { type: null, id: null, displayName: "Modern pricing", era: "modern", cpc: listCpc, cpa: listCpa, source: "list", isCurrent: false },
-    ];
+  // Preview highlight matcher: catalog plans match by type; synthetic entries
+  // (custom rows) match by displayName + era.
+  function planPickerSamePlan(a, b) {
+    return !!a && !!b &&
+      (a.type != null ? a.type === b.type : a.displayName === b.displayName && a.era === b.era);
   }
 
-  // (Re)build the menu body from planPickerPlans. Preview highlight tracks
-  // cb.selectedPlan (by type, else displayName for the fallback era rows).
-  function renderPlanPickerMenu(menu) {
+  // Re-apply preview/committed highlight classes + footer/reset state in place,
+  // without rebuilding the menu — so editing a custom rate input keeps focus.
+  function refreshPlanPickerHighlights(menu) {
     const cb = window.__cb;
-    const plans = (planPickerPlans && planPickerPlans.length) ? planPickerPlans : fallbackEraPlans();
     const preview = cb.selectedPlan || null;
     const committed = cb.quotePlan || null;
-    const samePlan = (a, b) =>
-      !!a && !!b && (a.type != null ? a.type === b.type : a.displayName === b.displayName && a.era === b.era);
+    for (const row of menu.querySelectorAll(".cb-plan-picker-row")) {
+      const plan = row.__plan;
+      row.classList.toggle("cb-plan-picker-row-preview", planPickerSamePlan(preview, plan));
+      row.classList.toggle(
+        "cb-plan-picker-row-committed",
+        !preview && planPickerSamePlan(committed, plan),
+      );
+    }
+    const resetBtn = menu.querySelector(".cb-plan-picker-reset");
+    if (resetBtn) resetBtn.classList.toggle("cb-plan-picker-reset-active", !preview && !committed);
+    const apply = menu.querySelector(".cb-plan-picker-apply");
+    if (apply) {
+      apply.disabled = !preview;
+      apply.textContent = preview ? `Apply ${preview.displayName} to quote` : "Apply to quote";
+    }
+  }
+
+  // The editable "Custom" row that sits atop each era column. Renders a $/credit
+  // input (and, for modern, a $/action input) seeded from the era's custom
+  // rates. Editing a field previews the custom plan live; clicking the label
+  // (re)previews it without touching a field.
+  function buildPlanPickerCustomRow(menu, era) {
+    const rates = ensurePlanPickerCustomRates()[era];
+    const cp = planPickerCustomPlan(era);
+    const row = document.createElement("div");
+    row.className = "cb-plan-picker-row cb-plan-picker-custom";
+    // Matches only by displayName + era, so a live object is unnecessary.
+    row.__plan = { type: null, displayName: cp.displayName, era };
+
+    const name = document.createElement("span");
+    name.className = "cb-plan-picker-name";
+    name.textContent = "Custom";
+    row.appendChild(name);
+
+    const previewCustom = () => {
+      setSelectedPlan(planPickerCustomPlan(era));
+      refreshPlanPickerHighlights(menu);
+    };
+
+    name.style.cursor = "pointer";
+    name.addEventListener("click", (e) => { e.stopPropagation(); previewCustom(); });
+
+    const fields = document.createElement("div");
+    fields.className = "cb-plan-picker-custom-fields";
+
+    const addField = (key, suffix) => {
+      const field = document.createElement("label");
+      field.className = "cb-plan-picker-custom-field";
+      const prefix = document.createElement("span");
+      prefix.textContent = "$";
+      const input = document.createElement("input");
+      input.type = "text";
+      input.className = "cb-plan-picker-custom-input";
+      input.value = Number(rates[key]).toFixed(4);
+      input.addEventListener("mousedown", (e) => e.stopPropagation());
+      input.addEventListener("click", (e) => e.stopPropagation());
+      input.addEventListener("input", () => {
+        const v = parseFloat(input.value.replace(/[^0-9.]/g, ""));
+        if (Number.isFinite(v) && v >= 0) {
+          rates[key] = v;
+          previewCustom();
+        }
+      });
+      const unit = document.createElement("span");
+      unit.textContent = suffix;
+      field.appendChild(prefix);
+      field.appendChild(input);
+      field.appendChild(unit);
+      fields.appendChild(field);
+    };
+
+    addField("cpc", "/cr");
+    if (era === "modern") addField("cpa", "/act");
+    row.appendChild(fields);
+
+    if (planPickerSamePlan(window.__cb.selectedPlan, cp)) {
+      row.classList.add("cb-plan-picker-row-preview");
+    }
+    return row;
+  }
+
+  // (Re)build the menu body: a full-width "Your plan" reset, then two side-by-side
+  // era columns (legacy | modern), each led by an editable Custom row and then
+  // its catalog plans in rank order, and a shared Apply footer.
+  function renderPlanPickerMenu(menu) {
+    const cb = window.__cb;
+    const plans = (planPickerPlans && planPickerPlans.length) ? planPickerPlans : [];
+    const preview = cb.selectedPlan || null;
+    const committed = cb.quotePlan || null;
+    const samePlan = planPickerSamePlan;
 
     menu.innerHTML = "";
 
@@ -833,22 +965,36 @@
     });
     menu.appendChild(header);
 
-    // Group rows by era.
+    const columns = document.createElement("div");
+    columns.className = "cb-plan-picker-columns";
+
     const groups = [
-      { era: "legacy", label: "Legacy plans" },
-      { era: "modern", label: "Modern plans" },
+      { era: "legacy", label: "Legacy" },
+      { era: "modern", label: "Modern" },
     ];
     for (const g of groups) {
-      const inGroup = plans.filter((p) => p.era === g.era);
-      if (inGroup.length === 0) continue;
+      const col = document.createElement("div");
+      col.className = "cb-plan-picker-col";
+
       const gh = document.createElement("div");
       gh.className = "cb-plan-picker-group";
       gh.textContent = g.label;
-      menu.appendChild(gh);
+      col.appendChild(gh);
+
+      // Custom row leads every column.
+      col.appendChild(buildPlanPickerCustomRow(menu, g.era));
+
+      const inGroup = plans
+        .filter((p) => p.era === g.era)
+        .sort((a, b) => {
+          const r = planPickerRank(a) - planPickerRank(b);
+          return r !== 0 ? r : (a.cpc ?? 0) - (b.cpc ?? 0);
+        });
 
       for (const plan of inGroup) {
         const row = document.createElement("button");
         row.type = "button";
+        row.__plan = plan;
         row.className =
           "cb-plan-picker-row" +
           (samePlan(preview, plan) ? " cb-plan-picker-row-preview" : "") +
@@ -888,9 +1034,12 @@
           setSelectedPlan(plan);
           renderPlanPickerMenu(menu);
         });
-        menu.appendChild(row);
+        col.appendChild(row);
       }
+
+      columns.appendChild(col);
     }
+    menu.appendChild(columns);
 
     // Footer: Apply the previewed plan to the quote (disabled without a preview).
     const footer = document.createElement("div");
