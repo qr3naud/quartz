@@ -212,32 +212,6 @@
   user-select: none;
 }
 
-.cb-tab-close {
-  display: none;
-  align-items: center;
-  justify-content: center;
-  width: 18px;
-  height: 18px;
-  border: none;
-  border-radius: 4px;
-  background: transparent;
-  color: #9ca3af;
-  font-size: 10px;
-  cursor: pointer;
-  flex-shrink: 0;
-  padding: 0;
-  line-height: 1;
-}
-
-.cb-tab:hover .cb-tab-close {
-  display: inline-flex;
-}
-
-.cb-tab-close:hover {
-  background: #fee2e2;
-  color: #dc2626;
-}
-
 .cb-tab-add {
   display: inline-flex;
   align-items: center;

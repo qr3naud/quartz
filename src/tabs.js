@@ -887,15 +887,6 @@
         if (tab.id !== __cb.tabStore.activeId) __cb.switchTab(tab.id);
       });
 
-      const closeBtn = document.createElement("button");
-      closeBtn.className = "cb-tab-close";
-      closeBtn.innerHTML = "&#x2715;";
-      closeBtn.title = "Delete tab";
-      closeBtn.addEventListener("click", (e) => {
-        e.stopPropagation();
-        hideTab(tab.id);
-      });
-
       tabEl.appendChild(nameSpan);
       // Pricing view: a small amber pill with the number of options on this tab
       // (defaults to 1 for the ever-present Option A). Styled like the Actual
@@ -909,7 +900,6 @@
         badge.textContent = String(Math.max(1, optCount));
         tabEl.appendChild(badge);
       }
-      tabEl.appendChild(closeBtn);
       tabBarEl.appendChild(tabEl);
     }
 
@@ -1200,7 +1190,7 @@
       deleteItem.addEventListener("click", (ev) => {
         ev.stopPropagation();
         closeTabContextMenu();
-        permanentlyDeleteTab(tab.id);
+        hideTab(tab.id);
       });
       menu.appendChild(deleteItem);
     }
